@@ -3,13 +3,49 @@
 load("@rules_python//python:defs.bzl", "py_library")
 load("@pip//:requirements.bzl", "requirement")
 
+# Errors module
 py_library(
-    name = "scripting",
-    srcs = glob(["*.py"]),
+    name = "errors",
+    srcs = ["errors.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [],
+)
+
+# Engine module
+py_library(
+    name = "engine",
+    srcs = ["engine.py"],
     imports = ["src"],
     visibility = ["//visibility:public"],
     deps = [
+        ":errors",
+        "//src/family_assistant/scripting/apis",
         requirement("starlark-pyo3"),
+    ],
+)
+
+# Init module
+py_library(
+    name = "__init__",
+    srcs = ["__init__.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":engine",
+        ":errors",
+    ],
+)
+
+# Legacy monolithic target for backward compatibility
+py_library(
+    name = "scripting",
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":__init__",
+        ":engine",
+        ":errors",
         "//src/family_assistant/scripting/apis",
     ],
 )

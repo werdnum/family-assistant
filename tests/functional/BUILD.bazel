@@ -12,7 +12,6 @@ COMMON_ENV = {
 
 # Common dependencies for functional tests
 COMMON_DEPS = [
-    "//src/family_assistant",
     "//src/family_assistant/testing",
     "//src/family_assistant/testing/mocks",
     dev_requirement("pytest"),
@@ -24,7 +23,13 @@ COMMON_DEPS = [
 py_test(
     name = "test_smoke_notes",
     srcs = ["test_smoke_notes.py"],
-    deps = COMMON_DEPS,
+    deps = COMMON_DEPS + [
+        "//src/family_assistant:context_providers",
+        "//src/family_assistant:processing",
+        "//src/family_assistant/llm",
+        "//src/family_assistant/storage:context",
+        "//src/family_assistant/tools",
+    ],
     tags = ["functional", "sqlite"],
     env = COMMON_ENV,
 )
@@ -33,7 +38,13 @@ py_test(
 py_test(
     name = "test_note_tools",
     srcs = ["test_note_tools.py"],
-    deps = COMMON_DEPS,
+    deps = COMMON_DEPS + [
+        "//src/family_assistant:context_providers",
+        "//src/family_assistant:processing",
+        "//src/family_assistant/llm",
+        "//src/family_assistant/storage:context",
+        "//src/family_assistant/tools",
+    ],
     tags = ["functional", "sqlite"],
     env = COMMON_ENV,
 )

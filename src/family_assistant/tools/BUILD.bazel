@@ -3,21 +3,213 @@
 load("@rules_python//python:defs.bzl", "py_library")
 load("@pip//:requirements.bzl", "requirement")
 
+# Core types module - referenced by many other modules
 py_library(
-    name = "tools",
-    srcs = glob(["*.py"]),
+    name = "types",
+    srcs = ["types.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [],
+)
+
+# Calendar tools
+py_library(
+    name = "calendar",
+    srcs = ["calendar.py"],
     imports = ["src"],
     visibility = ["//visibility:public"],
     deps = [
-        requirement("pydantic"),
         requirement("caldav"),
         requirement("httpx"),
-        requirement("mcp"),
-        requirement("homeassistant-api"),
-        requirement("starlark-pyo3"),
-        requirement("python-telegram-bot"),
+        requirement("python-dateutil"),
+        requirement("vobject"),
+    ],
+)
+
+# Communication tools
+py_library(
+    name = "communication",
+    srcs = ["communication.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [],
+)
+
+# Confirmation tools
+py_library(
+    name = "confirmation",
+    srcs = ["confirmation.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [],
+)
+
+# Document tools
+py_library(
+    name = "documents",
+    srcs = ["documents.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        requirement("aiofiles"),
+        requirement("sqlalchemy"),
+    ],
+)
+
+# Event listener tools
+py_library(
+    name = "event_listeners",
+    srcs = ["event_listeners.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":types",
         "//src/family_assistant/storage",
-        "//src/family_assistant/utils",
+    ],
+)
+
+# Events tools
+py_library(
+    name = "events",
+    srcs = ["events.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":types",
+        requirement("sqlalchemy"),
+        "//src/family_assistant/storage",
+    ],
+)
+
+# Script execution tools
+py_library(
+    name = "execute_script",
+    srcs = ["execute_script.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
         "//src/family_assistant/scripting",
+    ],
+)
+
+# Home Assistant tools
+py_library(
+    name = "home_assistant",
+    srcs = ["home_assistant.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        requirement("homeassistant-api"),
+    ],
+)
+
+# Infrastructure tools
+py_library(
+    name = "infrastructure",
+    srcs = ["infrastructure.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":types",
+    ],
+)
+
+# MCP (Model Context Protocol) tools
+py_library(
+    name = "mcp",
+    srcs = ["mcp.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":types",
+        requirement("mcp"),
+    ],
+)
+
+# Notes tools
+py_library(
+    name = "notes",
+    srcs = ["notes.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [],
+)
+
+# Schema tools
+py_library(
+    name = "schema",
+    srcs = ["schema.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [],
+)
+
+# Services tools
+py_library(
+    name = "services",
+    srcs = ["services.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [],
+)
+
+# Tasks tools
+py_library(
+    name = "tasks",
+    srcs = ["tasks.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        requirement("python-dateutil"),
+        requirement("sqlalchemy"),
+        "//src/family_assistant/utils",
+    ],
+)
+
+# Init module
+py_library(
+    name = "__init__",
+    srcs = ["__init__.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":calendar",
+        ":communication",
+        ":confirmation",
+        ":documents",
+        ":event_listeners",
+        ":events",
+        ":execute_script",
+        ":home_assistant",
+        ":infrastructure",
+        ":notes",
+        ":services",
+        ":tasks",
+        ":types",
+    ],
+)
+
+# Legacy target for backward compatibility - includes all modules
+py_library(
+    name = "tools",
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":__init__",
+        ":calendar",
+        ":communication",
+        ":confirmation",
+        ":documents",
+        ":event_listeners",
+        ":events",
+        ":execute_script",
+        ":home_assistant",
+        ":infrastructure",
+        ":mcp",
+        ":notes",
+        ":schema",
+        ":services",
+        ":tasks",
+        ":types",
     ],
 )

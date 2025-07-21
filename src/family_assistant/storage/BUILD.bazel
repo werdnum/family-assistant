@@ -3,20 +3,185 @@
 load("@rules_python//python:defs.bzl", "py_library")
 load("@pip//:requirements.bzl", "requirement")
 
+# Base module with database engine and metadata
 py_library(
-    name = "storage",
-    srcs = glob(["*.py"]),
+    name = "base",
+    srcs = ["base.py"],
     imports = ["src"],
     visibility = ["//visibility:public"],
     deps = [
         requirement("sqlalchemy"),
         requirement("aiosqlite"),
         requirement("asyncpg"),
+    ],
+)
+
+# API tokens table definition
+py_library(
+    name = "api_tokens",
+    srcs = ["api_tokens.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":base",
+        requirement("sqlalchemy"),
+    ],
+)
+
+# Email table definition
+py_library(
+    name = "email",
+    srcs = ["email.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":base",
+        requirement("sqlalchemy"),
+    ],
+)
+
+# Error logs table definition
+py_library(
+    name = "error_logs",
+    srcs = ["error_logs.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":base",
+        requirement("sqlalchemy"),
+    ],
+)
+
+# Events table definition
+py_library(
+    name = "events",
+    srcs = ["events.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":base",
+        requirement("sqlalchemy"),
+    ],
+)
+
+# Message history table definition
+py_library(
+    name = "message_history",
+    srcs = ["message_history.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":base",
+        requirement("sqlalchemy"),
+    ],
+)
+
+# Notes table definition
+py_library(
+    name = "notes",
+    srcs = ["notes.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":base",
+        requirement("sqlalchemy"),
+    ],
+)
+
+# Tasks table definition
+py_library(
+    name = "tasks",
+    srcs = ["tasks.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":base",
+        requirement("sqlalchemy"),
+    ],
+)
+
+# Vector table definition
+py_library(
+    name = "vector",
+    srcs = ["vector.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":base",
+        requirement("sqlalchemy"),
         requirement("pgvector"),
-        requirement("alembic"),
+        requirement("numpy"),
+    ],
+)
+
+# Vector search module
+py_library(
+    name = "vector_search",
+    srcs = ["vector_search.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":base",
+        ":vector",
+        requirement("sqlalchemy"),
         requirement("numpy"),
         requirement("pydantic"),
+    ],
+)
+
+# Database context manager (important for tests)
+py_library(
+    name = "context",
+    srcs = ["context.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":base",
         "//src/family_assistant/storage/repositories",
-        "//src/family_assistant/utils",
+        requirement("sqlalchemy"),
+    ],
+)
+
+# Package init
+py_library(
+    name = "__init__",
+    srcs = ["__init__.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":api_tokens",
+        ":base",
+        ":context",
+        ":email",
+        ":error_logs",
+        ":events",
+        ":message_history",
+        ":notes",
+        ":tasks",
+        ":vector",
+        ":vector_search",
+        requirement("alembic"),
+    ],
+)
+
+# Legacy target for backward compatibility - includes all modules
+py_library(
+    name = "storage",
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":__init__",
+        ":api_tokens",
+        ":base",
+        ":context",
+        ":email",
+        ":error_logs",
+        ":events",
+        ":message_history",
+        ":notes",
+        ":tasks",
+        ":vector",
+        ":vector_search",
+        "//src/family_assistant/storage/repositories",
     ],
 )

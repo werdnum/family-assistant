@@ -3,14 +3,55 @@
 load("@rules_python//python:defs.bzl", "py_library")
 load("@pip//:requirements.bzl", "requirement")
 
+# Clock module for time-related utilities
 py_library(
-    name = "utils",
-    srcs = glob(["*.py"]),
+    name = "clock",
+    srcs = ["clock.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [],
+)
+
+# Logging handler module
+py_library(
+    name = "logging_handler",
+    srcs = ["logging_handler.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [],
+)
+
+# Scraping module
+py_library(
+    name = "scraping",
+    srcs = ["scraping.py"],
     imports = ["src"],
     visibility = ["//visibility:public"],
     deps = [
         requirement("playwright"),
         requirement("httpx"),
         requirement("markitdown"),
+    ],
+)
+
+# Init module
+py_library(
+    name = "__init__",
+    srcs = ["__init__.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [],
+)
+
+# Legacy monolithic target for backward compatibility
+py_library(
+    name = "utils",
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":__init__",
+        ":clock",
+        ":logging_handler",
+        ":scraping",
     ],
 )

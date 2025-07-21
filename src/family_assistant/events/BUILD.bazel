@@ -3,17 +3,109 @@
 load("@rules_python//python:defs.bzl", "py_library")
 load("@pip//:requirements.bzl", "requirement")
 
+# Validation module
 py_library(
-    name = "events",
-    srcs = glob(["*.py"]),
+    name = "validation",
+    srcs = ["validation.py"],
     imports = ["src"],
     visibility = ["//visibility:public"],
     deps = [
         requirement("pydantic"),
+    ],
+)
+
+# Storage module
+py_library(
+    name = "storage",
+    srcs = ["storage.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":validation",
         requirement("sqlalchemy"),
+        "//src/family_assistant/storage",
+    ],
+)
+
+# Sources module
+py_library(
+    name = "sources",
+    srcs = ["sources.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":validation",
+    ],
+)
+
+# Home Assistant source module
+py_library(
+    name = "home_assistant_source",
+    srcs = ["home_assistant_source.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":sources",
+        ":validation",
         requirement("homeassistant-api"),
         requirement("janus"),
-        "//src/family_assistant/storage",
+    ],
+)
+
+# Indexing source module
+py_library(
+    name = "indexing_source",
+    srcs = ["indexing_source.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":sources",
+        ":validation",
+    ],
+)
+
+# Processor module
+py_library(
+    name = "processor",
+    srcs = ["processor.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":sources",
+        ":storage",
+        ":validation",
         "//src/family_assistant/utils",
+    ],
+)
+
+# Init module
+py_library(
+    name = "__init__",
+    srcs = ["__init__.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":home_assistant_source",
+        ":indexing_source",
+        ":processor",
+        ":sources",
+        ":storage",
+        ":validation",
+    ],
+)
+
+# Legacy monolithic target for backward compatibility
+py_library(
+    name = "events",
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":__init__",
+        ":home_assistant_source",
+        ":indexing_source",
+        ":processor",
+        ":sources",
+        ":storage",
+        ":validation",
     ],
 )

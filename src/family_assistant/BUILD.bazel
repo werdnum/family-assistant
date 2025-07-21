@@ -5,54 +5,224 @@ load("@pip//:requirements.bzl", "requirement")
 
 package(default_visibility = ["//visibility:public"])
 
-# Core family_assistant library
-py_library(
-    name = "family_assistant",
-    srcs = glob(["*.py"]),
-    data = glob([
+# Common data files that multiple modules might need
+filegroup(
+    name = "data",
+    srcs = glob([
         "templates/**/*",
         "static/**/*",
     ]) + [
         "py.typed",
     ],
+)
+
+# Interfaces module - base protocols and types
+py_library(
+    name = "interfaces",
+    srcs = ["interfaces.py"],
     imports = [".."],
     deps = [
-        # Core dependencies
-        requirement("aiofiles"),
-        requirement("aiosqlite"),
-        requirement("alembic"),
-        requirement("asyncpg"),
-        requirement("authlib"),
-        requirement("caldav"),
-        requirement("fastapi"),
-        requirement("filetype"),
-        requirement("google-genai"),
-        requirement("homeassistant-api"),
-        requirement("httpx"),
-        requirement("itsdangerous"),
-        requirement("jinja2"),
-        requirement("json-schema-for-humans"),
-        requirement("litellm"),
-        requirement("markdown-it-py"),
-        requirement("markitdown"),
-        requirement("mcp"),
-        requirement("numpy"),
-        requirement("openai"),
-        requirement("passlib"),
-        requirement("pgvector"),
-        requirement("playwright"),
         requirement("pydantic"),
-        requirement("python-dateutil"),
-        requirement("python-dotenv"),
-        requirement("python-multipart"),
-        requirement("python-telegram-bot"),
-        requirement("pytz"),
-        requirement("pyyaml"),
-        requirement("sqlalchemy"),
-        requirement("starlark-pyo3"),
-        requirement("telegramify-markdown"),
-        requirement("uvicorn"),
+        "//src/family_assistant/llm:base",
+    ],
+)
+
+# Embeddings module
+py_library(
+    name = "embeddings",
+    srcs = ["embeddings.py"],
+    imports = [".."],
+    deps = [
+        ":interfaces",
+        requirement("litellm"),
+        requirement("numpy"),
+    ],
+)
+
+# Calendar integration module
+py_library(
+    name = "calendar_integration",
+    srcs = ["calendar_integration.py"],
+    imports = [".."],
+    deps = [
+        requirement("caldav"),
         requirement("vobject"),
+        requirement("python-dateutil"),
+        requirement("pytz"),
+        "//src/family_assistant/tools:types",
+    ],
+)
+
+# Home Assistant shared module
+py_library(
+    name = "home_assistant_shared",
+    srcs = ["home_assistant_shared.py"],
+    imports = [".."],
+    deps = [
+        requirement("homeassistant-api"),
+        requirement("jinja2"),
+    ],
+)
+
+# Context providers module
+py_library(
+    name = "context_providers",
+    srcs = ["context_providers.py"],
+    imports = [".."],
+    deps = [
+        ":interfaces",
+        ":calendar_integration",
+        ":home_assistant_shared",
+        "//src/family_assistant/storage:context",
+        "//src/family_assistant/tools:types",
+        requirement("httpx"),
+    ],
+)
+
+# Actions module
+py_library(
+    name = "actions",
+    srcs = ["actions.py"],
+    imports = [".."],
+    deps = [
+        ":interfaces",
+        "//src/family_assistant/tools:types",
+        "//src/family_assistant/scripting:engine",
+        requirement("starlark-pyo3"),
+    ],
+)
+
+# Processing module
+py_library(
+    name = "processing",
+    srcs = ["processing.py"],
+    imports = [".."],
+    deps = [
+        ":interfaces",
+        ":context_providers",
+        ":actions",
+        "//src/family_assistant/llm",
+        "//src/family_assistant/storage:context",
+        "//src/family_assistant/tools",
+        "//src/family_assistant/utils:clock",
+        requirement("pydantic"),
+    ],
+)
+
+# Task worker module
+py_library(
+    name = "task_worker",
+    srcs = ["task_worker.py"],
+    imports = [".."],
+    deps = [
+        ":interfaces",
+        ":processing",
+        ":calendar_integration",
+        ":embeddings",
+        "//src/family_assistant/storage:context",
+        "//src/family_assistant/indexing:tasks",
+        "//src/family_assistant/tools:types",
+        requirement("sqlalchemy"),
+    ],
+)
+
+# Telegram bot module
+py_library(
+    name = "telegram_bot",
+    srcs = ["telegram_bot.py"],
+    imports = [".."],
+    deps = [
+        ":interfaces",
+        ":processing",
+        ":context_providers",
+        "//src/family_assistant/storage:context",
+        "//src/family_assistant/tools",
+        "//src/family_assistant/utils:clock",
+        requirement("python-telegram-bot"),
+        requirement("telegramify-markdown"),
+    ],
+)
+
+# Web server module
+py_library(
+    name = "web_server",
+    srcs = ["web_server.py"],
+    imports = [".."],
+    deps = [
+        "//src/family_assistant/web:app_creator",
+        requirement("uvicorn"),
+    ],
+)
+
+# Assistant module - main application orchestrator
+py_library(
+    name = "assistant",
+    srcs = ["assistant.py"],
+    imports = [".."],
+    deps = [
+        ":interfaces",
+        ":processing",
+        ":context_providers",
+        ":task_worker",
+        ":telegram_bot",
+        ":web_server",
+        ":embeddings",
+        ":calendar_integration",
+        ":home_assistant_shared",
+        "//src/family_assistant/events:processor",
+        "//src/family_assistant/llm",
+        "//src/family_assistant/storage",
+        "//src/family_assistant/tools",
+        "//src/family_assistant/web:app_creator",
+        requirement("alembic"),
+        requirement("sqlalchemy"),
+        requirement("python-dotenv"),
+        requirement("pyyaml"),
+        requirement("mcp"),
+    ],
+)
+
+# Init module
+py_library(
+    name = "__init__",
+    srcs = ["__init__.py"],
+    imports = [".."],
+)
+
+# Main module
+py_library(
+    name = "__main__lib",
+    srcs = ["__main__.py"],
+    imports = [".."],
+    deps = [
+        ":assistant",
+        "//src/family_assistant/utils:logging_handler",
+        requirement("python-dotenv"),
+        requirement("pyyaml"),
+    ],
+)
+
+# Legacy monolithic target for backward compatibility
+# TODO: Remove this once all tests are updated to use granular targets
+py_library(
+    name = "family_assistant",
+    srcs = [],
+    data = [":data"],
+    imports = [".."],
+    deps = [
+        ":__init__",
+        ":__main__lib",
+        ":actions",
+        ":assistant",
+        ":calendar_integration",
+        ":context_providers",
+        ":embeddings",
+        ":home_assistant_shared",
+        ":interfaces",
+        ":processing",
+        ":task_worker",
+        ":telegram_bot",
+        ":web_server",
         # Sub-packages
         "//src/family_assistant/events",
         "//src/family_assistant/indexing",
@@ -70,7 +240,7 @@ py_binary(
     name = "main",
     srcs = ["__main__.py"],
     main = "__main__.py",
-    deps = [":family_assistant"],
+    deps = [":__main__lib"],
     data = [
         "//:config.yaml",
         "//:logging.conf",

@@ -1,18 +1,75 @@
-"""BUILD file for LLM package"""
+"""BUILD file for LLM package
+
+This package contains the LLM client implementations and interfaces.
+The targets are organized as follows:
+
+- base: Exception hierarchy for LLM providers
+- factory: Factory for creating appropriate LLM clients based on configuration
+- retrying_client: LLM client wrapper that provides retry and fallback capabilities
+- interfaces: Main LLM interfaces and implementations (from __init__.py)
+- llm: Legacy aggregate target that includes all modules (for backward compatibility)
+"""
 
 load("@rules_python//python:defs.bzl", "py_library")
 load("@pip//:requirements.bzl", "requirement")
 
+# Base module with exception hierarchy
 py_library(
-    name = "llm",
-    srcs = glob(["*.py"]),
+    name = "base",
+    srcs = ["base.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [],
+)
+
+# Factory module for creating LLM clients
+py_library(
+    name = "factory",
+    srcs = ["factory.py"],
     imports = ["src"],
     visibility = ["//visibility:public"],
     deps = [
+        ":retrying_client",
+        "//src/family_assistant/llm/providers",
+    ],
+)
+
+# Retrying client wrapper
+py_library(
+    name = "retrying_client",
+    srcs = ["retrying_client.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":base",
+    ],
+)
+
+# Main LLM interfaces and implementations
+py_library(
+    name = "interfaces",
+    srcs = ["__init__.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":factory",
         requirement("litellm"),
-        requirement("openai"),
-        requirement("google-genai"),
         requirement("pydantic"),
+        requirement("aiofiles"),
+    ],
+)
+
+# Legacy target for backward compatibility
+# This aggregates all modules in the package
+py_library(
+    name = "llm",
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":base",
+        ":factory",
+        ":interfaces",
+        ":retrying_client",
         "//src/family_assistant/llm/providers",
         "//src/family_assistant/llm/utils",
     ],

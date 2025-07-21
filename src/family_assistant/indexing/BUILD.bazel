@@ -3,17 +3,90 @@
 load("@rules_python//python:defs.bzl", "py_library")
 load("@pip//:requirements.bzl", "requirement")
 
+# Pipeline module
 py_library(
-    name = "indexing",
-    srcs = glob(["*.py"]),
+    name = "pipeline",
+    srcs = ["pipeline.py"],
     imports = ["src"],
     visibility = ["//visibility:public"],
     deps = [
         requirement("pydantic"),
-        requirement("markitdown"),
-        requirement("filetype"),
+    ],
+)
+
+# Document indexer module
+py_library(
+    name = "document_indexer",
+    srcs = ["document_indexer.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pipeline",
         "//src/family_assistant/indexing/processors",
+        requirement("filetype"),
+    ],
+)
+
+# Email indexer module
+py_library(
+    name = "email_indexer",
+    srcs = ["email_indexer.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pipeline",
+    ],
+)
+
+# Notes indexer module
+py_library(
+    name = "notes_indexer",
+    srcs = ["notes_indexer.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pipeline",
+    ],
+)
+
+# Ingestion module
+py_library(
+    name = "ingestion",
+    srcs = ["ingestion.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pipeline",
+        requirement("markitdown"),
+    ],
+)
+
+# Tasks module for indexing tasks
+py_library(
+    name = "tasks",
+    srcs = ["tasks.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":document_indexer",
+        ":email_indexer",
+        ":notes_indexer",
         "//src/family_assistant/storage",
-        "//src/family_assistant/utils",
+    ],
+)
+
+# Legacy monolithic target for backward compatibility
+py_library(
+    name = "indexing",
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":document_indexer",
+        ":email_indexer",
+        ":ingestion",
+        ":notes_indexer",
+        ":pipeline",
+        ":tasks",
+        "//src/family_assistant/indexing/processors",
     ],
 )

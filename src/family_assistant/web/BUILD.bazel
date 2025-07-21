@@ -3,20 +3,100 @@
 load("@rules_python//python:defs.bzl", "py_library")
 load("@pip//:requirements.bzl", "requirement")
 
+# Auth module
 py_library(
-    name = "web",
-    srcs = glob(["*.py"]),
+    name = "auth",
+    srcs = ["auth.py"],
     imports = ["src"],
     visibility = ["//visibility:public"],
     deps = [
-        requirement("fastapi"),
-        requirement("pydantic"),
         requirement("authlib"),
         requirement("itsdangerous"),
-        requirement("jinja2"),
         requirement("passlib"),
+    ],
+)
+
+# Models module
+py_library(
+    name = "models",
+    srcs = ["models.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        requirement("pydantic"),
+    ],
+)
+
+# Dependencies module
+py_library(
+    name = "dependencies",
+    srcs = ["dependencies.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":auth",
+        requirement("fastapi"),
+    ],
+)
+
+# Template utils module
+py_library(
+    name = "template_utils",
+    srcs = ["template_utils.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        requirement("jinja2"),
+    ],
+)
+
+# Utils module
+py_library(
+    name = "utils",
+    srcs = ["utils.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [],
+)
+
+# App creator module
+py_library(
+    name = "app_creator",
+    srcs = ["app_creator.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":auth",
+        ":dependencies",
+        ":template_utils",
         "//src/family_assistant/web/routers",
-        "//src/family_assistant/storage",
-        "//src/family_assistant/tools",
+        requirement("fastapi"),
+        requirement("jinja2"),
+    ],
+)
+
+# Init module
+py_library(
+    name = "__init__",
+    srcs = ["__init__.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [],
+)
+
+# Legacy monolithic target for backward compatibility
+py_library(
+    name = "web",
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":__init__",
+        ":app_creator",
+        ":auth",
+        ":dependencies",
+        ":models",
+        ":template_utils",
+        ":utils",
+        "//src/family_assistant/web/routers",
     ],
 )
