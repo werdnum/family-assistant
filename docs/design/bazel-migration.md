@@ -34,10 +34,16 @@ system using rules_uv for dependency management.
 - [x] Fixed all import path issues
 - [x] Added missing dependencies to BUILD files (e.g., janus)
 - [x] Got all 20 functional SQLite tests passing
-
-### In Progress
-
-- [ ] Create BUILD files for subdirectory tests (telegram, web, indexing)
+- [x] Created BUILD files for all test subdirectories:
+  - [x] tests/functional/indexing/
+  - [x] tests/functional/scripting/
+  - [x] tests/functional/storage/
+  - [x] tests/functional/telegram/
+  - [x] tests/functional/tools/
+  - [x] tests/functional/web/
+  - [x] tests/data/
+- [x] Split monolithic BUILD targets into granular per-module targets
+- [x] All 33 SQLite functional tests passing with Bazel
 
 ### Todo
 
@@ -130,12 +136,19 @@ system using rules_uv for dependency management.
 - Main application binary builds (`bazel build //src/family_assistant:main`)
 - Unit tests are passing (2/2 tests in //tests/unit)
 - Dependencies are compiled from pyproject.toml using rules_uv
-- **All 20 functional SQLite tests are now passing**
 - Test utilities successfully migrated to `src/family_assistant/testing/`
+- **All 33 functional SQLite tests are now passing with Bazel**
+- BUILD files created for all test subdirectories with proper dependencies
 
-### All Passing Tests (20/20)
+### All Passing Tests (33/33)
 
-- simple_test
+**Unit Tests (2/2):**
+
+- test_embeddings
+- test_processing_history_formatting
+
+**Functional Tests (31/31):**
+
 - test_delegation
 - test_error_logging
 - test_event_listener_crud
@@ -151,16 +164,41 @@ system using rules_uv for dependency management.
 - test_script_execution_handler
 - test_script_wake_llm
 - test_smoke_callback
-- test_smoke_notes_fixed
+- test_smoke_notes
 - test_task_error_column
 - test_task_worker_resilience
 - test_vector_storage
+
+**Subdirectory Tests:**
+
+- scripting: 7 tests (test_direct_tool_callables, test_engine, test_json_functions, test_time_api,
+  test_time_integration, test_tools_api, test_tools_security)
+- storage: 1 test (test_message_history)
+- tools: 2 tests (test_execute_script, test_notes_append)
+- web: 4 tests (test_chat_api_endpoint, test_notes_ui, test_template_utils, test_ui_endpoints)
+
+### Architecture Improvements
+
+1. **Granular BUILD Targets**: Split monolithic targets (e.g., `//src/family_assistant`) into
+   per-module targets for:
+
+   - Better build caching and parallelism
+   - Clearer dependency graphs
+   - Faster incremental builds
+
+2. **Test Organization**: Created individual py_test targets for each test file with:
+
+   - Proper dependency declarations
+   - Test suites for grouping (sqlite, postgres, all)
+   - Special handling for tests that don't work with Bazel (e.g., Playwright tests marked as
+     "manual")
 
 ### Notes
 
 - Import paths resolved by moving test utilities to main package namespace
 - Bazel's `imports` attribute properly configured for each BUILD file
 - Warnings about deprecated Bazel conditions can be ignored (upstream issue)
+- PostgreSQL tests deferred but infrastructure is in place
 
 ## Bazel Commands
 
@@ -174,6 +212,12 @@ bazel test //tests/unit:unit
 # Run a specific test
 bazel test //tests/unit:test_embeddings --test_output=all
 
+# Run all SQLite tests (33 tests)
+bazel test //tests/functional:sqlite
+
+# Run tests in a specific subdirectory
+bazel test //tests/functional/scripting:scripting
+
 # Run tests excluding postgres 
 bazel test //... --config=sqlite
 
@@ -186,11 +230,12 @@ bazel clean
 
 ## Next Steps
 
-1. Create BUILD files for subdirectory tests (telegram, web, indexing)
-2. Set up linting and formatting targets
-3. Create CI configuration with Bazel
-4. Handle PostgreSQL tests with testcontainers (complex, deferred)
-5. Set up Docker image building with Bazel
+1. Set up linting and formatting targets in Bazel
+2. Create CI configuration with Bazel
+3. Handle PostgreSQL tests with testcontainers (complex, deferred)
+4. Set up Docker image building with Bazel
+5. Migrate remaining test directories if any
+6. Consider creating a `bazel run` target for the development server
 
 ## Notes
 
