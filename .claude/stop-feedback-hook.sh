@@ -23,12 +23,16 @@ if [ "$stop_hook_active" = "false" ]; then
     fi
     
     # Check for unpushed commits
-    unpushed_commits=$(git log --oneline origin/main..HEAD 2>/dev/null)
-    if [ -n "$unpushed_commits" ]; then
-        echo "• There are unpushed commits. You may want to push them." >&2
-        echo "  Unpushed commits:" >&2
-        echo "$unpushed_commits" | sed 's/^/    /' >&2
-        echo >&2
+    # Get the upstream tracking branch
+    upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null)
+    if [ -n "$upstream" ]; then
+        unpushed_commits=$(git log --oneline "$upstream"..HEAD 2>/dev/null)
+        if [ -n "$unpushed_commits" ]; then
+            echo "• There are unpushed commits. You may want to push them." >&2
+            echo "  Unpushed commits:" >&2
+            echo "$unpushed_commits" | sed 's/^/    /' >&2
+            echo >&2
+        fi
     fi
     
     # Always remind to check if request is fulfilled
