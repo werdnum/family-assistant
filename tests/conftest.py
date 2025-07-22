@@ -30,6 +30,7 @@ from family_assistant.storage import base as storage_base  # Import storage base
 
 # Import the metadata and the original engine object from your storage base
 from family_assistant.storage import init_db  # Import init_db
+from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.context import DatabaseContext
 
 # Explicitly import the module defining the tasks table to ensure metadata registration
@@ -165,8 +166,8 @@ async def db_engine(
     admin_url = None
 
     if db_backend == "sqlite":
-        # Use an in-memory SQLite database for each test
-        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        # Use an in-memory SQLite database with StaticPool so the schema persists across connections
+        engine = create_engine_with_sqlite_optimizations("sqlite+aiosqlite:///:memory:")
         logger.info(f"\n--- SQLite Test DB Setup ({request.node.name}) ---")
         logger.info(f"Created SQLite test engine: {engine.url}")
 
