@@ -2,9 +2,43 @@
 
 load("@rules_python//python:defs.bzl", "py_library")
 
+# Time API module
 py_library(
-    name = "apis",
-    srcs = glob(["*.py"]),
+    name = "time",
+    srcs = ["time.py"],
     imports = ["src"],
     visibility = ["//visibility:public"],
+)
+
+# Tools API module
+py_library(
+    name = "tools",
+    srcs = ["tools.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+)
+
+# Init module
+py_library(
+    name = "__init__",
+    srcs = ["__init__.py"],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":time",
+        ":tools",
+    ],
+)
+
+# Legacy monolithic target for backward compatibility
+py_library(
+    name = "apis",
+    srcs = [],
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":__init__",
+        ":time",
+        ":tools",
+    ],
 )

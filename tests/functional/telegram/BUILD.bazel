@@ -1,0 +1,118 @@
+"""Telegram functional tests BUILD file"""
+
+load("@pip_dev//:requirements.bzl", dev_requirement = "requirement")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+
+# Common environment for all functional tests
+COMMON_ENV = {
+    "PYTEST_CURRENT_TEST": "bazel_test",
+    "FAMILY_ASSISTANT_DISABLE_DB_ERROR_LOGGING": "1",
+}
+
+# Common dependencies for functional tests
+COMMON_DEPS = [
+    "//src/family_assistant/testing",
+    "//src/family_assistant/testing/mocks",
+    dev_requirement("pytest"),
+    dev_requirement("pytest-asyncio"),
+    dev_requirement("aiosqlite"),
+]
+
+# Telegram-specific dependencies
+TELEGRAM_DEPS = [
+    "//src/family_assistant:assistant",
+    "//src/family_assistant:context_providers",
+    "//src/family_assistant:processing",
+    "//src/family_assistant:telegram_bot",
+    "//src/family_assistant/llm",
+    "//src/family_assistant/storage:context",
+    "//src/family_assistant/tools",
+    dev_requirement("python-telegram-bot"),
+    dev_requirement("telegramify-markdown"),
+    dev_requirement("assertpy"),
+]
+
+# conftest.py as a library for imports
+py_library(
+    name = "conftest",
+    srcs = ["conftest.py"],
+    visibility = ["//visibility:private"],
+    deps = COMMON_DEPS + TELEGRAM_DEPS,
+)
+
+# Message history limit test
+py_test(
+    name = "test_message_history_limit",
+    srcs = ["test_message_history_limit.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "sqlite",
+        "telegram",
+    ],
+    deps = [":conftest"] + COMMON_DEPS + TELEGRAM_DEPS,
+)
+
+# Telegram confirmation test
+py_test(
+    name = "test_telegram_confirmation",
+    srcs = ["test_telegram_confirmation.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "sqlite",
+        "telegram",
+    ],
+    deps = [":conftest"] + COMMON_DEPS + TELEGRAM_DEPS,
+)
+
+# Telegram handler test
+py_test(
+    name = "test_telegram_handler",
+    srcs = ["test_telegram_handler.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "sqlite",
+        "telegram",
+    ],
+    deps = [":conftest"] + COMMON_DEPS + TELEGRAM_DEPS,
+)
+
+# Telegram send message tool test
+py_test(
+    name = "test_telegram_send_message_tool",
+    srcs = ["test_telegram_send_message_tool.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "sqlite",
+        "telegram",
+    ],
+    deps = [":conftest"] + COMMON_DEPS + TELEGRAM_DEPS,
+)
+
+# Telegram slash commands test
+py_test(
+    name = "test_telegram_slash_commands",
+    srcs = ["test_telegram_slash_commands.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "sqlite",
+        "telegram",
+    ],
+    deps = [":conftest"] + COMMON_DEPS + TELEGRAM_DEPS,
+)
+
+# Test suite for all Telegram functional tests
+test_suite(
+    name = "telegram",
+    tests = [
+        ":test_message_history_limit",
+        ":test_telegram_confirmation",
+        ":test_telegram_handler",
+        ":test_telegram_send_message_tool",
+        ":test_telegram_slash_commands",
+    ],
+)

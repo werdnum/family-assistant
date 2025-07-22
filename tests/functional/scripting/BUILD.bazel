@@ -1,0 +1,166 @@
+"""Functional tests for scripting package"""
+
+load("@pip_dev//:requirements.bzl", dev_requirement = "requirement")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+
+# Common environment for all functional tests
+COMMON_ENV = {
+    "PYTEST_CURRENT_TEST": "bazel_test",
+    "FAMILY_ASSISTANT_DISABLE_DB_ERROR_LOGGING": "1",
+}
+
+# Common dependencies for scripting functional tests
+COMMON_DEPS = [
+    "//src/family_assistant/testing",
+    "//src/family_assistant/testing/mocks",
+    dev_requirement("pytest"),
+    dev_requirement("pytest-asyncio"),
+    dev_requirement("aiosqlite"),
+]
+
+# Example file used by some tests
+py_library(
+    name = "example_direct_tools",
+    srcs = ["example_direct_tools.py"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "//src/family_assistant/scripting:engine",
+        "//src/family_assistant/storage:context",
+        "//src/family_assistant/tools:types",
+    ],
+)
+
+# mock_tools_provider moved to //src/family_assistant/testing/mocks
+
+# Test for direct tool callables
+py_test(
+    name = "test_direct_tool_callables",
+    srcs = ["test_direct_tool_callables.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "scripting",
+        "sqlite",
+    ],
+    deps = COMMON_DEPS + [
+        "//src/family_assistant/scripting:engine",
+        "//src/family_assistant/storage:context",
+        "//src/family_assistant/tools:types",
+        dev_requirement("starlark-pyo3"),
+    ],
+)
+
+# Test for Starlark engine integration
+py_test(
+    name = "test_engine",
+    srcs = ["test_engine.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "scripting",
+        "sqlite",
+    ],
+    deps = COMMON_DEPS + [
+        "//src/family_assistant/scripting:engine",
+        "//src/family_assistant/scripting:errors",
+        dev_requirement("starlark-pyo3"),
+    ],
+)
+
+# Test for JSON functions in Starlark
+py_test(
+    name = "test_json_functions",
+    srcs = ["test_json_functions.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "scripting",
+        "sqlite",
+    ],
+    deps = COMMON_DEPS + [
+        "//src/family_assistant/scripting:engine",
+        dev_requirement("starlark-pyo3"),
+    ],
+)
+
+# Test for time API
+py_test(
+    name = "test_time_api",
+    srcs = ["test_time_api.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "scripting",
+        "sqlite",
+    ],
+    deps = COMMON_DEPS + [
+        "//src/family_assistant/scripting/apis:time",
+    ],
+)
+
+# Test for time API integration with Starlark
+py_test(
+    name = "test_time_integration",
+    srcs = ["test_time_integration.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "scripting",
+        "sqlite",
+    ],
+    deps = COMMON_DEPS + [
+        "//src/family_assistant/scripting:engine",
+        dev_requirement("starlark-pyo3"),
+    ],
+)
+
+# Test for tools API bridge
+py_test(
+    name = "test_tools_api",
+    srcs = ["test_tools_api.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "scripting",
+        "sqlite",
+    ],
+    deps = COMMON_DEPS + [
+        "//src/family_assistant/scripting:engine",
+        "//src/family_assistant/storage:context",
+        dev_requirement("starlark-pyo3"),
+    ],
+)
+
+# Test for tools security controls
+py_test(
+    name = "test_tools_security",
+    srcs = ["test_tools_security.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "scripting",
+        "security",
+        "sqlite",
+    ],
+    deps = COMMON_DEPS + [
+        "//src/family_assistant/scripting:engine",
+        "//src/family_assistant/scripting:errors",
+        "//src/family_assistant/storage:context",
+        "//src/family_assistant/tools:types",
+        dev_requirement("starlark-pyo3"),
+    ],
+)
+
+# Test suite for all scripting functional tests
+test_suite(
+    name = "scripting",
+    tests = [
+        ":test_direct_tool_callables",
+        ":test_engine",
+        ":test_json_functions",
+        ":test_time_api",
+        ":test_time_integration",
+        ":test_tools_api",
+        ":test_tools_security",
+    ],
+)

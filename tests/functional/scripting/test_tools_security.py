@@ -9,9 +9,8 @@ import pytest
 from family_assistant.scripting.engine import StarlarkConfig, StarlarkEngine
 from family_assistant.scripting.errors import ScriptExecutionError
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.testing.mocks.mock_tools_provider import MockToolsProvider
 from family_assistant.tools.types import ToolExecutionContext
-
-from .test_tools_api import MockToolsProvider
 
 
 @pytest.mark.asyncio

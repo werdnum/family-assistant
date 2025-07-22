@@ -1,36 +1,36 @@
 """Unit tests BUILD file"""
 
-load("@rules_python//python:defs.bzl", "py_test")
 load("@pip_dev//:requirements.bzl", dev_requirement = "requirement")
+load("@rules_python//python:defs.bzl", "py_test")
 
 # Simple unit test example
 py_test(
     name = "test_embeddings",
     srcs = ["test_embeddings.py"],
+    env = {
+        "PYTHONPATH": "src",
+    },
+    tags = ["unit"],
     deps = [
         "//src/family_assistant",
         "//tests:test_utils",
         dev_requirement("pytest"),
         dev_requirement("numpy"),
     ],
-    tags = ["unit"],
-    env = {
-        "PYTHONPATH": "src",
-    },
 )
 
 py_test(
     name = "test_event_match_conditions",
     srcs = ["test_event_match_conditions.py"],
+    env = {
+        "PYTHONPATH": "src",
+    },
+    tags = ["unit"],
     deps = [
         "//src/family_assistant",
         "//tests:test_utils",
         dev_requirement("pytest"),
     ],
-    tags = ["unit"],
-    env = {
-        "PYTHONPATH": "src",
-    },
 )
 
 # Test all unit tests

@@ -1,0 +1,44 @@
+"""Functional tests for storage module"""
+
+load("@pip_dev//:requirements.bzl", dev_requirement = "requirement")
+load("@rules_python//python:defs.bzl", "py_test")
+
+# Common environment for all functional tests
+COMMON_ENV = {
+    "PYTEST_CURRENT_TEST": "bazel_test",
+    "FAMILY_ASSISTANT_DISABLE_DB_ERROR_LOGGING": "1",
+}
+
+# Common dependencies for functional tests
+COMMON_DEPS = [
+    "//src/family_assistant/testing",
+    "//src/family_assistant/testing/mocks",
+    dev_requirement("pytest"),
+    dev_requirement("pytest-asyncio"),
+    dev_requirement("aiosqlite"),
+]
+
+# Message history storage test
+py_test(
+    name = "test_message_history",
+    srcs = ["test_message_history.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "sqlite",
+    ],
+    deps = COMMON_DEPS + [
+        "//src/family_assistant/storage:base",
+        "//src/family_assistant/storage:context",
+        "//src/family_assistant/storage:message_history",
+        dev_requirement("sqlalchemy"),
+    ],
+)
+
+# Test suite for all storage functional tests
+test_suite(
+    name = "storage",
+    tests = [
+        ":test_message_history",
+    ],
+)

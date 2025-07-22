@@ -1,0 +1,61 @@
+"""Functional tests for tools"""
+
+load("@pip_dev//:requirements.bzl", dev_requirement = "requirement")
+load("@rules_python//python:defs.bzl", "py_test")
+
+# Common environment for all functional tests
+COMMON_ENV = {
+    "PYTEST_CURRENT_TEST": "bazel_test",
+    "FAMILY_ASSISTANT_DISABLE_DB_ERROR_LOGGING": "1",
+}
+
+# Common dependencies for functional tests
+COMMON_DEPS = [
+    "//src/family_assistant/testing",
+    "//src/family_assistant/testing/mocks",
+    dev_requirement("pytest"),
+    dev_requirement("pytest-asyncio"),
+    dev_requirement("aiosqlite"),
+]
+
+# Execute script tool test
+py_test(
+    name = "test_execute_script",
+    srcs = ["test_execute_script.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "sqlite",
+    ],
+    deps = COMMON_DEPS + [
+        "//src/family_assistant/storage:context",
+        "//src/family_assistant/tools",
+        "//src/family_assistant/tools:infrastructure",
+        "//src/family_assistant/tools:types",
+    ],
+)
+
+# Notes append functionality test
+py_test(
+    name = "test_notes_append",
+    srcs = ["test_notes_append.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "sqlite",
+    ],
+    deps = COMMON_DEPS + [
+        "//src/family_assistant/storage:context",
+        "//src/family_assistant/tools",
+        "//src/family_assistant/tools:types",
+    ],
+)
+
+# Test suite for all tools functional tests
+test_suite(
+    name = "tools",
+    tests = [
+        ":test_execute_script",
+        ":test_notes_append",
+    ],
+)

@@ -1,0 +1,213 @@
+"""Functional tests for indexing functionality"""
+
+load("@pip_dev//:requirements.bzl", dev_requirement = "requirement")
+load("@rules_python//python:defs.bzl", "py_test")
+
+# Common environment for all functional tests
+COMMON_ENV = {
+    "PYTEST_CURRENT_TEST": "bazel_test",
+    "FAMILY_ASSISTANT_DISABLE_DB_ERROR_LOGGING": "1",
+}
+
+# Common dependencies for indexing tests
+COMMON_DEPS = [
+    "//src/family_assistant/testing",
+    "//src/family_assistant/testing/mocks",
+    dev_requirement("pytest"),
+    dev_requirement("pytest-asyncio"),
+    dev_requirement("aiosqlite"),
+    dev_requirement("sqlalchemy"),
+    dev_requirement("numpy"),
+    dev_requirement("httpx"),
+]
+
+# Additional dependencies for tests that use assertpy
+ASSERTPY_DEPS = [
+    dev_requirement("assertpy"),
+]
+
+# Document indexing test
+py_test(
+    name = "test_document_indexing",
+    srcs = ["test_document_indexing.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "indexing",
+        "postgres",
+    ],
+    deps = COMMON_DEPS + [
+        "//src/family_assistant:task_worker",
+        "//src/family_assistant/embeddings",
+        "//src/family_assistant/indexing:document_indexer",
+        "//src/family_assistant/llm",
+        "//src/family_assistant/storage:context",
+        "//src/family_assistant/storage:tasks",
+        "//src/family_assistant/storage:vector",
+        "//src/family_assistant/tools:types",
+        "//src/family_assistant/utils:scraping",
+        "//src/family_assistant/web:app_creator",
+    ],
+)
+
+# Email indexing test
+py_test(
+    name = "test_email_indexing",
+    srcs = ["test_email_indexing.py"],
+    data = ["//tests/data:test_doc.pdf"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "indexing",
+        "postgres",
+    ],
+    deps = COMMON_DEPS + ASSERTPY_DEPS + [
+        "//src/family_assistant:task_worker",
+        "//src/family_assistant/embeddings",
+        "//src/family_assistant/indexing:email_indexer",
+        "//src/family_assistant/indexing:pipeline",
+        "//src/family_assistant/indexing:tasks",
+        "//src/family_assistant/indexing/processors",
+        "//src/family_assistant/llm",
+        "//src/family_assistant/storage:context",
+        "//src/family_assistant/storage:email",
+        "//src/family_assistant/storage:tasks",
+        "//src/family_assistant/storage:vector",
+        "//src/family_assistant/utils:scraping",
+        "//src/family_assistant/web:app_creator",
+    ],
+)
+
+# Indexing events test
+py_test(
+    name = "test_indexing_events",
+    srcs = ["test_indexing_events.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "indexing",
+        "sqlite",
+    ],
+    deps = COMMON_DEPS + [
+        "//src/family_assistant/embeddings",
+        "//src/family_assistant/events:indexing_source",
+        "//src/family_assistant/events:processor",
+        "//src/family_assistant/indexing:tasks",
+        "//src/family_assistant/storage",
+        "//src/family_assistant/storage:tasks",
+        "//src/family_assistant/storage:vector",
+        "//src/family_assistant/tools:types",
+    ],
+)
+
+# Indexing pipeline test
+py_test(
+    name = "test_indexing_pipeline",
+    srcs = ["test_indexing_pipeline.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "indexing",
+        "postgres",
+    ],
+    deps = COMMON_DEPS + ASSERTPY_DEPS + [
+        "//src/family_assistant:task_worker",
+        "//src/family_assistant/embeddings",
+        "//src/family_assistant/indexing:pipeline",
+        "//src/family_assistant/indexing:tasks",
+        "//src/family_assistant/indexing/processors",
+        "//src/family_assistant/storage:context",
+        "//src/family_assistant/storage:vector",
+        "//src/family_assistant/tools:types",
+    ],
+)
+
+# Notes indexing test
+py_test(
+    name = "test_notes_indexing",
+    srcs = ["test_notes_indexing.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "indexing",
+        "postgres",
+    ],
+    deps = COMMON_DEPS + [
+        "//src/family_assistant:task_worker",
+        "//src/family_assistant/embeddings",
+        "//src/family_assistant/indexing:notes_indexer",
+        "//src/family_assistant/indexing:pipeline",
+        "//src/family_assistant/indexing:tasks",
+        "//src/family_assistant/storage:context",
+        "//src/family_assistant/storage:tasks",
+        "//src/family_assistant/storage:vector",
+        "//src/family_assistant/tools:types",
+    ],
+)
+
+# Reindexing test
+py_test(
+    name = "test_reindexing",
+    srcs = ["test_reindexing.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "indexing",
+        "postgres",
+    ],
+    deps = COMMON_DEPS + [
+        "//src/family_assistant:task_worker",
+        "//src/family_assistant/embeddings",
+        "//src/family_assistant/indexing:document_indexer",
+        "//src/family_assistant/storage:context",
+        "//src/family_assistant/utils:scraping",
+        "//src/family_assistant/web:app_creator",
+    ],
+)
+
+# LLM intelligence processor test
+py_test(
+    name = "test_llm_intelligence_processor",
+    srcs = ["processors/test_llm_intelligence_processor.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "indexing",
+        "sqlite",
+    ],
+    deps = COMMON_DEPS + [
+        "//src/family_assistant/indexing:pipeline",
+        "//src/family_assistant/indexing/processors",
+        "//src/family_assistant/llm",
+    ],
+)
+
+# Test suite for all SQLite indexing tests
+test_suite(
+    name = "sqlite",
+    tests = [
+        ":test_indexing_events",
+        ":test_llm_intelligence_processor",
+    ],
+)
+
+# Test suite for all PostgreSQL indexing tests
+test_suite(
+    name = "postgres",
+    tests = [
+        ":test_document_indexing",
+        ":test_email_indexing",
+        ":test_indexing_pipeline",
+        ":test_notes_indexing",
+        ":test_reindexing",
+    ],
+)
+
+# Test suite for all indexing tests
+test_suite(
+    name = "all",
+    tests = [
+        ":postgres",
+        ":sqlite",
+    ],
+)

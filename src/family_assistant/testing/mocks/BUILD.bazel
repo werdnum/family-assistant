@@ -9,5 +9,6 @@ py_library(
     visibility = ["//visibility:public"],
     deps = [
         "//src/family_assistant",
+        "//src/family_assistant/tools:types",
     ],
 )

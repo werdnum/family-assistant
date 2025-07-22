@@ -1,0 +1,6 @@
+"""Test data files"""
+
+exports_files(
+    glob(["**/*"]),
+    visibility = ["//tests:__subpackages__"],
+)

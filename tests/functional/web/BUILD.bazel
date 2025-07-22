@@ -1,0 +1,309 @@
+"""Web functional tests BUILD file
+
+NOTE: Tests that use relative imports (e.g., from .pages import BasePage) are challenging
+to run with Bazel due to Python import path differences. The non-playwright tests work
+correctly. For Playwright tests, consider running them directly with pytest outside of Bazel:
+  pytest tests/functional/web/test_*playwright*.py
+"""
+
+load("@pip_dev//:requirements.bzl", dev_requirement = "requirement")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+
+# Common environment for all web functional tests
+COMMON_ENV = {
+    "PYTEST_CURRENT_TEST": "bazel_test",
+    "FAMILY_ASSISTANT_DISABLE_DB_ERROR_LOGGING": "1",
+}
+
+# Common dependencies for web functional tests
+COMMON_DEPS = [
+    "//src/family_assistant/testing",
+    "//src/family_assistant/testing/mocks",
+    dev_requirement("pytest"),
+    dev_requirement("pytest-asyncio"),
+    dev_requirement("aiosqlite"),
+    dev_requirement("httpx"),
+]
+
+# Web test specific dependencies
+WEB_DEPS = COMMON_DEPS + [
+    "//src/family_assistant:assistant",
+    "//src/family_assistant/storage:context",
+    "//src/family_assistant/web:app_creator",
+    "//src/family_assistant/web:models",
+]
+
+# Playwright test dependencies
+PLAYWRIGHT_DEPS = WEB_DEPS + [
+    dev_requirement("playwright"),
+]
+
+# Page objects library
+py_library(
+    name = "pages",
+    srcs = [
+        "pages/__init__.py",
+        "pages/base_page.py",
+        "pages/documents_page.py",
+        "pages/history_page.py",
+        "pages/notes_page.py",
+    ],
+    imports = ["."],
+    visibility = ["//visibility:public"],
+    deps = [
+        dev_requirement("playwright"),
+    ],
+)
+
+# Conftest library (shared fixtures)
+py_library(
+    name = "conftest",
+    srcs = ["conftest.py"],
+    imports = ["."],
+    visibility = ["//visibility:public"],
+    deps = PLAYWRIGHT_DEPS + [
+        "//src/family_assistant:context_providers",
+        "//src/family_assistant:processing",
+        "//src/family_assistant/llm",
+        "//src/family_assistant/tools",
+    ],
+)
+
+# Chat API endpoint test
+py_test(
+    name = "test_chat_api_endpoint",
+    srcs = ["test_chat_api_endpoint.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "sqlite",
+        "web",
+    ],
+    deps = WEB_DEPS + [
+        ":conftest",
+        "//src/family_assistant:context_providers",
+        "//src/family_assistant:processing",
+        "//src/family_assistant/llm",
+        "//src/family_assistant/storage",
+        "//src/family_assistant/tools",
+        dev_requirement("fastapi"),
+    ],
+)
+
+# Documents flow test (uses Playwright)
+# NOTE: This test uses relative imports which don't work well with Bazel
+py_test(
+    name = "test_documents_flow",
+    srcs = ["test_documents_flow.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "manual",
+        "playwright",
+        "sqlite",
+        "web",
+    ],
+    deps = PLAYWRIGHT_DEPS + [
+        ":conftest",
+        ":pages",
+    ],
+)
+
+# Enhanced fixtures simple test
+# NOTE: This test uses relative imports which don't work well with Bazel
+py_test(
+    name = "test_enhanced_fixtures_simple",
+    srcs = ["test_enhanced_fixtures_simple.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "manual",
+        "sqlite",
+        "web",
+    ],  # manual = skip in test suites
+    deps = WEB_DEPS + [
+        ":conftest",
+        ":pages",
+    ],
+)
+
+# History flow test
+# NOTE: This test uses relative imports which don't work well with Bazel
+py_test(
+    name = "test_history_flow",
+    srcs = ["test_history_flow.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "manual",
+        "sqlite",
+        "web",
+    ],
+    deps = WEB_DEPS + [
+        ":conftest",
+        ":pages",
+        "//src/family_assistant/storage:message_history",
+    ],
+)
+
+# Minimal playwright test
+# NOTE: This test uses relative imports which don't work well with Bazel
+py_test(
+    name = "test_minimal_playwright",
+    srcs = ["test_minimal_playwright.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "manual",
+        "playwright",
+        "sqlite",
+        "web",
+    ],
+    deps = PLAYWRIGHT_DEPS + [
+        ":conftest",
+    ],
+)
+
+# Notes flow test (uses Playwright)
+# NOTE: This test uses relative imports which don't work well with Bazel
+py_test(
+    name = "test_notes_flow",
+    srcs = ["test_notes_flow.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "manual",
+        "playwright",
+        "sqlite",
+        "web",
+    ],
+    deps = PLAYWRIGHT_DEPS + [
+        ":conftest",
+        ":pages",
+    ],
+)
+
+# Notes UI test
+py_test(
+    name = "test_notes_ui",
+    srcs = ["test_notes_ui.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "sqlite",
+        "web",
+    ],
+    deps = WEB_DEPS,
+)
+
+# Page object basic test
+# NOTE: This test uses relative imports which don't work well with Bazel
+py_test(
+    name = "test_page_object_basic",
+    srcs = ["test_page_object_basic.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "manual",
+        "playwright",
+        "sqlite",
+        "web",
+    ],
+    deps = PLAYWRIGHT_DEPS + [
+        ":conftest",
+        ":pages",
+    ],
+)
+
+# Playwright basic test
+# NOTE: This test uses relative imports which don't work well with Bazel
+py_test(
+    name = "test_playwright_basic",
+    srcs = ["test_playwright_basic.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "manual",
+        "playwright",
+        "sqlite",
+        "web",
+    ],
+    deps = PLAYWRIGHT_DEPS + [
+        ":conftest",
+    ],
+)
+
+# Template utils test
+py_test(
+    name = "test_template_utils",
+    srcs = ["test_template_utils.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "sqlite",
+        "web",
+    ],
+    deps = COMMON_DEPS + [
+        "//src/family_assistant/web:template_utils",
+    ],
+)
+
+# UI endpoints test
+py_test(
+    name = "test_ui_endpoints",
+    srcs = ["test_ui_endpoints.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "sqlite",
+        "web",
+    ],
+    deps = WEB_DEPS,
+)
+
+# UI endpoints playwright test
+# NOTE: This test uses relative imports which don't work well with Bazel
+py_test(
+    name = "test_ui_endpoints_playwright",
+    srcs = ["test_ui_endpoints_playwright.py"],
+    env = COMMON_ENV,
+    tags = [
+        "functional",
+        "manual",
+        "playwright",
+        "sqlite",
+        "web",
+    ],
+    deps = PLAYWRIGHT_DEPS + [
+        ":conftest",
+    ],
+)
+
+# Test suite for all web functional tests
+# NOTE: Tests marked as "manual" are excluded - they have relative import issues with Bazel
+test_suite(
+    name = "web",
+    tests = [
+        ":test_chat_api_endpoint",
+        ":test_notes_ui",
+        ":test_template_utils",
+        ":test_ui_endpoints",
+        # The following tests are excluded due to relative import issues:
+        # ":test_documents_flow",  # manual
+        # ":test_enhanced_fixtures_simple",  # manual
+        # ":test_history_flow",  # manual
+        # ":test_minimal_playwright",  # manual
+        # ":test_notes_flow",  # manual
+        # ":test_page_object_basic",  # manual
+        # ":test_playwright_basic",  # manual
+        # ":test_ui_endpoints_playwright",  # manual
+    ],
+)
+
+# To run tests with relative imports (Playwright tests), use pytest directly:
+# pytest tests/functional/web/test_*playwright*.py
+# pytest tests/functional/web/test_enhanced_fixtures_simple.py
+# pytest tests/functional/web/test_history_flow.py
+# pytest tests/functional/web/test_documents_flow.py
+# pytest tests/functional/web/test_notes_flow.py
+# pytest tests/functional/web/test_page_object_basic.py
