@@ -191,20 +191,56 @@ echo ""
 # Call LLM with the diff
 echo "${CYAN}Running review analysis...${NC}"
 
+# Check diff size and truncate if necessary
+MAX_DIFF_CHARS=50000  # Limit diff to 50k characters to avoid argument length issues
+DIFF_SIZE=${#DIFF}
+TRUNCATED=false
+
+if [[ $DIFF_SIZE -gt $MAX_DIFF_CHARS ]]; then
+    echo "${YELLOW}Warning: Diff is too large ($DIFF_SIZE chars), truncating to $MAX_DIFF_CHARS chars${NC}"
+    # Truncate the diff, trying to keep it meaningful
+    DIFF="${DIFF:0:$MAX_DIFF_CHARS}
+
+[... diff truncated due to size ...]"
+    TRUNCATED=true
+fi
+
+# Create a temp file for the review prompt to avoid argument length issues
+TEMP_PROMPT=$(mktemp /tmp/review-prompt.XXXXXX.txt)
+# Append to any existing EXIT trap
+EXISTING_EXIT_TRAP=$(trap -p EXIT | sed -E "s/^trap -- '(.*)' EXIT$/\1/")
+NEW_EXIT_TRAP="rm -f $TEMP_RESPONSE $TEMP_STDERR $TEMP_PROMPT"
+if [[ -n "$EXISTING_EXIT_TRAP" ]]; then
+    trap "$EXISTING_EXIT_TRAP; $NEW_EXIT_TRAP" EXIT
+else
+    trap "$NEW_EXIT_TRAP" EXIT
+fi
+
 # Create the review prompt
 if [[ -n "$COMMIT_MESSAGE" ]]; then
-    REVIEW_PROMPT="Review the following git diff and commit message. Identify any issues according to the severity levels defined in the guidelines. Be thorough but focus on actual problems. Also check if the commit message accurately describes the changes.
+    cat > "$TEMP_PROMPT" <<EOF
+Review the following git diff and commit message. Identify any issues according to the severity levels defined in the guidelines. Be thorough but focus on actual problems. Also check if the commit message accurately describes the changes.
 
 COMMIT MESSAGE:
 $COMMIT_MESSAGE
 
 DIFF:
-$DIFF"
+$DIFF
+EOF
 else
-    REVIEW_PROMPT="Review the following git diff and identify any issues according to the severity levels defined in the guidelines. Be thorough but focus on actual problems.
+    cat > "$TEMP_PROMPT" <<EOF
+Review the following git diff and identify any issues according to the severity levels defined in the guidelines. Be thorough but focus on actual problems.
 
 DIFF:
-$DIFF"
+$DIFF
+EOF
+fi
+
+# Add note about truncation if applicable
+if [[ "$TRUNCATED" == "true" ]]; then
+    echo "
+
+NOTE: This diff was truncated due to size. The full diff contains $DIFF_SIZE characters. Focus your review on the visible changes." >> "$TEMP_PROMPT"
 fi
 
 # Build LLM command arguments
@@ -216,8 +252,8 @@ LLM_ARGS+=("-f" "$REPO_ROOT/REVIEW_GUIDELINES.md")
 LLM_ARGS+=("--schema" "$SCHEMA")
 LLM_ARGS+=("-s" "$SYSTEM_PROMPT")
 
-# Execute LLM call (redirect stderr to a separate file for debugging)
-if llm "${LLM_ARGS[@]}" "$REVIEW_PROMPT" > "$TEMP_RESPONSE" 2>"$TEMP_STDERR"; then
+# Execute LLM call using temp file (redirect stderr to a separate file for debugging)
+if llm "${LLM_ARGS[@]}" < "$TEMP_PROMPT" > "$TEMP_RESPONSE" 2>"$TEMP_STDERR"; then
     
     # Parse the JSON response
     if ! jq empty "$TEMP_RESPONSE" 2>/dev/null; then
