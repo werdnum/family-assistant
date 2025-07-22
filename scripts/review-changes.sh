@@ -207,7 +207,14 @@ fi
 
 # Create a temp file for the review prompt to avoid argument length issues
 TEMP_PROMPT=$(mktemp /tmp/review-prompt.XXXXXX.txt)
-trap "rm -f $TEMP_RESPONSE $TEMP_STDERR $TEMP_PROMPT" EXIT
+# Append to any existing EXIT trap
+EXISTING_EXIT_TRAP=$(trap -p EXIT | sed -E "s/^trap -- '(.*)' EXIT$/\1/")
+NEW_EXIT_TRAP="rm -f $TEMP_RESPONSE $TEMP_STDERR $TEMP_PROMPT"
+if [[ -n "$EXISTING_EXIT_TRAP" ]]; then
+    trap "$EXISTING_EXIT_TRAP; $NEW_EXIT_TRAP" EXIT
+else
+    trap "$NEW_EXIT_TRAP" EXIT
+fi
 
 # Create the review prompt
 if [[ -n "$COMMIT_MESSAGE" ]]; then
