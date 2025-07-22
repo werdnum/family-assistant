@@ -84,6 +84,7 @@ event_listeners_table = Table(
         JSON().with_variant(JSONB, "postgresql"),
         nullable=True,
     ),
+    Column("condition_script", Text, nullable=True),
     Column("conversation_id", String(255), nullable=False, index=True),
     Column(
         "interface_type",
@@ -155,6 +156,7 @@ async def create_event_listener(
     action_type: str = "wake_llm",
     description: str | None = None,
     action_config: dict | None = None,
+    condition_script: str | None = None,
     one_time: bool = False,
     enabled: bool = True,
 ) -> int:
@@ -168,6 +170,7 @@ async def create_event_listener(
         action_type=action_type,
         description=description,
         action_config=action_config,
+        condition_script=condition_script,
         one_time=one_time,
         enabled=enabled,
     )

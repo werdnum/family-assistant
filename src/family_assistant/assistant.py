@@ -769,6 +769,7 @@ class Assistant:
                 self.event_processor = EventProcessor(
                     sources=event_sources,
                     sample_interval_hours=sample_interval_hours,
+                    config=event_config,
                     # db_context will be created internally if not provided
                 )
                 logger.info(

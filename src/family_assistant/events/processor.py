@@ -8,13 +8,18 @@ import logging
 import time
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from family_assistant.actions import ActionType, execute_action
+from family_assistant.events.condition_evaluator import EventConditionEvaluator
 from family_assistant.events.sources import EventSource
 from family_assistant.events.storage import EventStorage
+from family_assistant.scripting import ScriptExecutionError
 from family_assistant.storage.context import DatabaseContext, get_db_context
-from family_assistant.storage.events import check_and_update_rate_limit
+from family_assistant.storage.events import (
+    check_and_update_rate_limit,
+    event_listeners_table,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +32,7 @@ class EventProcessor:
         sources: dict[str, EventSource],
         db_context: DatabaseContext | None = None,
         sample_interval_hours: float = 1.0,
+        config: dict[str, Any] | None = None,
     ) -> None:
         """
         Initialize event processor.
@@ -35,9 +41,11 @@ class EventProcessor:
             sources: Dictionary of source_id -> EventSource instances
             db_context: Database context (optional, will create if needed)
             sample_interval_hours: Hours between storing event samples
+            config: Optional configuration for script execution
         """
         self.sources = sources
         self.event_storage = EventStorage(sample_interval_hours)
+        self._db_context = db_context  # Store for tests
         # Cache listeners by source_id for efficient lookup
         self._listener_cache: dict[str, list[dict]] = {}
         self._cache_refresh_interval = 60  # Refresh from DB every minute
@@ -45,6 +53,8 @@ class EventProcessor:
         self._running = False
         # Lock to prevent concurrent database operations
         self._process_lock = asyncio.Lock()
+        # Initialize condition evaluator for script execution
+        self.condition_evaluator = EventConditionEvaluator(config)
 
     async def start(self) -> None:
         """Start all event sources."""
@@ -93,13 +103,16 @@ class EventProcessor:
             listeners = self._listener_cache.get(source_id, [])
 
         # Process all database operations in a single transaction to avoid deadlocks
-        async with get_db_context() as db_ctx:
+        # Use provided db_context for tests, otherwise create new one
+        async def process_with_context(db_ctx: DatabaseContext) -> None:
             triggered_listener_ids = []
 
             # Check each listener
             for listener in listeners:
                 if self._check_match_conditions(
-                    event_data, listener["match_conditions"]
+                    event_data,
+                    listener["match_conditions"],
+                    listener.get("condition_script"),
                 ):
                     # Check and update rate limit atomically
                     allowed, reason = await check_and_update_rate_limit(
@@ -126,10 +139,33 @@ class EventProcessor:
                 db_ctx, source_id, event_data, triggered_listener_ids
             )
 
+        if self._db_context:
+            await process_with_context(self._db_context)
+        else:
+            async with get_db_context() as db_ctx:
+                await process_with_context(db_ctx)
+
     def _check_match_conditions(
-        self, event_data: dict, match_conditions: dict | None
+        self,
+        event_data: dict,
+        match_conditions: dict | None,
+        condition_script: str | None,
     ) -> bool:
-        """Check if event matches the listener's conditions using simple dict equality."""
+        """Check if event matches the listener's conditions."""
+        # Script takes precedence if present
+        if condition_script:
+            try:
+                return self.condition_evaluator.evaluate_condition(
+                    condition_script, event_data
+                )
+            except ScriptExecutionError as e:
+                logger.error(f"Script condition error: {e}")
+                return False  # Failed scripts don't match
+            except Exception as e:
+                logger.error(f"Unexpected error evaluating script condition: {e}")
+                return False
+
+        # Fall back to dict matching
         if not match_conditions:
             return True  # No conditions means match all events
 
@@ -152,38 +188,44 @@ class EventProcessor:
 
     async def _refresh_listener_cache(self) -> None:
         """Refresh the listener cache from database."""
-        async with get_db_context() as db_ctx:
-            result = await db_ctx.fetch_all(
-                text("SELECT * FROM event_listeners WHERE enabled = TRUE")
-            )
+        # Use provided db_context for tests, otherwise create new one
+        query = select(event_listeners_table).where(
+            event_listeners_table.c.enabled.is_(True)
+        )
 
-            new_cache = {}
-            for row in result:
-                listener_dict = dict(row)
-                # Parse JSON fields if they're strings
-                match_conditions = listener_dict.get("match_conditions") or {}
-                if isinstance(match_conditions, str):
-                    listener_dict["match_conditions"] = json.loads(match_conditions)
-                else:
-                    listener_dict["match_conditions"] = match_conditions
+        if self._db_context:
+            result = await self._db_context.fetch_all(query)
+        else:
+            async with get_db_context() as db_ctx:
+                result = await db_ctx.fetch_all(query)
 
-                action_config = listener_dict.get("action_config") or {}
-                if isinstance(action_config, str):
-                    listener_dict["action_config"] = json.loads(action_config)
-                else:
-                    listener_dict["action_config"] = action_config
+        new_cache = {}
+        for row in result:
+            listener_dict = dict(row)
+            # Parse JSON fields if they're strings
+            match_conditions = listener_dict.get("match_conditions") or {}
+            if isinstance(match_conditions, str):
+                listener_dict["match_conditions"] = json.loads(match_conditions)
+            else:
+                listener_dict["match_conditions"] = match_conditions
 
-                source_id = listener_dict["source_id"]
-                if source_id not in new_cache:
-                    new_cache[source_id] = []
-                new_cache[source_id].append(listener_dict)
+            action_config = listener_dict.get("action_config") or {}
+            if isinstance(action_config, str):
+                listener_dict["action_config"] = json.loads(action_config)
+            else:
+                listener_dict["action_config"] = action_config
 
-            self._listener_cache = new_cache
-            self._last_cache_refresh = time.time()
-            logger.debug(
-                f"Refreshed listener cache: {sum(len(v) for v in new_cache.values())} "
-                f"listeners across {len(new_cache)} sources"
-            )
+            source_id = listener_dict["source_id"]
+            if source_id not in new_cache:
+                new_cache[source_id] = []
+            new_cache[source_id].append(listener_dict)
+
+        self._listener_cache = new_cache
+        self._last_cache_refresh = time.time()
+        logger.debug(
+            f"Refreshed listener cache: {sum(len(v) for v in new_cache.values())} "
+            f"listeners across {len(new_cache)} sources"
+        )
 
     async def _execute_action(
         self, listener: dict[str, Any], event_data: dict[str, Any]

@@ -109,6 +109,7 @@ class EventsRepository(BaseRepository):
         description: str | None = None,
         action_type: str | EventActionType = EventActionType.wake_llm,
         action_config: dict | None = None,
+        condition_script: str | None = None,
         one_time: bool = False,
         enabled: bool = True,
     ) -> int:
@@ -124,6 +125,7 @@ class EventsRepository(BaseRepository):
             description: Optional description
             action_type: Type of action to trigger (wake_llm or script)
             action_config: Configuration for the action
+            condition_script: Optional Starlark script for complex matching
             one_time: If true, listener is disabled after first trigger
             enabled: Whether the listener is enabled
 
@@ -144,6 +146,7 @@ class EventsRepository(BaseRepository):
                     match_conditions=match_conditions,
                     action_type=action_type,
                     action_config=action_config,
+                    condition_script=condition_script,
                     conversation_id=conversation_id,
                     interface_type=interface_type,
                     one_time=one_time,
