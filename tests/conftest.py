@@ -30,6 +30,7 @@ from family_assistant.storage import base as storage_base  # Import storage base
 
 # Import the metadata and the original engine object from your storage base
 from family_assistant.storage import init_db  # Import init_db
+from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.context import DatabaseContext
 
 # Explicitly import the module defining the tasks table to ensure metadata registration
@@ -163,10 +164,17 @@ async def db_engine(
     engine = None
     unique_db_name = None
     admin_url = None
+    tmp_name: str | None = None
 
     if db_backend == "sqlite":
-        # Use an in-memory SQLite database for each test
-        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        # Use a temporary on-disk SQLite database to avoid connection scope issues
+        with tempfile.NamedTemporaryFile(
+            prefix="fa_test_", suffix=".sqlite", delete=False
+        ) as tmp_file:
+            tmp_name = tmp_file.name
+        engine = create_engine_with_sqlite_optimizations(
+            f"sqlite+aiosqlite:///{tmp_name}"
+        )
         logger.info(f"\n--- SQLite Test DB Setup ({request.node.name}) ---")
         logger.info(f"Created SQLite test engine: {engine.url}")
 
@@ -254,6 +262,9 @@ async def db_engine(
         await engine.dispose()
         logger.info("Test engine disposed.")
         logger.info("Restored original storage.base.engine.")
+        if db_backend == "sqlite" and tmp_name:
+            os.unlink(tmp_name)
+            logger.info("Removed temporary SQLite database file.")
 
         # Drop the PostgreSQL database if we created one
         if db_backend == "postgres" and unique_db_name and admin_url:
