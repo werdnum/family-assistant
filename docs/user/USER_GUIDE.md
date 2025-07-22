@@ -274,11 +274,16 @@ interface has been reorganized for better navigation with grouped sections.
   available: "Show me recent home assistant events" \*Test your conditions before creating the
   listener: "Test if entity_id equals 'person.andrew' would match recent events" \*Be specific with
   field names - use the exact names you see in the event data \*You can filter by event type: "Test
-  if event_type equals 'state_changed' and entity_id equals 'person.andrew'" \*Choose between two
-  action types: - **wake_llm**: Wakes the assistant to handle complex situations requiring reasoning
-  \- **script**: Runs automated Starlark code for simple, deterministic tasks \*Scripts can also use
-  wake_llm() to conditionally wake the assistant with specific context \*Via the Web UI: Navigate to
-  Event Listeners and click "Create New Listener" to use the visual form with live script validation
+  if event_type equals 'state_changed' and entity_id equals 'person.andrew'" \*For complex
+  conditions (like detecting zone entry/exit or temperature thresholds), use condition scripts:
+  \*"Create a listener that detects when I arrive home" (state changes from not 'home' to 'home')
+  \*"Alert me when temperature rises above 25°C" (numeric threshold checking) \*"Watch for any
+  motion sensor that turns on" (pattern matching with entity_id) \*Choose between two action types:
+
+  - **wake_llm**: Wakes the assistant to handle complex situations requiring reasoning - **script**:
+    Runs automated Starlark code for simple, deterministic tasks \*Scripts can also use wake_llm()
+    to conditionally wake the assistant with specific context \*Via the Web UI: Navigate to Event
+    Listeners and click "Create New Listener" to use the visual form with live script validation
 
 - \*\*Reply Directly:\*\*If you're responding to something the assistant just said, use Telegram's
   "Reply" feature so it knows exactly what message you're referring to. This is especially helpful
@@ -314,7 +319,10 @@ interface has been reorganized for better navigation with grouped sections.
 - \*\*Event Listeners:\*\*If an event listener isn't triggering as expected: \*Use "Show me recent
   events from [source]" to see what events are being captured \*Use the test tool to check if your
   conditions would match recent events \*Make sure you're using the exact field names from the event
-  data (use dot notation for nested fields like "new_state.state")
+  data (use dot notation for nested fields like "new_state.state") \*For condition scripts, test
+  them first: "Test this condition script with a sample event: [your script]" \*Remember that
+  condition scripts must return a boolean value \*Common issue: Home Assistant sends state_changed
+  events even when only attributes change - use condition scripts to detect actual state transitions
 
 - \*\*Connection Issues:\*\*The assistant now automatically reconnects to Home Assistant and other
   services if the connection is lost. You may see brief interruptions in event monitoring during
