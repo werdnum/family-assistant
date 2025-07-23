@@ -100,7 +100,7 @@ jobs:
             -e CLAUDE_PROJECT_REPO="" \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
-            bash -c 'cd /workspace && .venv/bin/pytest -xq --timeout=300'
+            bash -c 'cd /workspace && .venv/bin/pytest -xq --timeout=300 -m "not postgres"'
 
   test-postgres:
     needs: [prepare, build-devcontainer]
