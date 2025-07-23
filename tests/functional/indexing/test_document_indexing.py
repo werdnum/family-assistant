@@ -1433,7 +1433,7 @@ async def test_url_indexing_auto_title_e2e(
                 logger.warning(
                     f"Cleanup error for auto-title task {indexing_task_id}: {e}"
                 )
-        
+
         # Restore original scraper
         if original_scraper is not None:
             fastapi_app.state.scraper = original_scraper
