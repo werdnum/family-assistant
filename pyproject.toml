@@ -258,6 +258,8 @@ testpaths = [
 markers = [
     "postgres: marks tests as requiring PostgreSQL database",
 ]
+timeout = 300  # 5 minutes per test by default
+timeout_method = "thread"
 
 [tool.pylint.main]
 source-roots = ["src", "."]
