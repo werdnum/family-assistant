@@ -25,16 +25,29 @@ jobs:
     timeout-minutes: 10
     outputs:
       tag: ${{ steps.tags.outputs.tag }}
+      should-push: ${{ steps.tags.outputs.should-push }}
+      platforms: ${{ steps.tags.outputs.platforms }}
     steps:
-      - name: Generate tags
+      - name: Generate tags and determine build strategy
         id: tags
         run: |
+          # Determine tag
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.tag }}" ]; then
             TAG="${{ github.event.inputs.tag }}"
           else
             TAG=$(date +%Y%m%d_%H%M%S)
           fi
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          
+          # Only push on main branch or workflow dispatch
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "should-push=false" >> $GITHUB_OUTPUT
+            echo "platforms=linux/amd64" >> $GITHUB_OUTPUT  # Single arch for PRs
+          else
+            echo "should-push=true" >> $GITHUB_OUTPUT
+            echo "platforms=linux/amd64,linux/arm64" >> $GITHUB_OUTPUT  # Multi-arch for main
+          fi
+
   build-devcontainer:
     needs: prepare
     runs-on: ubuntu-latest
@@ -43,28 +56,31 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Set up QEMU
+        if: needs.prepare.outputs.platforms != 'linux/amd64'
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Log in to Container Registry
+        if: needs.prepare.outputs.should-push == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push devcontainer image
+      - name: Build and conditionally push devcontainer image
         uses: docker/build-push-action@v5
         with:
           context: .devcontainer
           file: .devcontainer/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
+          platforms: ${{ needs.prepare.outputs.platforms }}
+          push: ${{ needs.prepare.outputs.should-push }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:${{ needs.prepare.outputs.tag }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:main
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
   build-main:
     needs: prepare
     runs-on: ubuntu-latest
@@ -73,22 +89,24 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Set up QEMU
+        if: needs.prepare.outputs.platforms != 'linux/amd64'
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Log in to Container Registry
+        if: needs.prepare.outputs.should-push == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push main application image
+      - name: Build and conditionally push main application image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
+          platforms: ${{ needs.prepare.outputs.platforms }}
+          push: ${{ needs.prepare.outputs.should-push }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:${{ needs.prepare.outputs.tag }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:latest
