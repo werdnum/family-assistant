@@ -10,6 +10,9 @@ on:
         description: 'Custom tag for the images (defaults to timestamp)'
         required: false
         type: string
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository }} # This will be owner/repo format
