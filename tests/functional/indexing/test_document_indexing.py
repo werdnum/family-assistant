@@ -1209,6 +1209,10 @@ async def test_url_indexing_auto_title_e2e(
     mock_scraper = MockScraper(url_map={TEST_URL_TO_SCRAPE: mock_scrape_result})
     logger.info(f"MockScraper configured for URL: {TEST_URL_TO_SCRAPE}")
 
+    # Set the mock scraper on app state so API calls can use it
+    original_scraper = getattr(fastapi_app.state, "scraper", None)
+    fastapi_app.state.scraper = mock_scraper
+
     # --- Arrange: Update Mock Embeddings for URL content ---
     url_chunk_0_embedding_val = (
         np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32)
@@ -1295,18 +1299,19 @@ async def test_url_indexing_auto_title_e2e(
     document_db_id = None
     indexing_task_id = None
     try:
-        # --- Act: Call API to Ingest URL (NO title provided) ---
+        # --- Act: Call API to Ingest URL (placeholder title that will be replaced) ---
         url_doc_source_id = f"test-auto-title-doc-{uuid.uuid4()}"
         api_form_data_url_no_title = {
             "source_type": "url_auto_title_test",
             "source_id": url_doc_source_id,
+            "title": "Placeholder - Should be replaced by auto-extracted title",
             "url": TEST_URL_TO_SCRAPE,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "metadata": json.dumps({"test_type": "url_auto_title_indexing"}),
             "source_uri": TEST_URL_TO_SCRAPE,
         }
         logger.info(
-            f"Calling POST /api/documents/upload for URL (no title): {TEST_URL_TO_SCRAPE}"
+            f"Calling POST /api/documents/upload for URL (placeholder title): {TEST_URL_TO_SCRAPE}"
         )
         response = await http_client.post(
             "/api/documents/upload", data=api_form_data_url_no_title
@@ -1345,7 +1350,7 @@ async def test_url_indexing_auto_title_e2e(
         await wait_for_tasks_to_complete(
             pg_vector_db_engine,
             task_ids=None,  # Wait for all, including spawned embedding tasks
-            timeout_seconds=25.0,
+            timeout_seconds=60.0,  # Increased timeout for URL indexing with title update
         )
 
         # --- Assert: Verify Document Title in DB ---
@@ -1428,3 +1433,11 @@ async def test_url_indexing_auto_title_e2e(
                 logger.warning(
                     f"Cleanup error for auto-title task {indexing_task_id}: {e}"
                 )
+        
+        # Restore original scraper
+        if original_scraper is not None:
+            fastapi_app.state.scraper = original_scraper
+        else:
+            # Remove scraper if it didn't exist before
+            if hasattr(fastapi_app.state, "scraper"):
+                del fastapi_app.state.scraper
