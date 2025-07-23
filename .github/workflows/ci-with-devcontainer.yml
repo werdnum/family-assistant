@@ -92,21 +92,12 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Cache uv dependencies
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-${{ hashFiles('**/pyproject.toml', '**/uv.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-uv-
       - name: Run SQLite tests in devcontainer
         run: |
           docker run \
             --rm \
             -v ${{ github.workspace }}:/workspace \
-            -v ~/.cache/uv:/home/claude/.cache/uv \
             -e CLAUDE_PROJECT_REPO="" \
-            -e UV_CACHE_DIR=/home/claude/.cache/uv \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace && .venv/bin/pytest -xq --timeout=300'
@@ -135,23 +126,14 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Cache uv dependencies
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-${{ hashFiles('**/pyproject.toml', '**/uv.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-uv-
       - name: Run PostgreSQL tests in devcontainer
         run: |
           docker run \
             --rm \
             --network host \
             -v ${{ github.workspace }}:/workspace \
-            -v ~/.cache/uv:/home/claude/.cache/uv \
             -e TEST_DATABASE_URL="postgresql://test:test@localhost:5432/test" \
             -e CLAUDE_PROJECT_REPO="" \
-            -e UV_CACHE_DIR=/home/claude/.cache/uv \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace && .venv/bin/pytest --postgres -xq --timeout=300'
