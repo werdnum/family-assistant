@@ -202,19 +202,19 @@ fi
 
 [tool.poe.tasks.test]
 help = "Run linting and tests with smart parallel execution"
-shell = "scripts/run-tests.sh"
+cmd = "scripts/run-tests.sh"
 
 [tool.poe.tasks.test-postgres]
 help = "Run tests with PostgreSQL database backend"
-shell = "scripts/run-tests.sh --skip-lint --db postgres -xq"
+cmd = "scripts/run-tests.sh --skip-lint --db postgres -xq"
 
 [tool.poe.tasks.test-postgres-verbose]
 help = "Run tests with PostgreSQL database backend (verbose output)"
-shell = "scripts/run-tests.sh --skip-lint --db postgres -xvs"
+cmd = "scripts/run-tests.sh --skip-lint --db postgres -xvs"
 
 [tool.poe.tasks.test-sqlite]
 help = "Run tests with SQLite database backend only"
-shell = "scripts/run-tests.sh --skip-lint --db sqlite -xq"
+cmd = "scripts/run-tests.sh --skip-lint --db sqlite -xq"
 
 [tool.poe.tasks.ui-dev]
 help = "Run Vite development server for frontend"
