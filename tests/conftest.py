@@ -1037,3 +1037,51 @@ def vcr_cassette_dir(request: pytest.FixtureRequest) -> str:
     """Return the cassette directory for the current test module."""
     test_dir = pathlib.Path(request.node.fspath).parent
     return str(test_dir / "cassettes")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def setup_fastapi_test_config() -> Generator[None, None, None]:
+    """
+    Sets up a default test configuration for the FastAPI app.
+    This ensures all tests have a valid, writable document_storage_path.
+    """
+    from family_assistant.web.app_creator import app as fastapi_app
+
+    # Store original config to restore later
+    original_config = getattr(fastapi_app.state, "config", None)
+
+    # Create temporary directories for the test session
+    with (
+        tempfile.TemporaryDirectory(prefix="fa_test_docs_") as doc_dir,
+        tempfile.TemporaryDirectory(prefix="fa_test_attach_") as attach_dir,
+    ):
+        # Create subdirectory for mailbox
+        mailbox_dir = pathlib.Path(attach_dir) / "raw_mailbox_dumps"
+        mailbox_dir.mkdir(exist_ok=True)
+
+        # Create a test config with writable paths
+        test_config = {
+            "document_storage_path": doc_dir,
+            "attachment_storage_path": attach_dir,
+            "mailbox_raw_dir": str(mailbox_dir),  # Convert back to string for config
+            "auth_enabled": False,  # Disable auth for tests
+        }
+
+        # If there's an existing config, preserve other values
+        if original_config:
+            test_config = {**original_config, **test_config}
+
+        # Set the test config
+        fastapi_app.state.config = test_config
+
+        logger.info(f"Set up global test config for FastAPI app: {test_config}")
+
+        yield
+
+        # Restore original config
+        if original_config is not None:
+            fastapi_app.state.config = original_config
+        else:
+            # Remove config if it didn't exist before
+            if hasattr(fastapi_app.state, "config"):
+                del fastapi_app.state.config

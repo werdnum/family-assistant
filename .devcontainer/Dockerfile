@@ -1,17 +1,19 @@
 # Build stage for shpool
 FROM rust:latest AS shpool-builder
-RUN cargo install shpool
+RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash \
+    && cargo binstall -y shpool
 
 FROM ubuntu:24.04
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# System essentials
-RUN apt-get update && apt-get install -y \
-    curl git wget gnupg ca-certificates \
-    ripgrep fd-find micro unzip \
-    build-essential \
+# System essentials and Python runtime
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && apt-get install -y \
+        curl git wget gnupg ca-certificates lsb-release \
+        ripgrep fd-find micro unzip build-essential \
+        python3 python3-pip python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
 # Create symbolic link for fd (fd-find installs as fdfind)
@@ -43,21 +45,15 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Python 3.11 (Ubuntu 24.04 has 3.12 by default, but project might need 3.11)
-RUN apt-get update && apt-get install -y \
-    python3 python3-pip python3-venv \
-    && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast Python package management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Install PostgreSQL 17 with pgvector extension and jq for JSON processing
-RUN apt-get update && apt-get install -y wget ca-certificates lsb-release gnupg && \
-    # Add PostgreSQL APT repository with modern key management
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     wget -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /etc/apt/keyrings/postgres.gpg && \
     sh -c 'echo "deb [signed-by=/etc/apt/keyrings/postgres.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list' && \
     apt-get update && \
-    # Install PostgreSQL and other utilities
     apt-get install -y \
         jq \
         postgresql-client-17 \
@@ -99,12 +95,9 @@ RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/home/claude/.deno sh
 # Add uv tools to PATH before installing - maintaining /usr/local/bin first
 ENV PATH="/usr/local/bin:/home/claude/.local/bin:/usr/lib/postgresql/17/bin:$PATH"
 
-# Install Claude Code CLI as claude user
-RUN npm install -g @anthropic-ai/claude-code
-RUN npm install -g @google/gemini-cli
-
-# Install LLM tools globally using uv tool install with plugins
-RUN uv tool install --with llm-gemini --with llm-openrouter --with llm-fragments-github llm
+# Install Claude Code CLI and LLM tools as claude user
+RUN npm install -g @anthropic-ai/claude-code @google/gemini-cli && \
+    uv tool install --with llm-gemini --with llm-openrouter --with llm-fragments-github llm
 
 # Set Playwright browsers path to user's home to avoid permission issues
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/claude/.cache/playwright-browsers

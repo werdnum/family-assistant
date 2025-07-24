@@ -7,6 +7,25 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Usage function
+usage() {
+    echo "Usage: $0 [options] [pytest-args]"
+    echo ""
+    echo "Options:"
+    echo "  --skip-lint      Skip linting and only run tests"
+    echo "  -n NUM           Set pytest parallelism (e.g., -n2, -n4, -n auto)"
+    echo "  --help           Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0                    # Run linting and tests with default parallelism"
+    echo "  $0 -n2                # Run with 2 parallel workers"
+    echo "  $0 -n1                # Run tests sequentially"
+    echo "  $0 --skip-lint -n2    # Skip linting, run tests with 2 workers"
+    echo ""
+    echo "All other arguments are passed directly to pytest."
+    exit 0
+}
+
 # Timing function
 timer_start() {
     START_TIME=$(date +%s)
@@ -21,11 +40,29 @@ timer_end() {
 # Parse command line arguments
 SKIP_LINT=0
 PYTEST_ARGS=""
+PARALLELISM=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
+        --help|-h)
+            usage
+            ;;
         --skip-lint)
             SKIP_LINT=1
+            shift
+            ;;
+        -n|--numprocesses)
+            # Capture parallelism setting
+            if [ -z "$2" ] || [ "${2#-}" != "$2" ]; then
+                echo "${RED}Error: Argument for $1 is missing or is another option${NC}" >&2
+                exit 1
+            fi
+            PARALLELISM="$1 $2"
+            shift 2
+            ;;
+        -n*)
+            # Handle -n2, -n4, etc.
+            PARALLELISM="$1"
             shift
             ;;
         *)
@@ -111,7 +148,7 @@ if [ $SKIP_LINT -eq 0 ]; then
     # Start pytest
     echo "${BLUE}  ▸ Starting pytest...${NC}"
     timer_start
-    pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PYTEST_ARGS &
+    pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PARALLELISM $PYTEST_ARGS &
     TEST_PID=$!
     TEST_START=$START_TIME
 
@@ -125,7 +162,7 @@ else
     # Just run pytest when linting is skipped
     echo "${BLUE}  ▸ Starting pytest...${NC}"
     timer_start
-    pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PYTEST_ARGS &
+    pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PARALLELISM $PYTEST_ARGS &
     TEST_PID=$!
     TEST_START=$START_TIME
 fi
