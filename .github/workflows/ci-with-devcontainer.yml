@@ -48,12 +48,14 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .devcontainer
-          file: .devcontainer/Dockerfile
+          file: .devcontainer/Dockerfile.ci
           platforms: linux/amd64  # Single arch for CI speed
           push: true
           tags: ${{ needs.prepare.outputs.image-name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            BASE_IMAGE=ghcr.io/${{ env.IMAGE_PREFIX }}-devcontainer:latest
           load: false
 
   lint:

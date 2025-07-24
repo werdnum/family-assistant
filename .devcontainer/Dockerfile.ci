@@ -1,29 +1,42 @@
 # CI-optimized version of the devcontainer
 # Pre-installs project dependencies for faster CI runs
-FROM ghcr.io/werdnum/family-assistant-devcontainer:latest
+ARG BASE_IMAGE=ghcr.io/werdnum/family-assistant-devcontainer:latest
+FROM ${BASE_IMAGE}
 
 # Switch to root for setup
 USER root
 
+# Create cache directory with proper permissions
+RUN mkdir -p /opt/uv-cache && chown claude:claude /opt/uv-cache
+
 # Copy project files needed for dependency installation
-COPY pyproject.toml /tmp/
-COPY README.md /tmp/
+WORKDIR /opt/ci-workspace
+COPY pyproject.toml README.md ./
+COPY src ./src
 
-# Pre-install project dependencies
-# This way they're already in the image and uv just needs to verify/link them
-RUN cd /tmp && \
-    # Create a temporary venv to pre-download all dependencies
-    uv venv /opt/deps-cache && \
-    UV_CACHE_DIR=/opt/uv-cache uv pip install --python /opt/deps-cache -e ".[dev]" && \
-    # Keep the cache but remove the venv (we'll create it fresh in workspace)
-    rm -rf /opt/deps-cache && \
-    # Clean up temp files
-    rm -rf /tmp/pyproject.toml /tmp/README.md && \
-    # Ensure cache is accessible
-    chown -R claude:claude /opt/uv-cache
+# Create a complete virtual environment with all dependencies
+# This will be copied to /workspace/.venv at runtime for instant startup
+RUN --mount=type=cache,target=/opt/uv-cache,uid=1000,gid=1000,sharing=locked \
+    # Create venv in a fixed location
+    uv venv /opt/venv && \
+    # Install all dependencies
+    UV_CACHE_DIR=/opt/uv-cache /opt/venv/bin/uv pip install -e ".[dev]" && \
+    # Install additional CI tools
+    UV_CACHE_DIR=/opt/uv-cache /opt/venv/bin/uv pip install poethepoet pytest-xdist && \
+    # Fix permissions
+    chown -R claude:claude /opt/venv && \
+    # Clean up workspace files (keep only the venv)
+    rm -rf /opt/ci-workspace
 
-# Set cache directory for faster installs
+# Pre-install Playwright browsers to avoid download during CI
+USER claude
+RUN /opt/venv/bin/python -m playwright install chromium --with-deps || true
+USER root
+
+# Set environment variables for CI mode
 ENV UV_CACHE_DIR=/opt/uv-cache
+ENV CI_PREBUILT_VENV=/opt/venv
+ENV IS_CI_CONTAINER=true
 
 # Switch back to claude user
 USER claude

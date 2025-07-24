@@ -96,59 +96,73 @@ fi
 if [ -f "pyproject.toml" ]; then
     echo "Python project detected. Setting up virtual environment..."
     
-    # Create virtual environment if it doesn't exist
-    if [ ! -d ".venv" ] || [ ! -f ".venv/bin/python" ]; then
-        echo "Creating fresh virtual environment..."
-        rm -rf .venv
-        uv venv .venv
+    # Fast path for CI containers with pre-built venv
+    if [ -n "$CI_PREBUILT_VENV" ] && [ -d "$CI_PREBUILT_VENV" ] && [ ! -d ".venv" ]; then
+        echo "Using pre-built virtual environment from CI container..."
+        cp -r "$CI_PREBUILT_VENV" .venv
+        # Fix the venv to use correct paths
+        echo "Updating virtual environment paths..."
+        .venv/bin/python -m venv --upgrade .venv
+        echo "Virtual environment ready!"
     else
-        echo "Virtual environment already exists, checking if it's valid..."
-        # Verify the venv works
-        if .venv/bin/python --version >/dev/null 2>&1; then
-            echo "Existing virtual environment is valid"
-        else
-            echo "Existing virtual environment is broken, recreating..."
+        # Standard venv creation path
+        # Create virtual environment if it doesn't exist
+        if [ ! -d ".venv" ] || [ ! -f ".venv/bin/python" ]; then
+            echo "Creating fresh virtual environment..."
             rm -rf .venv
             uv venv .venv
+        else
+            echo "Virtual environment already exists, checking if it's valid..."
+            # Verify the venv works
+            if .venv/bin/python --version >/dev/null 2>&1; then
+                echo "Existing virtual environment is valid"
+            else
+                echo "Existing virtual environment is broken, recreating..."
+                rm -rf .venv
+                uv venv .venv
+            fi
         fi
+        
+        # Activate the virtual environment
+        source .venv/bin/activate
+        
+        # Install dependencies
+        echo "Installing Python dependencies..."
+        uv pip install -e ".[dev]"
+        
+        # Ensure poethepoet is installed
+        echo "Installing poethepoet..."
+        uv pip install poethepoet
+        
+        # Ensure pytest-xdist is installed for parallel test execution
+        echo "Installing pytest-xdist..."
+        uv pip install pytest-xdist
     fi
     
-    # Activate the virtual environment
-    source .venv/bin/activate
-    
-    # Install dependencies
-    echo "Installing Python dependencies..."
-    uv pip install -e ".[dev]"
-    
-    # Ensure poethepoet is installed
-    echo "Installing poethepoet..."
-    uv pip install poethepoet
-    
-    # Ensure pytest-xdist is installed for parallel test execution
-    echo "Installing pytest-xdist..."
-    uv pip install pytest-xdist
-    
-    # Install pre-commit hooks if available (skip if running as root to avoid git issues)
-    if [ -f ".pre-commit-config.yaml" ] && [ "$RUNNING_AS_ROOT" != "true" ]; then
+    # Install pre-commit hooks if available (skip if running as root or in CI)
+    if [ -f ".pre-commit-config.yaml" ] && [ "$RUNNING_AS_ROOT" != "true" ] && [ "$IS_CI_CONTAINER" != "true" ]; then
         echo "Installing pre-commit hooks..."
         .venv/bin/pre-commit install || true
     fi
 fi
 
-# Install Node dependencies if package.json exists
-if [ -f "package.json" ]; then
-    echo "Installing Node.js dependencies..."
-    npm install
+# Skip Node dependencies in CI (not needed for tests)
+if [ "$IS_CI_CONTAINER" != "true" ]; then
+    # Install Node dependencies if package.json exists
+    if [ -f "package.json" ]; then
+        echo "Installing Node.js dependencies..."
+        npm install
+    fi
+
+    # Install frontend dependencies
+    if [ -f "frontend/package.json" ]; then
+        echo "Installing frontend dependencies..."
+        (cd frontend && npm install)
+    fi
 fi
 
-# Install frontend dependencies
-if [ -f "frontend/package.json" ]; then
-    echo "Installing frontend dependencies..."
-    (cd frontend && npm install)
-fi
-
-# Install Playwright browsers if needed
-if [ -f "pyproject.toml" ] && grep -q "playwright" pyproject.toml; then
+# Install Playwright browsers if needed (skip in CI - pre-installed)
+if [ "$IS_CI_CONTAINER" != "true" ] && [ -f "pyproject.toml" ] && grep -q "playwright" pyproject.toml; then
     echo "Installing Playwright browsers for Python environment..."
     .venv/bin/playwright install chromium || true
 fi
