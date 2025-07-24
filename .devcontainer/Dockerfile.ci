@@ -9,17 +9,8 @@ USER root
 # Create cache directory with proper permissions
 RUN mkdir -p /opt/uv-cache && chown claude:claude /opt/uv-cache
 
-# Pre-download all dependencies to the uv cache
-# This makes the actual installation much faster at runtime
-WORKDIR /workspace
-COPY pyproject.toml ./
-
-RUN --mount=type=cache,target=/opt/uv-cache,uid=1000,gid=1000,sharing=locked \
-    # Download all dependencies to populate the cache
-    UV_CACHE_DIR=/opt/uv-cache uv pip download ".[dev]" && \
-    UV_CACHE_DIR=/opt/uv-cache uv pip download poethepoet pytest-xdist && \
-    # Clean up the workspace copy
-    rm -f pyproject.toml
+# The UV cache will be mounted at runtime and persist between builds
+# No need to pre-populate - BuildKit cache mounts handle this efficiently
 
 # Pre-install Playwright system dependencies and browser
 RUN npx playwright install-deps chromium || true && \
