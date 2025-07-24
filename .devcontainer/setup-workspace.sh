@@ -96,48 +96,37 @@ fi
 if [ -f "pyproject.toml" ]; then
     echo "Python project detected. Setting up virtual environment..."
     
-    # Fast path for CI containers with pre-built venv
-    if [ -n "$CI_PREBUILT_VENV" ] && [ -d "$CI_PREBUILT_VENV" ] && [ ! -d ".venv" ]; then
-        echo "Using pre-built virtual environment from CI container..."
-        cp -r "$CI_PREBUILT_VENV" .venv
-        # Fix the venv to use correct paths
-        echo "Updating virtual environment paths..."
-        .venv/bin/python -m venv --upgrade .venv
-        echo "Virtual environment ready!"
+    # Create virtual environment if it doesn't exist
+    if [ ! -d ".venv" ] || [ ! -f ".venv/bin/python" ]; then
+        echo "Creating fresh virtual environment..."
+        rm -rf .venv
+        uv venv .venv
     else
-        # Standard venv creation path
-        # Create virtual environment if it doesn't exist
-        if [ ! -d ".venv" ] || [ ! -f ".venv/bin/python" ]; then
-            echo "Creating fresh virtual environment..."
+        echo "Virtual environment already exists, checking if it's valid..."
+        # Verify the venv works
+        if .venv/bin/python --version >/dev/null 2>&1; then
+            echo "Existing virtual environment is valid"
+        else
+            echo "Existing virtual environment is broken, recreating..."
             rm -rf .venv
             uv venv .venv
-        else
-            echo "Virtual environment already exists, checking if it's valid..."
-            # Verify the venv works
-            if .venv/bin/python --version >/dev/null 2>&1; then
-                echo "Existing virtual environment is valid"
-            else
-                echo "Existing virtual environment is broken, recreating..."
-                rm -rf .venv
-                uv venv .venv
-            fi
         fi
-        
-        # Activate the virtual environment
-        source .venv/bin/activate
-        
-        # Install dependencies
-        echo "Installing Python dependencies..."
-        uv pip install -e ".[dev]"
-        
-        # Ensure poethepoet is installed
-        echo "Installing poethepoet..."
-        uv pip install poethepoet
-        
-        # Ensure pytest-xdist is installed for parallel test execution
-        echo "Installing pytest-xdist..."
-        uv pip install pytest-xdist
     fi
+    
+    # Activate the virtual environment
+    source .venv/bin/activate
+    
+    # Install dependencies
+    echo "Installing Python dependencies..."
+    uv pip install -e ".[dev]"
+    
+    # Ensure poethepoet is installed
+    echo "Installing poethepoet..."
+    uv pip install poethepoet
+    
+    # Ensure pytest-xdist is installed for parallel test execution
+    echo "Installing pytest-xdist..."
+    uv pip install pytest-xdist
     
     # Install pre-commit hooks if available (skip if running as root or in CI)
     if [ -f ".pre-commit-config.yaml" ] && [ "$RUNNING_AS_ROOT" != "true" ] && [ "$IS_CI_CONTAINER" != "true" ]; then

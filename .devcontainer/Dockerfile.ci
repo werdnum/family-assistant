@@ -9,36 +9,24 @@ USER root
 # Create cache directory with proper permissions
 RUN mkdir -p /opt/uv-cache && chown claude:claude /opt/uv-cache
 
-# Copy project files needed for dependency installation
-WORKDIR /opt/ci-workspace
-COPY pyproject.toml README.md ./
-COPY src ./src
+# Pre-download all dependencies to the uv cache
+# This makes the actual installation much faster at runtime
+WORKDIR /workspace
+COPY pyproject.toml ./
 
-# Create a complete virtual environment with all dependencies
-# This will be copied to /workspace/.venv at runtime for instant startup
 RUN --mount=type=cache,target=/opt/uv-cache,uid=1000,gid=1000,sharing=locked \
-    # Create venv in a fixed location
-    uv venv /opt/venv && \
-    # Install all dependencies
-    UV_CACHE_DIR=/opt/uv-cache /opt/venv/bin/uv pip install -e ".[dev]" && \
-    # Install additional CI tools
-    UV_CACHE_DIR=/opt/uv-cache /opt/venv/bin/uv pip install poethepoet pytest-xdist && \
-    # Fix permissions
-    chown -R claude:claude /opt/venv && \
-    # Clean up workspace files (keep only the venv)
-    rm -rf /opt/ci-workspace
+    # Download all dependencies to populate the cache
+    UV_CACHE_DIR=/opt/uv-cache uv pip download ".[dev]" && \
+    UV_CACHE_DIR=/opt/uv-cache uv pip download poethepoet pytest-xdist && \
+    # Clean up the workspace copy
+    rm -f pyproject.toml
 
-# Pre-install Playwright browsers to avoid download during CI
-# Install system dependencies as root first
-RUN /opt/venv/bin/python -m playwright install-deps chromium || true
-# Then install browsers as claude user
-USER claude
-RUN /opt/venv/bin/python -m playwright install chromium || true
-USER root
+# Pre-install Playwright system dependencies and browser
+RUN npx playwright install-deps chromium || true && \
+    npx playwright install chromium || true
 
 # Set environment variables for CI mode
 ENV UV_CACHE_DIR=/opt/uv-cache
-ENV CI_PREBUILT_VENV=/opt/venv
 ENV IS_CI_CONTAINER=true
 
 # Switch back to claude user
