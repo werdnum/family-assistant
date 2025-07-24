@@ -214,7 +214,7 @@ cmd = "scripts/run-tests.sh --skip-lint --db postgres -xvs"
 
 [tool.poe.tasks.test-sqlite]
 help = "Run tests with SQLite database backend only"
-cmd = "scripts/run-tests.sh --skip-lint --db sqlite -xq"
+cmd = "scripts/run-tests.sh --skip-lint --db sqlite -m 'not postgres' -xq"
 
 [tool.poe.tasks.ui-dev]
 help = "Run Vite development server for frontend"
