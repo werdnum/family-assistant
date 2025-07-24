@@ -128,29 +128,39 @@ if [ -f "pyproject.toml" ]; then
     echo "Installing pytest-xdist..."
     uv pip install pytest-xdist
     
-    # Install pre-commit hooks if available (skip if running as root to avoid git issues)
-    if [ -f ".pre-commit-config.yaml" ] && [ "$RUNNING_AS_ROOT" != "true" ]; then
+    # Install pre-commit hooks if available (skip if running as root or in CI)
+    if [ -f ".pre-commit-config.yaml" ] && [ "$RUNNING_AS_ROOT" != "true" ] && [ "$IS_CI_CONTAINER" != "true" ]; then
         echo "Installing pre-commit hooks..."
         .venv/bin/pre-commit install || true
     fi
 fi
 
-# Install Node dependencies if package.json exists
-if [ -f "package.json" ]; then
-    echo "Installing Node.js dependencies..."
-    npm install
-fi
+# Skip Node dependencies in CI (not needed for tests)
+if [ "$IS_CI_CONTAINER" != "true" ]; then
+    # Install Node dependencies if package.json exists
+    if [ -f "package.json" ]; then
+        echo "Installing Node.js dependencies..."
+        npm install
+    fi
 
-# Install frontend dependencies
-if [ -f "frontend/package.json" ]; then
-    echo "Installing frontend dependencies..."
-    (cd frontend && npm install)
+    # Install frontend dependencies
+    if [ -f "frontend/package.json" ]; then
+        echo "Installing frontend dependencies..."
+        (cd frontend && npm install)
+    fi
 fi
 
 # Install Playwright browsers if needed
+# In CI, they should already be pre-installed, but ensure they're available
 if [ -f "pyproject.toml" ] && grep -q "playwright" pyproject.toml; then
-    echo "Installing Playwright browsers for Python environment..."
-    .venv/bin/playwright install chromium || true
+    if [ "$IS_CI_CONTAINER" = "true" ]; then
+        echo "Verifying Playwright browsers are installed..."
+        # Just verify they exist, don't re-download
+        .venv/bin/playwright install chromium --dry-run || .venv/bin/playwright install chromium || true
+    else
+        echo "Installing Playwright browsers for Python environment..."
+        .venv/bin/playwright install chromium || true
+    fi
 fi
 
 # Copy Claude configuration if provided

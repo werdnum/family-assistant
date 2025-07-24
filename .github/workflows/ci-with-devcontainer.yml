@@ -14,8 +14,102 @@ permissions:
   contents: read
   packages: write
 jobs:
-  build-and-test:
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.tag.outputs.tag }}
+      image-name: ${{ steps.tag.outputs.image }}
+    steps:
+      - name: Generate image tag
+        id: tag
+        run: |
+          TAG="ci-${{ github.run_id }}-${{ github.run_attempt }}"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:${TAG}" >> $GITHUB_OUTPUT
+
+  build-devcontainer:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build devcontainer image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: .devcontainer/Dockerfile.ci
+          platforms: linux/amd64  # Single arch for CI speed
+          push: true
+          tags: ${{ needs.prepare.outputs.image-name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BASE_IMAGE=ghcr.io/${{ env.IMAGE_PREFIX }}-devcontainer:latest
+          load: false
+
+  lint:
+    needs: [prepare, build-devcontainer]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run linting in devcontainer
+        run: |
+          docker run \
+            --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -e CLAUDE_PROJECT_REPO="" \
+            -e UV_CACHE_DIR=/opt/uv-cache \
+            -u claude \
+            ${{ needs.prepare.outputs.image-name }} \
+            bash -c 'cd /workspace && scripts/format-and-lint.sh'
+
+  test-sqlite:
+    needs: [prepare, build-devcontainer]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run SQLite tests in devcontainer
+        run: |
+          docker run \
+            --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -e CLAUDE_PROJECT_REPO="" \
+            -e UV_CACHE_DIR=/opt/uv-cache \
+            -u claude \
+            ${{ needs.prepare.outputs.image-name }} \
+            bash -c 'cd /workspace && .venv/bin/pytest -xq --timeout=300 --db sqlite -m "not postgres"'
+
+  test-postgres:
+    needs: [prepare, build-devcontainer]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: pgvector/pgvector:0.8.0-pg17
@@ -30,36 +124,39 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
       - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Generate image tag
-        id: tag
+      - name: Run PostgreSQL tests in devcontainer
         run: |
-          TAG="ci-${{ github.run_id }}-${{ github.run_attempt }}"
-          echo "tag=${TAG}" >> $GITHUB_OUTPUT
-          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:${TAG}" >> $GITHUB_OUTPUT
-      - name: Create cache directory
-        run: mkdir -p ${{ runner.temp }}/uv-cache
-      - name: Build devcontainer image
-        uses: docker/build-push-action@v5
-        with:
-          context: .devcontainer
-          file: .devcontainer/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.tag.outputs.image }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          load: false
-      - name: Run tests in devcontainer
-        run: "# Run the container with the just-built image\n# Let the dev container's entrypoint handle setup\n# Override CMD to run our tests instead of claude\ndocker run \\\n  --rm \\\n  --network host \\\n  -v ${{ github.workspace }}:/workspace \\\n  -v ${{ runner.temp }}/uv-cache:/home/claude/.cache/uv \\\n  -e TEST_DATABASE_URL=\"postgresql://test:test@localhost:5432/test\" \\\n  -e CLAUDE_PROJECT_REPO=\"\" \\\n  -e UV_CACHE_DIR=/home/claude/.cache/uv \\\n  -u claude \\\n  ${{ steps.tag.outputs.image }} \\\n  bash -c '\n    cd /workspace\n    \n    # The entrypoint has already set up the environment\n    # Just run our tests\n    echo \"Running linting...\"\n    scripts/format-and-lint.sh\n    \n    echo \"Running SQLite tests...\"\n    .venv/bin/pytest -xq\n    \n    echo \"Running PostgreSQL tests with external service...\"\n    .venv/bin/pytest --postgres -xq\n  '\n"
+          docker run \
+            --rm \
+            --network host \
+            -v ${{ github.workspace }}:/workspace \
+            -e TEST_DATABASE_URL="postgresql://test:test@localhost:5432/test" \
+            -e CLAUDE_PROJECT_REPO="" \
+            -e UV_CACHE_DIR=/opt/uv-cache \
+            -u claude \
+            ${{ needs.prepare.outputs.image-name }} \
+            bash -c 'cd /workspace && .venv/bin/pytest --postgres -xq --timeout=300'
+
+  # Require all test jobs to pass
+  all-tests:
+    needs: [lint, test-sqlite, test-postgres]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check all tests passed
+        run: |
+          if [[ "${{ needs.lint.result }}" != "success" || \
+                "${{ needs.test-sqlite.result }}" != "success" || \
+                "${{ needs.test-postgres.result }}" != "success" ]]; then
+            echo "One or more test jobs failed"
+            exit 1
+          fi
+          echo "All tests passed!"
 
 # Note: Test images with unique tags will be cleaned up by GHCR retention policies
