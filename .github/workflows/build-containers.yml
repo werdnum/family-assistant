@@ -2,8 +2,6 @@ name: Build and Push Containers
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
     inputs:
       tag:
@@ -39,14 +37,9 @@ jobs:
           fi
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           
-          # Only push on main branch or workflow dispatch
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "should-push=false" >> $GITHUB_OUTPUT
-            echo "platforms=linux/amd64" >> $GITHUB_OUTPUT  # Single arch for PRs
-          else
-            echo "should-push=true" >> $GITHUB_OUTPUT
-            echo "platforms=linux/amd64,linux/arm64" >> $GITHUB_OUTPUT  # Multi-arch for main
-          fi
+          # Always push since we only run on main or workflow dispatch
+          echo "should-push=true" >> $GITHUB_OUTPUT
+          echo "platforms=linux/amd64,linux/arm64" >> $GITHUB_OUTPUT  # Multi-arch builds
 
   build-devcontainer:
     needs: prepare
