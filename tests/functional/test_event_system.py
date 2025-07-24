@@ -222,10 +222,14 @@ async def test_event_listener_matching(db_engine: AsyncEngine) -> None:
     assert len(listeners) == 1
 
     assert processor._check_match_conditions(
-        match_event, listeners[0]["match_conditions"]
+        match_event,
+        listeners[0]["match_conditions"],
+        listeners[0].get("condition_script"),
     )
     assert not processor._check_match_conditions(
-        no_match_event, listeners[0]["match_conditions"]
+        no_match_event,
+        listeners[0]["match_conditions"],
+        listeners[0].get("condition_script"),
     )
 
 

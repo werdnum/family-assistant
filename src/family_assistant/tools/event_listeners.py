@@ -68,7 +68,15 @@ EVENT_LISTENER_TOOLS_DEFINITION: list[dict[str, Any]] = [
                                 "description": "Optional configuration for the wake_llm action",
                             },
                         },
-                        "required": ["match_conditions"],
+                    },
+                    "condition_script": {
+                        "type": "string",
+                        "description": (
+                            "Optional Starlark script for complex event matching. "
+                            "Receives 'event' variable with full event data, must return boolean. "
+                            "Overrides match_conditions if provided. "
+                            "Example: \"return event.get('old_state', {}).get('state') != 'home' and event.get('new_state', {}).get('state') == 'home'\""
+                        ),
                     },
                     "action_type": {
                         "type": "string",
@@ -241,6 +249,7 @@ async def create_event_listener_tool(
     name: str,
     source: str,
     listener_config: dict[str, Any],
+    condition_script: str | None = None,
     action_type: str = "wake_llm",
     script_code: str | None = None,
     script_config: dict[str, Any] | None = None,
@@ -254,6 +263,7 @@ async def create_event_listener_tool(
         name: Unique name for the listener
         source: Event source (must be valid EventSourceType)
         listener_config: Configuration with match_conditions and optional action_config
+        condition_script: Optional Starlark script for complex event matching
         action_type: Type of action to execute ("wake_llm" or "script")
         script_code: Starlark script code (required if action_type is "script")
         script_config: Optional configuration for script execution
@@ -286,11 +296,15 @@ async def create_event_listener_tool(
 
         # Extract match_conditions and action_config
         match_conditions = listener_config.get("match_conditions")
-        if not match_conditions:
+        if not match_conditions and not condition_script:
             return json.dumps({
                 "success": False,
-                "message": "listener_config must contain 'match_conditions'",
+                "message": "Either match_conditions or condition_script must be provided",
             })
+
+        # If no match_conditions but we have a script, use empty dict
+        if not match_conditions:
+            match_conditions = {}
 
         # Get the event source for validation
         event_source = None
@@ -329,6 +343,23 @@ async def create_event_listener_tool(
                 f"{', '.join(validation.warnings)}"
             )
 
+        # Validate condition_script if provided
+        if condition_script:
+            from family_assistant.events.condition_evaluator import (
+                EventConditionValidator,
+            )
+
+            # Get config from execution context if available
+            config = getattr(exec_context, "event_config", None) or {}
+            validator = EventConditionValidator(config=config)
+            is_valid, error_msg = validator.validate_script(condition_script)
+
+            if not is_valid:
+                return json.dumps({
+                    "success": False,
+                    "message": f"Invalid condition script: {error_msg}",
+                })
+
         # Build action_config based on action_type
         if action_type == "script":
             action_config = {
@@ -348,6 +379,7 @@ async def create_event_listener_tool(
             interface_type=exec_context.interface_type,
             action_type=action_type,
             action_config=action_config,
+            condition_script=condition_script,
             one_time=one_time,
             enabled=True,
         )

@@ -395,6 +395,39 @@ Ask the assistant to create a script-based event listener:
 "Set up a script to track energy usage whenever the meter reading changes"
 ```
 
+### Advanced Event Matching with Condition Scripts
+
+For complex event matching that can't be expressed as simple equality checks, use condition scripts:
+
+```
+"Create a listener that detects when someone arrives home (state changes from not 'home' to 'home')"
+"Alert me when temperature rises above 25°C but only if it was below 20°C before"
+"Watch for any sensor that starts with 'sensor.motion_' and turns on"
+```
+
+Condition scripts are Starlark expressions that:
+
+- Receive the full event data in the `event` variable
+- Must return a boolean value (True to trigger, False to ignore)
+- Can access nested fields with `.get()` to handle missing data safely
+- Support complex logic with `and`, `or`, and `not` operators
+
+Common patterns:
+
+- Zone entry:
+  `event.get('old_state', {}).get('state') != 'home' and event.get('new_state', {}).get('state') == 'home'`
+- Temperature threshold: `int(event.get('new_state', {}).get('state', '0').split('.')[0]) > 25`
+- Entity pattern matching: `event.get('entity_id', '').startswith('sensor.motion_')`
+- Attribute changes:
+  `event.get('old_state', {}).get('attributes', {}).get('battery') != event.get('new_state', {}).get('attributes', {}).get('battery')`
+
+Note: Starlark doesn't have `float()`, only `int()`. For decimal values like "25.5", the safest
+approach is:
+
+- Truncate to integer: `int(event.get('new_state', {}).get('state', '0').split('.')[0])` (e.g.,
+  "25.5" becomes 25, "26" stays 26)
+- Be aware this loses precision - a value of "25.9" will not trigger a `> 25` condition
+
 ### Event Script Context
 
 When triggered by an event, scripts receive special global variables:
@@ -405,9 +438,9 @@ When triggered by an event, scripts receive special global variables:
 # conversation_id - The conversation this listener belongs to
 # listener_id - ID of the event listener that triggered this script
 
-# Example: Log temperature changes
-temp = float(event["new_state"]["state"])
-old_temp = float(event["old_state"]["state"]) if event["old_state"] else 0
+# Example: Log temperature changes (note: Starlark only has int(), not float())
+temp = int(event.get("new_state", {}).get("state", "0").split('.')[0])  # Truncate decimals
+old_temp = int(event.get("old_state", {}).get("state", "0").split('.')[0]) if event.get("old_state") else 0
 
 add_or_update_note(
     title="Temperature Log - " + time_format(time_now(), "%Y-%m-%d"),
@@ -441,12 +474,12 @@ log_motion()
 ```starlark
 # Alert on high temperature during business hours
 def check_temperature():
-    temp = float(event["new_state"]["state"])
+    temp = int(event.get("new_state", {}).get("state", "0").split('.')[0])  # Truncate decimals
     hour = time_hour(time_now())
     
     if temp > 25 and hour >= 9 and hour < 18:
         send_telegram_message(
-            message="🌡️ High temperature alert: " + str(temp) + "°C in " + event["entity_id"]
+            message="🌡️ High temperature alert: " + str(temp) + "°C in " + event.get("entity_id", "unknown")
         )
         return "Alert sent"
     return "Temperature OK"
@@ -484,7 +517,7 @@ process_document()
 ```starlark
 # Track hourly energy usage
 def track_energy():
-    reading = float(event["new_state"]["state"])
+    reading = int(event.get("new_state", {}).get("state", "0").split('.')[0])  # Truncate decimals
     hour_str = time_format(time_now(), "%Y-%m-%d %H:00")
     
     # Log the reading
@@ -563,23 +596,23 @@ wake_llm(context, include_event=True)
 
 ```starlark
 # Example: Simple string message (recommended for straightforward alerts)
-temp = float(event["new_state"]["state"])
+temp = int(event.get("new_state", {}).get("state", "0").split('.')[0])  # Truncate decimals
 if temp > 30:
-    wake_llm("High temperature alert: " + str(temp) + "°C detected in " + event["entity_id"])
+    wake_llm("High temperature alert: " + str(temp) + "°C detected in " + event.get("entity_id", "unknown"))
 
 # Example: Using string for motion detection
-if event["new_state"]["state"] == "on":
-    wake_llm("Motion detected in " + event["entity_id"])
+if event.get("new_state", {}).get("state") == "on":
+    wake_llm("Motion detected in " + event.get("entity_id", "unknown"))
 ```
 
 ```starlark
 # Example: Dictionary for complex context with multiple fields
-temp = float(event["new_state"]["state"])
+temp = int(event.get("new_state", {}).get("state", "0").split('.')[0])  # Truncate decimals
 if temp > 30:
     wake_llm({
         "alert": "High temperature detected",
         "temperature": temp,
-        "location": event["entity_id"],
+        "location": event.get("entity_id", "unknown"),
         "suggestion": "Consider turning on the AC"
     })
 ```
@@ -629,10 +662,10 @@ else:
     notes = []
 
 # Check for None values
-if event.get("new_state") and event["new_state"].get("state"):
-    value = float(event["new_state"]["state"])
+if event.get("new_state") and event.get("new_state", {}).get("state"):
+    value = int(event.get("new_state", {}).get("state", "0").split('.')[0])  # Truncate decimals
 else:
-    value = 0.0
+    value = 0
 ```
 
 ### Performance Tips
@@ -688,7 +721,7 @@ for event in events:
 
 ```starlark
 # For event-triggered scripts
-if float(event["new_state"]["state"]) > 25:
+if int(event.get("new_state", {}).get("state", "0").split('.')[0]) > 25:  # Truncate decimals
     send_telegram_message(message="High temperature alert!")
 ```
 
