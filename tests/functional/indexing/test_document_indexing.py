@@ -62,7 +62,7 @@ TEST_EMBEDDING_DIMENSION = 128  # Smaller dimension for mock testing
 
 # --- Test Data for E2E ---
 TEST_DOC_SOURCE_TYPE = "manual_test_upload"
-# NOTE: TEST_DOC_SOURCE_ID is generated per test to avoid conflicts in parallel execution
+# NOTE: Unique document source IDs are generated dynamically within individual test functions to avoid conflicts in parallel execution.
 TEST_DOC_TITLE = "E2E Test: Project Phoenix Proposal"
 TEST_DOC_CHUNK_0 = "This document outlines the proposal for Project Phoenix, focusing on renewable energy sources."
 TEST_DOC_CHUNK_1 = (
