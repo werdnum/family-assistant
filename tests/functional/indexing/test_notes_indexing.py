@@ -565,6 +565,14 @@ async def test_note_update_reindexing_e2e(
         )
         logger.info("Initial indexing completed")
 
+        # Also wait for embedding tasks to complete
+        await wait_for_tasks_to_complete(
+            pg_vector_db_engine,
+            task_types={"embed_and_store_batch"},
+            timeout_seconds=10.0,
+        )
+        logger.info("Embedding tasks completed")
+
         # Get document ID and count embeddings
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
             doc_record = await db.vector.get_document_by_source_id(unique_note_title)
@@ -624,6 +632,14 @@ async def test_note_update_reindexing_e2e(
             timeout_seconds=10.0,
         )
         logger.info("Re-indexing completed")
+
+        # Also wait for embedding tasks to complete
+        await wait_for_tasks_to_complete(
+            pg_vector_db_engine,
+            task_types={"embed_and_store_batch"},
+            timeout_seconds=10.0,
+        )
+        logger.info("Re-indexing embedding tasks completed")
 
         # --- Step 3: Verify Re-indexing Occurred ---
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
