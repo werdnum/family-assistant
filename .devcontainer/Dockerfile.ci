@@ -29,8 +29,11 @@ RUN --mount=type=cache,target=/opt/uv-cache,uid=1000,gid=1000,sharing=locked \
     rm -rf /opt/ci-workspace
 
 # Pre-install Playwright browsers to avoid download during CI
+# Install system dependencies as root first
+RUN /opt/venv/bin/python -m playwright install-deps chromium || true
+# Then install browsers as claude user
 USER claude
-RUN /opt/venv/bin/python -m playwright install chromium --with-deps || true
+RUN /opt/venv/bin/python -m playwright install chromium || true
 USER root
 
 # Set environment variables for CI mode
