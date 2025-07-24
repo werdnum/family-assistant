@@ -3,6 +3,7 @@ Module defining the interface and implementations for generating text embeddings
 """
 
 import asyncio
+import hashlib
 import logging
 import math
 import re
@@ -207,11 +208,10 @@ class HashingWordEmbeddingGenerator:
             return vector  # Return zero vector for empty or whitespace-only text
 
         for token in tokens:
-            hash_val = hash(token)
+            # Use a deterministic hash function based on the token's bytes
+            # This ensures consistent results across platforms and Python versions
+            hash_val = int(hashlib.md5(token.encode("utf-8")).hexdigest()[:8], 16)
             index = hash_val % self.dimensionality
-            # Ensure index is positive, as hash() can return negative numbers
-            if index < 0:
-                index += self.dimensionality
             vector[index] += 1.0
 
         # Normalize the vector to unit length
