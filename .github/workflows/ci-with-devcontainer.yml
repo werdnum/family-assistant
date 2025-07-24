@@ -104,7 +104,7 @@ jobs:
             -e UV_CACHE_DIR=/opt/uv-cache \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
-            bash -c 'cd /workspace && .venv/bin/pytest -xq --timeout=300 --db sqlite -m "not postgres"'
+            bash -c 'cd /workspace && .venv/bin/pytest -q --timeout=300 --db sqlite -m "not postgres"'
 
   test-postgres:
     needs: [prepare, build-devcontainer]
@@ -141,7 +141,7 @@ jobs:
             -e UV_CACHE_DIR=/opt/uv-cache \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
-            bash -c 'cd /workspace && .venv/bin/pytest --postgres -xq --timeout=300'
+            bash -c 'cd /workspace && .venv/bin/pytest --postgres -q --timeout=300'
 
   # Require all test jobs to pass
   all-tests:
