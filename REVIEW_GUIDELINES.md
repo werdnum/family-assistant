@@ -261,13 +261,12 @@ The reviewer should **NOT** focus on:
 
 ### Do not comment on
 
-* Do NOT correct version numbers, dates and times, etc - remember that your training
-  cutoff may be significantly before the present. For example, if a change references
-  a version number that you don't know about or that you think is "still in beta",
-  or has the year as 2025, which you believe to be in the future, do NOT comment.
-  It's likely that you are wrong.
-* Do NOT insist on backwards compatibility if a previous comment has indicated that
-  there is nothing to be backwards-compatible with (e.g. changing a hash format where
-  the commit message tells you that the hash has never been persisted).
-* Do NOT make blocking comments for issues that have been explicitly acknowledged in
-  the commit message or where a TODO has been left. Advise, don't block.
+- Do NOT correct version numbers, dates and times, etc - remember that your training cutoff may be
+  significantly before the present. For example, if a change references a version number that you
+  don't know about or that you think is "still in beta", or has the year as 2025, which you believe
+  to be in the future, do NOT comment. It's likely that you are wrong.
+- Do NOT insist on backwards compatibility if a previous comment has indicated that there is nothing
+  to be backwards-compatible with (e.g. changing a hash format where the commit message tells you
+  that the hash has never been persisted).
+- Do NOT make blocking comments for issues that have been explicitly acknowledged in the commit
+  message or where a TODO has been left. Advise, don't block.
