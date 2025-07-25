@@ -2,12 +2,15 @@ import json
 import logging
 import os
 import pathlib
+from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.templating import _TemplateResponse
 
 # Import new auth and utils modules
 from family_assistant.web.auth import (
@@ -21,6 +24,7 @@ from family_assistant.web.routers.api import api_router
 from family_assistant.web.routers.api_token_management import (
     router as api_token_management_router,
 )
+from family_assistant.web.routers.chat_ui import router as chat_ui_router
 from family_assistant.web.routers.context_viewer import context_viewer_router
 from family_assistant.web.routers.documentation import documentation_router
 from family_assistant.web.routers.documents_ui import (  # New import for document upload UI
@@ -39,17 +43,14 @@ from family_assistant.web.routers.ui_token_management import (  # New import
 )
 from family_assistant.web.routers.vector_search import vector_search_router
 from family_assistant.web.routers.webhooks import webhooks_router
-from family_assistant.web.template_utils import get_static_asset, should_use_vite_dev
+from family_assistant.web.template_utils import get_static_asset
 
 logger = logging.getLogger(__name__)
 
 
 # Load server URL from environment variable (used in templates)
-# In development with Vite, use localhost:5173
-default_server_url = (
-    "http://localhost:5173" if should_use_vite_dev() else "http://localhost:8000"
-)
-SERVER_URL = os.getenv("SERVER_URL", default_server_url)
+# Default to production URL - dev mode will be determined at runtime
+SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
 
 
 # --- Determine base path for templates and static files ---
@@ -88,8 +89,6 @@ try:
 
     templates = Jinja2Templates(directory=templates_dir)
     templates.env.filters["tojson"] = json.dumps
-    templates.env.globals["get_static_asset"] = get_static_asset
-    templates.env.globals["DEV_MODE"] = should_use_vite_dev
     templates.env.globals["AUTH_ENABLED"] = AUTH_ENABLED
 
 except NameError:
@@ -136,6 +135,100 @@ app.state.templates = templates
 app.state.server_url = SERVER_URL
 app.state.docs_user_dir = docs_user_dir
 
+
+# --- Configure template helpers ---
+def get_dev_mode_from_request(request: Request) -> bool:
+    """Get dev_mode from app config if available, otherwise from environment."""
+    if hasattr(request.app.state, "config") and "dev_mode" in request.app.state.config:
+        return request.app.state.config.get("dev_mode", False)
+    # Fallback to environment variable
+    return os.getenv("DEV_MODE", "false").lower() == "true"
+
+
+def create_template_context(request: Request, **kwargs: Any) -> dict[str, Any]:
+    """Create a template context with common variables including dev_mode."""
+    dev_mode = get_dev_mode_from_request(request)
+
+    # Create context-aware functions
+    def context_get_static_asset(filename: str, entry_name: str = "main") -> str:
+        return get_static_asset(filename, entry_name, dev_mode)
+
+    context = {
+        "request": request,
+        "DEV_MODE": dev_mode,
+        "get_static_asset": context_get_static_asset,
+        **kwargs,
+    }
+    return context
+
+
+# Set template globals
+templates.env.globals["AUTH_ENABLED"] = AUTH_ENABLED
+
+
+# Create a custom template response handler that uses inheritance
+class DevModeTemplates(Jinja2Templates):
+    """Custom Jinja2Templates that injects dev_mode into context."""
+
+    def TemplateResponse(self, *args: Any, **kwargs: Any) -> _TemplateResponse:
+        """Override to inject dev_mode and context-aware functions."""
+        # First, let the parent class parse the arguments to get the request and context
+        # We need to extract the request to determine dev_mode
+
+        # Parse arguments similar to parent class
+        if args:
+            if isinstance(args[0], str):  # old style: name first
+                context = args[1] if len(args) > 1 else kwargs.get("context", {})
+                request = context.get("request") if context else None
+            else:  # new style: request first
+                request = args[0]
+                context = args[2] if len(args) > 2 else kwargs.get("context", {})
+        else:  # all kwargs
+            context = kwargs.get("context", {})
+            request = kwargs.get("request", context.get("request"))
+
+        # Ensure context exists
+        if context is None:
+            context = {}
+
+        # Update args/kwargs with modified context
+        if args:
+            if isinstance(args[0], str):  # old style
+                if len(args) > 1:
+                    args = (args[0], context) + args[2:]
+                else:
+                    kwargs["context"] = context
+            else:  # new style
+                if len(args) > 2:
+                    args = args[:2] + (context,) + args[3:]
+                else:
+                    kwargs["context"] = context
+        else:
+            kwargs["context"] = context
+
+        # Inject our custom context
+        if isinstance(request, Request):
+            dev_mode = get_dev_mode_from_request(request)
+            # Add dev_mode function and context-aware get_static_asset
+            if "DEV_MODE" not in context:
+                # Make it a callable that returns the dev_mode value
+                context["DEV_MODE"] = lambda: dev_mode
+            if "get_static_asset" not in context:
+
+                def context_get_static_asset(
+                    filename: str, entry_name: str = "main"
+                ) -> str:
+                    return get_static_asset(filename, entry_name, dev_mode)
+
+                context["get_static_asset"] = context_get_static_asset
+
+        # Call parent with potentially modified args
+        return super().TemplateResponse(*args, **kwargs)
+
+
+# Replace the templates instance with our custom class
+templates.__class__ = DevModeTemplates
+
 # Initialize tool_definitions for development mode
 # This will be populated by Assistant.setup_dependencies() in production
 # For development, we load them directly here
@@ -167,16 +260,13 @@ else:
         f"Static directory '{static_dir if 'static_dir' in locals() else 'Not Defined'}' not found or not a directory. Static files will not be served."
     )
 
-# --- Development mode logging ---
-if should_use_vite_dev():
-    logger.info("Development mode enabled - Vite dev server detected on port 5173")
-
 # --- Include Routers ---
 if AUTH_ENABLED:
     app.include_router(auth_router, tags=["Authentication"])
     logger.info("Authentication routes included.")
 
 app.include_router(notes_router, tags=["Notes UI"])
+app.include_router(chat_ui_router, tags=["Chat UI"])
 app.include_router(documentation_router, tags=["Documentation UI"])
 app.include_router(webhooks_router, tags=["Webhooks"])
 app.include_router(history_router, tags=["History UI"])
@@ -209,3 +299,51 @@ app.include_router(
     prefix="/settings/tokens",  # UI page for managing tokens
     tags=["Settings UI"],
 )
+
+
+# --- Serve Vite-built HTML files in production ---
+# Always add this handler, but it will check dev mode at runtime
+@app.get("/{path:path}", include_in_schema=False, response_model=None)
+async def serve_vite_html(request: Request, path: str) -> FileResponse:
+    """
+    Serve Vite-built HTML files from the dist directory in production mode.
+    This handler runs after all other routes, acting as a fallback.
+    """
+    # Check if we're in dev mode at runtime
+    config = getattr(request.app.state, "config", {})
+    dev_mode = config.get("dev_mode", os.getenv("DEV_MODE", "false").lower() == "true")
+
+    if dev_mode:
+        # In dev mode, let the default 404 handler run (Vite will serve the files)
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # Only handle paths that could be HTML pages (no extension or .html)
+    if path and not path.endswith(".html") and "." in path:
+        # Has an extension but not .html, let default 404 handle it
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # Check if there's a corresponding HTML file in dist
+    html_filename = (
+        f"{path}.html"
+        if path and not path.endswith(".html")
+        else (path or "index.html")
+    )
+    if not html_filename.endswith(".html"):
+        html_filename += ".html"
+
+    html_path = static_dir / "dist" / html_filename
+
+    if html_path.exists() and html_path.is_file():
+        return FileResponse(html_path, media_type="text/html")
+
+    # No matching HTML file, return 404
+    raise HTTPException(status_code=404, detail="Not found")
+
+
+# Export the helper functions and app
+__all__ = [
+    "app",
+    "create_template_context",
+    "get_dev_mode_from_request",
+    "configure_app_debug",
+]

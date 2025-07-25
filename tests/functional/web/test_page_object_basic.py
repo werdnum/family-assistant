@@ -31,6 +31,9 @@ async def test_base_page_console_errors(web_test_fixture: Any) -> None:
     # Start capturing console errors
     errors = page.setup_console_error_collection()
 
+    # Enable request logging to debug what's happening
+    page.setup_request_logging()
+
     # Navigate to a page
     await page.navigate_to("/")
 

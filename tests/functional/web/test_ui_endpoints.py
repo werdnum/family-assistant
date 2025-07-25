@@ -24,6 +24,8 @@ BASE_UI_ENDPOINTS = [
     ("/tasks", "Tasks List Page"),
     ("/vector-search", "Vector Search Page"),
     ("/documents/upload", "Document Upload Page"),  # New endpoint
+    ("/chat", "Chat Interface Page"),
+    ("/chat/conversations", "Chat Conversations List Page"),
     ("/settings/tokens", "Manage API Tokens UI Page"),
     ("/events", "Events List Page"),
     ("/events/non_existent_event", "Event Detail Page"),
@@ -59,11 +61,16 @@ async def test_ui_endpoint_accessibility(web_only_assistant: Assistant) -> None:
     ) as client:
         failures = []
         for path, description in ALL_UI_ENDPOINTS_TO_TEST:
-            response = await client.get(path)
-            if response.status_code >= 500:
+            try:
+                response = await client.get(path)
+                if response.status_code >= 500:
+                    failures.append(
+                        f"UI endpoint '{description}' at '{path}' returned {response.status_code}. "
+                        f"Response text (first 500 chars): {response.text[:500]}"
+                    )
+            except Exception as e:
                 failures.append(
-                    f"UI endpoint '{description}' at '{path}' returned {response.status_code}. "
-                    f"Response text (first 500 chars): {response.text[:500]}"
+                    f"UI endpoint '{description}' at '{path}' raised exception: {type(e).__name__}: {str(e)}"
                 )
 
         if failures:

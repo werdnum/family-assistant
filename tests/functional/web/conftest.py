@@ -163,9 +163,7 @@ async def web_only_assistant(
 ) -> AsyncGenerator[Assistant, None]:
     """Start Assistant in web-only mode for testing."""
     # Auth is already disabled at module level
-
-    # Use production mode for tests since we're using built assets
-    os.environ["DEV_MODE"] = "false"
+    # DEV_MODE is already set to false at module level
 
     # Get the API port
     _, api_port = vite_and_api_ports
@@ -186,6 +184,7 @@ async def web_only_assistant(
         "document_storage_path": "/tmp/test_docs",
         "attachment_storage_path": "/tmp/test_attachments",
         "litellm_debug": False,
+        "dev_mode": False,  # Explicitly set dev_mode to False for tests
         "oidc": {
             "client_id": "",
             "client_secret": "",
@@ -333,6 +332,7 @@ async def web_test_fixture(
     playwright_page: Page,
     web_only_assistant: Assistant,
     vite_and_api_ports: tuple[int, int],
+    built_frontend: None,  # Ensure frontend is built before tests
 ) -> WebTestFixture:
     """Combined fixture providing all web test dependencies."""
     _, api_port = vite_and_api_ports

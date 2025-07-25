@@ -1,21 +1,56 @@
 {
-  "src/main-legacy.js": {
-    "file": "assets/main-legacy-6Xe16Eq_.js",
-    "name": "main",
-    "src": "src/main-legacy.js",
-    "isEntry": true
+  "_modulepreload-polyfill-B5Qt9EMX.js": {
+    "file": "assets/modulepreload-polyfill-B5Qt9EMX.js",
+    "name": "modulepreload-polyfill"
   },
-  "src/main.js": {
-    "file": "assets/main-DUd7RoNs.js",
-    "name": "main",
-    "src": "src/main.js",
+  "_modulepreload-polyfill-legacy-CnvmjJHj.js": {
+    "file": "assets/modulepreload-polyfill-legacy-CnvmjJHj.js",
+    "name": "modulepreload-polyfill"
+  },
+  "chat-legacy.html": {
+    "file": "assets/chat-legacy-DS5ESSff.js",
+    "name": "chat",
+    "src": "chat-legacy.html",
     "isEntry": true,
+    "imports": [
+      "_modulepreload-polyfill-legacy-CnvmjJHj.js"
+    ]
+  },
+  "chat.html": {
+    "file": "assets/chat-DKL-jpPA.js",
+    "name": "chat",
+    "src": "chat.html",
+    "isEntry": true,
+    "imports": [
+      "_modulepreload-polyfill-B5Qt9EMX.js"
+    ],
+    "css": [
+      "assets/chat-Ct7c2BaJ.css"
+    ]
+  },
+  "index-legacy.html": {
+    "file": "assets/main-legacy-BO4rHymF.js",
+    "name": "main",
+    "src": "index-legacy.html",
+    "isEntry": true,
+    "imports": [
+      "_modulepreload-polyfill-legacy-CnvmjJHj.js"
+    ]
+  },
+  "index.html": {
+    "file": "assets/main-D2rt6i_Y.js",
+    "name": "main",
+    "src": "index.html",
+    "isEntry": true,
+    "imports": [
+      "_modulepreload-polyfill-B5Qt9EMX.js"
+    ],
     "css": [
       "assets/main-DjKsuK_1.css"
     ]
   },
   "vite/legacy-polyfills-legacy": {
-    "file": "assets/polyfills-legacy-B93rlMtN.js",
+    "file": "assets/polyfills-legacy-Cy-2yVk8.js",
     "name": "polyfills",
     "src": "vite/legacy-polyfills-legacy",
     "isEntry": true

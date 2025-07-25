@@ -1039,6 +1039,65 @@ def vcr_cassette_dir(request: pytest.FixtureRequest) -> str:
     return str(test_dir / "cassettes")
 
 
+@pytest.fixture(scope="session")
+def built_frontend() -> Generator[None, None, None]:
+    """
+    Ensures the frontend is built before tests that require it.
+    This fixture runs npm install and npm run build if needed.
+    """
+    frontend_dir = pathlib.Path(__file__).parent.parent / "frontend"
+    dist_dir = (
+        pathlib.Path(__file__).parent.parent
+        / "src"
+        / "family_assistant"
+        / "static"
+        / "dist"
+    )
+
+    # Check if we need to build
+    needs_install = not (frontend_dir / "node_modules").exists()
+    needs_build = not (dist_dir / "chat.html").exists()
+
+    if needs_install or needs_build:
+        logger.info("Building frontend for tests...")
+
+        # Run npm install if needed
+        if needs_install:
+            logger.info("Running npm install...")
+            result = subprocess.run(
+                ["npm", "install"],
+                cwd=frontend_dir,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                pytest.fail(f"npm install failed: {result.stderr}")
+
+        # Run npm run build
+        if needs_build:
+            logger.info("Running npm run build...")
+            result = subprocess.run(
+                ["npm", "run", "build"],
+                cwd=frontend_dir,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                pytest.fail(f"npm run build failed: {result.stderr}")
+
+            logger.info(
+                f"Frontend built successfully. Files in dist: {list(dist_dir.glob('*.html'))}"
+            )
+    else:
+        logger.info("Frontend already built, skipping build step")
+
+    yield
+
+    # No cleanup needed - we want to keep the built files
+
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_fastapi_test_config() -> Generator[None, None, None]:
     """
@@ -1065,6 +1124,7 @@ def setup_fastapi_test_config() -> Generator[None, None, None]:
             "attachment_storage_path": attach_dir,
             "mailbox_raw_dir": str(mailbox_dir),  # Convert back to string for config
             "auth_enabled": False,  # Disable auth for tests
+            "dev_mode": False,  # Use production mode for tests
         }
 
         # If there's an existing config, preserve other values

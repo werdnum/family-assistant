@@ -13,8 +13,16 @@
   "license": "MIT",
   "description": "Frontend assets for Family Assistant",
   "dependencies": {
+    "@assistant-ui/react": "^0.5.0",
     "@vitejs/plugin-legacy": "^7.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "simpledotcss": "^2.3.7",
     "vite": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.17",
+    "@types/react-dom": "^18.3.5"
   }
 }
