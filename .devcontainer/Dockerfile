@@ -61,26 +61,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         postgresql-17-pgvector \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and install claude-code-webui binary
-RUN ARCH=$(dpkg --print-architecture) && \
-    if [ "$ARCH" = "amd64" ]; then \
-        WEBUI_ARCH="linux-amd64"; \
-    elif [ "$ARCH" = "arm64" ]; then \
-        WEBUI_ARCH="linux-arm64"; \
-    else \
-        echo "Unsupported architecture: $ARCH" && exit 1; \
-    fi && \
-    curl -sSL "https://github.com/sugyan/claude-code-webui/releases/latest/download/claude-code-webui-${WEBUI_ARCH}" \
-    -o /usr/local/bin/claude-code-webui && \
-    chmod +x /usr/local/bin/claude-code-webui
-
 # Create claude user with UID 1001 to match Kubernetes deployment
 RUN useradd -m -s /bin/bash -u 1001 claude && \
     mkdir -p /home/claude/.cache/uv && \
     mkdir -p /home/claude/.npm-global && \
     mkdir -p /home/claude/.cache/deno && \
     mkdir -p /home/claude/.deno && \
-    chown -R claude:claude /home/claude
+    chown -R claude:claude /home/claude && \
+    mkdir -p /opt && chown -R claude:claude /opt
 
 # Set up npm global directory for claude user
 ENV NPM_CONFIG_PREFIX=/home/claude/.npm-global
@@ -101,6 +89,10 @@ RUN npm install -g @anthropic-ai/claude-code @google/gemini-cli && \
 
 # Set Playwright browsers path to user's home to avoid permission issues
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/claude/.cache/playwright-browsers
+
+# Download and install claudecodewui binary
+RUN git clone --depth 1 --branch main https://github.com/siteboon/claudecodeui.git /opt/claude-code-webui && \
+    (cd /opt/claude-code-webui && npm install && npm run build)
 
 # Switch back to root to install system dependencies first
 USER root
