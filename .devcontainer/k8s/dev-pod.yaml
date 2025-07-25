@@ -50,10 +50,13 @@ spec:
         # PostgreSQL data - ephemeral within pod
         - name: postgres-data
           emptyDir: {}
+        # Shared logs directory for dev server logs
+        - name: dev-logs
+          emptyDir: {}
       initContainers:
         # Setup workspace and fix permissions
         - name: setup-workspace
-          image: containers.andrewgarrett.dev/family-assistant-devcontainer:20250713_103705
+          image: ghcr.io/werdnum/family-assistant-devcontainer:20250722_012621
           imagePullPolicy: Always
           command: ["/usr/local/bin/setup-workspace.sh"]
           securityContext:
@@ -99,10 +102,10 @@ spec:
             exec:
               command: ["pg_isready", "-U", "test"]
             initialDelaySeconds: 30
-            periodSeconds: 10
+            periodSeconds: 30
         # Backend service container
         - name: backend
-          image: containers.andrewgarrett.dev/family-assistant-devcontainer:20250713_103705
+          image: ghcr.io/werdnum/family-assistant-devcontainer:20250722_012621
           imagePullPolicy: Always
           workingDir: /workspace
           command: ["/bin/bash", "-c"]
@@ -122,9 +125,13 @@ spec:
                 sleep 1
               done
 
+              # Create log directory
+              mkdir -p /var/log/family-assistant
+
               # Start backend in full development mode
               # This runs both the backend server AND the frontend dev server
-              exec poe dev
+              # Redirect logs to files while also showing them in stdout
+              exec poe dev 2>&1 | tee /var/log/family-assistant/dev-server.log
           ports:
             - containerPort: 8000
             - containerPort: 5173
@@ -140,6 +147,8 @@ spec:
           volumeMounts:
             - name: workspace
               mountPath: /workspace
+            - name: dev-logs
+              mountPath: /var/log/family-assistant
           resources:
             requests:
               memory: "512Mi"
@@ -161,7 +170,7 @@ spec:
             periodSeconds: 10
         # Claude Code container
         - name: claude
-          image: containers.andrewgarrett.dev/family-assistant-devcontainer:20250713_103705
+          image: ghcr.io/werdnum/family-assistant-devcontainer:20250722_012621
           imagePullPolicy: Always
           workingDir: /workspace
           tty: true
@@ -196,6 +205,9 @@ spec:
               mountPath: /workspace
             - name: claude-home
               mountPath: /home/claude
+            - name: dev-logs
+              mountPath: /var/log/family-assistant
+              readOnly: true
           resources:
             requests:
               memory: "128Mi"
