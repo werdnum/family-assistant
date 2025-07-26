@@ -139,7 +139,8 @@ const ChatApp = () => {
         body: JSON.stringify({
           prompt: message.content[0].text,
           conversation_id: conversationId || `web_conv_${Date.now()}`,
-          profile_id: 'default_assistant' // You can make this configurable
+          profile_id: 'default_assistant', // You can make this configurable
+          interface_type: 'web' // Specify that this is from the web UI
         }),
       });
       

@@ -100,6 +100,9 @@ async def api_chat_send_message(
     # Prepare trigger_content_parts for the new service method
     trigger_content_parts = [{"type": "text", "text": payload.prompt}]
 
+    # Determine interface type - default to "api" if not specified
+    interface_type = payload.interface_type or "api"
+
     # Call the new centralized interaction handler
     # For API, user_name can be generic or derived from auth if implemented
     user_name_for_api = (
@@ -128,7 +131,7 @@ async def api_chat_send_message(
         error_traceback,
     ) = await selected_processing_service.handle_chat_interaction(
         db_context=db_context,
-        interface_type="api",
+        interface_type=interface_type,  # Use the interface_type from request or default "api"
         conversation_id=conversation_id,
         trigger_content_parts=trigger_content_parts,
         trigger_interface_message_id=None,  # API prompts don't have a prior interface ID
