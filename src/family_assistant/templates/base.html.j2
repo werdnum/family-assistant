@@ -6,8 +6,8 @@
     <title>{% block title %}Family Assistant{% endblock %}</title>
     {% if DEV_MODE() %}
     <!-- Vite development mode -->
-    <script type="module" src="http://localhost:5173/@vite/client"></script>
-    <script type="module" src="http://localhost:5173/src/main.js"></script>
+    <script type="module" src="/@vite/client"></script>
+    <script type="module" src="/src/main.js"></script>
     {% else %}
     <!-- Production build assets -->
     <link rel="stylesheet" href="{{ get_static_asset('main.css') }}">

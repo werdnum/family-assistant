@@ -104,7 +104,7 @@ async def api_chat_send_message(
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing request: {error_traceback if request.app.state.debug_mode else 'An internal error occurred.'}",
+            detail=f"Error processing request: {error_traceback if getattr(request.app.state, 'debug_mode', False) else 'An internal error occurred.'}",
         )
 
     if final_reply_content is None:

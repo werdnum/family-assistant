@@ -33,7 +33,7 @@ def get_static_asset(
         if filename.endswith(".css"):
             # CSS is handled by Vite's JS in dev mode, no separate CSS file
             return ""
-        return f"http://localhost:5173/src/{filename}"
+        return f"/src/{filename}"
 
     # In production, read from manifest
     global _manifest_cache, _manifest_last_read
