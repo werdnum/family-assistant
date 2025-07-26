@@ -1,8 +1,10 @@
 import logging
 import uuid
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field
 
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext
@@ -11,6 +13,43 @@ from family_assistant.web.models import ChatMessageResponse, ChatPromptRequest
 
 logger = logging.getLogger(__name__)
 chat_api_router = APIRouter()
+
+
+class ConversationSummary(BaseModel):
+    """Summary of a conversation for listing."""
+
+    conversation_id: str = Field(..., description="Unique conversation identifier")
+    last_message: str = Field(..., description="Preview of the last message")
+    last_timestamp: datetime = Field(..., description="Timestamp of the last message")
+    message_count: int = Field(..., description="Total number of messages")
+
+
+class ConversationListResponse(BaseModel):
+    """Response containing list of conversations."""
+
+    conversations: list[ConversationSummary] = Field(
+        ..., description="List of conversation summaries"
+    )
+    total: int = Field(..., description="Total number of conversations")
+
+
+class ConversationMessage(BaseModel):
+    """A single message in a conversation."""
+
+    internal_id: int = Field(..., description="Internal database ID")
+    role: str = Field(..., description="Message role (user/assistant/system/tool)")
+    content: str | None = Field(None, description="Message content")
+    timestamp: datetime = Field(..., description="Message timestamp")
+    tool_calls: list[dict] | None = Field(None, description="Tool calls if any")
+    error_traceback: str | None = Field(None, description="Error traceback if any")
+
+
+class ConversationMessagesResponse(BaseModel):
+    """Response containing messages for a specific conversation."""
+
+    conversation_id: str = Field(..., description="Conversation identifier")
+    messages: list[ConversationMessage] = Field(..., description="List of messages")
+    total: int = Field(..., description="Total number of messages")
 
 
 @chat_api_router.post("/v1/chat/send_message")  # Path relative to the prefix in api.py
@@ -120,4 +159,85 @@ async def api_chat_send_message(
         reply=final_reply_content,
         conversation_id=conversation_id,  # Return the used/generated conversation_id
         turn_id=response_turn_id,  # Return the turn_id generated for the response model
+    )
+
+
+@chat_api_router.get("/v1/chat/conversations")
+async def get_conversations(
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    limit: int = 20,
+    offset: int = 0,
+) -> ConversationListResponse:
+    """
+    Get a list of chat conversations for the web interface.
+
+    Args:
+        limit: Maximum number of conversations to return
+        offset: Number of conversations to skip for pagination
+
+    Returns:
+        List of conversation summaries with metadata
+    """
+    # Use optimized query for conversation summaries
+    summaries, total = await db_context.message_history.get_conversation_summaries(
+        interface_type="web", limit=limit, offset=offset
+    )
+
+    # Convert to response format
+    conversations = [
+        ConversationSummary(
+            conversation_id=summary["conversation_id"],
+            last_message=summary["last_message"],
+            last_timestamp=summary["last_timestamp"],
+            message_count=summary["message_count"],
+        )
+        for summary in summaries
+    ]
+
+    return ConversationListResponse(
+        conversations=conversations,
+        total=total,
+    )
+
+
+@chat_api_router.get("/v1/chat/conversations/{conversation_id}/messages")
+async def get_conversation_messages(
+    conversation_id: str,
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
+) -> ConversationMessagesResponse:
+    """
+    Get all messages for a specific conversation.
+
+    Args:
+        conversation_id: The conversation identifier
+
+    Returns:
+        List of messages in the conversation
+    """
+    # Get messages for this specific conversation
+    history_by_chat = await db_context.message_history.get_all_grouped(
+        interface_type="web", conversation_id=conversation_id
+    )
+
+    # Extract messages for this conversation (already filtered by conversation_id)
+    messages = history_by_chat.get(("web", conversation_id), [])
+
+    # Convert to response format
+    response_messages = []
+    for msg in messages:
+        response_messages.append(
+            ConversationMessage(
+                internal_id=msg.get("internal_id"),
+                role=msg.get("role"),
+                content=msg.get("content"),
+                timestamp=msg.get("timestamp"),
+                tool_calls=msg.get("tool_calls"),
+                error_traceback=msg.get("error_traceback"),
+            )
+        )
+
+    return ConversationMessagesResponse(
+        conversation_id=conversation_id,
+        messages=response_messages,
+        total=len(response_messages),
     )

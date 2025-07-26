@@ -6,9 +6,16 @@ body {
 /* Main wrapper to contain the entire chat app */
 .chat-app-wrapper {
   display: flex;
-  flex-direction: column;
   min-height: 100vh;
   background-color: var(--bg);
+}
+
+/* Main content wrapper (everything except sidebar) */
+.chat-main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0; /* Prevent content from pushing sidebar */
 }
 
 /* Main content area */
@@ -176,4 +183,34 @@ footer {
   border-top: 1px solid var(--border);
   text-align: center;
   background-color: var(--bg);
+}
+
+/* Mobile adjustments */
+@media (max-width: 768px) {
+  .chat-app-wrapper {
+    position: relative;
+  }
+  
+  .chat-main-content {
+    width: 100%;
+  }
+  
+  /* Adjust header to make room for hamburger */
+  .chat-main-content header {
+    padding-left: 4rem; /* Make room for hamburger button */
+  }
+  
+  /* Reduce padding on mobile */
+  .chat-container {
+    margin: 0 1em;
+  }
+  
+  /* Smaller text on mobile */
+  .chat-info h2 {
+    font-size: 1.25rem;
+  }
+  
+  .conversation-id {
+    font-size: 0.75rem;
+  }
 }

@@ -443,3 +443,80 @@ class MessageHistoryRepository(BaseRepository):
             grouped_history[key].append(msg)
 
         return grouped_history
+
+    async def get_conversation_summaries(
+        self,
+        interface_type: str = "web",
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """
+        Get conversation summaries with pagination, optimized for performance.
+
+        Returns:
+            Tuple of (summaries list, total count)
+        """
+        from sqlalchemy.sql import functions as func
+
+        # Subquery to get the latest message per conversation
+        latest_msg_subq = (
+            select(
+                message_history_table.c.conversation_id,
+                func.max(message_history_table.c.timestamp).label("max_timestamp"),
+            )
+            .where(
+                message_history_table.c.interface_type == interface_type,
+                message_history_table.c.role.in_(["user", "assistant"]),
+                message_history_table.c.content.isnot(None),
+            )
+            .group_by(message_history_table.c.conversation_id)
+            .subquery()
+        )
+
+        # Main query to get conversation summaries
+        summaries_query = (
+            select(
+                message_history_table.c.conversation_id,
+                message_history_table.c.content,
+                message_history_table.c.timestamp,
+                func.count(message_history_table.c.internal_id)
+                .over(partition_by=message_history_table.c.conversation_id)
+                .label("message_count"),
+            )
+            .join(
+                latest_msg_subq,
+                (
+                    message_history_table.c.conversation_id
+                    == latest_msg_subq.c.conversation_id
+                )
+                & (
+                    message_history_table.c.timestamp == latest_msg_subq.c.max_timestamp
+                ),
+            )
+            .where(message_history_table.c.interface_type == interface_type)
+            .order_by(message_history_table.c.timestamp.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+
+        # Count query
+        count_query = select(
+            func.count(func.distinct(message_history_table.c.conversation_id))
+        ).where(message_history_table.c.interface_type == interface_type)
+
+        # Execute queries
+        summaries_rows = await self._db.fetch_all(summaries_query)
+        count_row = await self._db.fetch_one(count_query)
+        total_count = count_row[0] if count_row else 0
+
+        # Process results
+        summaries = []
+        for row in summaries_rows:
+            summaries.append({
+                "conversation_id": row["conversation_id"],
+                "last_message": row["content"][:100] if row["content"] else "",
+                "last_timestamp": row["timestamp"],
+                "message_count": row["message_count"],
+            })
+
+        return summaries, total_count
