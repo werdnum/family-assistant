@@ -16,11 +16,36 @@ RUN mkdir -p /opt/uv-cache && chown claude:claude /opt/uv-cache
 RUN npx playwright install-deps chromium || true && \
     npx playwright install chromium || true
 
+# Pre-build frontend assets for CI
+# First copy only package files for better layer caching
+COPY --chown=claude:claude frontend/package*.json /tmp/frontend/
+
+# Switch to claude user for npm operations
+USER claude
+WORKDIR /tmp/frontend
+
+# Install dependencies (cached when package.json doesn't change)
+RUN npm ci --no-audit --no-fund
+
+# Now copy the rest of the frontend source
+COPY --chown=claude:claude frontend /tmp/frontend/
+
+# Build frontend
+RUN npm run build && \
+    # Copy built assets to a known location
+    mkdir -p /opt/frontend-dist && \
+    cp -r dist/* /opt/frontend-dist/
+
+# Clean up build directory
+USER root
+RUN rm -rf /tmp/frontend
+
 # Set environment variables for CI mode
 ENV UV_CACHE_DIR=/opt/uv-cache
 ENV IS_CI_CONTAINER=true
 
 # Switch back to claude user
 USER claude
+WORKDIR /workspace
 
 # The entrypoint and cmd are inherited from the base image

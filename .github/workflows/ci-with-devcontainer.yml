@@ -104,7 +104,13 @@ jobs:
             -e UV_CACHE_DIR=/opt/uv-cache \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
-            bash -c 'cd /workspace && .venv/bin/pytest -q --timeout=300 --db sqlite -m "not postgres"'
+            bash -c 'cd /workspace && \
+              if [ -d "/opt/frontend-dist" ] && [ ! -d "/workspace/src/family_assistant/static/dist" ]; then \
+                echo "Copying pre-built frontend assets..."; \
+                mkdir -p /workspace/src/family_assistant/static/dist; \
+                cp -r /opt/frontend-dist/* /workspace/src/family_assistant/static/dist/; \
+              fi && \
+              .venv/bin/pytest -q --timeout=300 --db sqlite -m "not postgres"'
 
   test-postgres:
     needs: [prepare, build-devcontainer]
@@ -141,7 +147,13 @@ jobs:
             -e UV_CACHE_DIR=/opt/uv-cache \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
-            bash -c 'cd /workspace && .venv/bin/pytest --postgres -q --timeout=300'
+            bash -c 'cd /workspace && \
+              if [ -d "/opt/frontend-dist" ] && [ ! -d "/workspace/src/family_assistant/static/dist" ]; then \
+                echo "Copying pre-built frontend assets..."; \
+                mkdir -p /workspace/src/family_assistant/static/dist; \
+                cp -r /opt/frontend-dist/* /workspace/src/family_assistant/static/dist/; \
+              fi && \
+              .venv/bin/pytest --postgres -q --timeout=300'
 
   # Require all test jobs to pass
   all-tests:
