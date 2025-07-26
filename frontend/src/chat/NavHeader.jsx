@@ -3,7 +3,6 @@ import React from 'react';
 const NavHeader = () => {
   return (
     <header>
-      <h1>Chat</h1>
       <nav>
         {/* Assistant Data */}
         <div className="nav-group">

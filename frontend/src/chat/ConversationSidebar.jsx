@@ -8,7 +8,6 @@ const ConversationSidebar = ({
   onConversationSelect, 
   onNewChat,
   isOpen,
-  onToggle,
   onRefresh
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -35,18 +34,7 @@ const ConversationSidebar = ({
   };
 
   return (
-    <>
-      {/* Mobile hamburger button */}
-      <button 
-        className="sidebar-toggle-btn"
-        onClick={onToggle}
-        aria-label="Toggle conversation sidebar"
-      >
-        <span className="hamburger-icon">☰</span>
-      </button>
-
-      {/* Sidebar */}
-      <div className={`conversation-sidebar ${isOpen ? 'open' : ''}`}>
+    <div className={`conversation-sidebar ${isOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
           <h2>Conversations</h2>
           <button 
@@ -95,17 +83,7 @@ const ConversationSidebar = ({
             ))
           )}
         </div>
-      </div>
-
-      {/* Mobile overlay */}
-      {isOpen && (
-        <div 
-          className="sidebar-overlay"
-          onClick={onToggle}
-          aria-hidden="true"
-        />
-      )}
-    </>
+    </div>
   );
 };
 

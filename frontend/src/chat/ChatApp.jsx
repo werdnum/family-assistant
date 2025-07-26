@@ -191,34 +191,53 @@ const ChatApp = () => {
   
   return (
     <div className={`chat-app-wrapper ${sidebarOpen ? 'with-sidebar' : ''}`}>
-      <ConversationSidebar
-        conversations={conversations}
-        conversationsLoading={conversationsLoading}
-        currentConversationId={conversationId}
-        onConversationSelect={handleConversationSelect}
-        onNewChat={handleNewChat}
-        isOpen={sidebarOpen}
-        onToggle={() => setSidebarOpen(!sidebarOpen)}
-        onRefresh={fetchConversations}
-      />
-      <div className="chat-main-content">
-        <NavHeader />
-        <main>
-          <AssistantRuntimeProvider runtime={runtime}>
-            <div className="chat-container">
-              <div className="chat-info">
-                <h2>Family Assistant Chat</h2>
-                {conversationId && (
-                  <div className="conversation-id">Conversation: {conversationId.substring(0, 20)}...</div>
-                )}
+      <NavHeader />
+      <div className="chat-app-header">
+        <button 
+          className="sidebar-toggle"
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+          aria-label="Toggle sidebar"
+        >
+          ☰
+        </button>
+        <h1>Chat</h1>
+      </div>
+      <div className="chat-app-body">
+        {/* Overlay when sidebar is open */}
+        {sidebarOpen && (
+          <div 
+            className="sidebar-overlay"
+            onClick={() => setSidebarOpen(false)}
+            aria-hidden="true"
+          />
+        )}
+        <ConversationSidebar
+          conversations={conversations}
+          conversationsLoading={conversationsLoading}
+          currentConversationId={conversationId}
+          onConversationSelect={handleConversationSelect}
+          onNewChat={handleNewChat}
+          isOpen={sidebarOpen}
+          onRefresh={fetchConversations}
+        />
+        <div className="chat-main-content">
+          <main>
+            <AssistantRuntimeProvider runtime={runtime}>
+              <div className="chat-container">
+                <div className="chat-info">
+                  <h2>Family Assistant Chat</h2>
+                  {conversationId && (
+                    <div className="conversation-id">Conversation: {conversationId.substring(0, 20)}...</div>
+                  )}
+                </div>
+                <Thread />
               </div>
-              <Thread />
-            </div>
-          </AssistantRuntimeProvider>
-        </main>
-        <footer>
-          <p>&copy; {new Date().getFullYear()} Family Assistant</p>
-        </footer>
+            </AssistantRuntimeProvider>
+          </main>
+          <footer>
+            <p>&copy; {new Date().getFullYear()} Family Assistant</p>
+          </footer>
+        </div>
       </div>
     </div>
   );
