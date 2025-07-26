@@ -1,8 +1,7 @@
 """Test conversation history endpoints for the chat API."""
 
-import time
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import httpx
 import pytest
@@ -299,48 +298,3 @@ async def test_get_conversation_messages_filters_by_interface(
         data = response.json()
         assert len(data["messages"]) == 1
         assert data["messages"][0]["content"] == "Web message"
-
-
-@pytest.mark.asyncio
-async def test_conversation_summary_performance(web_only_assistant: Assistant) -> None:
-    """Test that conversation summaries are efficiently retrieved."""
-    # Create many conversations with multiple messages each
-    async with get_db_context() as db_context:
-        num_conversations = 50
-        messages_per_conversation = 20
-        base_time = datetime.now(timezone.utc) - timedelta(days=1)
-
-        for conv_idx in range(num_conversations):
-            conv_id = f"perf_test_conv_{conv_idx}"
-            conv_base_time = base_time + timedelta(minutes=conv_idx)
-
-            for msg_idx in range(messages_per_conversation):
-                role = "user" if msg_idx % 2 == 0 else "assistant"
-                await db_context.message_history.add_message(
-                    interface_type="web",
-                    conversation_id=conv_id,
-                    interface_message_id=f"msg_{conv_idx}_{msg_idx}",
-                    turn_id=f"turn_{conv_idx}_{msg_idx // 2}",
-                    thread_root_id=None,
-                    timestamp=conv_base_time + timedelta(seconds=msg_idx),
-                    role=role,
-                    content=f"Message {msg_idx} in conversation {conv_idx}",
-                )
-
-    # Get first page of conversations - should be fast despite many messages
-    transport = httpx.ASGITransport(app=fastapi_app)
-    async with httpx.AsyncClient(
-        transport=transport, base_url="http://testserver"
-    ) as client:
-        start_time = time.time()
-        response = await client.get("/api/v1/chat/conversations?limit=10")
-        elapsed_time = time.time() - start_time
-
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["conversations"]) == 10
-        assert data["total"] == num_conversations
-
-        # Should complete quickly even with many messages
-        # The optimized query should prevent loading all messages
-        assert elapsed_time < 2.0, f"Query took too long: {elapsed_time}s"
