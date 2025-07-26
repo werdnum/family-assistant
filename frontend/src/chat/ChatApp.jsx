@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
 import { Thread } from '@assistant-ui/react';
+import NavHeader from './NavHeader';
 import './chat.css';
 
 const ChatApp = () => {
@@ -93,15 +94,23 @@ const ChatApp = () => {
   });
   
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <div className="chat-container">
-        <div className="chat-header">
-          <h2>Family Assistant Chat</h2>
-          <div className="conversation-id">Conversation: {conversationId}</div>
-        </div>
-        <Thread />
-      </div>
-    </AssistantRuntimeProvider>
+    <div className="chat-app-wrapper">
+      <NavHeader />
+      <main>
+        <AssistantRuntimeProvider runtime={runtime}>
+          <div className="chat-container">
+            <div className="chat-info">
+              <h2>Family Assistant Chat</h2>
+              <div className="conversation-id">Conversation: {conversationId}</div>
+            </div>
+            <Thread />
+          </div>
+        </AssistantRuntimeProvider>
+      </main>
+      <footer>
+        <p>&copy; {new Date().getFullYear()} Family Assistant</p>
+      </footer>
+    </div>
   );
 };
 

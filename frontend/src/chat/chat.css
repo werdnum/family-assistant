@@ -1,19 +1,42 @@
-/* Chat container styles */
-.chat-container {
+/* Chat page body adjustments to match main app */
+body {
+  margin: 0; /* Override for chat page since we have fixed header */
+}
+
+/* Main wrapper to contain the entire chat app */
+.chat-app-wrapper {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  max-height: 100vh;
+  min-height: 100vh;
   background-color: var(--bg);
 }
 
-.chat-header {
-  padding: 1rem;
-  background-color: var(--accent-bg);
+/* Main content area */
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Chat container styles - now without header */
+.chat-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  margin: 0 2em; /* Match body margin from custom.css */
+  max-width: 1200px;
+  align-self: center;
+  width: 100%;
+}
+
+.chat-info {
+  padding: 1rem 0;
   border-bottom: 1px solid var(--border);
 }
 
-.chat-header h2 {
+.chat-info h2 {
   margin: 0;
   font-size: 1.5rem;
 }
@@ -49,28 +72,34 @@
 }
 
 .asst-message-content {
-  padding: 0.75rem 1rem;
-  border-radius: 0.5rem;
-  background-color: var(--accent-bg);
+  padding: 0.8em;
+  border-radius: 4px;
   border: 1px solid var(--border);
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
+/* Match message_history.html styling */
 .asst-message-root[data-role="user"] .asst-message-content {
-  background-color: var(--accent);
-  color: var(--bg);
+  background-color: #e1f5fe; /* Match user-message from custom.css */
+  border-color: #b3e5fc;
+  color: #01579b;
   margin-left: auto;
   max-width: 70%;
 }
 
 .asst-message-root[data-role="assistant"] .asst-message-content {
+  background-color: #f1f8e9; /* Match assistant-message from custom.css */
+  border-color: #dcedc8;
+  color: #33691e;
   max-width: 70%;
 }
 
 /* Composer styles */
 .asst-composer-root {
-  padding: 1rem;
+  padding: 1rem 0;
   border-top: 1px solid var(--border);
-  background-color: var(--accent-bg);
+  background-color: var(--bg);
 }
 
 .asst-composer-form {
@@ -84,7 +113,7 @@
   flex: 1;
   padding: 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 0.25rem;
+  border-radius: 4px;
   background-color: var(--bg);
   color: var(--text);
   font-size: 1rem;
@@ -96,19 +125,23 @@
   border-color: var(--accent);
 }
 
+/* Style send button like other buttons in the app */
 .asst-composer-send {
-  padding: 0.75rem 1.5rem;
+  padding: 0.5rem 1rem;
   background-color: var(--accent);
-  color: var(--bg);
-  border: none;
-  border-radius: 0.25rem;
+  color: var(--accent-text);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
   cursor: pointer;
   font-size: 1rem;
-  font-weight: 500;
+  line-height: 1.5;
+  font-weight: normal;
+  transition: background-color 0.2s;
 }
 
 .asst-composer-send:hover:not(:disabled) {
-  opacity: 0.9;
+  background-color: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 .asst-composer-send:disabled {
@@ -120,12 +153,27 @@
 .asst-thread-root[data-running="true"] .asst-thread-messages::after {
   content: "Thinking...";
   display: block;
-  padding: 0.75rem 1rem;
+  padding: 0.8em;
   background-color: var(--accent-bg);
   border: 1px solid var(--border);
-  border-radius: 0.5rem;
+  border-radius: 4px;
   max-width: 70%;
   margin-top: 1rem;
   color: var(--text-light);
   font-style: italic;
+}
+
+/* Navigation - highlight current page */
+nav a.current-page {
+  background-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: bold;
+}
+
+/* Footer styling */
+footer {
+  padding: 1rem 2em;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  background-color: var(--bg);
 }

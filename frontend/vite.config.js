@@ -6,14 +6,29 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export default defineConfig({
-  // Set base URL for production assets
-  base: '/static/dist/',
+export default defineConfig(({ mode }) => ({
+  // Set base URL - root for dev, /static/dist/ for production
+  base: mode === 'development' ? '/' : '/static/dist/',
   plugins: [
     react(),
     legacy({
       targets: ['defaults', 'not IE 11']
-    })
+    }),
+    // Custom plugin to handle clean URLs (e.g., /chat -> /chat.html)
+    {
+      name: 'html-fallback',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          // Rewrite /chat to /chat.html (and potentially other routes in the future)
+          // Handle query parameters properly
+          const url = new URL(req.url, 'http://localhost');
+          if (url.pathname === '/chat') {
+            req.url = '/chat.html' + url.search;
+          }
+          next();
+        });
+      }
+    }
   ],
   build: {
     // Generate a manifest file to connect assets to Jinja2
@@ -40,10 +55,10 @@ export default defineConfig({
     // Proxy all non-asset requests to our FastAPI backend
     proxy: {
       // Proxy everything except Vite's own paths, static assets, and HTML entry points
-      '^(?!/@vite|/@react-refresh|/src|/node_modules|/__vite_ping|/index\.html|/chat\.html).*': {
+      '^(?!/@vite|/@react-refresh|/src|/node_modules|/__vite_ping|/index\.html|/chat\.html|/chat$).*': {
         target: `http://127.0.0.1:${process.env.VITE_API_PORT || 8000}`,
         changeOrigin: true,
       }
     },
   },
-});
+}));
