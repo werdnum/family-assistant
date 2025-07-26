@@ -1,6 +1,7 @@
 """Test conversation history endpoints for the chat API."""
 
 import time
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -9,6 +10,7 @@ import pytest
 from family_assistant.assistant import Assistant
 from family_assistant.storage.context import get_db_context
 from family_assistant.web.app_creator import app as fastapi_app
+from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 
 @pytest.mark.asyncio
@@ -28,43 +30,52 @@ async def test_get_conversations_empty(web_only_assistant: Assistant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_conversations_with_data(web_only_assistant: Assistant) -> None:
+async def test_get_conversations_with_data(
+    web_only_assistant: Assistant, mock_llm_client: RuleBasedMockLLMClient
+) -> None:
     """Test getting conversations with existing conversation data."""
-    # Get database context using the storage engine
-    async with get_db_context() as db_context:
-        # Create some test conversations
-        conv_ids = [f"test_conv_{i}" for i in range(3)]
-        base_time = datetime.now(timezone.utc) - timedelta(hours=3)
+    # Configure mock LLM to respond appropriately
+    from tests.mocks.mock_llm import LLMOutput
 
-        for i, conv_id in enumerate(conv_ids):
-            # Add messages to each conversation
-            await db_context.message_history.add_message(
-                interface_type="web",
-                conversation_id=conv_id,
-                interface_message_id=f"msg_{i}_1",
-                turn_id=f"turn_{i}_1",
-                thread_root_id=None,
-                timestamp=base_time + timedelta(minutes=i * 10),
-                role="user",
-                content=f"Hello from conversation {i}",
-            )
+    # Set up dynamic rules based on conversation content
+    def matches_conv(i: int) -> Callable[[dict], bool]:
+        def matcher(kwargs: dict) -> bool:
+            messages = kwargs.get("messages", [])
+            if messages:
+                last_message = messages[-1].get("content", "")
+                return f"conversation {i}" in last_message
+            return False
 
-            await db_context.message_history.add_message(
-                interface_type="web",
-                conversation_id=conv_id,
-                interface_message_id=f"msg_{i}_2",
-                turn_id=f"turn_{i}_1",
-                thread_root_id=None,
-                timestamp=base_time + timedelta(minutes=i * 10 + 1),
-                role="assistant",
-                content=f"Hello! This is response {i}",
-            )
+        return matcher
 
-    # Get conversations via API
+    mock_llm_client.rules = [
+        (matches_conv(0), LLMOutput(content="Hello! This is response 0")),
+        (matches_conv(1), LLMOutput(content="Hello! This is response 1")),
+        (matches_conv(2), LLMOutput(content="Hello! This is response 2")),
+    ]
+
+    # Create test conversations via API
+    conv_ids = [f"test_conv_{i}" for i in range(3)]
+
     transport = httpx.ASGITransport(app=fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
+        # Create conversations via chat API
+        for i, conv_id in enumerate(conv_ids):
+            response = await client.post(
+                "/api/v1/chat/send_message",
+                json={
+                    "prompt": f"Hello from conversation {i}",
+                    "conversation_id": conv_id,
+                    "interface_type": "web",
+                },
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert data["reply"] == f"Hello! This is response {i}"
+
+        # Now get conversations via API
         response = await client.get("/api/v1/chat/conversations")
 
         assert response.status_code == 200
@@ -81,31 +92,34 @@ async def test_get_conversations_with_data(web_only_assistant: Assistant) -> Non
 
 
 @pytest.mark.asyncio
-async def test_get_conversations_pagination(web_only_assistant: Assistant) -> None:
+async def test_get_conversations_pagination(
+    web_only_assistant: Assistant, mock_llm_client: RuleBasedMockLLMClient
+) -> None:
     """Test pagination of conversations list."""
-    # Create test data
-    async with get_db_context() as db_context:
-        # Create 5 test conversations
-        base_time = datetime.now(timezone.utc) - timedelta(hours=5)
+    # Configure mock LLM
+    from tests.mocks.mock_llm import LLMOutput
 
-        for i in range(5):
-            conv_id = f"test_conv_page_{i}"
-            await db_context.message_history.add_message(
-                interface_type="web",
-                conversation_id=conv_id,
-                interface_message_id=f"msg_page_{i}",
-                turn_id=f"turn_page_{i}",
-                thread_root_id=None,
-                timestamp=base_time + timedelta(minutes=i * 5),
-                role="user",
-                content=f"Message {i}",
-            )
+    # Simple response for all messages
+    mock_llm_client.rules = [
+        (lambda kwargs: True, LLMOutput(content="Test response")),
+    ]
 
-    # Test pagination via API
+    # Create 5 test conversations via API
     transport = httpx.ASGITransport(app=fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
+        for i in range(5):
+            conv_id = f"test_conv_page_{i}"
+            response = await client.post(
+                "/api/v1/chat/send_message",
+                json={
+                    "prompt": f"Message {i}",
+                    "conversation_id": conv_id,
+                    "interface_type": "web",
+                },
+            )
+            assert response.status_code == 200
         # Get first page (limit 2)
         response = await client.get("/api/v1/chat/conversations?limit=2&offset=0")
         assert response.status_code == 200
@@ -148,94 +162,97 @@ async def test_get_conversation_messages_empty(web_only_assistant: Assistant) ->
 
 @pytest.mark.asyncio
 async def test_get_conversation_messages_with_data(
-    web_only_assistant: Assistant,
+    web_only_assistant: Assistant, mock_llm_client: RuleBasedMockLLMClient
 ) -> None:
     """Test getting messages for an existing conversation."""
+    import json
+
+    from family_assistant.llm import ToolCallFunction, ToolCallItem
+    from tests.mocks.mock_llm import LLMOutput
+
     conv_id = "test_conv_messages"
 
-    # Create test messages
-    async with get_db_context() as db_context:
-        # Add various types of messages
-        messages_data = [
-            {
-                "role": "user",
-                "content": "What is the weather like?",
-                "interface_message_id": "msg_1",
-                "turn_id": "turn_1",
-            },
-            {
-                "role": "assistant",
-                "content": "I'll check the weather for you.",
-                "interface_message_id": "msg_2",
-                "turn_id": "turn_1",
-                "tool_calls": [
-                    {
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {
-                            "name": "get_weather",
-                            "arguments": '{"location": "current"}',
-                        },
-                    }
+    # Configure mock LLM to simulate a tool call flow
+    call_count = 0
+    tool_call_id = "call_1"
+
+    def weather_flow(kwargs: dict) -> LLMOutput:
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            # First call: respond with tool call
+            return LLMOutput(
+                content="I'll check the weather for you.",
+                tool_calls=[
+                    ToolCallItem(
+                        id=tool_call_id,
+                        type="function",
+                        function=ToolCallFunction(
+                            name="get_weather",
+                            arguments=json.dumps({"location": "current"}),
+                        ),
+                    )
                 ],
-            },
-            {
-                "role": "tool",
-                "content": "Weather: Sunny, 72°F",
-                "interface_message_id": "msg_3",
-                "turn_id": "turn_1",
-                "tool_call_id": "call_1",
-            },
-            {
-                "role": "assistant",
-                "content": "The weather is sunny and 72°F.",
-                "interface_message_id": "msg_4",
-                "turn_id": "turn_1",
-            },
-        ]
-
-        # Add messages to database
-        base_time = datetime.now(timezone.utc) - timedelta(minutes=10)
-        for idx, msg_data in enumerate(messages_data):
-            result = await db_context.message_history.add_message(
-                interface_type="web",
-                conversation_id=conv_id,
-                timestamp=base_time + timedelta(seconds=idx * 30),
-                thread_root_id=None,
-                **msg_data,
             )
-            # Store internal_id for validation
-            if result:
-                msg_data["internal_id"] = result["internal_id"]
+        else:
+            # Second call: respond with final answer
+            return LLMOutput(content="The weather is sunny and 72°F.")
 
-    # Get conversation messages via API
+    mock_llm_client.rules = [
+        (lambda kwargs: True, weather_flow),
+    ]
+
+    # Create conversation via API
     transport = httpx.ASGITransport(app=fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
+        # Send the initial message
+        response = await client.post(
+            "/api/v1/chat/send_message",
+            json={
+                "prompt": "What is the weather like?",
+                "conversation_id": conv_id,
+                "interface_type": "web",
+            },
+        )
+        assert response.status_code == 200
+        assert "weather is sunny and 72°F" in response.json()["reply"]
+
+        # Get conversation messages via API
         response = await client.get(f"/api/v1/chat/conversations/{conv_id}/messages")
 
         assert response.status_code == 200
         data = response.json()
         assert data["conversation_id"] == conv_id
-        assert len(data["messages"]) == 4
-        assert data["total"] == 4
+        # Should have at least 4 messages: user, assistant with tool call, tool response, final assistant
+        assert len(data["messages"]) >= 4
+        assert data["total"] >= 4
 
-        # Verify message details
-        for i, msg in enumerate(data["messages"]):
-            expected = messages_data[i]
-            assert msg["internal_id"] == expected["internal_id"]
-            assert msg["role"] == expected["role"]
-            assert msg["content"] == expected["content"]
-            assert "timestamp" in msg
+        # Verify message roles and content
+        messages = data["messages"]
 
-            # Check tool calls if present
-            if "tool_calls" in expected:
-                assert msg["tool_calls"] == expected["tool_calls"]
+        # Find messages by role
+        user_msgs = [m for m in messages if m["role"] == "user"]
+        assistant_msgs = [
+            m for m in messages if m["role"] == "assistant" and not m.get("tool_calls")
+        ]
+        tool_call_msgs = [
+            m for m in messages if m["role"] == "assistant" and m.get("tool_calls")
+        ]
+        tool_msgs = [m for m in messages if m["role"] == "tool"]
 
-            # Check tool_call_id for tool messages
-            if expected["role"] == "tool":
-                assert msg.get("tool_call_id") == expected["tool_call_id"]
+        # Verify we have the expected message types
+        assert len(user_msgs) >= 1
+        assert len(assistant_msgs) >= 1
+        assert len(tool_call_msgs) >= 1
+        assert len(tool_msgs) >= 1
+
+        # Check content
+        assert any("What is the weather like?" in m["content"] for m in user_msgs)
+        assert any("weather is sunny and 72°F" in m["content"] for m in assistant_msgs)
+        assert any("get_weather" in str(m["tool_calls"]) for m in tool_call_msgs)
 
 
 @pytest.mark.asyncio

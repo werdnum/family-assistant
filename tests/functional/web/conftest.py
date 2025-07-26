@@ -155,11 +155,21 @@ def build_frontend_assets() -> None:
         pytest.fail(f"No built assets found in {dist_dir}")
 
 
+@pytest.fixture(scope="function")
+def mock_llm_client() -> RuleBasedMockLLMClient:
+    """Create a mock LLM client that tests can configure."""
+    return RuleBasedMockLLMClient(
+        rules=[],
+        default_response=MockLLMOutput(content="Test response from mock LLM"),
+    )
+
+
 @pytest_asyncio.fixture(scope="function")
 async def web_only_assistant(
     db_engine: AsyncEngine,
     vite_and_api_ports: tuple[int, int],
     build_frontend_assets: None,  # Ensure assets are built
+    mock_llm_client: RuleBasedMockLLMClient,
 ) -> AsyncGenerator[Assistant, None]:
     """Start Assistant in web-only mode for testing."""
     # Auth is already disabled at module level
@@ -218,16 +228,12 @@ async def web_only_assistant(
         "event_system": {"enabled": False},
     }
 
-    # Create mock LLM client
-    mock_llm_client = RuleBasedMockLLMClient(
-        rules=[],
-        default_response=MockLLMOutput(content="Test response from mock LLM"),
-    )
-
-    # Create Assistant instance
+    # Create Assistant instance using the provided mock LLM client
     assistant = Assistant(
         config=test_config,
-        llm_client_overrides={"mock-model-for-testing": mock_llm_client},
+        llm_client_overrides={
+            "web_test_profile": mock_llm_client
+        },  # Key by profile ID, not model name
     )
 
     # Enable debug mode for tests to get detailed error messages
