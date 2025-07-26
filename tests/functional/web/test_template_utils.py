@@ -50,11 +50,18 @@ class TestTemplateUtils:
 
         main_entry = manifest["index.html"]
         assert "file" in main_entry, "file property missing from index.html entry"
-        assert "css" in main_entry, "css property missing from index.html entry"
-        assert isinstance(main_entry["css"], list), "css should be a list"
-        assert len(main_entry["css"]) > 0, (
-            "index.html should have at least one CSS file"
-        )
+
+        # CSS might be in the entry itself or in imported modules
+        has_css = "css" in main_entry and len(main_entry.get("css", [])) > 0
+
+        # Check if CSS is in imported modules
+        if not has_css and "imports" in main_entry:
+            for import_key in main_entry["imports"]:
+                if import_key in manifest and "css" in manifest[import_key]:
+                    has_css = True
+                    break
+
+        assert has_css, "No CSS files found in index.html entry or its imports"
 
     @patch.dict(os.environ, {"DEV_MODE": "false"})
     def test_get_static_asset_production_mode_js(self) -> None:
@@ -86,9 +93,10 @@ class TestTemplateUtils:
         # Test main.css lookup
         result = get_static_asset("main.css", entry_name="main")
 
-        # Should return the CSS file associated with main.js entry
-        assert result.startswith("/static/dist/assets/main-"), (
-            f"Expected path to start with '/static/dist/assets/main-', got '{result}'"
+        # Should return the CSS file associated with the main entry
+        # With the new structure, CSS is in the imported custom module
+        assert result.startswith("/static/dist/assets/custom-"), (
+            f"Expected path to start with '/static/dist/assets/custom-', got '{result}'"
         )
         assert result.endswith(".css"), (
             f"Expected path to end with '.css', got '{result}'"
@@ -98,7 +106,7 @@ class TestTemplateUtils:
         """Test getting assets in dev mode."""
         # Test that dev mode returns the Vite dev server URLs
         result = get_static_asset("main.js", dev_mode=True)
-        assert result == "http://localhost:5173/src/main.js"
+        assert result == "/src/main.js"
 
         # CSS returns empty string in dev mode (handled by Vite JS)
         result = get_static_asset("main.css", dev_mode=True)

@@ -1,1 +1,0 @@
-import"./modulepreload-polyfill-B5Qt9EMX.js";function t(){import.meta.url,import("_").catch(()=>1),async function*(){}().next()}console.log("Family Assistant frontend loaded");window.FamilyAssistant={version:"0.1.0",loaded:!0};export{t as __vite_legacy_guard};

@@ -1,0 +1,1 @@
+System.register(["./custom-legacy-BA68xdvr.js"],function(e,s){"use strict";return{setters:[null],execute:function(){console.log("Family Assistant frontend loaded"),window.FamilyAssistant={version:"0.1.0",loaded:!0}}}});

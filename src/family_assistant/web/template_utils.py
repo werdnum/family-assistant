@@ -84,8 +84,20 @@ def get_static_asset(
             if filename.endswith(".js") and "file" in entry:
                 return f"/static/dist/{entry['file']}"
             # Check for CSS files
-            if filename.endswith(".css") and "css" in entry and entry.get("css"):
-                return f"/static/dist/{entry['css'][0]}"
+            if filename.endswith(".css"):
+                # CSS might be in the entry itself
+                if "css" in entry and entry.get("css"):
+                    return f"/static/dist/{entry['css'][0]}"
+                # Or in imported modules
+                elif "imports" in entry:
+                    for import_key in entry["imports"]:
+                        if (
+                            import_key in _manifest_cache
+                            and "css" in _manifest_cache[import_key]
+                        ):
+                            css_files = _manifest_cache[import_key]["css"]
+                            if css_files:
+                                return f"/static/dist/{css_files[0]}"
 
         # Fallback: look up the file directly in the manifest (for legacy structure)
         entry_key = f"src/{filename}"
