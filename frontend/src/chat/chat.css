@@ -25,8 +25,8 @@ body {
   display: flex;
   align-items: center;
   gap: 1rem;
-  padding: 1rem 2rem;
-  background-color: var(--bg);
+  padding: 0.75rem 2rem;
+  background-color: var(--accent-bg);
   border-bottom: 1px solid var(--border);
 }
 
@@ -99,17 +99,16 @@ main {
   flex-direction: column;
   flex: 1;
   overflow: hidden;
-  padding: 0 2rem;
-  max-width: 900px;
-  margin: 0 auto;
+  padding: 0;
   width: 100%;
   box-sizing: border-box;
 }
 
 .chat-info {
-  padding: 1.5rem 0 1rem;
+  padding: 1.5rem 2rem;
+  background-color: var(--accent-bg);
   border-bottom: 1px solid var(--border);
-  margin-bottom: 1rem;
+  margin: 0;
 }
 
 .chat-info h2 {
@@ -131,7 +130,7 @@ main {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(to bottom, var(--bg) 0%, var(--accent-bg) 100%);
+  background-color: var(--bg);
 }
 
 .asst-thread-viewport {
@@ -160,9 +159,10 @@ main {
 }
 
 .asst-thread-messages {
-  max-width: 800px;
+  max-width: 900px;
   margin: 0 auto;
   width: 100%;
+  padding: 0 2rem;
 }
 
 .asst-message-root {
@@ -196,27 +196,25 @@ main {
   color: var(--accent-text);
   margin-left: auto;
   border-bottom-right-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .asst-message-root[data-role="assistant"] .asst-message-content {
-  background-color: white;
+  background-color: var(--accent-bg);
   color: var(--text);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--border);
   border-bottom-left-radius: 4px;
   margin-right: auto;
 }
 
 /* Composer styles */
 .asst-composer-root {
-  padding: 1.5rem 0;
+  padding: 1.5rem 2rem;
   border-top: 1px solid var(--border);
   background-color: var(--bg);
 }
 
 .asst-composer-form {
-  max-width: 100%;
+  max-width: 900px;
   margin: 0 auto;
   display: flex;
   gap: 0.75rem;

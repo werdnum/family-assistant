@@ -1,21 +1,16 @@
 
 /* Conversation sidebar */
 .conversation-sidebar {
-  width: 280px;
+  width: 320px;
   height: 100%;
-  background-color: var(--accent-bg);
+  background-color: var(--bg);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  transition: transform 0.3s ease;
-  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.05);
-  z-index: 10;
-  transform: translateX(-100%);
+  flex-shrink: 0;
+  transition: margin-left 0.3s ease;
+  margin-left: -320px;
 }
 
 /* Sidebar header */
@@ -43,20 +38,18 @@
   gap: 0.5rem;
   width: 100%;
   padding: 0.75rem 1rem;
-  background: linear-gradient(135deg, #0066cc 0%, #0052a3 100%);
-  color: white;
-  border: none;
-  border-radius: 8px;
+  background-color: var(--accent);
+  color: var(--accent-text);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
   cursor: pointer;
   font-size: 1rem;
   font-weight: 500;
   transition: all 0.2s;
-  box-shadow: 0 2px 4px rgba(0, 102, 204, 0.2);
 }
 
 .new-chat-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(0, 102, 204, 0.3);
+  opacity: 0.9;
 }
 
 .plus-icon {
@@ -67,7 +60,6 @@
 /* Search input */
 .sidebar-search {
   padding: 1rem;
-  background-color: var(--bg);
   border-bottom: 1px solid var(--border);
 }
 
@@ -75,8 +67,8 @@
   width: 100%;
   padding: 0.625rem 1rem;
   border: 1px solid var(--border);
-  border-radius: 20px;
-  background-color: var(--accent-bg);
+  border-radius: 5px;
+  background-color: var(--bg);
   color: var(--text);
   font-size: 0.875rem;
   transition: all 0.2s;
@@ -85,8 +77,6 @@
 .search-input:focus {
   outline: none;
   border-color: var(--accent);
-  background-color: var(--bg);
-  box-shadow: 0 0 0 3px var(--accent-bg);
 }
 
 /* Conversations list */
@@ -162,16 +152,33 @@
 
 /* Sidebar state styles */
 .conversation-sidebar.open {
-  transform: translateX(0);
+  margin-left: 0;
 }
 
-/* Overlay for when sidebar is open (applies to all screen sizes) */
-.sidebar-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.5);
-  z-index: 9;
+/* Mobile styles */
+@media (max-width: 768px) {
+  .conversation-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    z-index: 1000;
+    transform: translateX(-100%);
+    margin-left: 0;
+  }
+  
+  .conversation-sidebar.open {
+    transform: translateX(0);
+  }
+  
+  /* Overlay only on mobile */
+  .sidebar-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 999;
+  }
 }

@@ -12,6 +12,7 @@ const ChatApp = () => {
   const [conversationId, setConversationId] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   
   // Fetch conversations list
   const fetchConversations = async () => {
@@ -28,6 +29,16 @@ const ChatApp = () => {
       setConversationsLoading(false);
     }
   };
+
+  // Handle window resize
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 768);
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Initialize conversation ID from URL or localStorage
   useEffect(() => {
@@ -203,8 +214,8 @@ const ChatApp = () => {
         <h1>Chat</h1>
       </div>
       <div className="chat-app-body">
-        {/* Overlay when sidebar is open */}
-        {sidebarOpen && (
+        {/* Overlay when sidebar is open on mobile */}
+        {sidebarOpen && isMobile && (
           <div 
             className="sidebar-overlay"
             onClick={() => setSidebarOpen(false)}
