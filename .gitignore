@@ -20,3 +20,6 @@ local-logs.txt
 
 # Development databases
 dev_family_assistant.db*
+
+# Build artifacts
+src/family_assistant/static/dist/

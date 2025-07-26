@@ -41,6 +41,7 @@ class ConversationMessage(BaseModel):
     content: str | None = Field(None, description="Message content")
     timestamp: datetime = Field(..., description="Message timestamp")
     tool_calls: list[dict] | None = Field(None, description="Tool calls if any")
+    tool_call_id: str | None = Field(None, description="Tool call ID for tool messages")
     error_traceback: str | None = Field(None, description="Error traceback if any")
 
 
@@ -236,6 +237,7 @@ async def get_conversation_messages(
                 content=msg.get("content"),
                 timestamp=msg["timestamp"],
                 tool_calls=msg.get("tool_calls"),
+                tool_call_id=msg.get("tool_call_id"),
                 error_traceback=msg.get("error_traceback"),
             )
         )

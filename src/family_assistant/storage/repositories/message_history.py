@@ -458,7 +458,8 @@ class MessageHistoryRepository(BaseRepository):
         """
         from sqlalchemy.sql import functions as func
 
-        # Subquery to get the latest message per conversation
+        # Subquery to get the latest message id and count per conversation
+        # We get the max internal_id within the max timestamp to handle timestamp collisions
         latest_msg_subq = (
             select(
                 message_history_table.c.conversation_id,
@@ -473,15 +474,11 @@ class MessageHistoryRepository(BaseRepository):
             .subquery()
         )
 
-        # Main query to get conversation summaries
-        summaries_query = (
+        # Get the max internal_id for messages with the latest timestamp
+        latest_id_subq = (
             select(
                 message_history_table.c.conversation_id,
-                message_history_table.c.content,
-                message_history_table.c.timestamp,
-                func.count(message_history_table.c.internal_id)
-                .over(partition_by=message_history_table.c.conversation_id)
-                .label("message_count"),
+                func.max(message_history_table.c.internal_id).label("max_id"),
             )
             .join(
                 latest_msg_subq,
@@ -493,20 +490,67 @@ class MessageHistoryRepository(BaseRepository):
                     message_history_table.c.timestamp == latest_msg_subq.c.max_timestamp
                 ),
             )
-            .where(message_history_table.c.interface_type == interface_type)
+            .where(
+                message_history_table.c.interface_type == interface_type,
+                message_history_table.c.role.in_(["user", "assistant"]),
+                message_history_table.c.content.isnot(None),
+            )
+            .group_by(message_history_table.c.conversation_id)
+            .subquery()
+        )
+
+        # Get message counts per conversation
+        msg_count_subq = (
+            select(
+                message_history_table.c.conversation_id,
+                func.count(message_history_table.c.internal_id).label("msg_count"),
+            )
+            .where(
+                message_history_table.c.interface_type == interface_type,
+                message_history_table.c.role.in_(["user", "assistant"]),
+            )
+            .group_by(message_history_table.c.conversation_id)
+            .subquery()
+        )
+
+        # Main query to get conversation summaries with the latest message content
+        summaries_query = (
+            select(
+                message_history_table.c.conversation_id,
+                message_history_table.c.content,
+                message_history_table.c.timestamp,
+                msg_count_subq.c.msg_count.label("message_count"),
+            )
+            .join(
+                latest_id_subq,
+                message_history_table.c.internal_id == latest_id_subq.c.max_id,
+            )
+            .join(
+                msg_count_subq,
+                message_history_table.c.conversation_id
+                == msg_count_subq.c.conversation_id,
+            )
+            .where(
+                message_history_table.c.interface_type == interface_type,
+                message_history_table.c.content.isnot(None),
+            )
             .order_by(message_history_table.c.timestamp.desc())
             .limit(limit)
             .offset(offset)
         )
 
-        # Count query - use subquery approach for distinct count
+        # Count query - count conversations that have messages with content
         count_subquery = (
             select(message_history_table.c.conversation_id)
-            .where(message_history_table.c.interface_type == interface_type)
+            .where(
+                message_history_table.c.interface_type == interface_type,
+                message_history_table.c.role.in_(["user", "assistant"]),
+                message_history_table.c.content.isnot(None),
+            )
             .distinct()
             .subquery()
         )
-        count_query = select(func.count()).select_from(count_subquery)
+        count_query = select(func.count().label("count")).select_from(count_subquery)
 
         # Execute queries
         summaries_rows = await self._db.fetch_all(summaries_query)
