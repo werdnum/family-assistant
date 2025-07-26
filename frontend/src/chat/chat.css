@@ -1,6 +1,7 @@
 /* Chat page body adjustments to match main app */
 body {
   margin: 0; /* Override for chat page since we have fixed header */
+  overflow-x: hidden; /* Prevent horizontal scroll on body */
 }
 
 /* Global box-sizing */
@@ -15,7 +16,7 @@ body {
   min-height: 100vh;
   background-color: var(--bg);
   position: relative;
-  width: 100vw;
+  width: 100%;
   overflow-x: hidden;
 }
 
