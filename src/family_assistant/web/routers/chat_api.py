@@ -225,12 +225,16 @@ async def get_conversation_messages(
     # Convert to response format
     response_messages = []
     for msg in messages:
+        # Skip messages with missing required fields
+        if not all(key in msg for key in ["internal_id", "role", "timestamp"]):
+            continue
+
         response_messages.append(
             ConversationMessage(
-                internal_id=msg.get("internal_id"),
-                role=msg.get("role"),
+                internal_id=msg["internal_id"],
+                role=msg["role"],
                 content=msg.get("content"),
-                timestamp=msg.get("timestamp"),
+                timestamp=msg["timestamp"],
                 tool_calls=msg.get("tool_calls"),
                 error_traceback=msg.get("error_traceback"),
             )

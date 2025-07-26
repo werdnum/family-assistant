@@ -15,7 +15,7 @@
     "name": "custom"
   },
   "chat-legacy.html": {
-    "file": "assets/chat-legacy-CxFcs_Ak.js",
+    "file": "assets/chat-legacy-BIS2bX6Y.js",
     "name": "chat",
     "src": "chat-legacy.html",
     "isEntry": true,
@@ -24,7 +24,7 @@
     ]
   },
   "chat.html": {
-    "file": "assets/chat-CQeaflpr.js",
+    "file": "assets/chat-BUQxwkB_.js",
     "name": "chat",
     "src": "chat.html",
     "isEntry": true,
@@ -32,7 +32,7 @@
       "_custom-BFKWx-jO.js"
     ],
     "css": [
-      "assets/chat-rsEK0Xlf.css"
+      "assets/chat-DIB0AKts.css"
     ]
   },
   "index-legacy.html": {

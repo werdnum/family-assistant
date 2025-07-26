@@ -499,15 +499,19 @@ class MessageHistoryRepository(BaseRepository):
             .offset(offset)
         )
 
-        # Count query
-        count_query = select(
-            func.count(func.distinct(message_history_table.c.conversation_id))
-        ).where(message_history_table.c.interface_type == interface_type)
+        # Count query - use subquery approach for distinct count
+        count_subquery = (
+            select(message_history_table.c.conversation_id)
+            .where(message_history_table.c.interface_type == interface_type)
+            .distinct()
+            .subquery()
+        )
+        count_query = select(func.count()).select_from(count_subquery)
 
         # Execute queries
         summaries_rows = await self._db.fetch_all(summaries_query)
         count_row = await self._db.fetch_one(count_query)
-        total_count = count_row[0] if count_row else 0
+        total_count = count_row["count"] if count_row else 0
 
         # Process results
         summaries = []
