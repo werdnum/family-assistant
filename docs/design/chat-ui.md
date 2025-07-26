@@ -12,9 +12,10 @@ backend.
 
 1. **React Application** (`/frontend/src/chat/`)
 
-   - `ChatApp.jsx` - Main chat component using assistant-ui
-   - `index.jsx` - Entry point that mounts the React app
-   - `chat.css` - Styling for the chat interface
+   - `ChatApp.jsx` - Main chat component using assistant-ui with integrated layout
+   - `NavHeader.jsx` - Reusable navigation header component
+   - `index.jsx` - Entry point that imports Simple.css and custom styles
+   - `chat.css` - Styling for the chat interface using CSS variables
    - `chat.html` - HTML entry point for Vite to build the chat SPA
 
 2. **Integration with assistant-ui**
@@ -78,11 +79,24 @@ backend.
    - Redirects to login on 401 errors
    - Supports both session-based and token-based auth
 
-4. **Styling**
+4. **Styling and UI Integration**
 
    - Responsive design matching Simple.css theme
-   - Custom styling for chat bubbles and input
-   - Full-height chat container
+   - Custom styling for chat bubbles matching message_history.html colors:
+     - User messages: Light blue background (#e1f5fe)
+     - Assistant messages: Light green background (#f1f8e9)
+   - Full-height chat container with proper layout structure
+   - **NEW**: Integrated navigation header component (`NavHeader.jsx`)
+   - **NEW**: Consistent header and footer matching the rest of the application
+   - **NEW**: Current page highlighting in navigation
+   - **NEW**: CSS variables from Simple.css for consistent theming
+
+5. **Development Environment**
+
+   - **NEW**: Vite configuration supports clean URLs in dev mode (`/chat` instead of `/chat.html`)
+   - **NEW**: Conditional base URL for dev vs production builds
+   - **NEW**: Query parameter handling in URL rewriting middleware
+   - Hot Module Replacement (HMR) working properly
 
 ## Implementation Complete
 
@@ -116,9 +130,33 @@ Add features like:
 - Tool execution visualization
 - Streaming responses
 
+## Recent Updates (January 2025)
+
+1. **UI Consistency Improvements**
+
+   - Added navigation header component matching the main application
+   - Integrated Simple.css and custom styles for consistent theming
+   - Updated message styling to match message_history.html color scheme
+   - Added proper semantic HTML structure with header, main, and footer
+
+2. **Development Experience Enhancements**
+
+   - Fixed Vite configuration to support clean URLs (`/chat` instead of `/chat.html`)
+   - Added conditional base URL handling for dev vs production
+   - Improved URL rewriting to handle query parameters
+   - Ensured HMR works properly in development mode
+
+3. **Code Review Hook Improvements**
+
+   - Made review hook less strict for minor issues
+   - Added ability to override minor warnings with sentinel phrase
+   - Only block commits on critical issues (build breaks, runtime errors, security)
+   - Simplified sentinel detection to work with multi-line commit messages
+
 ## Testing
 
 - Unit tests for API endpoint exist in `test_chat_api_endpoint.py`
 - UI endpoint accessibility tests updated to include chat routes
 - All web tests pass with the new chat UI implementation
 - Console error detection validates proper JavaScript execution
+- Running test suite: `poe test -n2` for parallel execution
