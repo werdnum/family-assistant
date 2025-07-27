@@ -91,7 +91,8 @@ if echo "$COMMAND" | grep -qE "(^|[;&|])\s*git\s+add\s+.*[;&|]\s*git\s+(commit|c
     echo "${YELLOW}Note: Reviewing changes that will be staged by the git add command${NC}" >&2
     
     # Extract and run just the git add part
-    ADD_COMMAND=$(echo "$COMMAND" | sed -E 's/^(.*git\s+add\s+[^;&|]*).*/\1/')
+    # Replace newlines with spaces to handle multi-line commit messages
+    ADD_COMMAND=$(echo "$COMMAND" | tr '\n' ' ' | sed -E 's/^(.*git\s+add\s+[^;&|]*).*/\1/')
     echo "${CYAN}Running: $ADD_COMMAND${NC}" >&2
     eval "$ADD_COMMAND" 2>&1
     ADD_EXIT=$?
