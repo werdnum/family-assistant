@@ -128,6 +128,7 @@ const Composer = () => {
         autoFocus
         placeholder="Write a message..."
         className="composer-input"
+        data-testid="chat-input"
       />
       <ComposerAction />
     </ComposerPrimitive.Root>
@@ -143,6 +144,7 @@ const ComposerAction = () => {
             tooltip="Send message"
             variant="primary"
             className="composer-send"
+            data-testid="send-button"
           >
             <SendHorizontalIcon size={18} />
           </TooltipIconButton>
@@ -165,13 +167,13 @@ const ComposerAction = () => {
 
 const UserMessage = () => {
   return (
-    <MessagePrimitive.Root className="message-root user-message">
+    <MessagePrimitive.Root className="message-root user-message" data-testid="user-message">
       <div className="message-container">
         <div className="message-header">
           <MessageTimestamp />
         </div>
         <div className="message-content-wrapper">
-          <div className="message-bubble user-bubble">
+          <div className="message-bubble user-bubble" data-testid="user-message-content">
             <MessagePrimitive.Content components={{ Text: 'span' }} />
           </div>
           <div className="message-avatar user-avatar">
@@ -222,7 +224,7 @@ const EditComposer = () => {
 
 const AssistantMessage = () => {
   return (
-    <MessagePrimitive.Root className="message-root assistant-message">
+    <MessagePrimitive.Root className="message-root assistant-message" data-testid="assistant-message">
       <div className="message-container">
         <div className="message-header">
           <MessageTimestamp />
@@ -231,7 +233,7 @@ const AssistantMessage = () => {
           <div className="message-avatar assistant-avatar">
             <BotIcon size={20} />
           </div>
-          <div className="message-bubble assistant-bubble">
+          <div className="message-bubble assistant-bubble" data-testid="assistant-message-content">
             <MessagePrimitive.Content components={{ Text: MarkdownText }} />
           </div>
         </div>
