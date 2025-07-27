@@ -339,14 +339,26 @@ export function useStreamingRuntime({ conversationId, initialMessages = [], onUp
       
       // Process the SSE stream
       for await (const event of parseSSEStream(response)) {
+        // With a standardized payload, event now directly contains the data from the LLMStreamEvent
         switch (event.type) {
           case 'text':
             currentText += event.content;
-            setMessages(prev => prev.map(msg => 
-              msg.id === assistantId 
-                ? { ...msg, content: [{ type: 'text', text: currentText }] }
-                : msg
-            ));
+            setMessages(prev => prev.map(msg => {
+              if (msg.id !== assistantId) return msg;
+
+              // Find the index of the text part to maintain immutability
+              const textPartIndex = msg.content.findIndex(part => part.type === 'text');
+              
+              if (textPartIndex !== -1) {
+                // If a text part exists, create a new content array with updated text part
+                const newContent = [...msg.content];
+                newContent[textPartIndex] = { ...newContent[textPartIndex], text: currentText };
+                return { ...msg, content: newContent };
+              } else {
+                // Otherwise, add a new text part to the beginning
+                return { ...msg, content: [{ type: 'text', text: currentText }, ...msg.content] };
+              }
+            }));
             break;
             
           case 'tool_call':
