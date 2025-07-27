@@ -34,7 +34,7 @@ COPY --chown=claude:claude frontend /tmp/frontend/
 RUN npm run build && \
     # Copy built assets to a known location
     mkdir -p /opt/frontend-dist && \
-    cp -r dist/* /opt/frontend-dist/
+    cp -r ../src/family_assistant/static/dist/* /opt/frontend-dist/
 
 # Clean up build directory
 USER root
