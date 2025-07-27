@@ -109,6 +109,8 @@ jobs:
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/src/family_assistant/static/dist; \
                 cp -r /opt/frontend-dist/* /workspace/src/family_assistant/static/dist/; \
+                # Also copy the .vite directory which contains the manifest \
+                [ -d "/opt/frontend-dist/.vite" ] && cp -r /opt/frontend-dist/.vite /workspace/src/family_assistant/static/dist/.vite; \
               fi && \
               .venv/bin/pytest -q --timeout=300 --db sqlite -m "not postgres"'
 
@@ -152,6 +154,8 @@ jobs:
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/src/family_assistant/static/dist; \
                 cp -r /opt/frontend-dist/* /workspace/src/family_assistant/static/dist/; \
+                # Also copy the .vite directory which contains the manifest \
+                [ -d "/opt/frontend-dist/.vite" ] && cp -r /opt/frontend-dist/.vite /workspace/src/family_assistant/static/dist/.vite; \
               fi && \
               .venv/bin/pytest --postgres -q --timeout=300'
 
