@@ -1,12 +1,13 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
 import { Thread, ThreadLoading } from './Thread';
 import NavHeader from './NavHeader';
 import ConversationSidebar from './ConversationSidebar';
+import { useStreamingResponse } from './useStreamingResponse';
 import './chat.css';
 import './thread.css';
 
-const ChatApp = () => {
+const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 768);
@@ -14,9 +15,10 @@ const ChatApp = () => {
   const [conversations, setConversations] = useState([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const streamingMessageIdRef = useRef(null);
   
   // Fetch conversations list
-  const fetchConversations = async () => {
+  const fetchConversations = useCallback(async () => {
     try {
       setConversationsLoading(true);
       const response = await fetch('/api/v1/chat/conversations');
@@ -29,7 +31,68 @@ const ChatApp = () => {
     } finally {
       setConversationsLoading(false);
     }
-  };
+  }, []);
+  
+  // Streaming callbacks
+  const handleStreamingMessage = useCallback((content) => {
+    // Update the assistant message with streaming content
+    if (streamingMessageIdRef.current) {
+      setMessages(prev => prev.map(msg => 
+        msg.id === streamingMessageIdRef.current
+          ? { ...msg, content: [{ type: 'text', text: content }] }
+          : msg
+      ));
+    }
+  }, []);
+  
+  const handleStreamingError = useCallback((error, metadata) => {
+    console.error('Streaming error:', error, metadata);
+    // Update the existing placeholder message with error content
+    if (streamingMessageIdRef.current) {
+      setMessages(prev => prev.map(msg => 
+        msg.id === streamingMessageIdRef.current
+          ? { ...msg, content: [{ type: 'text', text: 'Sorry, I encountered an error processing your message.' }] }
+          : msg
+      ));
+      // Reset the ref
+      streamingMessageIdRef.current = null;
+    }
+  }, []);
+  
+  const handleStreamingComplete = useCallback(({ content, toolCalls, metadata }) => {
+    // Update the message with any tool calls if present
+    if (toolCalls && toolCalls.length > 0 && streamingMessageIdRef.current) {
+      const contentParts = [];
+      if (content) {
+        contentParts.push({ type: 'text', text: content });
+      }
+      toolCalls.forEach(tc => {
+        contentParts.push({
+          type: 'tool-call',
+          toolCallId: tc.id,
+          toolName: tc.name,
+          args: tc.arguments,
+          result: 'Tool execution in progress...'
+        });
+      });
+      setMessages(prev => prev.map(msg => 
+        msg.id === streamingMessageIdRef.current
+          ? { ...msg, content: contentParts }
+          : msg
+      ));
+    }
+    // Refresh conversations after message is sent
+    fetchConversations();
+    // Clear refs
+    streamingMessageIdRef.current = null;
+  }, [fetchConversations]);
+  
+  // Initialize streaming hook
+  const { sendStreamingMessage, cancelStream, isStreaming } = useStreamingResponse({
+    onMessage: handleStreamingMessage,
+    onError: handleStreamingError,
+    onComplete: handleStreamingComplete
+  });
 
   // Handle window resize
   useEffect(() => {
@@ -162,7 +225,7 @@ const ChatApp = () => {
   
   // Handle new chat creation
   const handleNewChat = () => {
-    const newConvId = `web_conv_${Date.now()}`;
+    const newConvId = `web_conv_${crypto.randomUUID()}`;
     setConversationId(newConvId);
     setMessages([]);
     localStorage.setItem('lastConversationId', newConvId);
@@ -188,61 +251,28 @@ const ChatApp = () => {
     };
     
     setMessages(prev => [...prev, userMessage]);
-    setIsLoading(true);
     
-    try {
-      // Send message to backend
-      const response = await fetch('/api/v1/chat/send_message', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          prompt: message.content[0].text,
-          conversation_id: conversationId || `web_conv_${Date.now()}`,
-          profile_id: 'default_assistant', // You can make this configurable
-          interface_type: 'web' // Specify that this is from the web UI
-        }),
-      });
-      
-      if (!response.ok) {
-        // Handle authentication errors
-        if (response.status === 401) {
-          window.location.href = '/login?next=/chat';
-          return;
-        }
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      
-      // Add assistant response to state
-      const assistantMessage = {
-        id: `msg_${Date.now()}_assistant`,
-        role: 'assistant',
-        content: [{ type: 'text', text: data.reply }],
-        createdAt: new Date()
-      };
-      
-      setMessages(prev => [...prev, assistantMessage]);
-      
-      // Refresh conversations to update the sidebar with the new message
-      fetchConversations();
-    } catch (error) {
-      console.error('Error sending message:', error);
-      // Add error message
-      const errorMessage = {
-        id: `msg_${Date.now()}_error`,
-        role: 'assistant',
-        content: [{ type: 'text', text: 'Sorry, I encountered an error processing your message.' }],
-        createdAt: new Date()
-      };
-      setMessages(prev => [...prev, errorMessage]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [conversationId]);
+    // Create placeholder assistant message for streaming
+    const assistantMessageId = `msg_${Date.now()}_assistant`;
+    const assistantMessage = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: [{ type: 'text', text: '' }], // Start with empty content
+      createdAt: new Date()
+    };
+    setMessages(prev => [...prev, assistantMessage]);
+    
+    // Store the message ID for streaming updates
+    streamingMessageIdRef.current = assistantMessageId;
+    
+    // Send message using streaming API
+    await sendStreamingMessage({
+      prompt: message.content[0].text,
+      conversationId: conversationId || `web_conv_${crypto.randomUUID()}`,
+      profileId: profileId,
+      interfaceType: 'web'
+    });
+  }, [conversationId, sendStreamingMessage, profileId]);
   
   // Convert backend message format to assistant-ui format
   const convertMessage = useCallback((message) => {
@@ -253,7 +283,7 @@ const ChatApp = () => {
   // Create the runtime
   const runtime = useExternalStoreRuntime({
     messages,
-    isRunning: isLoading || !conversationId, // Prevent sending messages until conversationId is ready
+    isRunning: isLoading || isStreaming || !conversationId, // Prevent sending messages until conversationId is ready or while streaming
     onNew: handleNew,
     convertMessage,
   });
