@@ -6,6 +6,12 @@ stop_hook_active=$(echo "$json_input" | jq -r '.stop_hook_active // false')
 
 # Check if stop_hook_active is false (normal stop, not a continuation)
 if [ "$stop_hook_active" = "false" ]; then
+    # Run format and lint
+    if ! (.venv/bin/poe format && .venv/bin/poe lint-fast); then
+        echo "Formatting or linting failed. Please fix the issues before proceeding." >&2
+        exit 2 # Continue Claude with a failure message
+    fi
+
     echo "Before stopping, please consider:" >&2
     echo >&2
     
