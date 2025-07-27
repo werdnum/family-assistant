@@ -202,7 +202,7 @@ class ChatPage(BasePage):
         # Wait for URL to update with new conversation ID
         await self.page.wait_for_function(
             f"window.location.href.includes('conversation_id={conversation_id}')",
-            timeout=5000
+            timeout=5000,
         )
 
     async def refresh_conversations(self) -> None:
