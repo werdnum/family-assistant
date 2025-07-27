@@ -1,9 +1,10 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
-import { Thread } from '@assistant-ui/react';
+import { Thread, ThreadLoading } from './Thread';
 import NavHeader from './NavHeader';
 import ConversationSidebar from './ConversationSidebar';
 import './chat.css';
+import './thread.css';
 
 const ChatApp = () => {
   const [messages, setMessages] = useState([]);
@@ -70,14 +71,74 @@ const ChatApp = () => {
       const response = await fetch(`/api/v1/chat/conversations/${convId}/messages`);
       if (response.ok) {
         const data = await response.json();
-        // Convert messages to the format expected by the UI
-        const formattedMessages = data.messages.map(msg => ({
-          id: `msg_${msg.internal_id}`,
-          role: msg.role,
-          content: msg.content ? [{ type: 'text', text: msg.content }] : [],
-          createdAt: new Date(msg.timestamp)
-        }));
-        setMessages(formattedMessages);
+        
+        // Process messages and merge tool responses with their assistant messages
+        const processedMessages = [];
+        const toolResponses = new Map(); // Map tool_call_id to tool response
+        
+        // First pass: collect tool responses
+        data.messages.forEach(msg => {
+          if (msg.role === 'tool' && msg.tool_call_id) {
+            toolResponses.set(msg.tool_call_id, msg.content || 'Tool executed successfully');
+          }
+        });
+        
+        // Second pass: process messages, merging tool calls with their responses
+        data.messages.forEach(msg => {
+          // Skip tool messages as they're merged with assistant messages
+          if (msg.role === 'tool') {
+            return;
+          }
+          
+          // Handle assistant messages that might have tool calls
+          if (msg.role === 'assistant' && msg.tool_calls_info) {
+            let toolCallsInfo;
+            try {
+              toolCallsInfo = typeof msg.tool_calls_info === 'string' 
+                ? JSON.parse(msg.tool_calls_info) 
+                : msg.tool_calls_info;
+            } catch (e) {
+              toolCallsInfo = null;
+            }
+            
+            if (toolCallsInfo && toolCallsInfo.tool_calls) {
+              // Convert tool calls to content parts with their results
+              const content = [];
+              if (msg.content) {
+                content.push({ type: 'text', text: msg.content });
+              }
+              
+              toolCallsInfo.tool_calls.forEach(toolCall => {
+                const toolResponse = toolResponses.get(toolCall.id);
+                content.push({
+                  type: 'tool-call',
+                  toolCallId: toolCall.id,
+                  toolName: toolCall.name,
+                  args: toolCall.arguments,
+                  result: toolResponse ?? 'Tool result not available' // Provide fallback for missing results
+                });
+              });
+              
+              processedMessages.push({
+                id: `msg_${msg.internal_id}`,
+                role: 'assistant',
+                content: content,
+                createdAt: new Date(msg.timestamp)
+              });
+              return;
+            }
+          }
+          
+          // Regular messages (user, assistant without tool calls, system)
+          processedMessages.push({
+            id: `msg_${msg.internal_id}`,
+            role: msg.role,
+            content: msg.content ? [{ type: 'text', text: msg.content }] : [],
+            createdAt: new Date(msg.timestamp)
+          });
+        });
+        
+        setMessages(processedMessages);
       }
     } catch (error) {
       console.error('Error loading conversation:', error);
@@ -185,12 +246,8 @@ const ChatApp = () => {
   
   // Convert backend message format to assistant-ui format
   const convertMessage = useCallback((message) => {
-    return {
-      id: message.id,
-      role: message.role,
-      content: message.content,
-      createdAt: message.createdAt
-    };
+    // Messages are already in the correct format from our processing
+    return message;
   }, []);
   
   // Create the runtime
@@ -243,6 +300,7 @@ const ChatApp = () => {
                   )}
                 </div>
                 <Thread />
+                {isLoading && messages.length > 0 && <ThreadLoading />}
               </div>
             </AssistantRuntimeProvider>
           </main>

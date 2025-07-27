@@ -41,6 +41,7 @@ const ConversationSidebar = ({
             className="new-chat-btn"
             onClick={onNewChat}
             aria-label="Start new chat"
+            data-testid="new-chat-button"
           >
             <span className="plus-icon">+</span> New Chat
           </button>
@@ -71,6 +72,8 @@ const ConversationSidebar = ({
                   conv.conversation_id === currentConversationId ? 'active' : ''
                 }`}
                 onClick={() => onConversationSelect(conv.conversation_id)}
+                data-testid={`conversation-item-${conv.conversation_id}`}
+                data-conversation-id={conv.conversation_id}
               >
                 <div className="conversation-preview">
                   {conv.last_message}
