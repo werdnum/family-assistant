@@ -476,6 +476,7 @@ class GoogleGenAIClient(LLMInterface):
                             hasattr(candidate, "content")
                             and candidate.content
                             and hasattr(candidate.content, "parts")
+                            and candidate.content.parts
                         ):
                             for part in candidate.content.parts:
                                 # Handle text parts
