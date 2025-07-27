@@ -374,3 +374,209 @@ async def test_api_chat_add_note_tool(
     assert final_assistant_reply_found, "Final assistant reply not found in history"
 
     logger.info("Message history assertions passed.")
+
+
+async def test_api_chat_send_message_stream_minimal(
+    test_client: AsyncClient,
+    mock_llm_client: RuleBasedMockLLMClient,
+    db_context: DatabaseContext,
+) -> None:
+    """Test the streaming chat API endpoint with a minimal conversation."""
+    # Arrange
+    user_prompt = "Hello, can you help me?"
+    llm_response = (
+        "Of course! I'd be happy to help you. What do you need assistance with?"
+    )
+
+    # Configure mock LLM to respond to the prompt
+    mock_llm_client.rules.append((
+        lambda args: any(
+            msg.get("role") == "user" and user_prompt in str(msg.get("content", ""))
+            for msg in args.get("messages", [])
+        ),
+        LLMOutput(
+            content=llm_response,
+            tool_calls=None,
+            reasoning_info={"model": "test-model", "usage": {"total_tokens": 100}},
+        ),
+    ))
+
+    # Act - Make streaming request
+    response = await test_client.post(
+        "/api/v1/chat/send_message_stream",
+        json={"prompt": user_prompt},
+    )
+
+    # Assert response basics
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+
+    # Parse SSE events
+    events = []
+    for line in response.text.split("\n"):
+        if line.startswith("event:"):
+            event_type = line.split(":", 1)[1].strip()
+        elif line.startswith("data:"):
+            data_str = line.split(":", 1)[1].strip()
+            if data_str:
+                events.append({"type": event_type, "data": json.loads(data_str)})
+
+    # Assert we got the expected events
+    text_events = [e for e in events if e["type"] == "text"]
+    end_events = [e for e in events if e["type"] == "end"]
+    close_events = [e for e in events if e["type"] == "close"]
+
+    # Should have text content
+    assert len(text_events) > 0
+    combined_text = "".join(e["data"]["content"] for e in text_events)
+    assert combined_text == llm_response
+
+    # Should have end event
+    assert len(end_events) == 1
+
+    # Should have close event
+    assert len(close_events) == 1
+
+    # Check database state - messages should be saved
+    # Need to extract conversation_id from the stream (it's generated)
+    # Since we don't have it in the response, we'll check for any recent messages
+    recent_conversations = await db_context.message_history.get_all_grouped(
+        interface_type="api"
+    )
+
+    # Should have at least one conversation
+    assert len(recent_conversations) > 0
+
+    # Get the most recent conversation
+    latest_conversation_messages = list(recent_conversations.values())[-1]
+
+    # Should have user and assistant messages
+    user_messages = [m for m in latest_conversation_messages if m["role"] == "user"]
+    assistant_messages = [
+        m for m in latest_conversation_messages if m["role"] == "assistant"
+    ]
+
+    assert len(user_messages) >= 1
+    assert len(assistant_messages) >= 1
+    assert user_messages[-1]["content"] == user_prompt
+    assert assistant_messages[-1]["content"] == llm_response
+
+
+async def test_api_chat_send_message_stream_with_tools(
+    test_client: AsyncClient,
+    mock_llm_client: RuleBasedMockLLMClient,
+    db_context: DatabaseContext,
+) -> None:
+    """Test the streaming chat API endpoint with tool calls."""
+    # Arrange
+    user_prompt = "Create a note titled 'Stream Test' with content 'Testing streaming'"
+    note_title = "Stream Test"
+    note_content = "Testing streaming"
+    tool_call_id = "streaming_call_123"
+    llm_final_reply = (
+        "I've created the note 'Stream Test' with the content you requested."
+    )
+
+    # Configure mock LLM to call the tool on first request
+    def first_llm_call_matcher(args: MatcherArgs) -> bool:
+        messages = args.get("messages", [])
+        return (
+            len(messages) >= 1
+            and any(
+                msg.get("role") == "user" and user_prompt in str(msg.get("content", ""))
+                for msg in messages
+            )
+            and not any(msg.get("role") == "tool" for msg in messages)
+        )
+
+    mock_llm_client.rules.append((
+        first_llm_call_matcher,
+        LLMOutput(
+            content=None,
+            tool_calls=[
+                ToolCallItem(
+                    id=tool_call_id,
+                    type="function",
+                    function=ToolCallFunction(
+                        name="add_or_update_note",
+                        arguments=json.dumps({
+                            "title": note_title,
+                            "content": note_content,
+                        }),
+                    ),
+                )
+            ],
+            reasoning_info={"model": "test-model", "usage": {"total_tokens": 50}},
+        ),
+    ))
+
+    # Configure mock LLM for second call (after tool execution)
+    def second_llm_call_matcher(args: MatcherArgs) -> bool:
+        messages = args.get("messages", [])
+        return any(
+            msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id
+            for msg in messages
+        )
+
+    mock_llm_client.rules.append((
+        second_llm_call_matcher,
+        LLMOutput(
+            content=llm_final_reply,
+            tool_calls=None,
+            reasoning_info={"model": "test-model", "usage": {"total_tokens": 75}},
+        ),
+    ))
+
+    # Act - Make streaming request
+    response = await test_client.post(
+        "/api/v1/chat/send_message_stream",
+        json={"prompt": user_prompt},
+    )
+
+    # Assert response basics
+    assert response.status_code == 200
+
+    # Parse SSE events
+    events = []
+    current_event_type = None
+    for line in response.text.split("\n"):
+        if line.startswith("event:"):
+            current_event_type = line.split(":", 1)[1].strip()
+        elif line.startswith("data:") and current_event_type:
+            data_str = line.split(":", 1)[1].strip()
+            if data_str:
+                events.append({
+                    "type": current_event_type,
+                    "data": json.loads(data_str),
+                })
+
+    # Assert we got the expected event types
+    event_types = [e["type"] for e in events]
+    assert "tool_call" in event_types
+    assert "tool_result" in event_types
+    assert "text" in event_types
+    assert "end" in event_types
+    assert "close" in event_types
+
+    # Check tool call event
+    tool_call_events = [e for e in events if e["type"] == "tool_call"]
+    assert len(tool_call_events) == 1
+    tool_call_data = tool_call_events[0]["data"]["tool_call"]
+    assert tool_call_data["id"] == tool_call_id
+    assert tool_call_data["function"]["name"] == "add_or_update_note"
+
+    # Check tool result event
+    tool_result_events = [e for e in events if e["type"] == "tool_result"]
+    assert len(tool_result_events) == 1
+    assert tool_result_events[0]["data"]["tool_call_id"] == tool_call_id
+    assert "successfully" in tool_result_events[0]["data"]["result"]
+
+    # Check final text
+    text_events = [e for e in events if e["type"] == "text"]
+    combined_text = "".join(e["data"]["content"] for e in text_events)
+    assert combined_text == llm_final_reply
+
+    # Check database - note should be created
+    note = await db_context.notes.get_by_title(note_title)
+    assert note is not None
+    assert note["content"] == note_content

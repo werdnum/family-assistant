@@ -164,7 +164,7 @@ class LLMInterface(Protocol):
         """
         ...
 
-    async def generate_response_stream(
+    def generate_response_stream(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
@@ -175,6 +175,9 @@ class LLMInterface(Protocol):
 
         Yields LLMStreamEvent objects as the response is generated.
         Must be implemented by all LLM clients (can use fallback implementation).
+
+        Note: This is typed as a regular method (not async def) that returns
+        AsyncIterator because it's an async generator function.
         """
         ...
 

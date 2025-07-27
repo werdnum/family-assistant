@@ -1188,3 +1188,262 @@ class ProcessingService:
                 None,
                 processing_error_traceback,
             )
+
+    async def handle_chat_interaction_stream(
+        self,
+        db_context: DatabaseContext,
+        interface_type: str,
+        conversation_id: str,
+        trigger_content_parts: list[dict[str, Any]],
+        trigger_interface_message_id: str | None,
+        user_name: str,
+        replied_to_interface_id: str | None = None,
+        chat_interface: ChatInterface | None = None,
+        request_confirmation_callback: (
+            Callable[
+                [str, str, str | None, str, str, dict[str, Any], float],
+                Awaitable[bool],
+            ]
+            | None
+        ) = None,
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """
+        Streaming version of handle_chat_interaction.
+
+        Yields LLMStreamEvent objects as the interaction progresses, providing
+        real-time updates on text generation, tool calls, and tool results.
+
+        Args:
+            Same as handle_chat_interaction
+
+        Yields:
+            LLMStreamEvent objects representing different stages of processing
+        """
+        turn_id = f"{interface_type}_turn_{uuid.uuid4()}"
+        logger.info(
+            f"Starting streaming chat interaction. Turn ID: {turn_id}, "
+            f"Interface: {interface_type}, Conversation: {conversation_id}, "
+            f"User: {user_name}"
+        )
+
+        try:
+            # --- 1. Determine Thread Root ID & Save User Trigger Message ---
+            thread_root_id_for_turn: int | None = None
+            user_message_timestamp = self.clock.now()
+
+            if replied_to_interface_id:
+                try:
+                    replied_to_db_msg = (
+                        await db_context.message_history.get_by_interface_id(
+                            interface_type=interface_type,
+                            interface_message_id=replied_to_interface_id,
+                        )
+                    )
+                    if replied_to_db_msg:
+                        thread_root_id_for_turn = replied_to_db_msg.get(
+                            "thread_root_id"
+                        ) or replied_to_db_msg.get("internal_id")
+                        logger.info(
+                            f"Determined thread_root_id {thread_root_id_for_turn} from replied-to message"
+                        )
+                except Exception as thread_err:
+                    logger.error(
+                        f"Error determining thread root ID: {thread_err}",
+                        exc_info=True,
+                    )
+
+            # Prepare user message content
+            user_content_for_history = "[User message content]"
+            if trigger_content_parts:
+                first_text_part = next(
+                    (
+                        part.get("text")
+                        for part in trigger_content_parts
+                        if part.get("type") == "text"
+                    ),
+                    None,
+                )
+                if first_text_part:
+                    user_content_for_history = str(first_text_part)
+                elif trigger_content_parts[0].get("type") == "image_url":
+                    user_content_for_history = "[Image Attached]"
+
+            saved_user_msg_record = await db_context.message_history.add(
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                interface_message_id=trigger_interface_message_id,
+                turn_id=turn_id,
+                thread_root_id=thread_root_id_for_turn,
+                timestamp=user_message_timestamp,
+                role="user",
+                content=user_content_for_history,
+                tool_calls=None,
+                reasoning_info=None,
+                error_traceback=None,
+                tool_call_id=None,
+                processing_profile_id=self.service_config.id,
+            )
+
+            if saved_user_msg_record and not thread_root_id_for_turn:
+                thread_root_id_for_turn = saved_user_msg_record.get("internal_id")
+
+            # --- 2. Prepare LLM Context ---
+            try:
+                raw_history_messages = await db_context.message_history.get_recent(
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    limit=self.max_history_messages,
+                    max_age=timedelta(hours=self.history_max_age_hours),
+                    processing_profile_id=self.service_config.id,
+                )
+            except Exception as hist_err:
+                logger.error(
+                    f"Failed to get message history: {hist_err}", exc_info=True
+                )
+                raw_history_messages = []
+
+            # Filter out current trigger message
+            filtered_history_messages = []
+            if trigger_interface_message_id:
+                for h_msg in raw_history_messages:
+                    if (
+                        h_msg.get("interface_message_id")
+                        != trigger_interface_message_id
+                    ):
+                        filtered_history_messages.append(h_msg)
+            else:
+                filtered_history_messages = raw_history_messages
+
+            initial_messages_for_llm = self._format_history_for_llm(
+                filtered_history_messages
+            )
+
+            # Handle reply thread context
+            if replied_to_interface_id and thread_root_id_for_turn:
+                try:
+                    full_thread_messages_db = (
+                        await db_context.message_history.get_by_thread_id(
+                            thread_root_id=thread_root_id_for_turn,
+                            processing_profile_id=self.service_config.id,
+                        )
+                    )
+                    current_trigger_removed_from_thread = []
+                    if trigger_interface_message_id:
+                        for msg_in_thread in full_thread_messages_db:
+                            if (
+                                msg_in_thread.get("interface_message_id")
+                                != trigger_interface_message_id
+                            ):
+                                current_trigger_removed_from_thread.append(
+                                    msg_in_thread
+                                )
+                    else:
+                        current_trigger_removed_from_thread = full_thread_messages_db
+
+                    initial_messages_for_llm = self._format_history_for_llm(
+                        current_trigger_removed_from_thread
+                    )
+                except Exception as thread_fetch_err:
+                    logger.error(f"Error fetching thread history: {thread_fetch_err}")
+
+            messages_for_llm = initial_messages_for_llm
+
+            # Prune leading invalid messages
+            while messages_for_llm:
+                first_msg = messages_for_llm[0]
+                role = first_msg.get("role")
+                has_tool_calls = bool(first_msg.get("tool_calls"))
+                if role == "tool" or (role == "assistant" and has_tool_calls):
+                    messages_for_llm.pop(0)
+                else:
+                    break
+
+            # Prepare System Prompt
+            system_prompt_template = self.prompts.get(
+                "system_prompt",
+                "You are a helpful assistant. Current time is {current_time}.",
+            )
+
+            try:
+                local_tz = pytz.timezone(self.timezone_str)
+                current_time_str = (
+                    self.clock.now()
+                    .astimezone(local_tz)
+                    .strftime("%Y-%m-%d %H:%M:%S %Z")
+                )
+            except Exception:
+                current_time_str = datetime.now(timezone.utc).strftime(
+                    "%Y-%m-%d %H:%M:%S UTC"
+                )
+
+            aggregated_other_context_str = (
+                await self._aggregate_context_from_providers()
+            )
+
+            format_args = {
+                "user_name": user_name,
+                "current_time": current_time_str,
+                "aggregated_other_context": aggregated_other_context_str,
+                "server_url": self.server_url,
+                "profile_id": self.service_config.id,
+            }
+
+            # Safe format system prompt (simplified version)
+            try:
+                final_system_prompt = system_prompt_template.format(
+                    **format_args
+                ).strip()
+            except Exception:
+                final_system_prompt = system_prompt_template.strip()
+
+            if final_system_prompt:
+                messages_for_llm.insert(
+                    0, {"role": "system", "content": final_system_prompt}
+                )
+
+            # Add current user trigger message
+            llm_user_content: str | list[dict[str, Any]]
+            if (
+                len(trigger_content_parts) == 1
+                and trigger_content_parts[0].get("type") == "text"
+            ):
+                llm_user_content = trigger_content_parts[0]["text"]
+            else:
+                llm_user_content = trigger_content_parts
+
+            messages_for_llm.append({"role": "user", "content": llm_user_content})
+
+            # --- 3. Stream LLM Processing ---
+            async for event, message_dict in self.process_message_stream(
+                db_context=db_context,
+                messages=messages_for_llm,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                user_name=user_name,
+                turn_id=turn_id,
+                chat_interface=chat_interface,
+                request_confirmation_callback=request_confirmation_callback,
+            ):
+                # Yield the event to the caller
+                yield event
+
+                # Save messages as they're generated
+                if message_dict and message_dict.get("role"):
+                    msg_to_save = message_dict.copy()
+                    msg_to_save["interface_type"] = interface_type
+                    msg_to_save["conversation_id"] = conversation_id
+                    msg_to_save["turn_id"] = turn_id
+                    msg_to_save["thread_root_id"] = thread_root_id_for_turn
+                    msg_to_save["timestamp"] = msg_to_save.get(
+                        "timestamp", self.clock.now()
+                    )
+                    msg_to_save.setdefault("interface_message_id", None)
+                    msg_to_save["processing_profile_id"] = self.service_config.id
+
+                    await db_context.message_history.add(**msg_to_save)
+
+        except Exception as e:
+            logger.error(f"Error in streaming chat interaction: {e}", exc_info=True)
+            yield LLMStreamEvent(
+                type="error", error=str(e), metadata={"error_id": str(uuid.uuid4())}
+            )

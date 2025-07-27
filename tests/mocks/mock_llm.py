@@ -3,7 +3,7 @@ Mock LLM implementations for testing purposes.
 """
 
 import logging
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from family_assistant.llm import LLMInterface, LLMOutput, LLMStreamEvent
@@ -48,7 +48,7 @@ class RuleBasedMockLLMClient(LLMInterface):
                               If None, a basic default response is used.
             model_name: A name for this mock model, can be used by processors.
         """
-        self.rules: Sequence[Rule] = rules
+        self.rules: list[Rule] = list(rules)
         self.model = model_name  # For getattr(llm_client, "model", "unknown")
         if default_response is None:
             self.default_response = LLMOutput(
@@ -149,32 +149,36 @@ class RuleBasedMockLLMClient(LLMInterface):
         )
         return self.default_response
 
-    async def generate_response_stream(
+    def generate_response_stream(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Mock streaming implementation that yields events based on generate_response."""
-        # Get the non-streaming response
-        response = await self.generate_response(messages, tools, tool_choice)
 
-        # Yield content in chunks if present
-        if response.content:
-            # Split content into words and yield them
-            words = response.content.split()
-            for i, word in enumerate(words):
-                # Add space before word unless it's the first word
-                chunk = word if i == 0 else f" {word}"
-                yield LLMStreamEvent(type="content", content=chunk)
+        async def _stream() -> AsyncIterator[LLMStreamEvent]:
+            # Get the non-streaming response
+            response = await self.generate_response(messages, tools, tool_choice)
 
-        # Yield tool calls if present
-        if response.tool_calls:
-            for tool_call in response.tool_calls:
-                yield LLMStreamEvent(type="tool_call", tool_call=tool_call)
+            # Yield content in chunks if present
+            if response.content:
+                # Split content into words and yield them
+                words = response.content.split()
+                for i, word in enumerate(words):
+                    # Add space before word unless it's the first word
+                    chunk = word if i == 0 else f" {word}"
+                    yield LLMStreamEvent(type="content", content=chunk)
 
-        # Yield done event with metadata
-        yield LLMStreamEvent(type="done", metadata=response.reasoning_info)
+            # Yield tool calls if present
+            if response.tool_calls:
+                for tool_call in response.tool_calls:
+                    yield LLMStreamEvent(type="tool_call", tool_call=tool_call)
+
+            # Yield done event with metadata
+            yield LLMStreamEvent(type="done", metadata=response.reasoning_info)
+
+        return _stream()
 
     async def format_user_message_with_file(
         self,

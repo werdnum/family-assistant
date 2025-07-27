@@ -1,13 +1,16 @@
+import json
 import logging
 import uuid
+from collections.abc import AsyncGenerator
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from family_assistant.processing import ProcessingService
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.web.dependencies import get_db, get_processing_service
 from family_assistant.web.models import ChatMessageResponse, ChatPromptRequest
 
@@ -249,4 +252,142 @@ async def get_conversation_messages(
         conversation_id=conversation_id,
         messages=response_messages,
         total=len(response_messages),
+    )
+
+
+@chat_api_router.post("/v1/chat/send_message_stream")
+async def api_chat_send_message_stream(
+    payload: ChatPromptRequest,
+    request: Request,
+    default_processing_service: Annotated[
+        ProcessingService, Depends(get_processing_service)
+    ],
+) -> StreamingResponse:
+    """
+    Stream chat responses using Server-Sent Events format.
+
+    This endpoint accepts the same payload as the non-streaming endpoint but
+    returns a stream of events as the response is generated, including:
+    - Text chunks as they're generated
+    - Tool calls as they're initiated
+    - Tool results as they complete
+    - Error events if something goes wrong
+    """
+    conversation_id = payload.conversation_id or f"api_conv_{uuid.uuid4()}"
+
+    # Determine which processing service to use (same logic as non-streaming endpoint)
+    selected_processing_service = default_processing_service
+    profile_id_requested = payload.profile_id
+
+    if profile_id_requested:
+        logger.info(
+            f"API streaming chat request for profile_id: '{profile_id_requested}'. "
+            f"Conversation ID: {conversation_id}, Prompt: '{payload.prompt[:100]}...'"
+        )
+        processing_services_registry = getattr(
+            request.app.state, "processing_services", {}
+        )
+        if profile_id_requested in processing_services_registry:
+            selected_processing_service = processing_services_registry[
+                profile_id_requested
+            ]
+            logger.info(
+                f"Using ProcessingService for profile_id: '{profile_id_requested}'."
+            )
+        else:
+            logger.warning(
+                f"Profile_id '{profile_id_requested}' not found in registry. "
+                f"Falling back to default profile: '{default_processing_service.service_config.id}'."
+            )
+    else:
+        logger.info(
+            f"API streaming chat request (no profile_id specified). "
+            f"Using default profile: '{default_processing_service.service_config.id}'. "
+            f"Conversation ID: {conversation_id}, Prompt: '{payload.prompt[:100]}...'"
+        )
+
+    # Prepare trigger content for processing
+    trigger_content_parts = [{"type": "text", "text": payload.prompt}]
+    interface_type = payload.interface_type or "api"
+    user_name_for_api = "API User"
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        """Generate SSE formatted events from the processing stream."""
+        # Get a fresh database context for the stream
+        async with get_db_context() as stream_db_context:
+            try:
+                # Use the streaming version of handle_chat_interaction
+                async for (
+                    event
+                ) in selected_processing_service.handle_chat_interaction_stream(
+                    db_context=stream_db_context,
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    trigger_content_parts=trigger_content_parts,
+                    trigger_interface_message_id=None,
+                    user_name=user_name_for_api,
+                    replied_to_interface_id=None,
+                    chat_interface=None,
+                    request_confirmation_callback=None,
+                ):
+                    # Format event based on type
+                    if event.type == "content":
+                        # Send text content chunks
+                        yield f"event: text\ndata: {json.dumps({'content': event.content})}\n\n"
+
+                    elif event.type == "tool_call":
+                        # Convert tool_call to dict for JSON serialization
+                        if event.tool_call:
+                            tool_call_dict = {
+                                "id": event.tool_call.id,
+                                "function": {
+                                    "name": event.tool_call.function.name,
+                                    "arguments": event.tool_call.function.arguments,
+                                },
+                            }
+                            yield f"event: tool_call\ndata: {json.dumps({'tool_call': tool_call_dict})}\n\n"
+
+                    elif event.type == "tool_result":
+                        # Include tool_call_id for correlation
+                        yield f"event: tool_result\ndata: {json.dumps({'tool_call_id': event.tool_call_id, 'result': event.tool_result})}\n\n"
+
+                    elif event.type == "done":
+                        # Send completion event with optional metadata
+                        done_data: dict[str, Any] = {}
+                        if event.metadata and event.metadata.get("reasoning_info"):
+                            done_data["reasoning_info"] = event.metadata[
+                                "reasoning_info"
+                            ]
+                        yield f"event: end\ndata: {json.dumps(done_data)}\n\n"
+
+                    elif event.type == "error":
+                        # Send error event
+                        error_data = {"error": event.error or "An error occurred"}
+                        if event.metadata and event.metadata.get("error_id"):
+                            error_data["error_id"] = event.metadata["error_id"]
+                        yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
+
+            except Exception as e:
+                error_id = str(uuid.uuid4())
+                logger.error(f"Streaming error {error_id}: {e}", exc_info=True)
+
+                # Send error event to client
+                error_msg = "An error occurred while processing your request"
+                if getattr(request.app.state, "debug_mode", False):
+                    error_msg = str(e)
+
+                yield f"event: error\ndata: {json.dumps({'error': error_msg, 'error_id': error_id})}\n\n"
+            finally:
+                # Send a final close event to ensure client knows stream is done
+                yield f"event: close\ndata: {json.dumps({})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable Nginx buffering
+            "Access-Control-Allow-Origin": "*",  # CORS support
+        },
     )

@@ -19,7 +19,7 @@ class MockLLMClient:
     async def generate_response(self, *args: Any, **kwargs: Any) -> Mock:
         return Mock()  # Not used in the tested method
 
-    async def generate_response_stream(
+    def generate_response_stream(
         self, *args: Any, **kwargs: Any
     ) -> AsyncIterator[LLMStreamEvent]:
         # Return an async generator that yields nothing
