@@ -338,7 +338,7 @@ async def web_test_fixture(
     playwright_page: Page,
     web_only_assistant: Assistant,
     vite_and_api_ports: tuple[int, int],
-    built_frontend: None,  # Ensure frontend is built before tests
+    build_frontend_assets: None,  # Ensure frontend is built before tests
 ) -> WebTestFixture:
     """Combined fixture providing all web test dependencies."""
     _, api_port = vite_and_api_ports

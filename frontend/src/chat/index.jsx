@@ -6,6 +6,7 @@ import ChatApp from './ChatApp';
 import 'simpledotcss/simple.css';
 import '../custom.css';
 import './chat.css';
+import './thread.css';
 
 // Ensure the DOM is ready before mounting
 function mountChatApp() {
