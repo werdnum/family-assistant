@@ -26,7 +26,7 @@ from .interfaces import ChatInterface  # Import ChatInterface
 from .llm import LLMInterface, LLMStreamEvent
 
 # Import DatabaseContext for type hinting
-from .storage.context import DatabaseContext
+from .storage.context import DatabaseContext, get_db_context
 
 # Import ToolsProvider interface and context
 from .tools import ToolExecutionContext, ToolNotFoundError, ToolsProvider
@@ -1219,7 +1219,7 @@ class ProcessingService:
         Yields:
             LLMStreamEvent objects representing different stages of processing
         """
-        turn_id = f"{interface_type}_turn_{uuid.uuid4()}"
+        turn_id = str(uuid.uuid4())
         logger.info(
             f"Starting streaming chat interaction. Turn ID: {turn_id}, "
             f"Interface: {interface_type}, Conversation: {conversation_id}, "
@@ -1268,21 +1268,23 @@ class ProcessingService:
                 elif trigger_content_parts[0].get("type") == "image_url":
                     user_content_for_history = "[Image Attached]"
 
-            saved_user_msg_record = await db_context.message_history.add(
-                interface_type=interface_type,
-                conversation_id=conversation_id,
-                interface_message_id=trigger_interface_message_id,
-                turn_id=turn_id,
-                thread_root_id=thread_root_id_for_turn,
-                timestamp=user_message_timestamp,
-                role="user",
-                content=user_content_for_history,
-                tool_calls=None,
-                reasoning_info=None,
-                error_traceback=None,
-                tool_call_id=None,
-                processing_profile_id=self.service_config.id,
-            )
+            # Save user message in its own transaction to avoid long-running transactions
+            async with get_db_context(engine=db_context.engine) as user_msg_db:
+                saved_user_msg_record = await user_msg_db.message_history.add(
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    interface_message_id=trigger_interface_message_id,
+                    turn_id=turn_id,
+                    thread_root_id=thread_root_id_for_turn,
+                    timestamp=user_message_timestamp,
+                    role="user",
+                    content=user_content_for_history,
+                    tool_calls=None,
+                    reasoning_info=None,
+                    error_traceback=None,
+                    tool_call_id=None,
+                    processing_profile_id=self.service_config.id,
+                )
 
             if saved_user_msg_record and not thread_root_id_for_turn:
                 thread_root_id_for_turn = saved_user_msg_record.get("internal_id")
@@ -1440,7 +1442,9 @@ class ProcessingService:
                     msg_to_save.setdefault("interface_message_id", None)
                     msg_to_save["processing_profile_id"] = self.service_config.id
 
-                    await db_context.message_history.add(**msg_to_save)
+                    # Save each message in its own transaction to avoid PostgreSQL transaction issues
+                    async with get_db_context(engine=db_context.engine) as msg_db:
+                        await msg_db.message_history.add(**msg_to_save)
 
         except Exception as e:
             logger.error(f"Error in streaming chat interaction: {e}", exc_info=True)

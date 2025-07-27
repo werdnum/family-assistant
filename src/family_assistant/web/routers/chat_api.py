@@ -69,7 +69,7 @@ async def api_chat_send_message(
     Receives a user prompt via API, processes it using the specified or default
     ProcessingService, and returns the assistant's reply.
     """
-    conversation_id = payload.conversation_id or f"api_conv_{uuid.uuid4()}"
+    conversation_id = payload.conversation_id or str(uuid.uuid4())
     # turn_id is generated internally by handle_chat_interaction.
     # We will use a placeholder for the response model if needed, or remove it from response.
 
@@ -124,7 +124,7 @@ async def api_chat_send_message(
     # This is a slight divergence; ideally, the one from handle_chat_interaction would be returned.
     # For now, to match the existing response model:
     response_turn_id = (
-        f"api_turn_{uuid.uuid4()}"  # This is for the *response model only*
+        str(uuid.uuid4())  # This is for the *response model only*
     )
 
     (
@@ -273,7 +273,7 @@ async def api_chat_send_message_stream(
     - Tool results as they complete
     - Error events if something goes wrong
     """
-    conversation_id = payload.conversation_id or f"api_conv_{uuid.uuid4()}"
+    conversation_id = payload.conversation_id or str(uuid.uuid4())
 
     # Determine which processing service to use (same logic as non-streaming endpoint)
     selected_processing_service = default_processing_service

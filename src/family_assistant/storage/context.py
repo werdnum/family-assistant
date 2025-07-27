@@ -151,6 +151,14 @@ class DatabaseContext:
                     )
                     raise  # Re-raise immediately, do not retry
 
+                # Check if this is a PostgreSQL transaction abort error
+                if "InFailedSQLTransactionError" in str(type(e.orig)):
+                    logger.error(
+                        "PostgreSQL transaction is aborted. Cannot retry within same transaction.",
+                        exc_info=True,
+                    )
+                    raise  # Re-raise immediately, retrying won't help
+
                 # Log other DBAPI errors and proceed with retry logic
                 logger.warning(
                     f"Retryable DBAPIError (attempt {attempt + 1}/{self.max_retries}): {e}."
