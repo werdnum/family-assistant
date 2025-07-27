@@ -1,0 +1,97 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Chat Conversations - Family Assistant{% endblock %}
+{% block title_header %}Chat Conversations{% endblock %}
+
+{% block content %}
+<div class="conversations-list">
+    <h2>Recent Conversations</h2>
+    
+    {% if conversations %}
+        <ul class="conversation-items">
+        {% for conv in conversations %}
+            <li class="conversation-item">
+                <a href="/chat?conversation_id={{ conv.conversation_id }}">
+                    <div class="conversation-info">
+                        <div class="conversation-preview">{{ conv.last_message[:100] }}...</div>
+                        <div class="conversation-meta">
+                            <span class="message-count">{{ conv.message_count }} messages</span>
+                            <span class="timestamp">{{ conv.last_timestamp }}</span>
+                        </div>
+                    </div>
+                </a>
+            </li>
+        {% endfor %}
+        </ul>
+    {% else %}
+        <p>No conversations found. Start a new chat to begin!</p>
+    {% endif %}
+    
+    <div class="actions">
+        <a href="/chat" class="button">Start New Chat</a>
+    </div>
+</div>
+
+<style>
+    .conversations-list {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+    
+    .conversation-items {
+        list-style: none;
+        padding: 0;
+        margin: 20px 0;
+    }
+    
+    .conversation-item {
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        margin-bottom: 10px;
+        transition: box-shadow 0.2s;
+    }
+    
+    .conversation-item:hover {
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .conversation-item a {
+        display: block;
+        padding: 15px;
+        text-decoration: none;
+        color: inherit;
+    }
+    
+    .conversation-preview {
+        margin-bottom: 8px;
+        color: #333;
+    }
+    
+    .conversation-meta {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.9em;
+        color: #666;
+    }
+    
+    .actions {
+        margin-top: 30px;
+        text-align: center;
+    }
+    
+    .button {
+        display: inline-block;
+        padding: 10px 20px;
+        background-color: #007bff;
+        color: white;
+        text-decoration: none;
+        border-radius: 4px;
+        transition: background-color 0.2s;
+    }
+    
+    .button:hover {
+        background-color: #0056b3;
+    }
+</style>
+{% endblock %}

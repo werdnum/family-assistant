@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-from family_assistant.web.template_utils import get_static_asset, should_use_vite_dev
+from family_assistant.web.template_utils import get_static_asset
 
 logger = logging.getLogger(__name__)
 
@@ -45,14 +45,23 @@ class TestTemplateUtils:
         with open(manifest_path, encoding="utf-8") as f:
             manifest = json.load(f)
 
-        # Check that src/main.js entry exists
-        assert "src/main.js" in manifest, "src/main.js entry missing from manifest"
+        # Check that index.html entry exists (new structure uses HTML as entry points)
+        assert "index.html" in manifest, "index.html entry missing from manifest"
 
-        main_entry = manifest["src/main.js"]
-        assert "file" in main_entry, "file property missing from main.js entry"
-        assert "css" in main_entry, "css property missing from main.js entry"
-        assert isinstance(main_entry["css"], list), "css should be a list"
-        assert len(main_entry["css"]) > 0, "main.js should have at least one CSS file"
+        main_entry = manifest["index.html"]
+        assert "file" in main_entry, "file property missing from index.html entry"
+
+        # CSS might be in the entry itself or in imported modules
+        has_css = "css" in main_entry and len(main_entry.get("css", [])) > 0
+
+        # Check if CSS is in imported modules
+        if not has_css and "imports" in main_entry:
+            for import_key in main_entry["imports"]:
+                if import_key in manifest and "css" in manifest[import_key]:
+                    has_css = True
+                    break
+
+        assert has_css, "No CSS files found in index.html entry or its imports"
 
     @patch.dict(os.environ, {"DEV_MODE": "false"})
     def test_get_static_asset_production_mode_js(self) -> None:
@@ -84,37 +93,24 @@ class TestTemplateUtils:
         # Test main.css lookup
         result = get_static_asset("main.css", entry_name="main")
 
-        # Should return the CSS file associated with main.js entry
-        assert result.startswith("/static/dist/assets/main-"), (
-            f"Expected path to start with '/static/dist/assets/main-', got '{result}'"
+        # Should return the CSS file associated with the main entry
+        # With the new structure, CSS is in the imported custom module
+        assert result.startswith("/static/dist/assets/custom-"), (
+            f"Expected path to start with '/static/dist/assets/custom-', got '{result}'"
         )
         assert result.endswith(".css"), (
             f"Expected path to end with '.css', got '{result}'"
         )
 
-    @patch.dict(os.environ, {"DEV_MODE": "true"})
     def test_get_static_asset_dev_mode(self) -> None:
         """Test getting assets in dev mode."""
-        # Test that dev mode returns the simple path
-        result = get_static_asset("main.js")
+        # Test that dev mode returns the Vite dev server URLs
+        result = get_static_asset("main.js", dev_mode=True)
         assert result == "/src/main.js"
 
-        result = get_static_asset("main.css")
-        assert result == "/src/main.css"
-
-    def test_should_use_vite_dev_env_var(self) -> None:
-        """Test that DEV_MODE environment variable controls dev mode."""
-        with patch.dict(os.environ, {"DEV_MODE": "true"}):
-            assert should_use_vite_dev() is True
-
-        with (
-            patch.dict(os.environ, {"DEV_MODE": "false"}),
-            patch("socket.socket") as mock_socket,
-        ):
-            # This might still return True if Vite is actually running
-            # So we mock the socket connection
-            mock_socket.return_value.connect_ex.return_value = 1  # Port closed
-            assert should_use_vite_dev() is False
+        # CSS returns empty string in dev mode (handled by Vite JS)
+        result = get_static_asset("main.css", dev_mode=True)
+        assert result == ""
 
     @patch.dict(os.environ, {"DEV_MODE": "false"})
     def test_get_static_asset_missing_file(self) -> None:

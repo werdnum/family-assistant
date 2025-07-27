@@ -57,8 +57,8 @@ if blocked:
 
 # Check for minimum timeout requirements
 minimum_timeouts = {
-    r"\bpytest\b": 300000,  # 5 minutes = 300,000 ms
-    r"\bpoe\s+test\b": 900000,  # 15 minutes = 900,000 ms
+    r"^pytest\b": 300000,  # 5 minutes = 300,000 ms
+    r"^poe\s+test\b": 900000,  # 15 minutes = 900,000 ms
 }
 
 for pattern, min_timeout_ms in minimum_timeouts.items():

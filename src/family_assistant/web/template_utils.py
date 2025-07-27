@@ -2,7 +2,6 @@
 
 import json
 import logging
-import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -12,7 +11,9 @@ _manifest_cache: dict | None = None
 _manifest_last_read = 0
 
 
-def get_static_asset(filename: str, entry_name: str = "main") -> str:
+def get_static_asset(
+    filename: str, entry_name: str = "main", dev_mode: bool = False
+) -> str:
     """
     Get the path to a static asset from Vite's manifest.
 
@@ -22,12 +23,16 @@ def get_static_asset(filename: str, entry_name: str = "main") -> str:
     Args:
         filename: The filename to look up (e.g., "main.js")
         entry_name: The entry point name from vite config (default: "main")
+        dev_mode: Whether we're in development mode
 
     Returns:
         The URL path to the asset
     """
-    if should_use_vite_dev():
-        # In development, use relative paths (Vite dev server will serve them)
+    if dev_mode:
+        # In development, use Vite dev server paths
+        if filename.endswith(".css"):
+            # CSS is handled by Vite's JS in dev mode, no separate CSS file
+            return ""
         return f"/src/{filename}"
 
     # In production, read from manifest
@@ -69,12 +74,37 @@ def get_static_asset(filename: str, entry_name: str = "main") -> str:
         return f"/static/dist/{filename}"
 
     if _manifest_cache:
-        # Look up the file in the manifest
+        # With HTML-based entry points, look for the corresponding HTML entry
+        # e.g., for "main.js" or "main.css", look for "index.html" entry
+        html_entry_key = "index.html" if entry_name == "main" else f"{entry_name}.html"
+        if html_entry_key in _manifest_cache and filename.startswith(entry_name + "."):
+            # Only use this entry if the filename matches the entry name
+            entry = _manifest_cache[html_entry_key]
+            # For JS files, return the main file
+            if filename.endswith(".js") and "file" in entry:
+                return f"/static/dist/{entry['file']}"
+            # Check for CSS files
+            if filename.endswith(".css"):
+                # CSS might be in the entry itself
+                if "css" in entry and entry.get("css"):
+                    return f"/static/dist/{entry['css'][0]}"
+                # Or in imported modules
+                elif "imports" in entry:
+                    for import_key in entry["imports"]:
+                        if (
+                            import_key in _manifest_cache
+                            and "css" in _manifest_cache[import_key]
+                        ):
+                            css_files = _manifest_cache[import_key]["css"]
+                            if css_files:
+                                return f"/static/dist/{css_files[0]}"
+
+        # Fallback: look up the file directly in the manifest (for legacy structure)
         entry_key = f"src/{filename}"
         if entry_key in _manifest_cache:
             return f"/static/dist/{_manifest_cache[entry_key]['file']}"
 
-        # Fallback for CSS or other assets tied to an entry point
+        # Another fallback for CSS or other assets tied to an entry point (legacy structure)
         entry_point_key = f"src/{entry_name}.js"
         if entry_point_key in _manifest_cache:
             entry = _manifest_cache[entry_point_key]
@@ -97,8 +127,3 @@ def get_static_asset(filename: str, entry_name: str = "main") -> str:
     if _manifest_cache and logger.isEnabledFor(logging.DEBUG):
         logger.debug(f"Manifest keys: {list(_manifest_cache.keys())}")
     return f"/static/dist/{filename}"
-
-
-def should_use_vite_dev() -> bool:
-    """Check if we should use Vite dev server for assets."""
-    return os.getenv("DEV_MODE", "false").lower() == "true"

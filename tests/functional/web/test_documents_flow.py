@@ -431,7 +431,9 @@ async def test_multiple_document_upload_flow(web_test_fixture: WebTestFixture) -
         success_msg = await docs_page.get_success_message()
         if success_msg:
             assert (
-                "submitted" in success_msg.lower() or "success" in success_msg.lower()
+                "submitted" in success_msg.lower()
+                or "success" in success_msg.lower()
+                or "accepted" in success_msg.lower()
             )
 
 

@@ -57,6 +57,7 @@ class ChatPromptRequest(BaseModel):
     prompt: str
     conversation_id: str | None = None
     profile_id: str | None = None  # Added to specify processing profile
+    interface_type: str | None = None  # Interface type (e.g., 'web', 'api', 'mobile')
 
 
 class ChatMessageResponse(BaseModel):

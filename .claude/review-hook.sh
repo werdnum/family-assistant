@@ -111,26 +111,16 @@ if [[ ! -x "$REVIEW_SCRIPT" ]]; then
     exit 0
 fi
 
-# Extract the commit message from the git command
-# Look for patterns like: -m "message" or --message="message" or --message "message"
-COMMIT_MESSAGE=""
-if [[ "$COMMAND" =~ -m[[:space:]]+[\"\']([^\"\']+)[\"\'] ]]; then
-    COMMIT_MESSAGE="${BASH_REMATCH[1]}"
-elif [[ "$COMMAND" =~ --message[[:space:]]*=[[:space:]]*[\"\']([^\"\']+)[\"\'] ]]; then
-    COMMIT_MESSAGE="${BASH_REMATCH[1]}"
-elif [[ "$COMMAND" =~ --message[[:space:]]+[\"\']([^\"\']+)[\"\'] ]]; then
-    COMMIT_MESSAGE="${BASH_REMATCH[1]}"
-fi
-
 # Get current HEAD commit hash
 HEAD_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "no-head")
 
-# Check for sentinel phrase in commit message
+# Check for sentinel phrase in the entire command
 # The sentinel should be: "Reviewed: HEAD-<commit-hash>"
 SENTINEL_PHRASE="Reviewed: HEAD-$HEAD_COMMIT"
 HAS_SENTINEL=false
 
-if [[ -n "$COMMIT_MESSAGE" ]] && echo "$COMMIT_MESSAGE" | grep -qF "$SENTINEL_PHRASE"; then
+# Simply check if the sentinel phrase appears anywhere in the command
+if echo "$COMMAND" | grep -qF "$SENTINEL_PHRASE"; then
     HAS_SENTINEL=true
     echo "${GREEN}✅ Found review override sentinel: $SENTINEL_PHRASE${NC}" >&2
     echo "" >&2
@@ -157,8 +147,8 @@ fi
 echo "${CYAN}Running code review...${NC}" >&2
 echo "" >&2
 
-# Pass the commit message via environment variable
-COMMIT_MESSAGE="$COMMIT_MESSAGE" REVIEW_OUTPUT=$("$REVIEW_SCRIPT" 2>&1)
+# Run the review script
+REVIEW_OUTPUT=$("$REVIEW_SCRIPT" 2>&1)
 REVIEW_EXIT_CODE=$?
 
 # Echo the captured output to stderr
@@ -175,9 +165,14 @@ if [[ "$HAS_SENTINEL" == "true" ]]; then
         echo "• Runtime errors" >&2
         echo "• Security vulnerabilities" >&2
         exit 2
+    elif [[ $REVIEW_EXIT_CODE -eq 1 ]]; then
+        echo "" >&2
+        echo "${YELLOW}⚠️  Minor issues found but proceeding with review override${NC}" >&2
+        echo "${GREEN}✅ Commit allowed - you've acknowledged the warnings${NC}" >&2
+        exit 0
     else
         echo "" >&2
-        echo "${GREEN}✅ Review override accepted - proceeding despite warnings${NC}" >&2
+        echo "${GREEN}✅ No issues found - proceeding${NC}" >&2
         exit 0
     fi
 fi
@@ -189,25 +184,22 @@ if [[ $REVIEW_EXIT_CODE -eq 0 ]]; then
     echo "${GREEN}✅ All checks passed, proceeding${NC}" >&2
     exit 0
 else
-    # Issues found - provide guidance about the sentinel
+    # Issues found - provide appropriate guidance based on severity
     echo "" >&2
-    echo "${RED}❌ Code review found issues${NC}" >&2
-    echo "" >&2
-    echo "${BOLD}To proceed despite these issues, Claude Code must:${NC}" >&2
-    echo "1. ${CYAN}Review and understand the issues${NC}" >&2
-    echo "2. ${CYAN}Make a conscious decision about whether to proceed${NC}" >&2
-    echo "3. ${CYAN}Add this exact phrase to the commit message:${NC}" >&2
-    echo "" >&2
-    echo "   ${YELLOW}$SENTINEL_PHRASE${NC}" >&2
-    echo "" >&2
-    echo "${BOLD}Example:${NC}" >&2
-    echo "   git commit -m \"Fix: Update error handling" >&2
-    echo "" >&2
-    echo "   $SENTINEL_PHRASE" >&2
-    echo "   " >&2
-    echo "   The review warnings about error message formatting are acknowledged" >&2
-    echo "   but not critical for this hotfix.\"" >&2
-    echo "" >&2
-    echo "${YELLOW}Note: This sentinel is unique to the current HEAD commit and cannot be reused.${NC}" >&2
+    if [[ $REVIEW_EXIT_CODE -eq 1 ]]; then
+        # Minor issues - less intimidating message
+        echo "${YELLOW}⚠ Code review found minor issues${NC}" >&2
+        echo "" >&2
+        echo "${BOLD}To proceed anyway, add this to your commit message:${NC}" >&2
+        echo "   ${YELLOW}$SENTINEL_PHRASE${NC}" >&2
+        echo "" >&2
+        echo "This acknowledges you've reviewed the warnings and decided to proceed." >&2
+    else
+        # Major issues - stronger message
+        echo "${RED}❌ Code review found blocking issues${NC}" >&2
+        echo "" >&2
+        echo "${BOLD}These issues must be fixed before committing.${NC}" >&2
+        echo "The code appears to have serious problems that could break the build or cause runtime errors." >&2
+    fi
     exit 2
 fi

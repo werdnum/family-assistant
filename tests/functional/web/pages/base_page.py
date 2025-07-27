@@ -1,8 +1,11 @@
 """Base Page Object Model for Playwright tests."""
 
+import logging
 from typing import Any
 
-from playwright.async_api import Page, Response
+from playwright.async_api import Page, Request, Response
+
+logger = logging.getLogger(__name__)
 
 
 class BasePage:
@@ -156,6 +159,44 @@ class BasePage:
 
         self.page.on("console", handle_console_message)
         return errors
+
+    def setup_request_logging(self) -> None:
+        """Set up request logging to help debug network issues.
+
+        Logs all requests and their responses at INFO level.
+        """
+
+        async def handle_request_finished(request: Request) -> None:
+            try:
+                response = await request.response()
+                if response:
+                    status = response.status
+                    logger.info(
+                        f"Request finished: {request.method} {request.url} -> {status}"
+                    )
+                else:
+                    logger.info(
+                        f"Request finished: {request.method} {request.url} -> No response"
+                    )
+            except Exception as e:
+                logger.error(f"Error handling request finish: {e}")
+
+        async def handle_request_failed(request: Request) -> None:
+            try:
+                failure = request.failure
+                if failure:
+                    logger.info(
+                        f"Request failed: {request.method} {request.url} -> {failure}"
+                    )
+                else:
+                    logger.info(
+                        f"Request failed: {request.method} {request.url} -> Unknown failure"
+                    )
+            except Exception as e:
+                logger.error(f"Error handling request failure: {e}")
+
+        self.page.on("requestfinished", handle_request_finished)
+        self.page.on("requestfailed", handle_request_failed)
 
     async def wait_for_network_idle(self, timeout: int = 30000) -> None:
         """Wait for network activity to settle.

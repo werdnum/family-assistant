@@ -17,3 +17,9 @@ local-logs.txt
 # Kubernetes secrets (contains sensitive tokens)
 .devcontainer/k8s/secrets.yaml
 .report.json
+
+# Development databases
+dev_family_assistant.db*
+
+# Build artifacts
+src/family_assistant/static/dist/

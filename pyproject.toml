@@ -137,7 +137,9 @@ dev = [
     "llm>=0.26.0",
     "llm-gemini>=0.23.0",
     "llm-openrouter>=0.4.1",
-    "llm-fragments-github>=0.4.0"
+    "llm-fragments-github>=0.4.0",
+    "hupper>=1.12.1",
+    "watchdog>=3.0.0"
 ]
 local-embeddings = [
     "sentence-transformers>=2.7.0",
@@ -225,8 +227,12 @@ help = "Build production frontend assets with Vite"
 shell = "npm run --prefix frontend build"
 
 [tool.poe.tasks.serve]
-help = "Run the FastAPI backend with auto-reload"
-shell = "uvicorn family_assistant.web_server:app --reload --host 0.0.0.0 --port 8000"
+help = "Run the full application (without Telegram)"
+shell = "DEV_MODE=false TELEGRAM_ENABLED=false DATABASE_URL=sqlite+aiosqlite:///dev_family_assistant.db GEMINI_API_KEY=${GEMINI_API_KEY:-dev-key} python -m family_assistant"
+
+[tool.poe.tasks.serve-reload]
+help = "Run the full application with auto-reload using hupper"
+shell = "DEV_MODE=false TELEGRAM_ENABLED=false DATABASE_URL=sqlite+aiosqlite:///dev_family_assistant.db GEMINI_API_KEY=${GEMINI_API_KEY:-dev-key} hupper -m family_assistant -w config.yaml -w prompts.yaml"
 
 [tool.poe.tasks.dev]
 help = "Run backend and frontend servers concurrently (access app at http://localhost:5173 or http://<your-ip>:5173)"
@@ -238,12 +244,13 @@ sequence = [
     { shell = "echo '   - Remote: http://<your-ip>:5173'" },
     { shell = "echo ''" },
     { shell = "echo '🔄 Development features:'" },
-    { shell = "echo '   - Backend API on port 8000 (auto-redirects to 5173)'" },
+    { shell = "echo '   - Backend API on port 8000 with auto-reload (hupper)'" },
     { shell = "echo '   - Vite dev server on port 5173 (main entry point)'" },
     { shell = "echo '   - Both servers listening on 0.0.0.0 for remote access'" },
+    { shell = "echo '   - Auto-reloads on Python code and config file changes'" },
     { shell = "echo ''" },
     { shell = "echo 'Press Ctrl+C to stop'" },
-    { shell = "trap 'echo \"\\n🛑 Stopping servers...\"; exit' INT; (DEV_MODE=true poe serve & poe ui-dev & wait)" }
+    { shell = "trap 'echo \"\\n🛑 Stopping servers...\"; exit' INT; (DEV_MODE=true poe serve-reload & poe ui-dev & wait)" }
 ]
 
 
