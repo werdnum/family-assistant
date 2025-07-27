@@ -464,7 +464,7 @@ class GoogleGenAIClient(LLMInterface):
             accumulated_tool_calls = []
 
             # Process stream chunks
-            async for chunk in stream_response:
+            async for chunk in stream_response:  # type: ignore[misc]
                 # Extract text content from chunk
                 if hasattr(chunk, "text") and chunk.text:
                     yield LLMStreamEvent(type="content", content=chunk.text)

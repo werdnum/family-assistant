@@ -754,7 +754,7 @@ class LiteLLMClient:
             current_tool_calls: dict[int, dict[str, Any]] = {}
             chunk = None  # Initialize for pylint
 
-            async for chunk in stream:
+            async for chunk in stream:  # type: ignore[misc]
                 if not chunk or not chunk.choices:
                     continue
 
