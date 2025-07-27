@@ -1,9 +1,10 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
-import { Thread } from '@assistant-ui/react';
+import { Thread, ThreadLoading } from './Thread';
 import NavHeader from './NavHeader';
 import ConversationSidebar from './ConversationSidebar';
 import './chat.css';
+import './thread.css';
 
 const ChatApp = () => {
   const [messages, setMessages] = useState([]);
@@ -243,6 +244,7 @@ const ChatApp = () => {
                   )}
                 </div>
                 <Thread />
+                {isLoading && messages.length > 0 && <ThreadLoading />}
               </div>
             </AssistantRuntimeProvider>
           </main>
