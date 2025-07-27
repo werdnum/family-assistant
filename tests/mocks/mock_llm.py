@@ -3,7 +3,7 @@ Mock LLM implementations for testing purposes.
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from family_assistant.llm import LLMInterface, LLMOutput
@@ -18,7 +18,9 @@ MatcherArgs = dict[str, Any]
 # MatcherFunction now takes a single dictionary of arguments,
 # which are the keyword arguments for the `generate_response` method.
 MatcherFunction = Callable[[MatcherArgs], bool]
-Rule = tuple[MatcherFunction, LLMOutput]
+# ResponseGenerator can be either a static LLMOutput or a callable that returns LLMOutput
+ResponseGenerator = LLMOutput | Callable[[MatcherArgs], LLMOutput]
+Rule = tuple[MatcherFunction, ResponseGenerator]
 
 
 class RuleBasedMockLLMClient(LLMInterface):
@@ -46,7 +48,7 @@ class RuleBasedMockLLMClient(LLMInterface):
                               If None, a basic default response is used.
             model_name: A name for this mock model, can be used by processors.
         """
-        self.rules = rules
+        self.rules: Sequence[Rule] = rules
         self.model = model_name  # For getattr(llm_client, "model", "unknown")
         if default_response is None:
             self.default_response = LLMOutput(

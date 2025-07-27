@@ -155,17 +155,25 @@ def build_frontend_assets() -> None:
         pytest.fail(f"No built assets found in {dist_dir}")
 
 
+@pytest.fixture(scope="function")
+def mock_llm_client() -> RuleBasedMockLLMClient:
+    """Create a mock LLM client that tests can configure."""
+    return RuleBasedMockLLMClient(
+        rules=[],
+        default_response=MockLLMOutput(content="Test response from mock LLM"),
+    )
+
+
 @pytest_asyncio.fixture(scope="function")
 async def web_only_assistant(
     db_engine: AsyncEngine,
     vite_and_api_ports: tuple[int, int],
     build_frontend_assets: None,  # Ensure assets are built
+    mock_llm_client: RuleBasedMockLLMClient,
 ) -> AsyncGenerator[Assistant, None]:
     """Start Assistant in web-only mode for testing."""
     # Auth is already disabled at module level
-
-    # Use production mode for tests since we're using built assets
-    os.environ["DEV_MODE"] = "false"
+    # DEV_MODE is already set to false at module level
 
     # Get the API port
     _, api_port = vite_and_api_ports
@@ -186,6 +194,7 @@ async def web_only_assistant(
         "document_storage_path": "/tmp/test_docs",
         "attachment_storage_path": "/tmp/test_attachments",
         "litellm_debug": False,
+        "dev_mode": False,  # Explicitly set dev_mode to False for tests
         "oidc": {
             "client_id": "",
             "client_secret": "",
@@ -219,16 +228,12 @@ async def web_only_assistant(
         "event_system": {"enabled": False},
     }
 
-    # Create mock LLM client
-    mock_llm_client = RuleBasedMockLLMClient(
-        rules=[],
-        default_response=MockLLMOutput(content="Test response from mock LLM"),
-    )
-
-    # Create Assistant instance
+    # Create Assistant instance using the provided mock LLM client
     assistant = Assistant(
         config=test_config,
-        llm_client_overrides={"mock-model-for-testing": mock_llm_client},
+        llm_client_overrides={
+            "web_test_profile": mock_llm_client
+        },  # Key by profile ID, not model name
     )
 
     # Enable debug mode for tests to get detailed error messages
@@ -333,6 +338,7 @@ async def web_test_fixture(
     playwright_page: Page,
     web_only_assistant: Assistant,
     vite_and_api_ports: tuple[int, int],
+    built_frontend: None,  # Ensure frontend is built before tests
 ) -> WebTestFixture:
     """Combined fixture providing all web test dependencies."""
     _, api_port = vite_and_api_ports

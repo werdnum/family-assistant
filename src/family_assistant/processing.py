@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import traceback  # Added for error traceback
 import uuid  # Added for unique task IDs
 from collections.abc import Awaitable, Callable  # Added Union, Awaitable
@@ -910,10 +911,42 @@ class ProcessingService:
                     )
                     return ""  # Return empty string for missing keys
 
+            # Pre-process template to handle JSON examples and other literal braces
+            # Strategy: Find all format placeholders first, then escape everything else
+            safe_template = system_prompt_template
+
+            # Find all valid format placeholders (e.g., {key_name})
+            placeholder_pattern = r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}"
+            placeholders = set(re.findall(placeholder_pattern, safe_template))
+
+            # Escape all braces that aren't part of valid placeholders
+            # First, temporarily replace valid placeholders with a unique marker
+            temp_template = safe_template
+            for i, placeholder in enumerate(placeholders):
+                marker = f"__PLACEHOLDER_{i}__"
+                temp_template = temp_template.replace(f"{{{placeholder}}}", marker)
+
+            # Now escape all remaining braces
+            temp_template = temp_template.replace("{", "{{").replace("}", "}}")
+
+            # Restore the valid placeholders
+            for i, placeholder in enumerate(placeholders):
+                marker = f"__PLACEHOLDER_{i}__"
+                temp_template = temp_template.replace(marker, f"{{{placeholder}}}")
+
+            safe_template = temp_template
+
             # Use format_map with the custom dictionary to safely format the template
-            final_system_prompt = system_prompt_template.format_map(
-                SafePromptFormatter(format_args)
-            ).strip()
+            try:
+                final_system_prompt = safe_template.format_map(
+                    SafePromptFormatter(format_args)
+                ).strip()
+            except ValueError as e:
+                # If we still get format errors, log them and use the template as-is
+                logger.error(
+                    f"Failed to format system prompt template: {e}. Using template without substitution."
+                )
+                final_system_prompt = system_prompt_template.strip()
 
             if final_system_prompt:
                 messages_for_llm.insert(

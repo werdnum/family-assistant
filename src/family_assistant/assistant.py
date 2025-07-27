@@ -171,6 +171,10 @@ class Assistant:
         """Initializes and wires up all core application components."""
         logger.info(f"Using model: {self.config['model']}")
 
+        # Store config in FastAPI app state for access by routes
+        fastapi_app.state.config = self.config
+        logger.info("Stored configuration in FastAPI app state.")
+
         self.shared_httpx_client = httpx.AsyncClient()
         logger.info("Shared httpx.AsyncClient created.")
 
