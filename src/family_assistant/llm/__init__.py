@@ -7,8 +7,9 @@ import io
 import json
 import logging
 import os
+from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass, field  # Added asdict
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import aiofiles  # type: ignore[import-untyped] # For async file operations
 import litellm  # Import litellm
@@ -82,6 +83,19 @@ class LLMOutput:
     )  # Store reasoning/usage data
 
 
+@dataclass
+class LLMStreamEvent:
+    """Event emitted during streaming LLM responses."""
+
+    type: Literal["content", "tool_call", "tool_result", "error", "done"]
+    content: str | None = None  # For content chunks
+    tool_call: ToolCallItem | None = None  # For tool calls
+    tool_call_id: str | None = None  # For correlating tool results
+    tool_result: str | None = None  # For tool execution results
+    error: str | None = None  # For error messages
+    metadata: dict[str, Any] | None = None  # Additional event metadata
+
+
 def _sanitize_tools_for_litellm(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Removes unsupported 'format' fields from string parameters in tool definitions
@@ -147,6 +161,20 @@ class LLMInterface(Protocol):
         """
         Generates a response from the LLM based on a pre-structured list of messages.
         (Existing method for direct message-based interaction)
+        """
+        ...
+
+    async def generate_response_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """
+        Generates a streaming response from the LLM.
+
+        Yields LLMStreamEvent objects as the response is generated.
+        Must be implemented by all LLM clients (can use fallback implementation).
         """
         ...
 
@@ -658,6 +686,38 @@ class LiteLLMClient:
 
         return {"role": "user", "content": final_user_content}
 
+    async def generate_response_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """
+        Generates a streaming response. For now, uses non-streaming API and yields all at once.
+        This provides compatibility while we implement true streaming support.
+        """
+        try:
+            # Get complete response
+            response = await self.generate_response(messages, tools, tool_choice)
+
+            # Yield content if present
+            if response.content:
+                yield LLMStreamEvent(type="content", content=response.content)
+
+            # Yield tool calls if present
+            if response.tool_calls:
+                for tool_call in response.tool_calls:
+                    yield LLMStreamEvent(
+                        type="tool_call", tool_call=tool_call, tool_call_id=tool_call.id
+                    )
+
+            # Always yield done event
+            yield LLMStreamEvent(type="done", metadata=response.reasoning_info)
+
+        except Exception as e:
+            yield LLMStreamEvent(type="error", error=str(e))
+            raise
+
 
 class RecordingLLMClient:
     """
@@ -673,9 +733,13 @@ class RecordingLLMClient:
             wrapped_client: The actual LLMInterface instance to use for generation.
             recording_path: Path to the file where interactions will be recorded (JSON Lines format).
         """
-        if not hasattr(wrapped_client, "generate_response"):
+        if not (
+            hasattr(wrapped_client, "generate_response")
+            and hasattr(wrapped_client, "generate_response_stream")
+            and hasattr(wrapped_client, "format_user_message_with_file")
+        ):
             raise TypeError("wrapped_client must implement the LLMInterface protocol.")
-        self.wrapped_client = wrapped_client
+        self.wrapped_client: LLMInterface = wrapped_client
         self.recording_path = recording_path
         # Ensure directory exists (optional, depends on desired behavior)
         os.makedirs(os.path.dirname(self.recording_path), exist_ok=True)
@@ -746,6 +810,22 @@ class RecordingLLMClient:
                 exc_info=True,
             )
             raise
+
+    async def generate_response_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """Delegates streaming to wrapped client - no recording for streams yet."""
+        # For now, just pass through to wrapped client
+        # Future: could record stream events
+        # Note: type: ignore needed due to basedpyright incorrectly flagging async generators from protocols
+        # as not iterable. This is a known limitation with protocol type inference.
+        async for event in self.wrapped_client.generate_response_stream(  # type: ignore[reportGeneralTypeIssues]
+            messages, tools, tool_choice
+        ):
+            yield event
 
     async def _record_interaction(
         self,
@@ -973,6 +1053,30 @@ class PlaybackLLMClient:
             f"No matching dict recorded interaction found in {self.recording_path} for the current input args."
         )
 
+    async def generate_response_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """
+        Plays back streaming response by converting recorded non-streaming response.
+        """
+        # Get the recorded response
+        response = await self.generate_response(messages, tools, tool_choice)
+
+        # Convert to stream events
+        if response.content:
+            yield LLMStreamEvent(type="content", content=response.content)
+
+        if response.tool_calls:
+            for tool_call in response.tool_calls:
+                yield LLMStreamEvent(
+                    type="tool_call", tool_call=tool_call, tool_call_id=tool_call.id
+                )
+
+        yield LLMStreamEvent(type="done", metadata=response.reasoning_info)
+
     async def _log_no_match_error(self, current_input_args: dict[str, Any]) -> None:
         """Logs an error when no matching interaction is found."""
         logger.error(
@@ -989,6 +1093,7 @@ class PlaybackLLMClient:
 __all__ = [
     "LLMInterface",
     "LLMOutput",
+    "LLMStreamEvent",
     "ToolCallFunction",
     "ToolCallItem",
     "LiteLLMClient",
