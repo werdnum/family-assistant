@@ -689,37 +689,167 @@ class LiteLLMClient:
 
         return {"role": "user", "content": final_user_content}
 
-    async def generate_response_stream(
+    def generate_response_stream(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
-        """
-        Generates a streaming response. For now, uses non-streaming API and yields all at once.
-        This provides compatibility while we implement true streaming support.
-        """
+        """Generate streaming response using LiteLLM."""
+        return self._generate_response_stream(messages, tools, tool_choice)
+
+    async def _generate_response_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """Internal async generator for streaming responses."""
         try:
-            # Get complete response
-            response = await self.generate_response(messages, tools, tool_choice)
+            # Use primary model for streaming
+            completion_params = self.default_kwargs.copy()
 
-            # Yield content if present
-            if response.content:
-                yield LLMStreamEvent(type="content", content=response.content)
+            # Apply model-specific parameters
+            for pattern, params in self.model_parameters.items():
+                matched = False
+                if pattern.endswith("-"):
+                    if self.model.startswith(pattern[:-1]):
+                        matched = True
+                elif self.model == pattern:
+                    matched = True
 
-            # Yield tool calls if present
-            if response.tool_calls:
-                for tool_call in response.tool_calls:
+                if matched:
+                    logger.debug(
+                        f"Applying streaming parameters for model '{self.model}' using pattern '{pattern}': {params}"
+                    )
+                    params_to_merge = params.copy()
+                    if "reasoning" in params_to_merge:
+                        params_to_merge.pop("reasoning")  # Not supported in streaming
+                    completion_params.update(params_to_merge)
+                    break
+
+            # Prepare streaming parameters
+            stream_params = {
+                "model": self.model,
+                "messages": messages,
+                "stream": True,  # Enable streaming
+                **completion_params,
+            }
+
+            # Add tools if provided
+            if tools:
+                sanitized_tools = _sanitize_tools_for_litellm(tools)
+                stream_params["tools"] = sanitized_tools
+                stream_params["tool_choice"] = tool_choice
+
+            logger.debug(
+                f"Starting streaming response from LiteLLM model {self.model} "
+                f"with {len(messages)} messages. Tools: {bool(tools)}"
+            )
+
+            # Make streaming API call
+            stream = await acompletion(**stream_params)
+
+            # Track current tool calls being built
+            current_tool_calls: dict[int, dict[str, Any]] = {}
+            chunk = None  # Initialize for pylint
+
+            async for chunk in stream:
+                if not chunk or not chunk.choices:
+                    continue
+
+                delta = chunk.choices[0].delta
+                if not delta:
+                    continue
+
+                # Stream content chunks
+                if hasattr(delta, "content") and delta.content:
+                    yield LLMStreamEvent(type="content", content=delta.content)
+
+                # Handle tool calls
+                if hasattr(delta, "tool_calls") and delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        # LiteLLM should always provide an index for tool calls
+                        if not hasattr(tc_delta, "index"):
+                            logger.warning(
+                                "Tool call delta missing index attribute, defaulting to 0. "
+                                "This may cause issues with multiple tool calls."
+                            )
+                            idx = 0
+                        else:
+                            idx = tc_delta.index
+
+                        # Initialize new tool call
+                        if idx not in current_tool_calls:
+                            current_tool_calls[idx] = {
+                                "id": tc_delta.id if hasattr(tc_delta, "id") else None,
+                                "type": tc_delta.type
+                                if hasattr(tc_delta, "type")
+                                else "function",
+                                "function": {"name": "", "arguments": ""},
+                            }
+
+                        # Update tool call info
+                        tc_data = current_tool_calls[idx]
+                        if hasattr(tc_delta, "id") and tc_delta.id:
+                            tc_data["id"] = tc_delta.id
+                        if hasattr(tc_delta, "type") and tc_delta.type:
+                            tc_data["type"] = tc_delta.type
+
+                        # Accumulate function info
+                        if hasattr(tc_delta, "function") and tc_delta.function:
+                            if (
+                                hasattr(tc_delta.function, "name")
+                                and tc_delta.function.name
+                            ):
+                                tc_data["function"]["name"] = tc_delta.function.name
+                            if (
+                                hasattr(tc_delta.function, "arguments")
+                                and tc_delta.function.arguments
+                            ):
+                                tc_data["function"]["arguments"] += (
+                                    tc_delta.function.arguments
+                                )
+
+                        # Continue accumulating tool call data
+                        # We'll emit complete tool calls after the stream ends
+
+            # Emit any remaining tool calls
+            for tc_data in current_tool_calls.values():
+                if tc_data["id"] and tc_data["function"]["name"]:
+                    tool_call = ToolCallItem(
+                        id=tc_data["id"],
+                        type=tc_data["type"],
+                        function=ToolCallFunction(
+                            name=tc_data["function"]["name"],
+                            arguments=tc_data["function"]["arguments"] or "{}",
+                        ),
+                    )
                     yield LLMStreamEvent(
-                        type="tool_call", tool_call=tool_call, tool_call_id=tool_call.id
+                        type="tool_call",
+                        tool_call=tool_call,
+                        tool_call_id=tc_data["id"],
                     )
 
-            # Always yield done event
-            yield LLMStreamEvent(type="done", metadata=response.reasoning_info)
+            # Extract usage info if available
+            metadata = {}
+            if chunk and hasattr(chunk, "usage") and chunk.usage:
+                try:
+                    metadata["reasoning_info"] = chunk.usage.model_dump(mode="json")
+                except Exception as e:
+                    logger.warning(f"Could not serialize streaming usage data: {e}")
+
+            # Signal completion
+            yield LLMStreamEvent(type="done", metadata=metadata)
 
         except Exception as e:
-            yield LLMStreamEvent(type="error", error=str(e))
-            raise
+            error_message = str(e)
+            logger.error(f"LiteLLM streaming error: {e}", exc_info=True)
+            yield LLMStreamEvent(
+                type="error",
+                error=error_message,
+                metadata={"error_id": str(e.__class__.__name__)},
+            )
 
 
 class RecordingLLMClient:

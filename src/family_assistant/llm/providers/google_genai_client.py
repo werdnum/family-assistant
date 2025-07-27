@@ -5,6 +5,7 @@ Direct Google Generative AI (Gemini) implementation for LLM interactions.
 import json
 import logging
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any
 
 import aiofiles
@@ -14,6 +15,7 @@ from google.genai import types
 from family_assistant.llm import (
     LLMInterface,
     LLMOutput,
+    LLMStreamEvent,
     ToolCallFunction,
     ToolCallItem,
 )
@@ -402,3 +404,153 @@ class GoogleGenAIClient(LLMInterface):
             combined_content = file_content
 
         return {"role": "user", "content": combined_content}
+
+    def generate_response_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """Generate streaming response using Google GenAI."""
+        return self._generate_response_stream(messages, tools, tool_choice)
+
+    async def _generate_response_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """Internal async generator for streaming responses using Google GenAI."""
+        try:
+            # Convert messages to format expected by API
+            contents = self._convert_messages_to_genai_format(messages)
+
+            # Build generation config
+            config_params = {
+                **self.default_kwargs,
+                **self._get_model_specific_params(self.model_name),
+            }
+
+            # Map common parameters
+            generation_config = types.GenerateContentConfig()
+            if "temperature" in config_params:
+                generation_config.temperature = config_params["temperature"]
+            if "max_tokens" in config_params:
+                generation_config.max_output_tokens = config_params["max_tokens"]
+            if "top_p" in config_params:
+                generation_config.top_p = config_params["top_p"]
+            if "top_k" in config_params:
+                generation_config.top_k = config_params["top_k"]
+
+            # Handle tools if provided
+            google_tools = None
+            if tools:
+                google_tools = self._convert_tools_to_genai_format(tools)
+
+            # Add tools to config if provided
+            if google_tools:
+                generation_config.tools = google_tools
+                # TODO: The tool_choice parameter is not currently mapped to Google's API
+                # This matches the behavior of the non-streaming implementation
+
+            # Make streaming API call using generate_content_stream
+            stream_response = await self.client.aio.models.generate_content_stream(
+                model=self.model_name,
+                contents=contents,
+                config=generation_config,
+            )
+
+            # Track tool calls being accumulated
+            accumulated_tool_calls = []
+
+            # Process stream chunks
+            async for chunk in stream_response:
+                # Extract text content from chunk
+                if hasattr(chunk, "text") and chunk.text:
+                    yield LLMStreamEvent(type="content", content=chunk.text)
+
+                # Handle candidates structure for more complex responses
+                elif hasattr(chunk, "candidates") and chunk.candidates:
+                    for candidate in chunk.candidates:
+                        if (
+                            hasattr(candidate, "content")
+                            and candidate.content
+                            and hasattr(candidate.content, "parts")
+                        ):
+                            for part in candidate.content.parts:
+                                # Handle text parts
+                                if hasattr(part, "text") and part.text:
+                                    yield LLMStreamEvent(
+                                        type="content", content=part.text
+                                    )
+
+                                # Accumulate function calls
+                                if (
+                                    hasattr(part, "function_call")
+                                    and part.function_call
+                                ):
+                                    func_call = part.function_call
+                                    if func_call.name:
+                                        # Generate a unique ID for the tool call
+                                        tool_call_id = f"call_{uuid.uuid4().hex[:24]}"
+
+                                        tool_call = ToolCallItem(
+                                            id=tool_call_id,
+                                            type="function",
+                                            function=ToolCallFunction(
+                                                name=func_call.name,
+                                                arguments=json.dumps(func_call.args),
+                                            ),
+                                        )
+                                        accumulated_tool_calls.append((
+                                            tool_call,
+                                            tool_call_id,
+                                        ))
+
+            # Emit accumulated tool calls
+            for tool_call, tool_call_id in accumulated_tool_calls:
+                yield LLMStreamEvent(
+                    type="tool_call", tool_call=tool_call, tool_call_id=tool_call_id
+                )
+
+            # Signal completion
+            # Note: Usage metadata might not be available in streaming mode
+            yield LLMStreamEvent(type="done", metadata={})
+
+        except Exception as e:
+            # Handle errors the same way as non-streaming
+            error_message = str(e)
+
+            # Categorize the error type for metadata
+            error_type = "unknown"
+            if "401" in error_message or "api key" in error_message.lower():
+                error_type = "authentication"
+            elif "429" in error_message or "quota" in error_message.lower():
+                error_type = "rate_limit"
+            elif "404" in error_message or "not found" in error_message.lower():
+                error_type = "model_not_found"
+            elif "token" in error_message.lower() and "limit" in error_message.lower():
+                error_type = "context_length"
+            elif "invalid" in error_message.lower() or "400" in error_message:
+                error_type = "invalid_request"
+            elif (
+                "connection" in error_message.lower()
+                or "network" in error_message.lower()
+            ):
+                error_type = "connection"
+            elif "timeout" in error_message.lower():
+                error_type = "timeout"
+
+            logger.error(
+                f"Google GenAI streaming error ({error_type}): {e}", exc_info=True
+            )
+            yield LLMStreamEvent(
+                type="error",
+                error=error_message,
+                metadata={
+                    "error_id": str(e.__class__.__name__),
+                    "error_type": error_type,
+                    "provider": "google",
+                    "model": self.model_name,
+                },
+            )
