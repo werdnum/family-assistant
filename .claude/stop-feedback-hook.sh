@@ -16,13 +16,14 @@ if [ "$stop_hook_active" = "false" ]; then
     echo >&2
     
     # Suggest running tests
-    echo "• Have you run tests to verify any changes? Consider running 'poe test' if appropriate." >&2
+    echo "• Have you run tests to verify any changes? You MUST run 'poe test' if you have made any changes that could possibly affect the test result." >&2
+    echo "• Are all tests passing? It's OK if you are waiting for the user's advice on how to fix the tests, but you MUST NOT say you are done unless all tests are passing." >&2
     echo >&2
     
     # Check for uncommitted changes
     uncommitted_changes=$(git status --porcelain 2>/dev/null)
     if [ -n "$uncommitted_changes" ]; then
-        echo "• There are uncommitted changes. You may want to commit them." >&2
+        echo "• There are uncommitted changes. You MUST commit changes before finishing up." >&2
         echo "  Uncommitted changes:" >&2
         echo "$uncommitted_changes" | sed 's/^/    /' >&2
         echo >&2
@@ -34,7 +35,7 @@ if [ "$stop_hook_active" = "false" ]; then
     if [ -n "$upstream" ]; then
         unpushed_commits=$(git log --oneline "$upstream"..HEAD 2>/dev/null)
         if [ -n "$unpushed_commits" ]; then
-            echo "• There are unpushed commits. You may want to push them." >&2
+            echo "• There are unpushed commits. You should push them if the situation warrants it." >&2
             echo "  Unpushed commits:" >&2
             echo "$unpushed_commits" | sed 's/^/    /' >&2
             echo >&2
@@ -42,7 +43,7 @@ if [ "$stop_hook_active" = "false" ]; then
     fi
     
     # Always remind to check if request is fulfilled
-    echo "• Have you fulfilled the user's request completely? Ask if they need any additional help." >&2
+    echo "• Have you fulfilled the user's request completely?" >&2
 fi
 
 # Return 2 to continue Claude Code when stop_hook_active is false
