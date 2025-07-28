@@ -67,9 +67,22 @@ export const useStreamingResponse = ({
           const lines = buffer.split('\n');
           buffer = lines[lines.length - 1]; // Keep incomplete line in buffer
 
+          let currentEventType = null;
+
           for (let i = 0; i < lines.length - 1; i++) {
             const line = lines[i].trim();
 
+            // Handle SSE event lines
+            if (line.startsWith('event: ')) {
+              currentEventType = line.slice(7);
+              if (currentEventType === 'close') {
+                // Server closed the stream
+                return;
+              }
+              continue;
+            }
+            
+            // Handle data lines
             if (line.startsWith('data: ')) {
               const data = line.slice(6);
               
@@ -79,40 +92,51 @@ export const useStreamingResponse = ({
               }
 
               try {
-                const event = JSON.parse(data);
+                const payload = JSON.parse(data);
 
-                switch (event.type) {
-                  case 'content':
-                    currentMessage += event.content;
-                    onMessage(currentMessage);
+                // Use the event type from the 'event:' line
+                switch (currentEventType) {
+                  case 'text':
+                    if (payload.content) {
+                      currentMessage += payload.content;
+                      onMessage(currentMessage);
+                    }
                     break;
 
                   case 'tool_call':
-                    if (event.tool_call?.function?.name) {
+                    if (payload.tool_call) {
                       toolCalls.push({
-                        id: event.tool_call_id,
-                        name: event.tool_call.function.name,
-                        arguments: event.tool_call.function.arguments || '{}',
+                        id: payload.tool_call.id,
+                        name: payload.tool_call.function.name,
+                        arguments: payload.tool_call.function.arguments || '{}',
                       });
                       onToolCall(toolCalls);
                     }
                     break;
 
-                  case 'error':
-                    onError(new Error(event.error || 'Unknown error'));
+                  case 'tool_result':
+                    // Handle tool results if needed
                     break;
 
+                  case 'error':
+                    onError(new Error(payload.error || 'Unknown error'));
+                    break;
+
+                  case 'end':
                   case 'done':
                     // Stream completed successfully
                     break;
 
                   default:
-                    // Ignore unknown event types
+                    // Log unknown event types for debugging
                     break;
                 }
               } catch (e) {
                 console.error('Failed to parse SSE event:', e, 'Data:', data);
               }
+              
+              // Reset event type after processing
+              currentEventType = null;
             }
           }
         }

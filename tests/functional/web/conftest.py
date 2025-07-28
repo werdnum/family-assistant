@@ -126,8 +126,10 @@ def build_frontend_assets() -> None:
     need_rebuild = True
     if dist_dir.exists() and any(dist_dir.iterdir()):
         # Check if source files are newer than build
-        src_files = list(frontend_dir.glob("src/**/*.js")) + list(
-            frontend_dir.glob("src/**/*.css")
+        src_files = (
+            list(frontend_dir.glob("src/**/*.js"))
+            + list(frontend_dir.glob("src/**/*.jsx"))
+            + list(frontend_dir.glob("src/**/*.css"))
         )
         if src_files:
             newest_src = max(f.stat().st_mtime for f in src_files)
@@ -200,10 +202,10 @@ async def web_only_assistant(
             "client_secret": "",
             "discovery_url": "",
         },
-        "default_service_profile_id": "web_test_profile",
+        "default_service_profile_id": "default_assistant",
         "service_profiles": [
             {
-                "id": "web_test_profile",
+                "id": "default_assistant",
                 "description": "Test profile for web UI",
                 "processing_config": {
                     "prompts": {"system_prompt": "You are a helpful test assistant."},
@@ -232,7 +234,7 @@ async def web_only_assistant(
     assistant = Assistant(
         config=test_config,
         llm_client_overrides={
-            "web_test_profile": mock_llm_client
+            "default_assistant": mock_llm_client
         },  # Key by profile ID, not model name
     )
 

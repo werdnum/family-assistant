@@ -174,7 +174,7 @@ const UserMessage = () => {
         </div>
         <div className="message-content-wrapper">
           <div className="message-bubble user-bubble" data-testid="user-message-content">
-            <MessagePrimitive.Content components={{ Text: 'span' }} />
+            <MessagePrimitive.Content />
           </div>
           <div className="message-avatar user-avatar">
             <UserIcon size={20} />

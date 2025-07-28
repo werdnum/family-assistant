@@ -39,7 +39,13 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === streamingMessageIdRef.current
-            ? { ...msg, content: [{ type: 'text', text: msg.content[0].text + content }] }
+            ? { 
+                ...msg, 
+                content: [{ 
+                  type: 'text', 
+                  text: content // Use the accumulated content directly from the hook
+                }] 
+              }
             : msg
         )
       );
@@ -99,6 +105,7 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
     onError: handleStreamingError,
     onComplete: handleStreamingComplete,
   });
+
 
   // Handle window resize
   useEffect(() => {
@@ -270,7 +277,7 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
 
   const runtime = useExternalStoreRuntime({
     messages,
-    isRunning: isLoading || isStreaming || !conversationId,
+    isRunning: isLoading || isStreaming,
     onNew: handleNew,
     convertMessage,
   });
