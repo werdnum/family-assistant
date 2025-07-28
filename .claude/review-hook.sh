@@ -190,6 +190,9 @@ else
     if [[ $REVIEW_EXIT_CODE -eq 1 ]]; then
         # Minor issues - less intimidating message
         echo "${YELLOW}⚠ Code review found minor issues${NC}" >&2
+        echo "General advice: if it's easy to fix, just fix it now. There's no time like the present." >&2
+        echo "If it's wrong, just proceed." >&2
+        echo "If it's hard and not important enough to fix, track the fix somehwere - with a TODO comment or similar, and acknowledge in the commit message." >&2
         echo "" >&2
         echo "${BOLD}To proceed anyway, add this to your commit message:${NC}" >&2
         echo "   ${YELLOW}$SENTINEL_PHRASE${NC}" >&2
