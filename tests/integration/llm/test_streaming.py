@@ -511,9 +511,9 @@ async def test_litellm_streaming_with_various_models(llm_client_factory: Any) ->
     # This test uses a mock provider to avoid API calls
     # We'll test the LiteLLM client directly with streaming support
 
-    # Skip in CI without API keys
-    if os.getenv("CI"):
-        pytest.skip("Skipping LiteLLM streaming test in CI")
+    # Skip in CI without API keys or when no API key is available
+    if os.getenv("CI") or not os.getenv("OPENAI_API_KEY"):
+        pytest.skip("Skipping LiteLLM streaming test - requires API key")
 
     # Test with a LiteLLM-supported model
     client = await llm_client_factory("litellm", "gpt-4.1-nano")

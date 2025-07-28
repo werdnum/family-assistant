@@ -20,17 +20,54 @@ async def test_basic_chat_conversation(
     chat_page = ChatPage(page, web_test_fixture.base_url)
 
     # Configure mock LLM response
+    def llm_matcher(args: dict) -> bool:
+        messages = args.get("messages", [])
+        print(f"DEBUG: LLM called with {len(messages)} messages")
+        # Look for "Hello" in any message content
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, str) and "Hello" in content:
+                print(f"DEBUG: Found 'Hello' in message: {content[:50]}...")
+                return True
+        return False
+
     mock_llm_client.rules = [
         (
-            lambda args: "Hello" in str(args.get("messages", [])),
+            llm_matcher,
             LLMOutput(
-                content="Hello! I'm your test assistant. How can I help you today?"
+                content="Hello! I'm your test assistant. How can I help you today!"
             ),
         )
     ]
 
+    # Also set a default response in case the rule doesn't match
+    mock_llm_client.default_response = LLMOutput(
+        content="Default test response from mock LLM"
+    )
+
+    # Capture console logs
+    console_logs = []
+    page.on("console", lambda msg: console_logs.append(f"{msg.type}: {msg.text}"))
+
     # Navigate to chat
     await chat_page.navigate_to_chat()
+
+    # Debug: Wait for JavaScript to load and check state
+    await page.wait_for_timeout(2000)
+    js_state = await page.evaluate("""() => {
+        return {
+            hasReact: typeof window.React !== 'undefined',
+            url: window.location.href,
+            scripts: Array.from(document.querySelectorAll('script')).length,
+            apiUrl: window.API_URL || 'not set'
+        }
+    }""")
+    print(f"DEBUG: JavaScript state after navigation: {js_state}")
+
+    if console_logs:
+        print("DEBUG: Console logs:")
+        for log in console_logs[:10]:  # First 10
+            print(f"  {log}")
 
     # Verify chat input is enabled
     assert await chat_page.is_chat_input_enabled()
@@ -38,17 +75,48 @@ async def test_basic_chat_conversation(
     # Send a message
     await chat_page.send_message("Hello, assistant!")
 
-    # Wait for assistant response
-    await chat_page.wait_for_assistant_response()
+    # Debug: Check if message was sent
+    await page.wait_for_timeout(1000)
+    all_msgs_before = await page.query_selector_all(
+        '[data-testid="user-message"], [data-testid="assistant-message"]'
+    )
+    print(f"DEBUG: Messages after send: {len(all_msgs_before)}")
+
+    # Wait for assistant response with increased timeout
+    try:
+        await chat_page.wait_for_assistant_response(timeout=10000)
+    except Exception as e:
+        print(f"DEBUG: Error waiting for response: {e}")
+        # Take a screenshot for debugging
+        await page.screenshot(path="/tmp/test_chat_error.png")
+        # Check what's in the DOM
+        assistant_msgs = await page.query_selector_all(
+            '[data-testid="assistant-message"]'
+        )
+        print(f"DEBUG: Found {len(assistant_msgs)} assistant messages")
+        for i, msg in enumerate(assistant_msgs):
+            html = await msg.inner_html()
+            print(f"DEBUG: Assistant message {i} HTML: {html[:200]}...")
+        raise
 
     # Verify assistant response contains expected content
+    await page.wait_for_function(
+        f"""() => {{
+            const lastMessage = document.querySelector('{chat_page.MESSAGE_ASSISTANT_CONTENT}:last-child');
+            return lastMessage && lastMessage.innerText.includes('your test assistant');
+        }}""",
+        timeout=10000,
+    )
+
     response = await chat_page.get_last_assistant_message()
+
     assert "Hello!" in response
     assert "test assistant" in response
 
     # Verify conversation ID was created with correct format
     conv_id = await chat_page.get_current_conversation_id()
     assert conv_id is not None
+    # Frontend still uses web_conv_ prefix for now
     assert conv_id.startswith("web_conv_")
 
     # Verify both messages are displayed

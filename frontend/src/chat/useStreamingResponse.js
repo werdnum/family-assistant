@@ -2,10 +2,12 @@ import { useState, useCallback, useRef } from 'react';
 
 /**
  * Hook for handling streaming responses from the chat API
- * @param {Function} onMessage - Callback when a content chunk is received
- * @param {Function} onToolCall - Callback when a tool call is received
- * @param {Function} onError - Callback when an error occurs
- * @param {Function} onComplete - Callback when the stream completes
+ * @param {Object} options - Hook options
+ * @param {Function} options.onMessage - Callback when content is streamed (receives accumulated content)
+ * @param {Function} options.onToolCall - Callback when tool calls are updated (receives array of all tool calls)
+ * @param {Function} options.onError - Callback when an error occurs (receives Error object)
+ * @param {Function} options.onComplete - Callback when stream completes (receives { content, toolCalls })
+ * @returns {Object} { sendStreamingMessage, cancelStream, isStreaming }
  */
 export const useStreamingResponse = ({
   onMessage = () => {},
@@ -15,18 +17,15 @@ export const useStreamingResponse = ({
 } = {}) => {
   const [isStreaming, setIsStreaming] = useState(false);
   const abortControllerRef = useRef(null);
-  const currentMessageRef = useRef('');
-  const toolCallsRef = useRef([]);
 
   const sendStreamingMessage = useCallback(
     async ({ prompt, conversationId, profileId = 'default_assistant', interfaceType = 'web' }) => {
-      // Reset state
-      currentMessageRef.current = '';
-      toolCallsRef.current = [];
       setIsStreaming(true);
-
-      // Create abort controller for cancellation
       abortControllerRef.current = new AbortController();
+
+      let currentMessage = '';
+      const toolCalls = [];
+      let buffer = '';
 
       try {
         const response = await fetch('/api/v1/chat/send_message_stream', {
@@ -44,7 +43,6 @@ export const useStreamingResponse = ({
         });
 
         if (!response.ok) {
-          // Handle authentication errors
           if (response.status === 401) {
             window.location.href = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
             return;
@@ -53,14 +51,11 @@ export const useStreamingResponse = ({
           throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
         }
 
-        // Process the SSE stream
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
-        let buffer = '';
 
         while (true) {
           const { done, value } = await reader.read();
-
           if (done) {
             break;
           }
@@ -77,7 +72,7 @@ export const useStreamingResponse = ({
 
             if (line.startsWith('data: ')) {
               const data = line.slice(6);
-
+              
               // Skip the [DONE] marker
               if (data === '[DONE]') {
                 continue;
@@ -88,46 +83,46 @@ export const useStreamingResponse = ({
 
                 switch (event.type) {
                   case 'content':
-                    currentMessageRef.current += event.content;
-                    onMessage(currentMessageRef.current);
+                    currentMessage += event.content;
+                    onMessage(currentMessage);
                     break;
 
                   case 'tool_call':
                     if (event.tool_call?.function?.name) {
-                      toolCallsRef.current.push({
+                      toolCalls.push({
                         id: event.tool_call_id,
                         name: event.tool_call.function.name,
                         arguments: event.tool_call.function.arguments || '{}',
                       });
-                      onToolCall(event.tool_call, event.tool_call_id);
+                      onToolCall(toolCalls);
                     }
                     break;
 
                   case 'error':
-                    onError(event.error, event.metadata);
+                    onError(new Error(event.error || 'Unknown error'));
                     break;
 
                   case 'done':
-                    onComplete({
-                      content: currentMessageRef.current,
-                      toolCalls: toolCallsRef.current,
-                      metadata: event.metadata,
-                    });
+                    // Stream completed successfully
+                    break;
+
+                  default:
+                    // Ignore unknown event types
                     break;
                 }
               } catch (e) {
-                console.error('Error parsing SSE event:', e, data);
+                console.error('Failed to parse SSE event:', e, 'Data:', data);
               }
             }
           }
         }
       } catch (error) {
         if (error.name !== 'AbortError') {
-          console.error('Streaming error:', error);
-          onError(error.message);
+          onError(error.message || error.toString());
         }
       } finally {
         setIsStreaming(false);
+        onComplete({ content: currentMessage, toolCalls });
         abortControllerRef.current = null;
       }
     },
@@ -137,8 +132,6 @@ export const useStreamingResponse = ({
   const cancelStream = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-      setIsStreaming(false);
     }
   }, []);
 

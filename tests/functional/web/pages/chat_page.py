@@ -1,5 +1,7 @@
 """Chat Page Object Model for Playwright tests."""
 
+import contextlib
+import time
 from typing import Any
 
 from .base_page import BasePage
@@ -33,7 +35,15 @@ class ChatPage(BasePage):
             await self.navigate_to(f"/chat?conversation_id={conversation_id}")
         else:
             await self.navigate_to("/chat")
-        await self.wait_for_load()
+
+        # Wait for the chat app to fully load
+        # The default wait_for_load only waits for DOM, not JavaScript modules
+        await self.wait_for_load(wait_for_network=True)
+
+        # Also wait for the chat interface to be ready
+        await self.page.wait_for_selector(
+            self.CHAT_INPUT, state="visible", timeout=10000
+        )
 
     async def send_message(self, message: str) -> None:
         """Send a message in the chat.
@@ -58,26 +68,63 @@ class ChatPage(BasePage):
             self.MESSAGE_USER, state="visible", timeout=5000
         )
 
-        # Wait for assistant response to start
+    async def get_last_assistant_message(self, timeout: int = 15000) -> str:
+        """Get the text content of the last assistant message, waiting for it to stabilize."""
         await self.page.wait_for_selector(
-            self.MESSAGE_ASSISTANT, state="visible", timeout=30000
+            self.MESSAGE_ASSISTANT, state="visible", timeout=timeout
         )
 
-    async def get_last_assistant_message(self) -> str:
-        """Get the text content of the last assistant message."""
-        await self.page.wait_for_selector(self.MESSAGE_ASSISTANT, state="visible")
-        # Get all assistant messages
-        assistant_messages = await self.page.query_selector_all(self.MESSAGE_ASSISTANT)
-        if assistant_messages:
-            # Get the last one
-            last_message = assistant_messages[-1]
-            # Find the content element within it
-            content_elem = await last_message.query_selector(
+        # This JS function polls the last assistant message until its content
+        # has not changed for a certain period (e.g., 500ms), indicating stability.
+        js_function = f"""
+        () => {{
+            return new Promise((resolve, reject) => {{
+                const assistantMessages = document.querySelectorAll('{self.MESSAGE_ASSISTANT_CONTENT}');
+                if (assistantMessages.length === 0) {{
+                    return resolve(null);
+                }}
+
+                const lastMessage = assistantMessages[assistantMessages.length - 1];
+                let lastText = lastMessage.innerText;
+                let stableTime = 0;
+                const stabilityThreshold = 500; // ms
+                const pollInterval = 100; // ms
+                const timeoutLimit = {timeout}; // ms
+
+                const poller = setInterval(() => {{
+                    const newText = lastMessage.innerText;
+                    if (newText === lastText) {{
+                        stableTime += pollInterval;
+                        if (stableTime >= stabilityThreshold) {{
+                            clearInterval(poller);
+                            resolve(newText);
+                        }}
+                    }} else {{
+                        lastText = newText;
+                        stableTime = 0;
+                    }}
+                }}, pollInterval);
+
+                setTimeout(() => {{
+                    clearInterval(poller);
+                    reject(new Error(`Timeout: Assistant message did not stabilize within ${{timeout}}ms. Last content: "${{lastText}}"`));
+                }}, timeoutLimit);
+            }});
+        }}"""
+
+        try:
+            handle = await self.page.evaluate_handle(js_function)
+            content = await handle.json_value()
+            return content or ""
+        except Exception as e:
+            print(f"DEBUG: Error waiting for stable assistant message: {e}")
+            # Fallback for debugging
+            assistant_messages = await self.page.query_selector_all(
                 self.MESSAGE_ASSISTANT_CONTENT
             )
-            if content_elem:
-                return await content_elem.text_content() or ""
-        return ""
+            if assistant_messages:
+                return await assistant_messages[-1].inner_text()
+            return ""
 
     async def get_all_messages(self) -> list[dict[str, str]]:
         """Get all messages in the conversation.
@@ -205,11 +252,6 @@ class ChatPage(BasePage):
             timeout=5000,
         )
 
-    async def refresh_conversations(self) -> None:
-        """Refresh the conversation list."""
-        # The UI should auto-refresh, so just wait a bit
-        await self.page.wait_for_timeout(1000)
-
     async def wait_for_tool_call_display(self) -> None:
         """Wait for tool call content to be displayed."""
         await self.page.wait_for_selector(
@@ -258,25 +300,44 @@ class ChatPage(BasePage):
         Args:
             timeout: Maximum time to wait in milliseconds
         """
-        # Wait for assistant message to appear
-        await self.page.wait_for_selector(
-            self.MESSAGE_ASSISTANT, state="visible", timeout=timeout
+        # In a streaming UI, the most reliable way to know the response is complete
+        # is to wait for the input to be re-enabled. We can do this by waiting for
+        # the chat input's `disabled` property to be false.
+        await self.page.wait_for_function(
+            f"() => {{ const el = document.querySelector('{self.CHAT_INPUT}'); return el && !el.disabled; }}",
+            timeout=timeout,
         )
-        # Wait for any loading indicators to disappear
-        await self.page.wait_for_selector(
-            self.LOADING_INDICATOR, state="hidden", timeout=timeout
+
+        # Also, wait for any loading indicators to disappear
+        with contextlib.suppress(Exception):
+            await self.page.wait_for_selector(
+                self.LOADING_INDICATOR, state="hidden", timeout=1000
+            )
+
+        # Give a tiny buffer for final DOM updates and UI rendering
+        await self.page.wait_for_timeout(250)
+
+    async def wait_for_conversation_saved(self, timeout: int = 20000) -> None:
+        """Wait for conversation to be saved to backend by checking conversation list."""
+        start_time = time.time()
+        current_conv_id = await self.get_current_conversation_id()
+
+        while time.time() - start_time < timeout / 1000:
+            try:
+                # Force a reload to ensure the conversation list is up-to-date
+                await self.page.reload(wait_until="networkidle")
+
+                conv_list = await self.get_conversation_list()
+                if any(c["id"] == current_conv_id for c in conv_list):
+                    return  # Conversation found
+            except Exception as e:
+                print(f"DEBUG: Error checking conversation list, will retry: {e}")
+
+            await self.page.wait_for_timeout(2000)  # Wait longer between reloads
+
+        raise TimeoutError(
+            f"Conversation {current_conv_id} not saved within {timeout}ms"
         )
-        # Give a tiny buffer for DOM updates
-        await self.page.wait_for_timeout(100)
-
-    async def wait_for_conversation_saved(self, timeout: int = 5000) -> None:
-        """Wait for conversation to be saved to backend.
-
-        Args:
-            timeout: Maximum time to wait in milliseconds
-        """
-        # Wait for network idle state indicating save completed
-        await self.page.wait_for_load_state("networkidle", timeout=timeout)
 
     async def wait_for_message_count(
         self, expected_count: int, role: str | None = None, timeout: int = 10000

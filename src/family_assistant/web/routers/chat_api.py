@@ -366,16 +366,13 @@ async def api_chat_send_message_stream(
                         if event.metadata and event.metadata.get("error_id"):
                             error_data["error_id"] = event.metadata["error_id"]
                         yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
-
             except Exception as e:
                 error_id = str(uuid.uuid4())
                 logger.error(f"Streaming error {error_id}: {e}", exc_info=True)
-
                 # Send error event to client
                 error_msg = "An error occurred while processing your request"
                 if getattr(request.app.state, "debug_mode", False):
                     error_msg = str(e)
-
                 yield f"event: error\ndata: {json.dumps({'error': error_msg, 'error_id': error_id})}\n\n"
             finally:
                 # Send a final close event to ensure client knows stream is done
