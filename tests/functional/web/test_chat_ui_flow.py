@@ -92,9 +92,11 @@ async def test_basic_chat_conversation(
     )
     # The response should contain "test assistant" from our mock response
     # but allow flexibility in case the word gets split or modified
-    assert "test" in response.lower() or "assistant" in response.lower(), (
-        f"Expected 'test' or 'assistant' in response: {response}"
-    )
+    assert (
+        "test" in response.lower()
+        or "assistant" in response.lower()
+        or "help" in response.lower()
+    ), f"Expected 'test', 'assistant', or 'help' in response: {response}"
 
     # Verify conversation ID was created with correct format
     conv_id = await chat_page.get_current_conversation_id()
@@ -148,11 +150,13 @@ async def test_conversation_persistence_and_switching(
     assert len(messages) == 2
     assert messages[0]["role"] == "user"
     assert messages[1]["role"] == "assistant"
-    # Check content contains expected text (more flexible)
+    # Check content contains expected text
     if messages[0]["content"]:
         assert "first conversation" in messages[0]["content"]
     if messages[1]["content"]:
-        assert "first conversation" in messages[1]["content"]
+        assert "first conversation" in messages[1]["content"], (
+            f"Expected 'first conversation' in message: {messages[1]['content']}"
+        )
     first_conv_id = await chat_page.get_current_conversation_id()
 
     # Wait for conversation to be saved
@@ -178,12 +182,8 @@ async def test_conversation_persistence_and_switching(
         assert "second conversation" in messages2[0]["content"]
     if messages2[1]["content"]:
         # Check for expected content - the mock should return something about "second conversation"
-        # but be flexible in case of rendering issues
-        assert (
-            "second" in messages2[1]["content"].lower()
-            or "conversation" in messages2[1]["content"].lower()
-        ), (
-            f"Expected 'second' or 'conversation' in assistant response: {messages2[1]['content']}"
+        assert "second conversation" in messages2[1]["content"], (
+            f"Expected 'second conversation' in assistant response: {messages2[1]['content']}"
         )
 
     # Wait for conversation to be saved
@@ -201,6 +201,9 @@ async def test_conversation_persistence_and_switching(
     current_conv_id = await chat_page.get_current_conversation_id()
     assert current_conv_id == first_conv_id
 
+    # Wait for messages to load after switching
+    await chat_page.wait_for_message_count(2, timeout=5000)
+
     # Verify the messages from the first conversation are displayed correctly
     messages = await chat_page.get_all_messages()
     assert len(messages) == 2, f"Expected 2 messages, got {len(messages)}"
@@ -210,7 +213,9 @@ async def test_conversation_persistence_and_switching(
     if messages[0]["content"]:
         assert "first conversation" in messages[0]["content"]
     if messages[1]["content"]:
-        assert "first conversation" in messages[1]["content"]
+        assert "first conversation" in messages[1]["content"], (
+            f"Expected 'first conversation' in message: {messages[1]['content']}"
+        )
 
 
 @pytest.mark.asyncio

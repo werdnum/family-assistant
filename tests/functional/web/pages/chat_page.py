@@ -87,21 +87,41 @@ class ChatPage(BasePage):
                 const lastMessage = assistantMessages[assistantMessages.length - 1];
                 let lastText = lastMessage.innerText;
                 let stableTime = 0;
-                const stabilityThreshold = 1000; // ms - increased for better stability
+                const stabilityThreshold = 1500; // ms - increased for better stability with markdown rendering
                 const pollInterval = 100; // ms
                 const timeoutLimit = {timeout}; // ms
 
+                let waitingForContent = !lastText;
+                
                 const poller = setInterval(() => {{
-                    const newText = lastMessage.innerText || lastMessage.textContent || '';
-                    if (newText === lastText) {{
+                    // Try multiple ways to get the text content
+                    const markdownEl = lastMessage.querySelector('.markdown-text');
+                    let newText = '';
+                    
+                    // First try the markdown element
+                    if (markdownEl) {{
+                        newText = markdownEl.innerText || markdownEl.textContent || '';
+                    }}
+                    
+                    // If no markdown element or empty, try the parent
+                    if (!newText || newText.trim() === '') {{
+                        newText = lastMessage.innerText || lastMessage.textContent || '';
+                    }}
+                    
+                    // If we're waiting for initial content, keep polling
+                    if (waitingForContent && newText && newText.trim()) {{
+                        waitingForContent = false;
+                        lastText = newText;
+                        stableTime = 0;
+                    }}
+                    // Otherwise check for stability
+                    else if (newText === lastText && newText.length > 0) {{
                         stableTime += pollInterval;
                         if (stableTime >= stabilityThreshold) {{
                             clearInterval(poller);
-                            // Use textContent as fallback if innerText seems incomplete
-                            const finalText = newText.length > 10 ? newText : (lastMessage.textContent || newText);
-                            resolve(finalText);
+                            resolve(newText.trim());
                         }}
-                    }} else {{
+                    }} else if (newText && newText !== lastText) {{
                         lastText = newText;
                         stableTime = 0;
                     }}
@@ -163,7 +183,12 @@ class ChatPage(BasePage):
                 # For assistant messages, try the specific content selector first
                 content_elem = await msg.query_selector(self.MESSAGE_ASSISTANT_CONTENT)
                 if content_elem:
-                    content = await content_elem.text_content() or ""
+                    # Check if there's a markdown element inside
+                    markdown_elem = await content_elem.query_selector(".markdown-text")
+                    if markdown_elem:
+                        content = await markdown_elem.text_content() or ""
+                    else:
+                        content = await content_elem.text_content() or ""
                 else:
                     # Fallback: try to get text from the bubble div
                     bubble_elem = await msg.query_selector(".assistant-bubble")
