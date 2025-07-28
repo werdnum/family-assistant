@@ -20,7 +20,7 @@ import {
   Loader2Icon,
 } from 'lucide-react';
 import classNames from 'classnames';
-import { formatRelativeTime } from './utils';
+// import { formatRelativeTime } from './utils';
 import { MarkdownText } from './MarkdownText';
 import { TooltipIconButton } from './TooltipIconButton';
 
@@ -86,19 +86,19 @@ const ThreadWelcomeSuggestions = () => {
   const suggestions = [
     {
       prompt: "What's on my calendar today?",
-      icon: "📅",
+      icon: '📅',
     },
     {
-      prompt: "Add a note about groceries",
-      icon: "📝",
+      prompt: 'Add a note about groceries',
+      icon: '📝',
     },
     {
-      prompt: "Search my documents for recipes",
-      icon: "🔍",
+      prompt: 'Search my documents for recipes',
+      icon: '🔍',
     },
     {
-      prompt: "What tasks do I have pending?",
-      icon: "✅",
+      prompt: 'What tasks do I have pending?',
+      icon: '✅',
     },
   ];
 
@@ -206,10 +206,7 @@ const UserActionBar = () => {
 const EditComposer = () => {
   return (
     <ComposerPrimitive.Root className="edit-composer">
-      <ComposerPrimitive.Input 
-        className="edit-composer-input"
-        autoFocus
-      />
+      <ComposerPrimitive.Input className="edit-composer-input" autoFocus />
       <div className="edit-composer-actions">
         <ComposerPrimitive.Cancel asChild>
           <button className="edit-cancel-btn">Cancel</button>
@@ -224,7 +221,10 @@ const EditComposer = () => {
 
 const AssistantMessage = () => {
   return (
-    <MessagePrimitive.Root className="message-root assistant-message" data-testid="assistant-message">
+    <MessagePrimitive.Root
+      className="message-root assistant-message"
+      data-testid="assistant-message"
+    >
       <div className="message-container">
         <div className="message-header">
           <MessageTimestamp />
@@ -301,9 +301,7 @@ const MessageTimestamp = () => {
   // This would need to be passed down from the parent component in a real implementation
   return (
     <MessagePrimitive.If hasBranchPicker={false}>
-      <time className="message-timestamp">
-        just now
-      </time>
+      <time className="message-timestamp">just now</time>
     </MessagePrimitive.If>
   );
 };

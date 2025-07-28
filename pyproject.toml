@@ -253,6 +253,31 @@ sequence = [
     { shell = "trap 'echo \"\\n🛑 Stopping servers...\"; exit' INT; (DEV_MODE=true poe serve-reload & poe ui-dev & wait)" }
 ]
 
+[tool.poe.tasks.frontend-lint]
+help = "Lint frontend JavaScript/TypeScript code"
+shell = "cd frontend && npm run lint"
+
+[tool.poe.tasks.frontend-lint-fix]
+help = "Lint and fix frontend JavaScript/TypeScript code"
+shell = "cd frontend && npm run lint:fix"
+
+[tool.poe.tasks.frontend-format]
+help = "Format frontend code with Biome"
+shell = "cd frontend && npm run format"
+
+[tool.poe.tasks.frontend-check]
+help = "Check frontend code formatting and linting without fixing"
+shell = "cd frontend && npm run check"
+
+[tool.poe.tasks.format-and-lint]
+help = "Format and lint both Python and JavaScript/TypeScript code"
+sequence = [
+    { cmd = "poe format" },
+    { cmd = "poe frontend-format" },
+    { cmd = "poe lint" },
+    { cmd = "poe frontend-lint" }
+]
+
 
 [tool.ruff.lint.isort]
 known-first-party = ["family_assistant"]

@@ -8,10 +8,10 @@ import 'simpledotcss/simple.css';
 import './custom.css';
 
 // Log that the frontend is loaded (for development)
-console.log('Family Assistant frontend loaded');
+// console.log('Family Assistant frontend loaded');
 
 // Export any utilities that might be needed globally
 window.FamilyAssistant = {
   version: '0.1.0',
-  loaded: true
+  loaded: true,
 };
