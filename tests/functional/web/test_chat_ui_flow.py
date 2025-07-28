@@ -1,7 +1,6 @@
 """End-to-end tests for the chat UI using Playwright."""
 
 import json
-from typing import Any
 
 import pytest
 
@@ -44,7 +43,6 @@ async def test_basic_chat_conversation(
         content="Default test response from mock LLM"
     )
 
-
     # Navigate to chat
     await chat_page.navigate_to_chat()
 
@@ -64,7 +62,6 @@ async def test_basic_chat_conversation(
     # Send a message
     await chat_page.send_message("Hello, assistant!")
 
-
     # Wait for assistant message to appear first
     try:
         await page.wait_for_selector(
@@ -73,7 +70,7 @@ async def test_basic_chat_conversation(
         # Wait a bit for content to be populated
         await page.wait_for_timeout(2000)
 
-    except Exception as e:
+    except Exception:
         # Take screenshot for debugging
         await page.screenshot(path="/tmp/test_timeout_debug.png")
         raise
