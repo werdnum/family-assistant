@@ -629,7 +629,7 @@
 @media (max-width: 768px) {
   .thread-welcome {
     min-height: 50vh;
-    padding: 1.5rem;
+    padding: 1rem;
   }
   
   .welcome-title {
@@ -645,12 +645,17 @@
   }
   
   .message-root {
-    padding: 1rem;
+    padding: 0.75rem 0.5rem;
+  }
+  
+  .message-container {
+    padding: 0 0.5rem;
   }
   
   .message-bubble {
     max-width: 85%;
     font-size: 0.9rem;
+    padding: 0.75rem 1rem;
   }
   
   .message-avatar {
@@ -659,16 +664,29 @@
   }
   
   .thread-footer {
-    padding: 1rem;
+    padding: 0.75rem 0.5rem;
+  }
+  
+  .composer-root {
+    padding: 0 0.5rem;
   }
   
   .composer-input {
     font-size: 16px; /* Prevent zoom on iOS */
+    padding: 0.75rem;
   }
   
   .scroll-to-bottom-btn {
-    right: 1rem;
-    bottom: 90px;
+    right: 0.5rem;
+    bottom: 80px;
+  }
+  
+  .loading-message {
+    padding: 0 0.5rem;
+  }
+  
+  .chat-info {
+    padding: 1rem 0.75rem;
   }
 }
 

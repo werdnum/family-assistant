@@ -370,12 +370,17 @@ footer {
   
   /* Adjust header to make room for hamburger */
   .chat-main-content header {
-    padding-left: 4rem; /* Make room for hamburger button */
+    padding: 0 0.5rem;
+  }
+  
+  /* Reduce header paddings */
+  .chat-app-header {
+    padding: 0.5rem 0.75rem;
   }
   
   /* Reduce padding on mobile */
   .chat-container {
-    padding: 0 1rem;
+    padding: 0;
   }
   
   /* Smaller text on mobile */
@@ -399,10 +404,22 @@ footer {
   }
   
   .asst-thread-viewport {
-    padding: 1rem 0;
+    padding: 0.5rem 0;
+  }
+  
+  .asst-thread-messages {
+    padding: 0 0.5rem;
   }
   
   /* Smaller composer on mobile */
+  .asst-composer-root {
+    padding: 0.75rem 0.5rem;
+  }
+  
+  .asst-composer-form {
+    padding: 0;
+  }
+  
   .asst-composer-input,
   .asst-composer-send {
     min-height: 44px;
@@ -410,6 +427,11 @@ footer {
   }
   
   .asst-composer-send {
+    padding: 0.75rem 1rem;
+  }
+  
+  /* Footer */
+  footer {
     padding: 0.75rem 1rem;
   }
 }

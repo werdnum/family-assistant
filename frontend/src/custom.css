@@ -557,6 +557,33 @@ main pre {
 
 /* Responsive adjustments */
 @media (max-width: 768px) {
+    body {
+        margin: 0.5em;
+    }
+    
+    nav {
+        margin-bottom: 0.75em;
+        padding-bottom: 0.3em;
+        gap: 0.3em;
+        font-size: 0.85rem;
+    }
+    
+    .nav-group {
+        gap: 0.3em;
+    }
+    
+    .nav-label {
+        font-size: 0.8em;
+    }
+    
+    .nav-separator {
+        margin: 0 0.3em;
+    }
+    
+    nav a {
+        padding: 0.15em 0.3em;
+    }
+    
     .filter-row {
         flex-direction: column;
     }
