@@ -67,8 +67,10 @@ async def test_basic_chat_conversation(
         await page.wait_for_selector(
             '[data-testid="assistant-message"]', state="visible", timeout=5000
         )
-        # Wait a bit for content to be populated
-        await page.wait_for_timeout(2000)
+        # Wait for the assistant message content to fully load
+        await chat_page.wait_for_message_content(
+            "Hello", role="assistant", timeout=10000
+        )
 
     except Exception:
         # Take screenshot for debugging
