@@ -147,7 +147,8 @@ async def test_conversation_persistence_and_switching(
 
     # Wait for messages with expected content
     await chat_page.wait_for_messages_with_content(
-        {"user": "first conversation", "assistant": "first conversation"}, timeout=20000
+        {"user": "first conversation", "assistant": "response for the first"},
+        timeout=20000,
     )
 
     # Verify first conversation has expected response
@@ -159,8 +160,8 @@ async def test_conversation_persistence_and_switching(
     if messages[0]["content"]:
         assert "first conversation" in messages[0]["content"]
     if messages[1]["content"]:
-        assert "first conversation" in messages[1]["content"], (
-            f"Expected 'first conversation' in message: {messages[1]['content']}"
+        assert "response for the first" in messages[1]["content"], (
+            f"Expected 'response for the first' in message: {messages[1]['content']}"
         )
     first_conv_id = await chat_page.get_current_conversation_id()
 
@@ -179,7 +180,7 @@ async def test_conversation_persistence_and_switching(
 
     # Wait for messages with expected content
     await chat_page.wait_for_messages_with_content(
-        {"user": "second conversation", "assistant": "second conversation"},
+        {"user": "second conversation", "assistant": "response for the second"},
         timeout=20000,
     )
 
@@ -192,8 +193,8 @@ async def test_conversation_persistence_and_switching(
         assert "second conversation" in messages2[0]["content"]
     if messages2[1]["content"]:
         # Check for expected content - the mock should return something about "second conversation"
-        assert "second conversation" in messages2[1]["content"], (
-            f"Expected 'second conversation' in assistant response: {messages2[1]['content']}"
+        assert "response for the second" in messages2[1]["content"], (
+            f"Expected 'response for the second' in assistant response: {messages2[1]['content']}"
         )
 
     # Wait for conversation to be saved
@@ -213,7 +214,8 @@ async def test_conversation_persistence_and_switching(
 
     # Wait for messages to load after switching
     await chat_page.wait_for_messages_with_content(
-        {"user": "first conversation", "assistant": "first conversation"}, timeout=10000
+        {"user": "first conversation", "assistant": "response for the first"},
+        timeout=10000,
     )
 
     # Verify the messages from the first conversation are displayed correctly
@@ -225,8 +227,8 @@ async def test_conversation_persistence_and_switching(
     if messages[0]["content"]:
         assert "first conversation" in messages[0]["content"]
     if messages[1]["content"]:
-        assert "first conversation" in messages[1]["content"], (
-            f"Expected 'first conversation' in message: {messages[1]['content']}"
+        assert "response for the first" in messages[1]["content"], (
+            f"Expected 'response for the first' in message: {messages[1]['content']}"
         )
 
 
