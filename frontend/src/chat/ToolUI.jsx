@@ -52,9 +52,7 @@ const ToolFallback = ({ toolName, args, result, status }) => {
 };
 
 // Specific tool UI for add_or_update_note
-export const AddOrUpdateNoteToolUI = makeAssistantToolUI({
-  toolName: 'add_or_update_note',
-  render: ({ args, result, status }) => {
+export const AddOrUpdateNoteToolUI = ({ args, result, status }) => {
     return (
       <div className="tool-call-container tool-note" data-ui="tool-call-content">
         <div className="tool-call-header">
@@ -74,13 +72,10 @@ export const AddOrUpdateNoteToolUI = makeAssistantToolUI({
         )}
       </div>
     );
-  },
-});
+};
 
 // Tool UI for search_documents
-export const SearchDocumentsToolUI = makeAssistantToolUI({
-  toolName: 'search_documents',
-  render: ({ args, result, status }) => {
+export const SearchDocumentsToolUI = ({ args, result, status }) => {
     return (
       <div className="tool-call-container tool-search" data-ui="tool-call-content">
         <div className="tool-call-header">
@@ -105,8 +100,7 @@ export const SearchDocumentsToolUI = makeAssistantToolUI({
         )}
       </div>
     );
-  },
-});
+};
 
 // Create a map of tool UIs by name for easier access
 export const toolUIsByName = {
