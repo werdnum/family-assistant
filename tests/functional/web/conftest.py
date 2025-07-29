@@ -12,7 +12,7 @@ from typing import Any, NamedTuple
 import httpx
 import pytest
 import pytest_asyncio
-from playwright.async_api import Page, async_playwright
+from playwright.async_api import Page
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
@@ -293,72 +293,46 @@ async def web_only_assistant(
 
 
 @pytest_asyncio.fixture(scope="function")
-async def playwright_page(
-    web_only_assistant: Assistant,
-) -> AsyncGenerator[Page, None]:
-    """Provide Playwright browser page for tests."""
-    async with async_playwright() as p:
-        # Launch browser in headless mode by default
-        browser = await p.chromium.launch(
-            headless=os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false"
-        )
-
-        # Create browser context with viewport size
-        context = await browser.new_context(
-            viewport={"width": 1280, "height": 720},
-            locale="en-US",
-        )
-
-        # Create a new page
-        page = await context.new_page()
-
-        # Set up console message logging for debugging
-        def log_console(msg: Any) -> None:
-            print(f"[Browser Console] {msg.type}: {msg.text}")
-            # Also log location for errors
-            if msg.type == "error":
-                print(f"  Location: {msg.location}")
-
-        page.on("console", log_console)
-
-        # Set up request/response logging for debugging
-        # Always log API requests to help debug
-        def log_request(req: Any) -> None:
-            if "/api/" in req.url:
-                print(f"[API Request] {req.method} {req.url}")
-                if req.method == "POST":
-                    print(f"  Body: {req.post_data}")
-            elif req.url.endswith(".js") or req.url.endswith(".css"):
-                print(f"[Asset Request] {req.method} {req.url}")
-
-        def log_response(res: Any) -> None:
-            if "/api/" in res.url:
-                print(f"[API Response] {res.status} {res.url}")
-            elif res.url.endswith(".js") or res.url.endswith(".css"):
-                print(f"[Asset Response] {res.status} {res.url}")
-
-        page.on("request", log_request)
-        page.on("response", log_response)
-
-        yield page
-
-        # Cleanup
-        await context.close()
-        await browser.close()
-
-
-@pytest_asyncio.fixture(scope="function")
 async def web_test_fixture(
-    playwright_page: Page,
+    page: Page,
     web_only_assistant: Assistant,
     vite_and_api_ports: tuple[int, int],
     build_frontend_assets: None,  # Ensure frontend is built before tests
 ) -> WebTestFixture:
     """Combined fixture providing all web test dependencies."""
+
+    # Set up console message logging for debugging
+    def log_console(msg: Any) -> None:
+        print(f"[Browser Console] {msg.type}: {msg.text}")
+        # Also log location for errors
+        if msg.type == "error":
+            print(f"  Location: {msg.location}")
+
+    page.on("console", log_console)
+
+    # Set up request/response logging for debugging
+    # Always log API requests to help debug
+    def log_request(req: Any) -> None:
+        if "/api/" in req.url:
+            print(f"[API Request] {req.method} {req.url}")
+            if req.method == "POST":
+                print(f"  Body: {req.post_data}")
+        elif req.url.endswith(".js") or req.url.endswith(".css"):
+            print(f"[Asset Request] {req.method} {req.url}")
+
+    def log_response(res: Any) -> None:
+        if "/api/" in res.url:
+            print(f"[API Response] {res.status} {res.url}")
+        elif res.url.endswith(".js") or res.url.endswith(".css"):
+            print(f"[Asset Response] {res.status} {res.url}")
+
+    page.on("request", log_request)
+    page.on("response", log_response)
+
     _, api_port = vite_and_api_ports
     return WebTestFixture(
         assistant=web_only_assistant,
-        page=playwright_page,
+        page=page,
         base_url=f"http://localhost:{api_port}",  # Direct to API server (serves built assets)
     )
 

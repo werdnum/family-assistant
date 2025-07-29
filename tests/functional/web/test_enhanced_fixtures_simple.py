@@ -19,11 +19,10 @@ async def test_authenticated_page_fixture(authenticated_page: Any) -> None:
 
 @pytest.mark.asyncio
 async def test_console_error_checker_basic(
-    playwright_page: Any,
+    page: Any,
     console_error_checker: Any,
 ) -> None:
     """Test that console_error_checker captures errors."""
-    page = playwright_page
 
     # Initially no errors
     console_error_checker.assert_no_errors()
@@ -50,11 +49,10 @@ async def test_console_error_checker_basic(
 
 @pytest.mark.asyncio
 async def test_console_error_checker_warnings(
-    playwright_page: Any,
+    page: Any,
     console_error_checker: Any,
 ) -> None:
     """Test that console_error_checker captures warnings separately."""
-    page = playwright_page
 
     # Navigate to blank page
     await page.goto("about:blank")

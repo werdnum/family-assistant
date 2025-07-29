@@ -11,6 +11,7 @@ from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 from .conftest import WebTestFixture
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_basic_chat_conversation(
     web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
@@ -119,6 +120,7 @@ async def test_basic_chat_conversation(
         assert "test assistant" in all_messages[1]["content"]
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_conversation_persistence_and_switching(
     web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
@@ -232,6 +234,7 @@ async def test_conversation_persistence_and_switching(
         )
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_tool_call_display(
     web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
@@ -311,6 +314,7 @@ async def test_tool_call_display(
         assert "note" in all_assistant_content.lower()
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_sidebar_functionality(
     web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
@@ -353,6 +357,7 @@ async def test_sidebar_functionality(
     assert "Test" in latest_conv["preview"] or "message" in latest_conv["preview"]
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_multiple_messages_in_conversation(
     web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
@@ -417,6 +422,7 @@ async def test_multiple_messages_in_conversation(
     assert len(assistant_messages) == 3
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_conversation_loading_with_tool_calls(
     web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
@@ -507,6 +513,7 @@ async def test_conversation_loading_with_tool_calls(
         assert "note for testing" in user_messages[0]["content"]
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_empty_conversation_state(
     web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
@@ -526,6 +533,7 @@ async def test_empty_conversation_state(
     assert conv_id is not None
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_responsive_sidebar_mobile(
     web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
