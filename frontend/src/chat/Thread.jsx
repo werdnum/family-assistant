@@ -250,11 +250,14 @@ const AssistantMessage = () => {
                 <span className="typing-dot"></span>
               </div>
             ) : (
-              <MessagePrimitive.Content 
-                components={{ 
+              <MessagePrimitive.Content
+                components={{
                   Text: MarkdownText,
-                  tools: toolUIsByName,
-                }} 
+                  tools: {
+                    by_name: toolUIsByName,
+                    Fallback: ToolFallback,
+                  },
+                }}
               />
             )}
           </div>
