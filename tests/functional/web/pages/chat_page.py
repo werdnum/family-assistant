@@ -87,13 +87,20 @@ class ChatPage(BasePage):
                 const lastMessage = assistantMessages[assistantMessages.length - 1];
                 let lastText = lastMessage.innerText;
                 let stableTime = 0;
-                const stabilityThreshold = 1500; // ms - increased for better stability with markdown rendering
+                const stabilityThreshold = 2000; // ms - increased for better stability with markdown rendering and typing indicator
                 const pollInterval = 100; // ms
                 const timeoutLimit = {timeout}; // ms
 
                 let waitingForContent = !lastText;
                 
                 const poller = setInterval(() => {{
+                    // Check if it's showing the typing indicator
+                    const typingIndicator = lastMessage.querySelector('.typing-indicator');
+                    if (typingIndicator) {{
+                        // Skip if still showing loading state
+                        return;
+                    }}
+                    
                     // Try multiple ways to get the text content
                     const markdownEl = lastMessage.querySelector('.markdown-text');
                     let newText = '';
@@ -183,12 +190,21 @@ class ChatPage(BasePage):
                 # For assistant messages, try the specific content selector first
                 content_elem = await msg.query_selector(self.MESSAGE_ASSISTANT_CONTENT)
                 if content_elem:
-                    # Check if there's a markdown element inside
-                    markdown_elem = await content_elem.query_selector(".markdown-text")
-                    if markdown_elem:
-                        content = await markdown_elem.text_content() or ""
+                    # Check if it's showing the typing indicator
+                    typing_indicator = await content_elem.query_selector(
+                        ".typing-indicator"
+                    )
+                    if typing_indicator:
+                        content = "..."  # Represent loading state as dots
                     else:
-                        content = await content_elem.text_content() or ""
+                        # Check if there's a markdown element inside
+                        markdown_elem = await content_elem.query_selector(
+                            ".markdown-text"
+                        )
+                        if markdown_elem:
+                            content = await markdown_elem.text_content() or ""
+                        else:
+                            content = await content_elem.text_content() or ""
                 else:
                     # Fallback: try to get text from the bubble div
                     bubble_elem = await msg.query_selector(".assistant-bubble")

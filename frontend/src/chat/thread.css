@@ -516,23 +516,47 @@
 .loading-bubble {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
   padding: 0.875rem 1.25rem;
   background-color: var(--accent-bg);
   border: 1px solid var(--border);
   border-radius: 18px;
   border-bottom-left-radius: 4px;
-  color: var(--text-light);
-  font-size: 0.95rem;
+  min-width: 60px;
+  min-height: 44px;
 }
 
-.loading-spinner {
-  animation: spin 1s linear infinite;
+/* Typing indicator with bouncing dots */
+.typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+.typing-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--text-light);
+  animation: typing-bounce 1.4s infinite ease-in-out;
+}
+
+.typing-dot:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+@keyframes typing-bounce {
+  0%, 80%, 100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 /* Markdown styles */

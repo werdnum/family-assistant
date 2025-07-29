@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
-import { Thread, ThreadLoading } from './Thread';
+import { Thread } from './Thread';
 import NavHeader from './NavHeader';
 import ConversationSidebar from './ConversationSidebar';
 import { useStreamingResponse } from './useStreamingResponse';
@@ -36,19 +36,21 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
   // Streaming callbacks
   const handleStreamingMessage = useCallback((content) => {
     if (streamingMessageIdRef.current) {
-      setMessages((prev) =>
-        prev.map((msg) =>
+      setMessages((prev) => {
+        // Update the loading message with actual content
+        return prev.map((msg) =>
           msg.id === streamingMessageIdRef.current
             ? { 
                 ...msg, 
                 content: [{ 
                   type: 'text', 
                   text: content // Use the accumulated content directly from the hook
-                }] 
+                }],
+                isLoading: false // Remove loading flag when content arrives
               }
             : msg
-        )
-      );
+        );
+      });
     }
   }, []);
 
@@ -63,6 +65,7 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
                 content: [
                   { type: 'text', text: 'Sorry, I encountered an error processing your message.' },
                 ],
+                isLoading: false, // Remove loading state on error
               }
             : msg
         )
@@ -250,14 +253,16 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
       };
 
       const assistantMessageId = `msg_${Date.now()}_assistant`;
-      const assistantMessage = {
+      // Add both user message and a loading assistant message
+      const loadingAssistantMessage = {
         id: assistantMessageId,
         role: 'assistant',
-        content: [{ type: 'text', text: '' }],
+        content: [{ type: 'text', text: '' }], // Empty content for loading state
+        isLoading: true, // Custom flag to indicate loading state
         createdAt: new Date(),
       };
-
-      setMessages((prev) => [...prev, userMessage, assistantMessage]);
+      
+      setMessages((prev) => [...prev, userMessage, loadingAssistantMessage]);
 
       streamingMessageIdRef.current = assistantMessageId;
 
@@ -325,7 +330,6 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
                   )}
                 </div>
                 <Thread />
-                {isLoading && messages.length > 0 && <ThreadLoading />}
               </div>
             </AssistantRuntimeProvider>
           </main>

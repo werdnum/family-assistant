@@ -5,6 +5,7 @@ import {
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
+  useMessage,
 } from '@assistant-ui/react';
 import {
   ArrowDownIcon,
@@ -220,6 +221,9 @@ const EditComposer = () => {
 };
 
 const AssistantMessage = () => {
+  const message = useMessage();
+  const isLoading = message?.isLoading;
+  
   return (
     <MessagePrimitive.Root
       className="message-root assistant-message"
@@ -234,7 +238,15 @@ const AssistantMessage = () => {
             <BotIcon size={20} />
           </div>
           <div className="message-bubble assistant-bubble" data-testid="assistant-message-content">
-            <MessagePrimitive.Content components={{ Text: MarkdownText }} />
+            {isLoading ? (
+              <div className="typing-indicator">
+                <span className="typing-dot"></span>
+                <span className="typing-dot"></span>
+                <span className="typing-dot"></span>
+              </div>
+            ) : (
+              <MessagePrimitive.Content components={{ Text: MarkdownText }} />
+            )}
           </div>
         </div>
         <AssistantActionBar />
@@ -306,19 +318,3 @@ const MessageTimestamp = () => {
   );
 };
 
-// Loading indicator component
-export const ThreadLoading = () => {
-  return (
-    <div className="thread-loading">
-      <div className="loading-message">
-        <div className="message-avatar assistant-avatar">
-          <BotIcon size={20} />
-        </div>
-        <div className="loading-bubble">
-          <Loader2Icon size={16} className="loading-spinner" />
-          <span>Thinking...</span>
-        </div>
-      </div>
-    </div>
-  );
-};
