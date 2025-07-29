@@ -4,6 +4,7 @@ import { Thread } from './Thread';
 import NavHeader from './NavHeader';
 import ConversationSidebar from './ConversationSidebar';
 import { useStreamingResponse } from './useStreamingResponse';
+import { LOADING_MARKER } from './constants';
 import './chat.css';
 import './thread.css';
 
@@ -257,7 +258,7 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
       const loadingAssistantMessage = {
         id: assistantMessageId,
         role: 'assistant',
-        content: [{ type: 'text', text: '' }], // Empty content for loading state
+        content: [{ type: 'text', text: LOADING_MARKER }], // Special marker for loading state
         isLoading: true, // Custom flag to indicate loading state
         createdAt: new Date(),
       };
@@ -288,19 +289,20 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
   });
 
   return (
-    <div className={`chat-app-wrapper ${sidebarOpen ? 'with-sidebar' : ''}`}>
+    <>
       <NavHeader />
-      <div className="chat-app-header">
-        <button
-          className="sidebar-toggle"
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-          aria-label="Toggle sidebar"
-        >
-          ☰
-        </button>
-        <h1>Chat</h1>
-      </div>
-      <div className="chat-app-body">
+      <div className={`chat-app-wrapper ${sidebarOpen ? 'with-sidebar' : ''}`}>
+        <div className="chat-app-header">
+          <button
+            className="sidebar-toggle"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            aria-label="Toggle sidebar"
+          >
+            ☰
+          </button>
+          <h1>Chat</h1>
+        </div>
+        <div className="chat-app-body">
         {sidebarOpen && isMobile && (
           <div
             className="sidebar-overlay"
@@ -338,7 +340,8 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
           </footer>
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 };
 

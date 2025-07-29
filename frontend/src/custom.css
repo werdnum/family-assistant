@@ -23,19 +23,22 @@ nav {
     align-items: center;
     flex-wrap: wrap;
     gap: 0.5em;
+    font-size: 0.9rem;
+    justify-content: center;
+    max-width: 100%;
 }
 
 /* Navigation groups */
 .nav-group {
     display: inline-flex;
     align-items: center;
-    gap: 0.5em;
+    gap: 0.4em;
 }
 
 .nav-label {
     font-weight: bold;
     color: var(--text-light);
-    font-size: 0.9em;
+    font-size: 0.85em;
 }
 
 .nav-separator {
@@ -45,9 +48,10 @@ nav {
 
 nav a {
     text-decoration: none;
-    padding: 0.2em 0.5em;
+    padding: 0.2em 0.4em;
     border-radius: 3px;
     transition: background-color 0.2s;
+    white-space: nowrap;
 }
 
 nav a:hover {

@@ -24,6 +24,7 @@ import classNames from 'classnames';
 // import { formatRelativeTime } from './utils';
 import { MarkdownText } from './MarkdownText';
 import { TooltipIconButton } from './TooltipIconButton';
+import { LOADING_MARKER } from './constants';
 
 export const Thread = () => {
   return (
@@ -222,7 +223,10 @@ const EditComposer = () => {
 
 const AssistantMessage = () => {
   const message = useMessage();
-  const isLoading = message?.isLoading;
+  
+  // Check if message is loading by checking for our special marker
+  // The assistant-ui library might not pass through our custom isLoading property
+  const isLoading = message?.content?.[0]?.text === LOADING_MARKER;
   
   return (
     <MessagePrimitive.Root

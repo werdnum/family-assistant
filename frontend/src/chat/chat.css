@@ -23,6 +23,8 @@ body {
   position: relative;
   width: 100%;
   overflow-x: hidden;
+  max-width: 1920px;
+  margin: 0 auto;
 }
 
 /* App header with toggle button and title */
@@ -67,11 +69,13 @@ body {
 header {
   width: 100%;
   flex-shrink: 0;
-  padding: 0 1rem;
+  padding: 0 2rem;
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 1rem;
+  justify-content: center;
+  background-color: var(--accent-bg);
+  border-bottom: 1px solid var(--border);
 }
 
 /* Sidebar toggle button */
@@ -176,7 +180,7 @@ main {
 }
 
 .asst-thread-messages {
-  max-width: 900px;
+  max-width: 1200px;
   margin: 0 auto;
   width: 100%;
   padding: 0 2rem;
@@ -231,7 +235,7 @@ main {
 }
 
 .asst-composer-form {
-  max-width: 900px;
+  max-width: 1200px;
   margin: 0 auto;
   display: flex;
   gap: 0.75rem;
@@ -337,6 +341,21 @@ footer {
   border-top: 1px solid var(--border);
   text-align: center;
   background-color: var(--bg);
+}
+
+/* Large screens - add responsive layout adjustments */
+@media (min-width: 1600px) {
+  .asst-thread-messages,
+  .asst-composer-form {
+    max-width: 1400px;
+  }
+}
+
+@media (min-width: 2000px) {
+  .asst-thread-messages,
+  .asst-composer-form {
+    max-width: 1600px;
+  }
 }
 
 /* Mobile adjustments */
