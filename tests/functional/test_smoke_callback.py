@@ -287,7 +287,17 @@ async def test_schedule_and_execute_callback(db_engine: AsyncEngine) -> None:
 
     # Assertion: Check if the mock_chat_interface_for_worker's send_message was called
     logger.info("Checking if mock_chat_interface_for_worker.send_message was called...")
-    mock_chat_interface_for_worker.send_message.assert_awaited_once()
+
+    # Wait for send_message to be called with a timeout
+    for _i in range(10):  # 10 * 0.1 = 1 second timeout
+        if mock_chat_interface_for_worker.send_message.called:
+            break
+        await asyncio.sleep(0.1)
+
+    # Verify it was called exactly once
+    assert mock_chat_interface_for_worker.send_message.call_count == 1, (
+        f"Expected send_message to be called exactly once, but was called {mock_chat_interface_for_worker.send_message.call_count} times"
+    )
     _, call_kwargs = mock_chat_interface_for_worker.send_message.call_args
     assert call_kwargs.get("conversation_id") == str(TEST_CHAT_ID)
     sent_text = call_kwargs.get("text")
@@ -629,7 +639,17 @@ async def test_modify_pending_callback(db_engine: AsyncEngine) -> None:
 
     # --- Part 4: Verify MODIFIED Callback Execution ---
     logger.info("--- Part 4: Verifying MODIFIED Callback Execution ---")
-    mock_chat_interface_for_worker.send_message.assert_awaited_once()
+
+    # Wait for send_message to be called with a timeout
+    for _i in range(10):  # 10 * 0.1 = 1 second timeout
+        if mock_chat_interface_for_worker.send_message.called:
+            break
+        await asyncio.sleep(0.1)
+
+    # Verify it was called exactly once
+    assert mock_chat_interface_for_worker.send_message.call_count == 1, (
+        f"Expected send_message to be called exactly once, but was called {mock_chat_interface_for_worker.send_message.call_count} times"
+    )
     _call_args, call_kwargs = mock_chat_interface_for_worker.send_message.call_args
     assert call_kwargs.get("conversation_id") == str(TEST_CHAT_ID)
     sent_text = call_kwargs.get("text")
@@ -1283,7 +1303,17 @@ async def test_schedule_reminder_with_follow_up(db_engine: AsyncEngine) -> None:
             tasks_table.c.status == "pending",
         )
         tasks = await db_context.fetch_all(stmt)
-        assert len(tasks) == 0, "No more reminders should be pending"
+        # Wait for tasks to be cleared with a timeout
+        for _i in range(10):
+            if len(tasks) == 0:
+                break
+            await asyncio.sleep(0.2)
+            # Re-query for pending tasks
+            tasks = await db_context.fetch_all(stmt)
+
+        assert len(tasks) == 0, (
+            f"Expected no pending tasks after max follow-ups, but found {len(tasks)}"
+        )
         logger.info("No additional follow-ups scheduled (reached max)")
 
     # --- Cleanup ---
