@@ -2,6 +2,7 @@
 Mock LLM implementations for testing purposes.
 """
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from typing import Any
@@ -169,6 +170,8 @@ class RuleBasedMockLLMClient(LLMInterface):
                     # Add space before word unless it's the first word
                     chunk = word if i == 0 else f" {word}"
                     yield LLMStreamEvent(type="content", content=chunk)
+                    # Add a small delay to simulate streaming
+                    await asyncio.sleep(0.01)
 
             # Yield tool calls if present
             if response.tool_calls:

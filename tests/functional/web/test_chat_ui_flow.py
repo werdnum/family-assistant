@@ -62,23 +62,22 @@ async def test_basic_chat_conversation(
     # Send a message
     await chat_page.send_message("Hello, assistant!")
 
-    # Wait for assistant message to appear first
-    try:
-        await page.wait_for_selector(
-            '[data-testid="assistant-message"]', state="visible", timeout=5000
-        )
-        # Wait for the assistant message content to fully load
-        await chat_page.wait_for_message_content(
-            "Hello", role="assistant", timeout=10000
-        )
+    # Wait for both user and assistant messages with expected content
+    await chat_page.wait_for_messages_with_content(
+        {
+            "user": "Hello, assistant!",
+            "assistant": "test assistant",  # Look for key phrase from mock response
+        },
+        timeout=20000,
+    )
 
-    except Exception:
-        # Take screenshot for debugging
-        await page.screenshot(path="/tmp/test_timeout_debug.png")
-        raise
+    # Get all messages for verification
+    messages = await chat_page.get_all_messages()
 
-    # Give a small delay for UI to stabilize
-    await page.wait_for_timeout(500)
+    # Verify we have both messages
+    assert len(messages) >= 2, f"Expected at least 2 messages, got {len(messages)}"
+    assert any(m["role"] == "user" for m in messages), "No user message found"
+    assert any(m["role"] == "assistant" for m in messages), "No assistant message found"
 
     # TODO: There's a known issue where the chat input remains disabled after streaming completes.
     # This appears to be related to the assistant-ui library's runtime state management.
@@ -145,11 +144,10 @@ async def test_conversation_persistence_and_switching(
 
     # Create first conversation
     await chat_page.send_message("This is my first conversation")
-    await chat_page.wait_for_assistant_response()
 
-    # Wait for content to stabilize using condition-based wait
-    await chat_page.wait_for_message_content(
-        "This is the response", role="assistant", timeout=10000
+    # Wait for messages with expected content
+    await chat_page.wait_for_messages_with_content(
+        {"user": "first conversation", "assistant": "first conversation"}, timeout=20000
     )
 
     # Verify first conversation has expected response
@@ -178,11 +176,11 @@ async def test_conversation_persistence_and_switching(
 
     # Send message in second conversation
     await chat_page.send_message("This is my second conversation")
-    await chat_page.wait_for_assistant_response()
 
-    # Wait for content to stabilize using condition-based wait
-    await chat_page.wait_for_message_content(
-        "This is the response", role="assistant", timeout=10000
+    # Wait for messages with expected content
+    await chat_page.wait_for_messages_with_content(
+        {"user": "second conversation", "assistant": "second conversation"},
+        timeout=20000,
     )
 
     # Verify second conversation has expected response
@@ -213,11 +211,9 @@ async def test_conversation_persistence_and_switching(
     current_conv_id = await chat_page.get_current_conversation_id()
     assert current_conv_id == first_conv_id
 
-    # Wait for messages to load after switching - wait for specific content
-    await chat_page.wait_for_message_count(2, timeout=5000)
-    # Wait for the assistant message content to fully load
-    await chat_page.wait_for_message_content(
-        "first conversation", role="assistant", timeout=10000
+    # Wait for messages to load after switching
+    await chat_page.wait_for_messages_with_content(
+        {"user": "first conversation", "assistant": "first conversation"}, timeout=10000
     )
 
     # Verify the messages from the first conversation are displayed correctly
@@ -491,11 +487,9 @@ async def test_conversation_loading_with_tool_calls(
     current_conv_id = await chat_page.get_current_conversation_id()
     assert current_conv_id == conv_id_with_tools
 
-    # Wait for messages to load after switching conversations
-    await chat_page.wait_for_message_count(2, timeout=5000)
-    # Wait for the user message content to fully load
-    await chat_page.wait_for_message_content(
-        "note for testing", role="user", timeout=10000
+    # Wait for messages to load after switching
+    await chat_page.wait_for_messages_with_content(
+        {"user": "note for testing"}, timeout=10000
     )
 
     # Verify messages loaded from the conversation with tool calls

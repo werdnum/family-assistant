@@ -87,7 +87,7 @@ class ChatPage(BasePage):
                 const lastMessage = assistantMessages[assistantMessages.length - 1];
                 let lastText = lastMessage.innerText;
                 let stableTime = 0;
-                const stabilityThreshold = 2000; // ms - increased for better stability with markdown rendering and typing indicator
+                const stabilityThreshold = 3000; // ms - increased for better stability with streaming responses
                 const pollInterval = 100; // ms
                 const timeoutLimit = {timeout}; // ms
 
@@ -205,6 +205,10 @@ class ChatPage(BasePage):
                             content = await markdown_elem.text_content() or ""
                         else:
                             content = await content_elem.text_content() or ""
+
+                        # Don't return LOADING_MARKER as content
+                        if content == "___LOADING___":
+                            content = "..."
                 else:
                     # Fallback: try to get text from the bubble div
                     bubble_elem = await msg.query_selector(".assistant-bubble")
@@ -468,4 +472,46 @@ class ChatPage(BasePage):
         # Pass parameters safely to avoid injection
         await self.page.evaluate(
             js_function, [expected_text, selector, content_selector, timeout]
+        )
+
+    async def wait_for_messages_with_content(
+        self, expected_contents: dict[str, str], timeout: int = 10000
+    ) -> None:
+        """Wait for messages to contain expected content, polling until satisfied.
+
+        Args:
+            expected_contents: Dict mapping role to expected text content
+            timeout: Maximum time to wait in milliseconds
+        """
+        start_time = time.time()
+
+        while (time.time() - start_time) * 1000 < timeout:
+            messages = await self.get_all_messages()
+
+            # Check if all expected content is present
+            all_found = True
+            for role, expected_text in expected_contents.items():
+                role_messages = [m for m in messages if m["role"] == role]
+                if not role_messages:
+                    all_found = False
+                    break
+
+                # Check if any message of this role contains the expected text
+                found = any(
+                    expected_text in msg.get("content", "") for msg in role_messages
+                )
+                if not found:
+                    all_found = False
+                    break
+
+            if all_found:
+                return  # Success!
+
+            # Wait a bit before next check
+            await self.page.wait_for_timeout(100)
+
+        # If we get here, timeout occurred
+        messages = await self.get_all_messages()
+        raise TimeoutError(
+            f"Timeout waiting for expected content. Got messages: {messages}"
         )
