@@ -147,6 +147,11 @@ async def test_conversation_persistence_and_switching(
     await chat_page.send_message("This is my first conversation")
     await chat_page.wait_for_assistant_response()
 
+    # Wait for content to stabilize using condition-based wait
+    await chat_page.wait_for_message_content(
+        "This is the response", role="assistant", timeout=10000
+    )
+
     # Verify first conversation has expected response
     messages = await chat_page.get_all_messages()
     assert len(messages) == 2
@@ -174,6 +179,11 @@ async def test_conversation_persistence_and_switching(
     # Send message in second conversation
     await chat_page.send_message("This is my second conversation")
     await chat_page.wait_for_assistant_response()
+
+    # Wait for content to stabilize using condition-based wait
+    await chat_page.wait_for_message_content(
+        "This is the response", role="assistant", timeout=10000
+    )
 
     # Verify second conversation has expected response
     messages2 = await chat_page.get_all_messages()
