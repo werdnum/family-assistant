@@ -8,6 +8,19 @@ import { LOADING_MARKER } from './constants';
 import './chat.css';
 import './thread.css';
 
+// Helper function to parse tool arguments
+const parseToolArguments = (args) => {
+  if (typeof args === 'string') {
+    try {
+      return JSON.parse(args);
+    } catch (e) {
+      console.error('Failed to parse tool arguments:', e);
+      return { raw: args };
+    }
+  }
+  return args;
+};
+
 const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -83,12 +96,14 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
           contentParts.push({ type: 'text', text: content });
         }
         toolCalls.forEach((tc) => {
+          // Parse arguments if they're a string
+          const args = parseToolArguments(tc.arguments);
+          
           contentParts.push({
             type: 'tool-call',
             toolCallId: tc.id,
             toolName: tc.name,
-            args: tc.arguments,
-            result: 'Tool execution in progress...',
+            args: args,
           });
         });
         setMessages((prev) =>
@@ -163,31 +178,25 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
             return;
           }
 
-          if (msg.role === 'assistant' && msg.tool_calls_info) {
-            let toolCallsInfo;
-            try {
-              toolCallsInfo =
-                typeof msg.tool_calls_info === 'string'
-                  ? JSON.parse(msg.tool_calls_info)
-                  : msg.tool_calls_info;
-            } catch (_e) {
-              toolCallsInfo = null;
-            }
-
-            if (toolCallsInfo && toolCallsInfo.tool_calls) {
+          if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
               const content = [];
               if (msg.content) {
                 content.push({ type: 'text', text: msg.content });
               }
 
-              toolCallsInfo.tool_calls.forEach((toolCall) => {
+              msg.tool_calls.forEach((toolCall) => {
                 const toolResponse = toolResponses.get(toolCall.id);
+                // Extract the function name from the tool call
+                const toolName = toolCall.function?.name || toolCall.name || 'unknown';
+                // Parse arguments if they're a string
+                const args = parseToolArguments(toolCall.function?.arguments || toolCall.arguments);
+                
                 content.push({
                   type: 'tool-call',
                   toolCallId: toolCall.id,
-                  toolName: toolCall.name,
-                  args: toolCall.arguments,
-                  result: toolResponse ?? 'Tool result not available',
+                  toolName: toolName,
+                  args: args,
+                  result: toolResponse ?? undefined,
                 });
               });
 
@@ -198,7 +207,6 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
                 createdAt: new Date(msg.timestamp),
               });
               return;
-            }
           }
 
           processedMessages.push({

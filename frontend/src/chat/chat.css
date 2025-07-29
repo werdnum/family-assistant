@@ -7,6 +7,18 @@ body {
 /* CSS Variables for enhanced theming */
 :root {
   --accent-hover: color-mix(in srgb, var(--accent) 80%, black);
+  
+  /* Tool UI specific variables with fallbacks */
+  --text-primary: var(--text, #212529);
+  --text-secondary: var(--text-light, #6c757d);
+  --surface-light: var(--accent-bg, #f8f9fa);
+  --surface-lighter: color-mix(in srgb, var(--accent-bg, #f8f9fa) 50%, white);
+  --border-light: var(--border, #dee2e6);
+  --border-lighter: color-mix(in srgb, var(--border, #dee2e6) 50%, transparent);
+  --code-bg: var(--accent-bg, #f8f9fa);
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  --success: #22c55e;
+  --error: #ef4444;
 }
 
 /* Global box-sizing */

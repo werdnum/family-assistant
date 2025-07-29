@@ -720,3 +720,144 @@
     opacity: 1;
   }
 }
+
+/* Tool UI Styles */
+.tool-call-container {
+  background-color: var(--surface-light);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 8px 0;
+  font-size: 0.875rem;
+}
+
+.tool-call-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.tool-name {
+  color: var(--text-primary);
+}
+
+.tool-status-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-light);
+}
+
+.tool-status-icon .animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.tool-section-label {
+  font-size: 0.75rem;
+  color: var(--text-light);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.tool-code-block {
+  background-color: var(--code-bg);
+  border: 1px solid var(--border-lighter);
+  border-radius: 4px;
+  padding: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  overflow-x: auto;
+  margin: 0;
+}
+
+.tool-running-message {
+  color: var(--text-light);
+  font-style: italic;
+  margin-top: 8px;
+}
+
+/* Tool status variants */
+.tool-running {
+  border-color: var(--accent);
+  background-color: rgba(74, 144, 226, 0.05);
+}
+
+.tool-complete {
+  border-color: var(--success);
+  background-color: rgba(34, 197, 94, 0.05);
+}
+
+.tool-complete .tool-status-icon {
+  color: var(--success);
+}
+
+.tool-error {
+  border-color: var(--error);
+  background-color: rgba(239, 68, 68, 0.05);
+}
+
+.tool-error .tool-status-icon {
+  color: var(--error);
+}
+
+/* Specific tool styles */
+.tool-note {
+  border-left: 3px solid var(--accent);
+}
+
+.tool-note-content {
+  margin: 12px 0;
+}
+
+.tool-note-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 8px 0;
+  color: var(--text-primary);
+}
+
+.tool-note-text {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.tool-note-result {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-lighter);
+  color: var(--success);
+  font-size: 0.875rem;
+}
+
+.tool-search {
+  border-left: 3px solid #f59e0b;
+}
+
+.tool-search-query {
+  margin: 8px 0;
+  color: var(--text-secondary);
+}
+
+.tool-search-results {
+  margin-top: 8px;
+  padding: 8px;
+  background-color: var(--surface-lighter);
+  border-radius: 4px;
+  color: var(--text-secondary);
+}
+
+.tool-success {
+  color: var(--success);
+}

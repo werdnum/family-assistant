@@ -25,6 +25,7 @@ import classNames from 'classnames';
 import { MarkdownText } from './MarkdownText';
 import { TooltipIconButton } from './TooltipIconButton';
 import { LOADING_MARKER } from './constants';
+import { toolUIsByName, ToolFallback } from './ToolUI';
 
 export const Thread = () => {
   return (
@@ -249,7 +250,12 @@ const AssistantMessage = () => {
                 <span className="typing-dot"></span>
               </div>
             ) : (
-              <MessagePrimitive.Content components={{ Text: MarkdownText }} />
+              <MessagePrimitive.Content 
+                components={{ 
+                  Text: MarkdownText,
+                  tools: toolUIsByName,
+                }} 
+              />
             )}
           </div>
         </div>
