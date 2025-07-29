@@ -181,6 +181,8 @@ async def test_conversation_persistence_and_switching(
     if messages2[0]["content"]:
         assert "second conversation" in messages2[0]["content"]
     if messages2[1]["content"]:
+        # TODO: Fix timing issue - test sometimes extracts partial content "This" instead of full message
+        # This appears to be a race condition in content extraction during streaming
         # Check for expected content - the mock should return something about "second conversation"
         assert "second conversation" in messages2[1]["content"], (
             f"Expected 'second conversation' in assistant response: {messages2[1]['content']}"
