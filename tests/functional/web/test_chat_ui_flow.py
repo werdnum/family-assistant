@@ -181,8 +181,6 @@ async def test_conversation_persistence_and_switching(
     if messages2[0]["content"]:
         assert "second conversation" in messages2[0]["content"]
     if messages2[1]["content"]:
-        # TODO: Fix timing issue - test sometimes extracts partial content "This" instead of full message
-        # This appears to be a race condition in content extraction during streaming
         # Check for expected content - the mock should return something about "second conversation"
         assert "second conversation" in messages2[1]["content"], (
             f"Expected 'second conversation' in assistant response: {messages2[1]['content']}"
@@ -203,8 +201,12 @@ async def test_conversation_persistence_and_switching(
     current_conv_id = await chat_page.get_current_conversation_id()
     assert current_conv_id == first_conv_id
 
-    # Wait for messages to load after switching
+    # Wait for messages to load after switching - wait for specific content
     await chat_page.wait_for_message_count(2, timeout=5000)
+    # Wait for the assistant message content to fully load
+    await chat_page.wait_for_message_content(
+        "first conversation", role="assistant", timeout=10000
+    )
 
     # Verify the messages from the first conversation are displayed correctly
     messages = await chat_page.get_all_messages()
@@ -479,6 +481,10 @@ async def test_conversation_loading_with_tool_calls(
 
     # Wait for messages to load after switching conversations
     await chat_page.wait_for_message_count(2, timeout=5000)
+    # Wait for the user message content to fully load
+    await chat_page.wait_for_message_content(
+        "note for testing", role="user", timeout=10000
+    )
 
     # Verify messages loaded from the conversation with tool calls
     loaded_messages = await chat_page.get_all_messages()

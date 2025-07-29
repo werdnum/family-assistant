@@ -402,3 +402,70 @@ class ChatPage(BasePage):
             f"document.querySelectorAll('{selector}').length >= {expected_count}",
             timeout=timeout,
         )
+
+    async def wait_for_message_content(
+        self, expected_text: str, role: str = "assistant", timeout: int = 10000
+    ) -> None:
+        """Wait for a message with specific text content to appear and stabilize.
+
+        Args:
+            expected_text: Text to look for in the message
+            role: Message role to check ('user' or 'assistant')
+            timeout: Maximum time to wait in milliseconds
+        """
+        selector = self.MESSAGE_USER if role == "user" else self.MESSAGE_ASSISTANT
+        content_selector = (
+            self.MESSAGE_USER_CONTENT
+            if role == "user"
+            else self.MESSAGE_ASSISTANT_CONTENT
+        )
+
+        # JavaScript function that accepts parameters safely
+        js_function = """
+        ([expectedText, selector, contentSelector, timeout]) => {
+            return new Promise((resolve, reject) => {
+                const startTime = Date.now();
+                
+                const checkForContent = () => {
+                    const messages = document.querySelectorAll(selector);
+                    
+                    for (const msg of messages) {
+                        const contentElem = msg.querySelector(contentSelector);
+                        if (!contentElem) continue;
+                        
+                        // Skip if showing typing indicator
+                        const typingIndicator = contentElem.querySelector('.typing-indicator');
+                        if (typingIndicator) continue;
+                        
+                        // Get text content
+                        let text = '';
+                        const markdownElem = contentElem.querySelector('.markdown-text');
+                        if (markdownElem) {
+                            text = markdownElem.innerText || markdownElem.textContent || '';
+                        } else {
+                            text = contentElem.innerText || contentElem.textContent || '';
+                        }
+                        
+                        // Check if text contains expected content
+                        if (text && text.includes(expectedText)) {
+                            return resolve(true);
+                        }
+                    }
+                    
+                    // Check timeout
+                    if (Date.now() - startTime > timeout) {
+                        return reject(new Error('Timeout waiting for message content: ' + expectedText));
+                    }
+                    
+                    // Check again
+                    setTimeout(checkForContent, 100);
+                };
+                
+                checkForContent();
+            });
+        }"""
+
+        # Pass parameters safely to avoid injection
+        await self.page.evaluate(
+            js_function, [expected_text, selector, content_selector, timeout]
+        )
