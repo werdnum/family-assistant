@@ -5,6 +5,7 @@ import pytest
 from tests.functional.web.conftest import WebTestFixture
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_homepage_loads_with_playwright(web_test_fixture: WebTestFixture) -> None:
     """Test that the homepage loads successfully using Playwright."""
@@ -44,6 +45,7 @@ async def test_homepage_loads_with_playwright(web_test_fixture: WebTestFixture) 
     assert body_text is not None and len(body_text) > 0, "Page should have content"
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_notes_page_accessible(web_test_fixture: WebTestFixture) -> None:
     """Test that the notes page is accessible and renders correctly."""
@@ -82,6 +84,7 @@ async def test_notes_page_accessible(web_test_fixture: WebTestFixture) -> None:
     assert form_element is not None, "Add note page should have a form"
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_backend_api_accessible(web_test_fixture: WebTestFixture) -> None:
     """Test that the backend API is accessible from the frontend."""
@@ -117,6 +120,7 @@ async def test_backend_api_accessible(web_test_fixture: WebTestFixture) -> None:
     )
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_page_navigation_elements(web_test_fixture: WebTestFixture) -> None:
     """Test that main navigation elements are present and functional."""
@@ -146,6 +150,7 @@ async def test_page_navigation_elements(web_test_fixture: WebTestFixture) -> Non
     assert len(internal_links) > 0, "Page should have internal navigation links"
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_responsive_design(web_test_fixture: WebTestFixture) -> None:
     """Test that the UI is responsive and works on mobile viewport."""
@@ -167,6 +172,7 @@ async def test_responsive_design(web_test_fixture: WebTestFixture) -> None:
     await page.set_viewport_size({"width": 1280, "height": 720})
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_add_note_with_javascript(web_test_fixture: WebTestFixture) -> None:
     """Test adding a note using the UI with JavaScript/CSS functionality."""
@@ -222,6 +228,7 @@ async def test_add_note_with_javascript(web_test_fixture: WebTestFixture) -> Non
     assert await note_element.is_visible(), "Created note should be visible in the list"
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_css_and_styling_loads(web_test_fixture: WebTestFixture) -> None:
     """Test that CSS stylesheets are properly loaded through Vite."""
