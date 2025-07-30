@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import gc
 import logging
 import os
 import pathlib
@@ -47,6 +48,119 @@ logging.basicConfig(level=logging.INFO)
 os.environ["FAMILY_ASSISTANT_DISABLE_DB_ERROR_LOGGING"] = "1"
 
 logger = logging.getLogger(__name__)
+
+
+@pytest.fixture(scope="session")
+def session_event_loop_debug() -> Generator[None, None, None]:
+    """Debug fixture to monitor session-scoped event loop health."""
+    logger.info("\n=== Session Event Loop Debug Started ===")
+
+    yield
+
+    # This runs at session teardown
+    logger.info("\n=== Session Event Loop Debug Teardown ===")
+    try:
+        loop = asyncio.get_running_loop()
+        logger.info("Session loop still running at teardown")
+
+        # Check for lingering tasks
+        tasks = asyncio.all_tasks(loop)
+        logger.info(f"Tasks remaining in session loop: {len(tasks)}")
+        for task in tasks:
+            if not task.done():
+                logger.warning(f"  - Pending task at session end: {task}")
+    except RuntimeError:
+        logger.info("No running loop at session teardown")
+    logger.info("=== End Session Event Loop Debug ===\n")
+
+
+@pytest.fixture
+async def debug_async_resources(
+    request: pytest.FixtureRequest,
+) -> AsyncGenerator[None, None]:
+    """Debug fixture to track async resources and potential leaks."""
+    test_name = request.node.name
+    loop = asyncio.get_running_loop()
+
+    # Track initial state
+    initial_tasks = set(asyncio.all_tasks(loop))
+
+    yield
+
+    # After test, check for issues
+    logger.info(f"\n=== Async Debug Info for {test_name} ===")
+
+    # Check for pending tasks
+    current_tasks = asyncio.all_tasks(loop)
+    new_tasks = current_tasks - initial_tasks
+    if new_tasks:
+        logger.warning(f"New tasks created during test: {len(new_tasks)}")
+        for task in new_tasks:
+            if not task.done():
+                logger.warning(f"  - Pending task: {task}")
+                logger.warning(f"    Coroutine: {task.get_coro()}")
+                logger.warning(f"    Stack: {task.get_stack()}")
+
+    # Check for unclosed resources
+    import sys
+
+    if hasattr(sys, "_asyncio_resources"):
+        logger.info(f"Asyncio resources: {sys._asyncio_resources}")
+
+    # Force garbage collection to see if that helps
+    gc.collect()
+
+    # Check for AsyncMock objects that might be lingering
+    mocks = [
+        obj
+        for obj in gc.get_objects()
+        if hasattr(obj, "_mock_name") and hasattr(obj, "_is_coroutine")
+    ]
+    if mocks:
+        logger.warning(f"Found {len(mocks)} AsyncMock objects in memory")
+        for mock in mocks[:5]:  # Show first 5
+            logger.warning(f"  - Mock: {mock}")
+
+    logger.info("=== End Async Debug Info ===")
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_timeout_hook(item: pytest.Item, timeout: float) -> None:
+    """Called when a test times out."""
+    logger.error(f"\n\n=== TIMEOUT in {item.nodeid} after {timeout}s ===")
+
+    # Get the event loop and check its state
+    try:
+        loop = asyncio.get_running_loop()
+        logger.error(f"Event loop running: {loop.is_running()}")
+        logger.error(f"Event loop closed: {loop.is_closed()}")
+
+        # Check all tasks
+        all_tasks = asyncio.all_tasks(loop)
+        logger.error(f"Total tasks: {len(all_tasks)}")
+        for i, task in enumerate(all_tasks):
+            logger.error(f"\nTask {i}: {task}")
+            if not task.done():
+                logger.error("  State: PENDING")
+                logger.error(f"  Coro: {task.get_coro()}")
+                try:
+                    stack = task.get_stack()
+                    if stack:
+                        logger.error("  Stack trace:")
+                        for frame in stack:
+                            logger.error(f"    {frame}")
+                except Exception as e:
+                    logger.error(f"  Could not get stack: {e}")
+            else:
+                logger.error("  State: DONE")
+                try:
+                    logger.error(f"  Result: {task.result()}")
+                except Exception as e:
+                    logger.error(f"  Exception: {e}")
+    except RuntimeError:
+        logger.error("No running event loop")
+
+    logger.error("=== END TIMEOUT DEBUG ===\n\n")
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -260,7 +374,20 @@ async def db_engine(
         # Cleanup: Stop the patch and dispose the engine
         patcher.stop()
         logger.info(f"--- Test DB Teardown ({request.node.name}) ---")
+
+        # Force close all connections before disposing
         await engine.dispose()
+
+        # For PostgreSQL, ensure all connections are truly closed
+        if db_backend == "postgres":
+            # PostgreSQL connections may take a moment to fully close after engine.dispose()
+            # This sleep helps prevent "database is being accessed by other users" errors
+            # when dropping the test database. This is particularly important when using
+            # a session-scoped event loop where many tests run in sequence.
+            # TODO: Investigate if asyncpg or SQLAlchemy provides a more deterministic way
+            # to wait for all connections to be closed.
+            await asyncio.sleep(0.1)
+
         logger.info("Test engine disposed.")
         logger.info("Restored original storage.base.engine.")
         if db_backend == "sqlite" and tmp_name:

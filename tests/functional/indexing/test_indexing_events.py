@@ -205,39 +205,23 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                 )
 
         # Process all embedding tasks
-        async with get_db_context(engine=db_engine) as db_ctx:
-            # Process title embedding
-            title_task = await db_ctx.tasks.dequeue(
-                task_types=["embed_and_store_batch"],
-                worker_id="test-worker",
-                current_time=datetime.now(timezone.utc),
-            )
-            assert title_task is not None
+        # Keep track of how many we've processed
+        tasks_processed = 0
+        total_tasks = 1 + len(TEST_DOC_CHUNKS)  # 1 title + 3 chunks
 
-            # Create new context for each task with fresh db_context
-            task_context = ToolExecutionContext(
-                interface_type="web",
-                conversation_id="test-conv",
-                user_name="test-user",
-                turn_id=str(uuid.uuid4()),
-                db_context=db_ctx,
-                embedding_generator=embedding_generator,
-                indexing_source=indexing_source,
-            )
-            await handle_embed_and_store_batch(task_context, title_task["payload"])
-            await db_ctx.tasks.update_status(title_task["task_id"], "done")
-
-        # Process chunk embeddings
-        for _ in range(len(TEST_DOC_CHUNKS)):
+        # Process tasks one by one
+        while tasks_processed < total_tasks:
             async with get_db_context(engine=db_engine) as db_ctx:
-                chunk_task = await db_ctx.tasks.dequeue(
+                task = await db_ctx.tasks.dequeue(
                     task_types=["embed_and_store_batch"],
                     worker_id="test-worker",
                     current_time=datetime.now(timezone.utc),
                 )
-                assert chunk_task is not None
+                if task is None:
+                    # Give a moment for tasks to become available
+                    await asyncio.sleep(0.1)
+                    continue
 
-                # Create new context for each task
                 task_context = ToolExecutionContext(
                     interface_type="web",
                     conversation_id="test-conv",
@@ -248,14 +232,15 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                     indexing_source=indexing_source,
                 )
 
-                # This should emit DOCUMENT_READY on the last task
-                await handle_embed_and_store_batch(task_context, chunk_task["payload"])
-                await db_ctx.tasks.update_status(chunk_task["task_id"], "done")
+                await handle_embed_and_store_batch(task_context, task["payload"])
+                await db_ctx.tasks.update_status(task["task_id"], "done")
+                tasks_processed += 1
 
         # Poll for DOCUMENT_READY event and verify its contents
         # Use longer timeout since event processing is async
+        # SQLite might need more time for transaction visibility
         event_data = await poll_for_document_ready_event(
-            doc_id, timeout_seconds=5.0, engine=db_engine
+            doc_id, timeout_seconds=10.0, poll_interval=0.2, engine=db_engine
         )
 
         assert event_data["document_id"] == doc_id

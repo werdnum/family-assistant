@@ -168,7 +168,10 @@ class TestEventListenerTestValidation:
 
     @pytest.mark.asyncio
     async def test_test_listener_with_validation_errors(
-        self, db_engine: AsyncEngine
+        self,
+        db_engine: AsyncEngine,
+        debug_async_resources: None,
+        session_event_loop_debug: None,
     ) -> None:
         """Test testing a listener that shows validation errors in analysis."""
         # Create execution context with real database
@@ -210,4 +213,8 @@ class TestEventListenerTestValidation:
             # Check that validation errors appear in analysis
             assert data["matched_events"] == []
             assert data["total_tested"] == 0
-            assert "analysis" not in data  # No analysis when no events tested
+            assert (
+                "analysis" in data
+            )  # Validation errors shown even when no events tested
+            assert "VALIDATION ISSUES FOUND:" in data["analysis"][0]
+            assert any("Invalid entity ID format" in msg for msg in data["analysis"])
