@@ -8,12 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from family_assistant.events.validation import ValidationError, ValidationResult
+from family_assistant.tools import events
 from family_assistant.tools.event_listeners import create_event_listener_tool
-from family_assistant.tools.events import test_event_listener_tool as test_listener_tool
 from family_assistant.tools.types import ToolExecutionContext
 
-# Tell pytest to not collect test_listener_tool as a test
-test_listener_tool.__test__ = False
+# Access test_event_listener_tool through the module to avoid modifying it
+# This prevents potential issues with parallel test execution
 
 
 class TestCreateEventListenerValidation:
@@ -192,7 +192,7 @@ class TestEventListenerTestValidation:
             mock_db_context.fetch_all = AsyncMock(return_value=[])
             mock_db.return_value.__aenter__.return_value = mock_db_context
 
-            result = await test_listener_tool(
+            result = await events.test_event_listener_tool(
                 exec_context=exec_context,
                 source="home_assistant",
                 match_conditions={"entity_id": "invalid.entity"},

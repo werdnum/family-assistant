@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface  # LLMOutput removed
 # Import select for direct DB queries
-from sqlalchemy.sql import select  # Import text
+from sqlalchemy.sql import select
 
 # Import necessary components from the application
 from family_assistant.interfaces import ChatInterface  # Import ChatInterface
@@ -1103,9 +1103,11 @@ async def test_schedule_reminder_with_follow_up(
 
     # Verify task in DB has reminder config
     async with DatabaseContext(engine=db_engine) as db_context:
+        # Filter by conversation_id to avoid picking up tasks from parallel tests
         stmt = select(tasks_table).where(
             tasks_table.c.task_type == "llm_callback",
             tasks_table.c.status == "pending",
+            tasks_table.c.payload["conversation_id"].as_string() == str(TEST_CHAT_ID),
         )
         tasks = await db_context.fetch_all(stmt)
         assert len(tasks) == 1, "Expected exactly one pending reminder task"
@@ -1134,9 +1136,11 @@ async def test_schedule_reminder_with_follow_up(
 
     # Verify follow-up was scheduled
     async with DatabaseContext(engine=db_engine) as db_context:
+        # Filter by conversation_id to avoid picking up tasks from parallel tests
         stmt = select(tasks_table).where(
             tasks_table.c.task_type == "llm_callback",
             tasks_table.c.status == "pending",
+            tasks_table.c.payload["conversation_id"].as_string() == str(TEST_CHAT_ID),
         )
         tasks = await db_context.fetch_all(stmt)
         assert len(tasks) == 1, "Expected exactly one pending follow-up task"
@@ -1162,9 +1166,11 @@ async def test_schedule_reminder_with_follow_up(
 
     # Verify another follow-up was scheduled (attempt 3 of 3)
     async with DatabaseContext(engine=db_engine) as db_context:
+        # Filter by conversation_id to avoid picking up tasks from parallel tests
         stmt = select(tasks_table).where(
             tasks_table.c.task_type == "llm_callback",
             tasks_table.c.status == "pending",
+            tasks_table.c.payload["conversation_id"].as_string() == str(TEST_CHAT_ID),
         )
         tasks = await db_context.fetch_all(stmt)
         assert len(tasks) == 1, "Expected exactly one pending second follow-up task"
@@ -1200,9 +1206,11 @@ async def test_schedule_reminder_with_follow_up(
 
     # Verify no more follow-ups scheduled (reached max_follow_ups)
     async with DatabaseContext(engine=db_engine) as db_context:
+        # Filter by conversation_id to avoid picking up tasks from parallel tests
         stmt = select(tasks_table).where(
             tasks_table.c.task_type == "llm_callback",
             tasks_table.c.status == "pending",
+            tasks_table.c.payload["conversation_id"].as_string() == str(TEST_CHAT_ID),
         )
         tasks = await db_context.fetch_all(stmt)
         # Wait for tasks to be cleared with a timeout
@@ -1415,9 +1423,11 @@ async def test_schedule_recurring_callback(
 
     # Verify initial task in DB has recurrence rule
     async with DatabaseContext(engine=db_engine) as db_context:
+        # Filter by conversation_id to avoid picking up tasks from parallel tests
         stmt = select(tasks_table).where(
             tasks_table.c.task_type == "llm_callback",
             tasks_table.c.status == "pending",
+            tasks_table.c.payload["conversation_id"].as_string() == str(TEST_CHAT_ID),
         )
         tasks = await db_context.fetch_all(stmt)
         assert len(tasks) == 1, "Expected exactly one pending recurring task"
@@ -1433,7 +1443,7 @@ async def test_schedule_recurring_callback(
     logger.info("--- Part 2: Executing first callback ---")
     mock_clock.advance(timedelta(seconds=initial_delay_seconds + 1))
     test_new_task_event.set()
-    await asyncio.sleep(0.2)  # Allow processing
+    await asyncio.sleep(0.5)  # Allow processing
 
     # Verify first callback was sent
     assert mock_chat_interface.send_message.call_count == 1
@@ -1443,9 +1453,11 @@ async def test_schedule_recurring_callback(
 
     # Verify next occurrence was scheduled
     async with DatabaseContext(engine=db_engine) as db_context:
+        # Filter by conversation_id to avoid picking up tasks from parallel tests
         stmt = select(tasks_table).where(
             tasks_table.c.task_type == "llm_callback",
             tasks_table.c.status == "pending",
+            tasks_table.c.payload["conversation_id"].as_string() == str(TEST_CHAT_ID),
         )
         tasks = await db_context.fetch_all(stmt)
         assert len(tasks) == 1, "Expected exactly one pending next occurrence"
