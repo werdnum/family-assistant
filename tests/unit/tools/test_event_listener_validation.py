@@ -24,6 +24,7 @@ class TestCreateEventListenerValidation:
         """Test creating a listener with validation errors."""
         # Mock the execution context
         exec_context = MagicMock(spec=ToolExecutionContext)
+        exec_context.db_context = AsyncMock()  # Ensure db_context is async-compatible
 
         # Mock event processor and source
         mock_source = AsyncMock()
@@ -87,7 +88,7 @@ class TestCreateEventListenerValidation:
         """Test creating a listener with validation warnings only."""
         # Mock the execution context
         exec_context = MagicMock(spec=ToolExecutionContext)
-        exec_context.db_context = AsyncMock()
+        exec_context.db_context = AsyncMock()  # Ensure db_context is async-compatible
         exec_context.conversation_id = "test_conv"
         exec_context.interface_type = "test"
 
@@ -163,9 +164,13 @@ class TestEventListenerTestValidation:
     @pytest.mark.asyncio
     async def test_test_listener_with_validation_errors(self) -> None:
         """Test testing a listener that shows validation errors in analysis."""
-        # Mock the execution context
+        # Mock the execution context with a proper mock database context
         exec_context = MagicMock(spec=ToolExecutionContext)
-        exec_context.db_context = AsyncMock()
+
+        # Create a mock database context that returns empty results
+        mock_db_context = AsyncMock()
+        mock_db_context.fetch_all = AsyncMock(return_value=[])
+        exec_context.db_context = mock_db_context
 
         # Mock event processor and source
         mock_source = AsyncMock()
@@ -186,18 +191,13 @@ class TestEventListenerTestValidation:
         # Setup the event sources
         exec_context.event_sources = {"home_assistant": mock_source}
 
-        # Mock database query result (no events)
-        with patch("family_assistant.tools.events.get_db_context") as mock_db:
-            mock_db_context = AsyncMock()
-            mock_db_context.fetch_all = AsyncMock(return_value=[])
-            mock_db.return_value.__aenter__.return_value = mock_db_context
-
-            result = await events.test_event_listener_tool(
-                exec_context=exec_context,
-                source="home_assistant",
-                match_conditions={"entity_id": "invalid.entity"},
-                hours=1,
-            )
+        # Call the function directly
+        result = await events.test_event_listener_tool(
+            exec_context=exec_context,
+            source="home_assistant",
+            match_conditions={"entity_id": "invalid.entity"},
+            hours=1,
+        )
 
         # Parse result
         data = json.loads(result)

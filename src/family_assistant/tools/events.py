@@ -9,7 +9,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from family_assistant.storage.context import get_db_context
+# get_db_context import removed - using exec_context.db_context for dependency injection
 from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -128,32 +128,34 @@ async def query_recent_events_tool(
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
 
-        async with get_db_context() as db_ctx:
-            # Build query
-            if source_id:
-                query = text("""
-                    SELECT event_id, source_id, event_data, triggered_listener_ids, timestamp
-                    FROM recent_events
-                    WHERE source_id = :source_id AND timestamp >= :cutoff_time
-                    ORDER BY timestamp DESC
-                    LIMIT :limit
-                """)
-                params = {
-                    "source_id": source_id,
-                    "cutoff_time": cutoff_time,
-                    "limit": limit,
-                }
-            else:
-                query = text("""
-                    SELECT event_id, source_id, event_data, triggered_listener_ids, timestamp
-                    FROM recent_events
-                    WHERE timestamp >= :cutoff_time
-                    ORDER BY timestamp DESC
-                    LIMIT :limit
-                """)
-                params = {"cutoff_time": cutoff_time, "limit": limit}
+        # Use the database context from the execution context
+        db_ctx = exec_context.db_context
 
-            result = await db_ctx.fetch_all(query, params)
+        # Build query
+        if source_id:
+            query = text("""
+                SELECT event_id, source_id, event_data, triggered_listener_ids, timestamp
+                FROM recent_events
+                WHERE source_id = :source_id AND timestamp >= :cutoff_time
+                ORDER BY timestamp DESC
+                LIMIT :limit
+            """)
+            params = {
+                "source_id": source_id,
+                "cutoff_time": cutoff_time,
+                "limit": limit,
+            }
+        else:
+            query = text("""
+                SELECT event_id, source_id, event_data, triggered_listener_ids, timestamp
+                FROM recent_events
+                WHERE timestamp >= :cutoff_time
+                ORDER BY timestamp DESC
+                LIMIT :limit
+            """)
+            params = {"cutoff_time": cutoff_time, "limit": limit}
+
+        result = await db_ctx.fetch_all(query, params)
 
         if not result:
             return json.dumps({
@@ -246,20 +248,22 @@ async def test_event_listener_tool(
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
 
-        async with get_db_context() as db_ctx:
-            # Query all events for the source within the time range
-            query = text("""
-                SELECT event_id, source_id, event_data, timestamp
-                FROM recent_events
-                WHERE source_id = :source_id AND timestamp >= :cutoff_time
-                ORDER BY timestamp DESC
-            """)
-            params = {
-                "source_id": source,
-                "cutoff_time": cutoff_time,
-            }
+        # Use the database context from the execution context instead of creating a new one
+        db_ctx = exec_context.db_context
 
-            result = await db_ctx.fetch_all(query, params)
+        # Query all events for the source within the time range
+        query = text("""
+            SELECT event_id, source_id, event_data, timestamp
+            FROM recent_events
+            WHERE source_id = :source_id AND timestamp >= :cutoff_time
+            ORDER BY timestamp DESC
+        """)
+        params = {
+            "source_id": source,
+            "cutoff_time": cutoff_time,
+        }
+
+        result = await db_ctx.fetch_all(query, params)
 
         if not result:
             return json.dumps({
