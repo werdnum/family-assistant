@@ -6,8 +6,10 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.events.validation import ValidationError, ValidationResult
+from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import events
 from family_assistant.tools.event_listeners import create_event_listener_tool
 from family_assistant.tools.types import ToolExecutionContext
@@ -161,48 +163,47 @@ class TestCreateEventListenerValidation:
 class TestEventListenerTestValidation:
     """Test validation in test_event_listener_tool."""
 
-    @pytest.mark.asyncio(loop_scope="function")
-    async def test_test_listener_with_validation_errors(self) -> None:
+    @pytest.mark.asyncio
+    async def test_test_listener_with_validation_errors(
+        self, db_engine: AsyncEngine
+    ) -> None:
         """Test testing a listener that shows validation errors in analysis."""
-        # Mock the execution context with a proper mock database context
-        exec_context = MagicMock(spec=ToolExecutionContext)
+        # Create execution context with real database
+        async with DatabaseContext(engine=db_engine) as db_context:
+            exec_context = MagicMock(spec=ToolExecutionContext)
+            exec_context.db_context = db_context
 
-        # Create a mock database context that returns empty results
-        mock_db_context = AsyncMock()
-        mock_db_context.fetch_all = AsyncMock(return_value=[])
-        exec_context.db_context = mock_db_context
-
-        # Mock event processor and source
-        mock_source = AsyncMock()
-        mock_source.validate_match_conditions = AsyncMock(
-            return_value=ValidationResult(
-                valid=False,
-                errors=[
-                    ValidationError(
-                        field="entity_id",
-                        value="invalid.entity",
-                        error="Invalid entity ID format",
-                        suggestion="Format: domain.object_id",
-                    )
-                ],
+            # Mock event processor and source
+            mock_source = AsyncMock()
+            mock_source.validate_match_conditions = AsyncMock(
+                return_value=ValidationResult(
+                    valid=False,
+                    errors=[
+                        ValidationError(
+                            field="entity_id",
+                            value="invalid.entity",
+                            error="Invalid entity ID format",
+                            suggestion="Format: domain.object_id",
+                        )
+                    ],
+                )
             )
-        )
 
-        # Setup the event sources
-        exec_context.event_sources = {"home_assistant": mock_source}
+            # Setup the event sources
+            exec_context.event_sources = {"home_assistant": mock_source}
 
-        # Call the function directly
-        result = await events.test_event_listener_tool(
-            exec_context=exec_context,
-            source="home_assistant",
-            match_conditions={"entity_id": "invalid.entity"},
-            hours=1,
-        )
+            # Call the function directly
+            result = await events.test_event_listener_tool(
+                exec_context=exec_context,
+                source="home_assistant",
+                match_conditions={"entity_id": "invalid.entity"},
+                hours=1,
+            )
 
-        # Parse result
-        data = json.loads(result)
+            # Parse result
+            data = json.loads(result)
 
-        # Check that validation errors appear in analysis
-        assert data["matched_events"] == []
-        assert data["total_tested"] == 0
-        assert "analysis" not in data  # No analysis when no events tested
+            # Check that validation errors appear in analysis
+            assert data["matched_events"] == []
+            assert data["total_tested"] == 0
+            assert "analysis" not in data  # No analysis when no events tested
