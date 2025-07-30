@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
@@ -45,6 +46,8 @@ logger = logging.getLogger(__name__)
 @pytest.mark.asyncio
 async def test_recurring_task_respects_user_timezone(
     db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+    mock_clock: MockClock,
 ) -> None:
     """
     Test that recurring tasks scheduled with BYHOUR respect the user's timezone.
@@ -58,9 +61,8 @@ async def test_recurring_task_respects_user_timezone(
     logger.info(f"\n--- Running Recurring Task Timezone Test ({test_run_id}) ---")
 
     # Setup mock clock starting at 2025-06-16 05:00:00 UTC (3pm Sydney time)
-    mock_clock = MockClock(
-        initial_time=datetime(2025, 6, 16, 5, 0, 0, tzinfo=timezone.utc)
-    )
+    # mock_clock fixture is now passed as parameter
+    mock_clock.set_time(datetime(2025, 6, 16, 5, 0, 0, tzinfo=timezone.utc))
     initial_time = mock_clock.now()
 
     # Sydney timezone
@@ -187,26 +189,15 @@ async def test_recurring_task_respects_user_timezone(
     mock_chat_interface = AsyncMock(spec=ChatInterface)
     mock_chat_interface.send_message.return_value = "mock_message_id"
 
-    # Create task worker
-    test_new_task_event = asyncio.Event()
-    test_shutdown_event = asyncio.Event()
-
-    task_worker_instance = TaskWorker(
-        processing_service=processing_service,
-        chat_interface=mock_chat_interface,
-        timezone_str="Australia/Sydney",  # Sydney timezone
-        embedding_generator=AsyncMock(),
-        calendar_config={},
-        clock=mock_clock,
-        shutdown_event_instance=test_shutdown_event,
-        engine=db_engine,
+    # Use the task_worker_manager fixture with Sydney timezone
+    task_worker_instance, test_new_task_event, test_shutdown_event = (
+        task_worker_manager(
+            processing_service=processing_service,
+            chat_interface=mock_chat_interface,
+            timezone_str="Australia/Sydney",  # Override the default UTC timezone
+        )
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
-
-    worker_task = asyncio.create_task(
-        task_worker_instance.run(test_new_task_event),
-        name=f"TaskWorker-RecurringTimezone-{test_run_id}",
-    )
     await asyncio.sleep(0.01)  # Allow worker to start
 
     # Part 1: Schedule the recurring task
@@ -307,21 +298,5 @@ async def test_recurring_task_respects_user_timezone(
         f"Next task scheduled correctly at {next_scheduled_at} UTC = {next_scheduled_sydney} Sydney"
     )
 
-    # Cleanup
-    logger.info("--- Cleanup ---")
-    test_shutdown_event.set()  # Signal worker to stop
-    test_new_task_event.set()  # Wake up worker if it's waiting
-    try:
-        await asyncio.wait_for(worker_task, timeout=5.0)
-        logger.info("TaskWorker finished.")
-    except asyncio.TimeoutError:
-        logger.warning("TaskWorker did not finish within timeout. Cancelling.")
-        worker_task.cancel()
-        await asyncio.sleep(0.1)  # Allow cancellation to process
-    except asyncio.CancelledError:
-        logger.info("TaskWorker was cancelled.")
-    finally:
-        # Ensure the events are cleared
-        test_shutdown_event.clear()
-
+    # Cleanup is handled by the task_worker_manager fixture
     logger.info(f"--- Recurring Task Timezone Test ({test_run_id}) Passed ---")

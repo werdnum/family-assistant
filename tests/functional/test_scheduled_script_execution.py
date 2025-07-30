@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from datetime import timedelta
 from unittest.mock import AsyncMock
 
@@ -45,10 +46,13 @@ SCRIPT_DELAY_SECONDS = 2
 
 
 @pytest.mark.asyncio
-async def test_schedule_script_execution(db_engine: AsyncEngine) -> None:
+async def test_schedule_script_execution(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+    mock_clock: MockClock,
+) -> None:
     """Test that schedule_action tool can schedule a script for future execution."""
     # Arrange
-    mock_clock = MockClock()
     initial_time = mock_clock.now()
     script_dt = initial_time + timedelta(seconds=SCRIPT_DELAY_SECONDS)
     script_time_iso = script_dt.isoformat()
@@ -142,30 +146,16 @@ print("Script executed - note created: " + str(result))
     mock_chat_interface = AsyncMock(spec=ChatInterface)
     mock_chat_interface.send_message.return_value = "mock_message_id"
 
-    # Create task worker
-    test_shutdown_event = asyncio.Event()
-    test_new_task_event = asyncio.Event()
-
-    task_worker = TaskWorker(
+    # Create task worker using the fixture
+    task_worker, test_new_task_event, test_shutdown_event = task_worker_manager(
         processing_service=processing_service,
         chat_interface=mock_chat_interface,
-        calendar_config={},
-        timezone_str="UTC",
-        embedding_generator=AsyncMock(),
-        clock=mock_clock,
-        shutdown_event_instance=test_shutdown_event,
-        engine=db_engine,
     )
 
     # Register the script execution handler
     task_worker.register_task_handler("script_execution", handle_script_execution)
 
-    # Start the task worker
-    worker_task = None
     try:
-        worker_task = asyncio.create_task(task_worker.run(test_new_task_event))
-        logger.info("Started ScriptWorker")
-        await asyncio.sleep(0.1)  # Give worker time to start
         # Act - Schedule the script
         async with DatabaseContext(engine=db_engine) as db_context:
             resp, _, _, error = await processing_service.handle_chat_interaction(
@@ -214,29 +204,18 @@ print("Script executed - note created: " + str(result))
             assert note["title"] == test_note_title
             assert "scheduled script" in note["content"]
     finally:
-        if worker_task:
-            logger.info("Stopping ScriptWorker...")
-            test_shutdown_event.set()
-            test_new_task_event.set()  # Wake up worker if it's waiting
-            try:
-                await asyncio.wait_for(worker_task, timeout=5.0)
-                logger.info("ScriptWorker stopped gracefully.")
-            except asyncio.TimeoutError:
-                logger.warning("Timeout stopping ScriptWorker. Cancelling.")
-                worker_task.cancel()
-                try:
-                    await worker_task
-                except asyncio.CancelledError:
-                    logger.info("ScriptWorker cancellation confirmed.")
-            except Exception as e:
-                logger.error(f"Error during ScriptWorker shutdown: {e}", exc_info=True)
+        # Cleanup is handled by the task_worker_manager fixture
+        pass
 
 
 @pytest.mark.asyncio
-async def test_schedule_recurring_script(db_engine: AsyncEngine) -> None:
+async def test_schedule_recurring_script(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+    mock_clock: MockClock,
+) -> None:
     """Test that schedule_recurring_action tool can schedule a recurring script."""
     # Arrange
-    mock_clock = MockClock()
     initial_time = mock_clock.now()
     start_dt = initial_time + timedelta(seconds=2)
     start_time_iso = start_dt.isoformat()
@@ -330,28 +309,18 @@ print("Recurring script executed - note created")
 
     mock_chat_interface = AsyncMock(spec=ChatInterface)
     mock_chat_interface.send_message.return_value = "mock_message_id"
-    test_shutdown_event = asyncio.Event()
-    test_new_task_event = asyncio.Event()
 
-    task_worker = TaskWorker(
+    # Use the task_worker_manager fixture
+    task_worker, test_new_task_event, test_shutdown_event = task_worker_manager(
         processing_service=processing_service,
         chat_interface=mock_chat_interface,
-        calendar_config={},
-        timezone_str="UTC",
-        embedding_generator=AsyncMock(),
-        clock=mock_clock,
-        shutdown_event_instance=test_shutdown_event,
-        engine=db_engine,
     )
 
     # Register the script execution handler
     task_worker.register_task_handler("script_execution", handle_script_execution)
 
-    # Start the task worker
-    worker_task = None
+    # Task worker is already started by the fixture
     try:
-        worker_task = asyncio.create_task(task_worker.run(test_new_task_event))
-        logger.info("Started RecurringWorker")
         await asyncio.sleep(0.1)  # Give worker time to start
         # Act - Schedule the recurring script
         async with DatabaseContext(engine=db_engine) as db_context:
@@ -405,31 +374,18 @@ print("Recurring script executed - note created")
             assert "Recurring Script Execution" in note["title"]
             assert "unix timestamp" in note["content"]
     finally:
-        if worker_task:
-            logger.info("Stopping RecurringWorker...")
-            test_shutdown_event.set()
-            test_new_task_event.set()  # Wake up worker if it's waiting
-            try:
-                await asyncio.wait_for(worker_task, timeout=5.0)
-                logger.info("RecurringWorker stopped gracefully.")
-            except asyncio.TimeoutError:
-                logger.warning("Timeout stopping RecurringWorker. Cancelling.")
-                worker_task.cancel()
-                try:
-                    await worker_task
-                except asyncio.CancelledError:
-                    logger.info("RecurringWorker cancellation confirmed.")
-            except Exception as e:
-                logger.error(
-                    f"Error during RecurringWorker shutdown: {e}", exc_info=True
-                )
+        # Cleanup is handled by the task_worker_manager fixture
+        logger.info("Cleanup handled by fixture")
 
 
 @pytest.mark.asyncio
-async def test_schedule_script_with_invalid_syntax(db_engine: AsyncEngine) -> None:
+async def test_schedule_script_with_invalid_syntax(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+    mock_clock: MockClock,
+) -> None:
     """Test that scheduling a script with invalid syntax fails appropriately."""
     # Arrange
-    mock_clock = MockClock()
     initial_time = mock_clock.now()
     script_dt = initial_time + timedelta(seconds=1)
     script_time_iso = script_dt.isoformat()
@@ -515,28 +471,18 @@ if True  # Missing colon
 
     mock_chat_interface = AsyncMock(spec=ChatInterface)
     mock_chat_interface.send_message.return_value = "mock_message_id"
-    test_shutdown_event = asyncio.Event()
-    test_new_task_event = asyncio.Event()
 
-    task_worker = TaskWorker(
+    # Use the task_worker_manager fixture
+    task_worker, test_new_task_event, test_shutdown_event = task_worker_manager(
         processing_service=processing_service,
         chat_interface=mock_chat_interface,
-        calendar_config={},
-        timezone_str="UTC",
-        embedding_generator=AsyncMock(),
-        clock=mock_clock,
-        shutdown_event_instance=test_shutdown_event,
-        engine=db_engine,
     )
 
     # Register the script execution handler
     task_worker.register_task_handler("script_execution", handle_script_execution)
 
-    # Start the task worker
-    worker_task = None
+    # Task worker is already started by the fixture
     try:
-        worker_task = asyncio.create_task(task_worker.run(test_new_task_event))
-        logger.info("Started InvalidScriptWorker")
         await asyncio.sleep(0.1)  # Give worker time to start
         # Act - Schedule the invalid script
         async with DatabaseContext(engine=db_engine) as db_context:
@@ -565,21 +511,5 @@ if True  # Missing colon
         # The task should have failed due to syntax error
         # We're testing that the system handles script errors gracefully
     finally:
-        if worker_task:
-            logger.info("Stopping InvalidScriptWorker...")
-            test_shutdown_event.set()
-            test_new_task_event.set()  # Wake up worker if it's waiting
-            try:
-                await asyncio.wait_for(worker_task, timeout=5.0)
-                logger.info("InvalidScriptWorker stopped gracefully.")
-            except asyncio.TimeoutError:
-                logger.warning("Timeout stopping InvalidScriptWorker. Cancelling.")
-                worker_task.cancel()
-                try:
-                    await worker_task
-                except asyncio.CancelledError:
-                    logger.info("InvalidScriptWorker cancellation confirmed.")
-            except Exception as e:
-                logger.error(
-                    f"Error during InvalidScriptWorker shutdown: {e}", exc_info=True
-                )
+        # Cleanup is handled by the task_worker_manager fixture
+        logger.info("Cleanup handled by fixture")

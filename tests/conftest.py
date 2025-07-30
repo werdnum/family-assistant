@@ -10,7 +10,7 @@ import sys  # Import sys module
 import tempfile
 import time
 import uuid
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Callable, Generator
 from typing import Any, Protocol
 from unittest.mock import MagicMock, patch
 
@@ -37,6 +37,7 @@ from family_assistant.storage.context import DatabaseContext
 # Import vector storage init and context
 from family_assistant.storage.vector import init_vector_db  # Corrected import path
 from family_assistant.task_worker import TaskWorker
+from family_assistant.utils.clock import MockClock
 
 # Configure logging for tests (optional, but can be helpful)
 logging.basicConfig(level=logging.INFO)
@@ -712,60 +713,120 @@ async def pg_vector_db_engine(
 #         ...
 
 
+async def cleanup_task_worker(
+    worker_task: asyncio.Task,
+    shutdown_event: asyncio.Event,
+    new_task_event: asyncio.Event | None = None,
+    test_name: str = "",
+    timeout: float = 5.0,
+) -> None:
+    """
+    Properly clean up a TaskWorker task. Ensures the task is fully stopped
+    even with a session-scoped event loop.
+
+    Args:
+        worker_task: The asyncio task running the worker
+        shutdown_event: The shutdown event to signal
+        new_task_event: Optional new task event to signal (to wake worker)
+        test_name: Optional test name for logging
+        timeout: Maximum time to wait for graceful shutdown
+    """
+    label = f"TaskWorker-{test_name}" if test_name else "TaskWorker"
+
+    # Signal shutdown
+    shutdown_event.set()
+    if new_task_event:
+        new_task_event.set()  # Wake up worker if waiting
+
+    # Wait for graceful shutdown with timeout
+    try:
+        await asyncio.wait_for(worker_task, timeout=timeout)
+        logger.info(f"{label} stopped gracefully")
+    except asyncio.TimeoutError:
+        logger.warning(f"Timeout stopping {label}. Cancelling.")
+        worker_task.cancel()
+        try:
+            await worker_task
+        except asyncio.CancelledError:
+            logger.info(f"{label} cancellation confirmed")
+    except Exception as e:
+        logger.error(f"Error stopping {label}: {e}", exc_info=True)
+        worker_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await worker_task
+
+    # Give a moment for database connections to fully close
+    # This is crucial when using PostgreSQL to avoid "database is being accessed by other users" errors
+    await asyncio.sleep(0.5)
+
+    # Force all pending tasks to complete
+    pending = [
+        task
+        for task in asyncio.all_tasks()
+        if not task.done() and task != asyncio.current_task()
+    ]
+    if pending:
+        logger.warning(f"Found {len(pending)} pending tasks after {label} cleanup")
+        # Give them a moment to complete
+        await asyncio.sleep(0.1)
+
+
+@pytest.fixture(scope="function")
+def mock_clock() -> MockClock:
+    """Provides a mock clock for controlling time in tests."""
+    return MockClock()
+
+
 @pytest_asyncio.fixture(scope="function")
-async def task_worker_manager() -> AsyncGenerator[
-    tuple[TaskWorker, asyncio.Event, asyncio.Event], None
+async def task_worker_manager(
+    request: pytest.FixtureRequest, db_engine: AsyncEngine, mock_clock: MockClock
+) -> AsyncGenerator[
+    Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]], None
 ]:
     """
-    Manages the lifecycle of a TaskWorker instance.
+    Manages the lifecycle of a TaskWorker instance via a factory.
 
-    Yields a tuple: (TaskWorker instance, new_task_event, shutdown_event).
-    The TaskWorker is initialized with default parameters and has no handlers
-    registered by default. Tests using this fixture are responsible for
-    registering necessary handlers on the yielded worker instance.
+    Yields a factory function that creates and starts a TaskWorker.
+    The factory is responsible for creating the worker with the correct
+    dependencies, and the fixture ensures it is properly shut down.
     """
-    mock_chat_interface = MagicMock()  # Mock ChatInterface
-    mock_embedding_gen = MagicMock()
-    new_task_event_for_worker = asyncio.Event()  # Event for the worker itself
-
-    worker = TaskWorker(
-        processing_service=MagicMock(spec=ProcessingService),
-        chat_interface=mock_chat_interface,  # Pass mock ChatInterface
-        calendar_config={},
-        timezone_str="UTC",
-        embedding_generator=mock_embedding_gen,
-    )
-
     worker_task_handle = None
     shutdown_event = asyncio.Event()
-    # new_task_event is now new_task_event_for_worker, which is passed to worker.run
+    new_task_event_for_worker = asyncio.Event()
+
+    def worker_factory(
+        processing_service: ProcessingService,
+        chat_interface: MagicMock,
+        **kwargs: Any,
+    ) -> tuple[TaskWorker, asyncio.Event, asyncio.Event]:
+        nonlocal worker_task_handle
+        # Extract timezone_str from kwargs with default of "UTC"
+        timezone_str = kwargs.pop("timezone_str", "UTC")
+        worker = TaskWorker(
+            processing_service=processing_service,
+            chat_interface=chat_interface,
+            calendar_config={},
+            timezone_str=timezone_str,
+            embedding_generator=MagicMock(),
+            shutdown_event_instance=shutdown_event,
+            engine=db_engine,
+            clock=mock_clock,  # Use the mock_clock fixture
+            **kwargs,
+        )
+        worker_task_handle = asyncio.create_task(worker.run(new_task_event_for_worker))
+        logger.info("Started background TaskWorker (factory).")
+        return worker, new_task_event_for_worker, shutdown_event
 
     try:
-        # The worker.run method now takes the event it should listen on.
-        # This is the same event that tasks will use to notify it.
-        worker_task_handle = asyncio.create_task(worker.run(new_task_event_for_worker))
-        logger.info("Started background TaskWorker (fixture).")
-        await asyncio.sleep(0.1)  # Give worker time to start
-        yield worker, new_task_event_for_worker, shutdown_event
+        yield worker_factory
     finally:
         if worker_task_handle:
-            logger.info("Stopping background TaskWorker (fixture)...")
-            shutdown_event.set()
-            new_task_event_for_worker.set()  # Wake up worker if it's waiting on this
-            try:
-                await asyncio.wait_for(worker_task_handle, timeout=5.0)
-                logger.info("Background TaskWorker (fixture) stopped gracefully.")
-            except asyncio.TimeoutError:
-                logger.warning("Timeout stopping TaskWorker (fixture). Cancelling.")
-                worker_task_handle.cancel()
-                try:
-                    await worker_task_handle
-                except asyncio.CancelledError:
-                    logger.info("TaskWorker (fixture) cancellation confirmed.")
-            except Exception as e:
-                logger.error(
-                    f"Error during TaskWorker (fixture) shutdown: {e}", exc_info=True
-                )
+            await cleanup_task_worker(
+                worker_task_handle,
+                shutdown_event,
+                new_task_event_for_worker,
+                test_name=request.node.name,
+            )
 
 
 # --- Radicale CalDAV Server Fixture ---
