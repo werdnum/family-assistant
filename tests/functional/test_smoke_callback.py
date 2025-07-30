@@ -41,6 +41,7 @@ from family_assistant.tools import (
     MCPToolsProvider,
 )
 from family_assistant.utils.clock import MockClock
+from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,  # Import the mock's LLMOutput
 )
@@ -261,7 +262,14 @@ async def test_schedule_and_execute_callback(
         timedelta(seconds=CALLBACK_DELAY_SECONDS + 1)
     )  # Advance past callback time
     test_new_task_event.set()  # Notify worker to check for tasks
-    await asyncio.sleep(0.1)  # Allow worker to process the task
+
+    # Wait for the callback task to complete
+    await wait_for_tasks_to_complete(
+        engine=db_engine,
+        task_types={"llm_callback"},
+        timeout_seconds=5.0,
+        poll_interval_seconds=0.1,
+    )
 
     # --- Part 3: Verify Callback Execution ---
     logger.info("--- Part 3: Verifying Callback Execution ---")
@@ -272,6 +280,12 @@ async def test_schedule_and_execute_callback(
     # Wait for send_message to be called with a timeout
     for _i in range(10):  # 10 * 0.1 = 1 second timeout
         if mock_chat_interface_for_worker.send_message.called:
+            break
+        await asyncio.sleep(0.1)
+
+    # Wait for send_message to be called
+    for _ in range(10):  # 10 * 0.1 = 1 second timeout
+        if mock_chat_interface_for_worker.send_message.call_count >= 1:
             break
         await asyncio.sleep(0.1)
 
@@ -597,7 +611,14 @@ async def test_modify_pending_callback(
         )
 
     test_new_task_event.set()  # Notify worker
-    await asyncio.sleep(0.1)  # Allow worker to process
+
+    # Wait for the modified callback task to complete
+    await wait_for_tasks_to_complete(
+        engine=db_engine,
+        task_ids={scheduled_task_id},
+        timeout_seconds=5.0,
+        poll_interval_seconds=0.1,
+    )
 
     # --- Part 4: Verify MODIFIED Callback Execution ---
     logger.info("--- Part 4: Verifying MODIFIED Callback Execution ---")
@@ -897,9 +918,8 @@ async def test_cancel_pending_callback(
     if duration_to_advance_past_schedule.total_seconds() > 0:
         mock_clock.advance(duration_to_advance_past_schedule)
     test_new_task_event.set()  # Notify worker
-    await asyncio.sleep(
-        0.1
-    )  # Allow worker to process (it should find nothing or a failed task)
+    # Give worker a small window to potentially pick up the task (it shouldn't)
+    await asyncio.sleep(0.5)
 
     # --- Part 4: Verify Callback Was NOT Executed ---
     logger.info("--- Part 4: Verifying Cancelled Callback Was NOT Executed ---")
@@ -1126,9 +1146,21 @@ async def test_schedule_reminder_with_follow_up(
     logger.info("--- Part 2: Executing initial reminder ---")
     mock_clock.advance(timedelta(seconds=reminder_delay_seconds + 1))
     test_new_task_event.set()
-    await asyncio.sleep(0.5)  # Allow more time for processing
 
-    # Verify initial reminder was sent
+    # Wait for the initial reminder task to complete
+    await wait_for_tasks_to_complete(
+        engine=db_engine,
+        task_ids={initial_task_id},
+        timeout_seconds=5.0,
+        poll_interval_seconds=0.1,
+    )
+
+    # Wait for and verify initial reminder was sent
+    for _ in range(10):  # 10 * 0.1 = 1 second timeout
+        if mock_chat_interface.send_message.call_count >= 1:
+            break
+        await asyncio.sleep(0.1)
+
     assert mock_chat_interface.send_message.call_count == 1
     call_kwargs = mock_chat_interface.send_message.call_args_list[0][1]
     assert reminder_message in call_kwargs["text"]
@@ -1156,9 +1188,21 @@ async def test_schedule_reminder_with_follow_up(
     logger.info("--- Part 3: Executing follow-up reminder ---")
     mock_clock.advance(timedelta(seconds=follow_up_interval_seconds + 1))
     test_new_task_event.set()
-    await asyncio.sleep(0.5)
 
-    # Verify follow-up reminder was sent
+    # Wait for the follow-up task to complete
+    await wait_for_tasks_to_complete(
+        engine=db_engine,
+        task_ids={follow_up_task_id},
+        timeout_seconds=5.0,
+        poll_interval_seconds=0.1,
+    )
+
+    # Wait for and verify follow-up reminder was sent
+    for _ in range(10):  # 10 * 0.1 = 1 second timeout
+        if mock_chat_interface.send_message.call_count >= 2:
+            break
+        await asyncio.sleep(0.1)
+
     assert mock_chat_interface.send_message.call_count == 2
     call_kwargs = mock_chat_interface.send_message.call_args_list[1][1]
     assert reminder_message in call_kwargs["text"]
@@ -1198,7 +1242,20 @@ async def test_schedule_reminder_with_follow_up(
     # Execute the final follow-up (should still send but not schedule more)
     mock_clock.advance(timedelta(seconds=follow_up_interval_seconds + 1))
     test_new_task_event.set()
-    await asyncio.sleep(0.2)
+
+    # Wait for the final follow-up task to complete
+    await wait_for_tasks_to_complete(
+        engine=db_engine,
+        task_ids={second_follow_up["task_id"]},
+        timeout_seconds=5.0,
+        poll_interval_seconds=0.1,
+    )
+
+    # Wait for the final follow-up to be sent with a timeout
+    for _i in range(20):  # 20 * 0.1 = 2 second timeout
+        if mock_chat_interface.send_message.call_count == 3:
+            break
+        await asyncio.sleep(0.1)
 
     # Verify final follow-up was sent
     assert mock_chat_interface.send_message.call_count == 3
@@ -1213,13 +1270,8 @@ async def test_schedule_reminder_with_follow_up(
             tasks_table.c.payload["conversation_id"].as_string() == str(TEST_CHAT_ID),
         )
         tasks = await db_context.fetch_all(stmt)
-        # Wait for tasks to be cleared with a timeout
-        for _i in range(10):
-            if len(tasks) == 0:
-                break
-            await asyncio.sleep(0.2)
-            # Re-query for pending tasks
-            tasks = await db_context.fetch_all(stmt)
+        # No need to wait for tasks to be cleared - they should be gone immediately
+        # after the final follow-up completes since max_follow_ups was reached
 
         assert len(tasks) == 0, (
             f"Expected no pending tasks after max follow-ups, but found {len(tasks)}"
@@ -1443,9 +1495,21 @@ async def test_schedule_recurring_callback(
     logger.info("--- Part 2: Executing first callback ---")
     mock_clock.advance(timedelta(seconds=initial_delay_seconds + 1))
     test_new_task_event.set()
-    await asyncio.sleep(0.5)  # Allow processing
 
-    # Verify first callback was sent
+    # Wait for the initial recurring task to complete
+    await wait_for_tasks_to_complete(
+        engine=db_engine,
+        task_ids={initial_task_id},
+        timeout_seconds=5.0,
+        poll_interval_seconds=0.1,
+    )
+
+    # Wait for and verify first callback was sent
+    for _ in range(10):  # 10 * 0.1 = 1 second timeout
+        if mock_chat_interface.send_message.call_count >= 1:
+            break
+        await asyncio.sleep(0.1)
+
     assert mock_chat_interface.send_message.call_count == 1
     call_kwargs = mock_chat_interface.send_message.call_args_list[0][1]
     assert "daily briefing" in call_kwargs["text"]

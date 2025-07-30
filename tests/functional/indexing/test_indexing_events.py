@@ -193,42 +193,47 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                 await handle_embed_and_store_batch(task_context, chunk_task["payload"])
                 await db_ctx.tasks.update_status(chunk_task["task_id"], "done")
 
-        # Give event processor time to process events
-        await asyncio.sleep(0.5)
+        # Poll for DOCUMENT_READY event to be stored
+        from sqlalchemy import and_, select
 
-        # Check that DOCUMENT_READY event was stored
-        async with get_db_context() as db_ctx:
-            from sqlalchemy import and_, select
+        from family_assistant.storage.events import recent_events_table
 
-            from family_assistant.storage.events import recent_events_table
-
-            # Use SQLAlchemy's JSON operators for cross-database compatibility
-            stmt = select(recent_events_table.c.event_data).where(
-                and_(
-                    recent_events_table.c.source_id == "indexing",
-                    recent_events_table.c.event_data["event_type"].as_string()
-                    == IndexingEventType.DOCUMENT_READY.value,
-                    recent_events_table.c.event_data["document_id"].as_integer()
-                    == doc_id,
+        event_found = False
+        result = None
+        for _attempt in range(20):  # Poll up to 2 seconds (20 * 0.1)
+            async with get_db_context() as db_ctx:
+                # Use SQLAlchemy's JSON operators for cross-database compatibility
+                stmt = select(recent_events_table.c.event_data).where(
+                    and_(
+                        recent_events_table.c.source_id == "indexing",
+                        recent_events_table.c.event_data["event_type"].as_string()
+                        == IndexingEventType.DOCUMENT_READY.value,
+                        recent_events_table.c.event_data["document_id"].as_integer()
+                        == doc_id,
+                    )
                 )
-            )
 
-            result = await db_ctx.fetch_all(stmt)
+                result = await db_ctx.fetch_all(stmt)
+                if len(result) > 0:
+                    event_found = True
+                    break
 
-            assert len(result) > 0, "No DOCUMENT_READY event found in recent_events"
+            await asyncio.sleep(0.1)
 
-            # The event_data might already be a dict or might be a JSON string
-            if isinstance(result[0]["event_data"], str):
-                event_data = json.loads(result[0]["event_data"])
-            else:
-                event_data = result[0]["event_data"]
-            assert event_data["document_id"] == doc_id
-            assert event_data["document_title"] == TEST_DOC_TITLE
-            assert event_data["document_metadata"] == {"test": "metadata"}
-            assert event_data["metadata"]["total_embeddings"] == 4  # 1 title + 3 chunks
-            assert (
-                event_data["metadata"]["embedding_types"] == 2
-            )  # title and content_chunk
+        assert event_found, (
+            "No DOCUMENT_READY event found in recent_events after polling"
+        )
+
+        # The event_data might already be a dict or might be a JSON string
+        if isinstance(result[0]["event_data"], str):
+            event_data = json.loads(result[0]["event_data"])
+        else:
+            event_data = result[0]["event_data"]
+        assert event_data["document_id"] == doc_id
+        assert event_data["document_title"] == TEST_DOC_TITLE
+        assert event_data["document_metadata"] == {"test": "metadata"}
+        assert event_data["metadata"]["total_embeddings"] == 4  # 1 title + 3 chunks
+        assert event_data["metadata"]["embedding_types"] == 2  # title and content_chunk
 
     finally:
         # Stop event processor
@@ -449,42 +454,46 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
             # Process embedding task - should emit event
             await handle_embed_and_store_batch(exec_context, task["payload"])
 
-            # Give event processor time to handle event
-            await asyncio.sleep(0.5)
+            # Poll for the event to be stored in recent_events
+            from sqlalchemy import and_, select
 
-            # Check that the event was stored in recent_events
-            async with get_db_context() as db_ctx:
-                from sqlalchemy import and_, select
+            from family_assistant.storage.events import recent_events_table
 
-                from family_assistant.storage.events import recent_events_table
-
-                # Use SQLAlchemy's JSON operators for cross-database compatibility
-                stmt = select(recent_events_table.c.event_data).where(
-                    and_(
-                        recent_events_table.c.source_id == "indexing",
-                        recent_events_table.c.event_data["event_type"].as_string()
-                        == IndexingEventType.DOCUMENT_READY.value,
-                        recent_events_table.c.event_data["document_id"].as_integer()
-                        == doc_id,
+            event_found = False
+            result = None
+            for _attempt in range(20):  # Poll up to 2 seconds (20 * 0.1)
+                async with get_db_context() as db_ctx:
+                    # Use SQLAlchemy's JSON operators for cross-database compatibility
+                    stmt = select(recent_events_table.c.event_data).where(
+                        and_(
+                            recent_events_table.c.source_id == "indexing",
+                            recent_events_table.c.event_data["event_type"].as_string()
+                            == IndexingEventType.DOCUMENT_READY.value,
+                            recent_events_table.c.event_data["document_id"].as_integer()
+                            == doc_id,
+                        )
                     )
-                )
 
-                result = await db_ctx.fetch_all(stmt)
+                    result = await db_ctx.fetch_all(stmt)
+                    if len(result) > 0:
+                        event_found = True
+                        break
 
-                assert len(result) > 0, (
-                    "DOCUMENT_READY event not found in recent_events"
-                )
-                # The event_data might already be a dict or might be a JSON string
-                if isinstance(result[0]["event_data"], str):
-                    event_data = json.loads(result[0]["event_data"])
-                else:
-                    event_data = result[0]["event_data"]
-                assert (
-                    event_data["document_title"] == "School Newsletter - December 2024"
-                )
-                assert event_data["document_metadata"] == {
-                    "sender": "newsletter@school.edu"
-                }
+                await asyncio.sleep(0.1)
+
+            assert event_found, (
+                "DOCUMENT_READY event not found in recent_events after polling"
+            )
+
+            # The event_data might already be a dict or might be a JSON string
+            if isinstance(result[0]["event_data"], str):
+                event_data = json.loads(result[0]["event_data"])
+            else:
+                event_data = result[0]["event_data"]
+            assert event_data["document_title"] == "School Newsletter - December 2024"
+            assert event_data["document_metadata"] == {
+                "sender": "newsletter@school.edu"
+            }
 
         finally:
             # Stop processor
@@ -583,58 +592,62 @@ async def test_document_ready_event_includes_rich_metadata(
             await handle_embed_and_store_batch(exec_context, task["payload"])
             await db_ctx.tasks.update_status(task["task_id"], "done")
 
-        # Give event processor time to process
-        await asyncio.sleep(1.0)
+        # Poll for the event to be stored
+        from sqlalchemy import and_, select
 
-        # Verify the event contains all metadata
-        async with get_db_context() as db_ctx:
-            from sqlalchemy import and_, select
+        from family_assistant.storage.events import recent_events_table
 
-            from family_assistant.storage.events import recent_events_table
-
-            stmt = select(recent_events_table.c.event_data).where(
-                and_(
-                    recent_events_table.c.source_id == "indexing",
-                    recent_events_table.c.event_data["event_type"].as_string()
-                    == IndexingEventType.DOCUMENT_READY.value,
-                    recent_events_table.c.event_data["document_id"].as_integer()
-                    == doc_id,
+        event_found = False
+        result = None
+        for _attempt in range(30):  # Poll up to 3 seconds (30 * 0.1)
+            async with get_db_context() as db_ctx:
+                stmt = select(recent_events_table.c.event_data).where(
+                    and_(
+                        recent_events_table.c.source_id == "indexing",
+                        recent_events_table.c.event_data["event_type"].as_string()
+                        == IndexingEventType.DOCUMENT_READY.value,
+                        recent_events_table.c.event_data["document_id"].as_integer()
+                        == doc_id,
+                    )
                 )
-            )
 
-            result = await db_ctx.fetch_all(stmt)
-            assert len(result) > 0, "DOCUMENT_READY event not found"
+                result = await db_ctx.fetch_all(stmt)
+                if len(result) > 0:
+                    event_found = True
+                    break
 
-            # Extract event data
-            if isinstance(result[0]["event_data"], str):
-                event_data = json.loads(result[0]["event_data"])
-            else:
-                event_data = result[0]["event_data"]
+            await asyncio.sleep(0.1)
 
-            # Verify all fields are present
-            assert event_data["document_id"] == doc_id
-            assert event_data["document_type"] == "pdf"
-            assert event_data["document_title"] == "Research Paper - AI in Healthcare"
+        assert event_found, "DOCUMENT_READY event not found after polling"
 
-            # Verify rich metadata is included
-            doc_metadata = event_data["document_metadata"]
-            assert (
-                doc_metadata["original_filename"] == "ai_healthcare_research_2024.pdf"
-            )
-            assert (
-                doc_metadata["original_url"]
-                == "https://example.com/papers/ai-healthcare.pdf"
-            )
-            assert doc_metadata["author"] == "Dr. Jane Smith"
-            assert doc_metadata["publication_date"] == "2024-03-15"
-            assert doc_metadata["keywords"] == ["AI", "healthcare", "machine learning"]
-            assert doc_metadata["page_count"] == 25
-            assert doc_metadata["department"] == "Computer Science"
-            assert doc_metadata["document_type"] == "research_paper"
+        # Extract event data
+        if isinstance(result[0]["event_data"], str):
+            event_data = json.loads(result[0]["event_data"])
+        else:
+            event_data = result[0]["event_data"]
 
-            # Verify indexing metadata
-            assert event_data["metadata"]["total_embeddings"] == 1
-            assert event_data["metadata"]["source_id"] == test_doc.source_id
+        # Verify all fields are present
+        assert event_data["document_id"] == doc_id
+        assert event_data["document_type"] == "pdf"
+        assert event_data["document_title"] == "Research Paper - AI in Healthcare"
+
+        # Verify rich metadata is included
+        doc_metadata = event_data["document_metadata"]
+        assert doc_metadata["original_filename"] == "ai_healthcare_research_2024.pdf"
+        assert (
+            doc_metadata["original_url"]
+            == "https://example.com/papers/ai-healthcare.pdf"
+        )
+        assert doc_metadata["author"] == "Dr. Jane Smith"
+        assert doc_metadata["publication_date"] == "2024-03-15"
+        assert doc_metadata["keywords"] == ["AI", "healthcare", "machine learning"]
+        assert doc_metadata["page_count"] == 25
+        assert doc_metadata["department"] == "Computer Science"
+        assert doc_metadata["document_type"] == "research_paper"
+
+        # Verify indexing metadata
+        assert event_data["metadata"]["total_embeddings"] == 1
+        assert event_data["metadata"]["source_id"] == test_doc.source_id
 
     finally:
         # Clean up
@@ -725,43 +738,50 @@ async def test_document_ready_event_handles_none_metadata(
             await handle_embed_and_store_batch(exec_context, task["payload"])
             await db_ctx.tasks.update_status(task["task_id"], "done")
 
-        # Give event processor time to process events
-        await asyncio.sleep(0.5)
+        # Poll for DOCUMENT_READY event to be stored
+        from sqlalchemy import and_, select
 
-        # Check that DOCUMENT_READY event was stored
-        async with get_db_context() as db_ctx:
-            from sqlalchemy import and_, select
+        from family_assistant.storage.events import recent_events_table
 
-            from family_assistant.storage.events import recent_events_table
-
-            # Use SQLAlchemy's JSON operators for cross-database compatibility
-            stmt = select(recent_events_table.c.event_data).where(
-                and_(
-                    recent_events_table.c.source_id == "indexing",
-                    recent_events_table.c.event_data["event_type"].as_string()
-                    == IndexingEventType.DOCUMENT_READY.value,
-                    recent_events_table.c.event_data["document_id"].as_integer()
-                    == doc_id,
+        event_found = False
+        result = None
+        for _attempt in range(20):  # Poll up to 2 seconds (20 * 0.1)
+            async with get_db_context() as db_ctx:
+                # Use SQLAlchemy's JSON operators for cross-database compatibility
+                stmt = select(recent_events_table.c.event_data).where(
+                    and_(
+                        recent_events_table.c.source_id == "indexing",
+                        recent_events_table.c.event_data["event_type"].as_string()
+                        == IndexingEventType.DOCUMENT_READY.value,
+                        recent_events_table.c.event_data["document_id"].as_integer()
+                        == doc_id,
+                    )
                 )
-            )
 
-            result = await db_ctx.fetch_all(stmt)
+                result = await db_ctx.fetch_all(stmt)
+                if len(result) > 0:
+                    event_found = True
+                    break
 
-            assert len(result) > 0, "No DOCUMENT_READY event found in recent_events"
+            await asyncio.sleep(0.1)
 
-            # The event_data might already be a dict or might be a JSON string
-            if isinstance(result[0]["event_data"], str):
-                event_data = json.loads(result[0]["event_data"])
-            else:
-                event_data = result[0]["event_data"]
+        assert event_found, (
+            "No DOCUMENT_READY event found in recent_events after polling"
+        )
 
-            assert event_data["document_id"] == doc_id
-            assert event_data["document_type"] == "note"
-            assert event_data["document_title"] == "Simple Note"
-            assert (
-                event_data["document_metadata"] == {}
-            )  # None metadata is stored as empty dict
-            assert event_data["metadata"]["total_embeddings"] == 1
+        # The event_data might already be a dict or might be a JSON string
+        if isinstance(result[0]["event_data"], str):
+            event_data = json.loads(result[0]["event_data"])
+        else:
+            event_data = result[0]["event_data"]
+
+        assert event_data["document_id"] == doc_id
+        assert event_data["document_type"] == "note"
+        assert event_data["document_title"] == "Simple Note"
+        assert (
+            event_data["document_metadata"] == {}
+        )  # None metadata is stored as empty dict
+        assert event_data["metadata"]["total_embeddings"] == 1
 
     finally:
         # Stop event processor
