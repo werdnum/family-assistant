@@ -28,6 +28,58 @@ from family_assistant.tools.types import ToolExecutionContext
 logger = logging.getLogger(__name__)
 
 
+async def poll_for_document_ready_event(
+    doc_id: int,
+    timeout_seconds: float = 2.0,
+    poll_interval: float = 0.1,
+) -> dict[str, Any]:
+    """Poll for DOCUMENT_READY event to appear in recent_events table.
+
+    Args:
+        doc_id: Document ID to look for
+        timeout_seconds: Maximum time to wait
+        poll_interval: Time between polls
+
+    Returns:
+        The event_data dict
+
+    Raises:
+        AssertionError: If event not found within timeout
+    """
+    from sqlalchemy import and_, select
+
+    from family_assistant.storage.events import recent_events_table
+
+    max_attempts = int(timeout_seconds / poll_interval)
+
+    for _ in range(max_attempts):
+        async with get_db_context() as db_ctx:
+            stmt = select(recent_events_table.c.event_data).where(
+                and_(
+                    recent_events_table.c.source_id == "indexing",
+                    recent_events_table.c.event_data["event_type"].as_string()
+                    == IndexingEventType.DOCUMENT_READY.value,
+                    recent_events_table.c.event_data["document_id"].as_integer()
+                    == doc_id,
+                )
+            )
+
+            result = await db_ctx.fetch_all(stmt)
+            if result:
+                # Extract and return event data
+                event_data_raw = result[0]["event_data"]
+                if isinstance(event_data_raw, str):
+                    return json.loads(event_data_raw)
+                else:
+                    return event_data_raw
+
+        await asyncio.sleep(poll_interval)
+
+    raise AssertionError(
+        f"No DOCUMENT_READY event found for doc_id {doc_id} after {timeout_seconds}s"
+    )
+
+
 @dataclass
 class MockDocument:
     """Test implementation of Document protocol."""
@@ -193,42 +245,9 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                 await handle_embed_and_store_batch(task_context, chunk_task["payload"])
                 await db_ctx.tasks.update_status(chunk_task["task_id"], "done")
 
-        # Poll for DOCUMENT_READY event to be stored
-        from sqlalchemy import and_, select
+        # Poll for DOCUMENT_READY event and verify its contents
+        event_data = await poll_for_document_ready_event(doc_id)
 
-        from family_assistant.storage.events import recent_events_table
-
-        event_found = False
-        result = None
-        for _attempt in range(20):  # Poll up to 2 seconds (20 * 0.1)
-            async with get_db_context() as db_ctx:
-                # Use SQLAlchemy's JSON operators for cross-database compatibility
-                stmt = select(recent_events_table.c.event_data).where(
-                    and_(
-                        recent_events_table.c.source_id == "indexing",
-                        recent_events_table.c.event_data["event_type"].as_string()
-                        == IndexingEventType.DOCUMENT_READY.value,
-                        recent_events_table.c.event_data["document_id"].as_integer()
-                        == doc_id,
-                    )
-                )
-
-                result = await db_ctx.fetch_all(stmt)
-                if len(result) > 0:
-                    event_found = True
-                    break
-
-            await asyncio.sleep(0.1)
-
-        assert event_found, (
-            "No DOCUMENT_READY event found in recent_events after polling"
-        )
-
-        # The event_data might already be a dict or might be a JSON string
-        if isinstance(result[0]["event_data"], str):
-            event_data = json.loads(result[0]["event_data"])
-        else:
-            event_data = result[0]["event_data"]
         assert event_data["document_id"] == doc_id
         assert event_data["document_title"] == TEST_DOC_TITLE
         assert event_data["document_metadata"] == {"test": "metadata"}
@@ -454,42 +473,9 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
             # Process embedding task - should emit event
             await handle_embed_and_store_batch(exec_context, task["payload"])
 
-            # Poll for the event to be stored in recent_events
-            from sqlalchemy import and_, select
+            # Poll for the event and verify
+            event_data = await poll_for_document_ready_event(doc_id)
 
-            from family_assistant.storage.events import recent_events_table
-
-            event_found = False
-            result = None
-            for _attempt in range(20):  # Poll up to 2 seconds (20 * 0.1)
-                async with get_db_context() as db_ctx:
-                    # Use SQLAlchemy's JSON operators for cross-database compatibility
-                    stmt = select(recent_events_table.c.event_data).where(
-                        and_(
-                            recent_events_table.c.source_id == "indexing",
-                            recent_events_table.c.event_data["event_type"].as_string()
-                            == IndexingEventType.DOCUMENT_READY.value,
-                            recent_events_table.c.event_data["document_id"].as_integer()
-                            == doc_id,
-                        )
-                    )
-
-                    result = await db_ctx.fetch_all(stmt)
-                    if len(result) > 0:
-                        event_found = True
-                        break
-
-                await asyncio.sleep(0.1)
-
-            assert event_found, (
-                "DOCUMENT_READY event not found in recent_events after polling"
-            )
-
-            # The event_data might already be a dict or might be a JSON string
-            if isinstance(result[0]["event_data"], str):
-                event_data = json.loads(result[0]["event_data"])
-            else:
-                event_data = result[0]["event_data"]
             assert event_data["document_title"] == "School Newsletter - December 2024"
             assert event_data["document_metadata"] == {
                 "sender": "newsletter@school.edu"
@@ -592,39 +578,8 @@ async def test_document_ready_event_includes_rich_metadata(
             await handle_embed_and_store_batch(exec_context, task["payload"])
             await db_ctx.tasks.update_status(task["task_id"], "done")
 
-        # Poll for the event to be stored
-        from sqlalchemy import and_, select
-
-        from family_assistant.storage.events import recent_events_table
-
-        event_found = False
-        result = None
-        for _attempt in range(30):  # Poll up to 3 seconds (30 * 0.1)
-            async with get_db_context() as db_ctx:
-                stmt = select(recent_events_table.c.event_data).where(
-                    and_(
-                        recent_events_table.c.source_id == "indexing",
-                        recent_events_table.c.event_data["event_type"].as_string()
-                        == IndexingEventType.DOCUMENT_READY.value,
-                        recent_events_table.c.event_data["document_id"].as_integer()
-                        == doc_id,
-                    )
-                )
-
-                result = await db_ctx.fetch_all(stmt)
-                if len(result) > 0:
-                    event_found = True
-                    break
-
-            await asyncio.sleep(0.1)
-
-        assert event_found, "DOCUMENT_READY event not found after polling"
-
-        # Extract event data
-        if isinstance(result[0]["event_data"], str):
-            event_data = json.loads(result[0]["event_data"])
-        else:
-            event_data = result[0]["event_data"]
+        # Poll for the event with longer timeout for rich metadata test
+        event_data = await poll_for_document_ready_event(doc_id, timeout_seconds=3.0)
 
         # Verify all fields are present
         assert event_data["document_id"] == doc_id
@@ -738,42 +693,8 @@ async def test_document_ready_event_handles_none_metadata(
             await handle_embed_and_store_batch(exec_context, task["payload"])
             await db_ctx.tasks.update_status(task["task_id"], "done")
 
-        # Poll for DOCUMENT_READY event to be stored
-        from sqlalchemy import and_, select
-
-        from family_assistant.storage.events import recent_events_table
-
-        event_found = False
-        result = None
-        for _attempt in range(20):  # Poll up to 2 seconds (20 * 0.1)
-            async with get_db_context() as db_ctx:
-                # Use SQLAlchemy's JSON operators for cross-database compatibility
-                stmt = select(recent_events_table.c.event_data).where(
-                    and_(
-                        recent_events_table.c.source_id == "indexing",
-                        recent_events_table.c.event_data["event_type"].as_string()
-                        == IndexingEventType.DOCUMENT_READY.value,
-                        recent_events_table.c.event_data["document_id"].as_integer()
-                        == doc_id,
-                    )
-                )
-
-                result = await db_ctx.fetch_all(stmt)
-                if len(result) > 0:
-                    event_found = True
-                    break
-
-            await asyncio.sleep(0.1)
-
-        assert event_found, (
-            "No DOCUMENT_READY event found in recent_events after polling"
-        )
-
-        # The event_data might already be a dict or might be a JSON string
-        if isinstance(result[0]["event_data"], str):
-            event_data = json.loads(result[0]["event_data"])
-        else:
-            event_data = result[0]["event_data"]
+        # Poll for DOCUMENT_READY event
+        event_data = await poll_for_document_ready_event(doc_id)
 
         assert event_data["document_id"] == doc_id
         assert event_data["document_type"] == "note"
