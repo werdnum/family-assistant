@@ -245,6 +245,43 @@ async def test_event_listener_tool(
             "message": "Please provide at least one condition to test",
         })
 
+    # Get validation results
+    analysis = []
+    event_source = None
+
+    # Look up the event source from the event_sources map
+    if exec_context.event_sources and source in exec_context.event_sources:
+        event_source = exec_context.event_sources[source]
+
+    if event_source:
+        from family_assistant.events.validation import (
+            format_validation_errors,
+        )
+
+        validate_fn = getattr(event_source, "validate_match_conditions", None)
+        if validate_fn:
+            validation = await validate_fn(match_conditions)
+        else:
+            validation = None
+        if validation:
+            validation_messages = format_validation_errors(validation)
+            if validation_messages:
+                analysis.extend(validation_messages)
+
+    # If validation fails, return immediately
+    if analysis:
+        return json.dumps(
+            {
+                "matched_events": [],
+                "total_tested": 0,
+                "matched_count": 0,
+                "match_conditions": match_conditions,
+                "hours_queried": hours,
+                "analysis": analysis,
+            },
+            indent=2,
+        )
+
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
 
@@ -310,7 +347,6 @@ async def test_event_listener_tool(
                     break
 
         # Analyze why events might not have matched
-        analysis = []
         if total_tested > 0 and len(matched_events) == 0:
             # Get a sample event to show what fields are available
             try:
@@ -338,28 +374,6 @@ async def test_event_listener_tool(
                             )
             except Exception:
                 pass
-
-            # Get validation results
-            event_source = None
-
-            # Look up the event source from the event_sources map
-            if exec_context.event_sources and source in exec_context.event_sources:
-                event_source = exec_context.event_sources[source]
-
-            if event_source:
-                from family_assistant.events.validation import (
-                    format_validation_errors,
-                )
-
-                validate_fn = getattr(event_source, "validate_match_conditions", None)
-                if validate_fn:
-                    validation = await validate_fn(match_conditions)
-                else:
-                    validation = None
-                if validation:
-                    validation_messages = format_validation_errors(validation)
-                    if validation_messages:
-                        analysis.extend(validation_messages)
 
         return json.dumps(
             {
