@@ -47,7 +47,8 @@ async def poll_for_document_ready_event(
     Raises:
         AssertionError: If event not found within timeout
     """
-    from sqlalchemy import and_, select
+    from sqlalchemy import and_, cast, select
+    from sqlalchemy.types import Integer
 
     from family_assistant.storage.events import recent_events_table
 
@@ -55,12 +56,17 @@ async def poll_for_document_ready_event(
 
     for _ in range(max_attempts):
         async with get_db_context(engine=engine) as db_ctx:
+            # Use SQLAlchemy's JSON operators for cross-database compatibility
             stmt = select(recent_events_table.c.event_data).where(
                 and_(
                     recent_events_table.c.source_id == "indexing",
                     recent_events_table.c.event_data["event_type"].as_string()
                     == IndexingEventType.DOCUMENT_READY.value,
-                    recent_events_table.c.event_data["document_id"].as_integer()
+                    # Cast to integer for proper comparison
+                    cast(
+                        recent_events_table.c.event_data["document_id"].as_string(),
+                        Integer,
+                    )
                     == doc_id,
                 )
             )
@@ -135,8 +141,8 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
     processor_task = asyncio.create_task(event_processor.start())
 
     try:
-        # Give processor time to start
-        await asyncio.sleep(0.1)
+        # Give processor time to start and ensure listener cache is refreshed
+        await asyncio.sleep(0.3)
 
         # Create a document
         async with get_db_context(engine=db_engine) as db_ctx:
@@ -247,7 +253,10 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                 await db_ctx.tasks.update_status(chunk_task["task_id"], "done")
 
         # Poll for DOCUMENT_READY event and verify its contents
-        event_data = await poll_for_document_ready_event(doc_id, engine=db_engine)
+        # Use longer timeout since event processing is async
+        event_data = await poll_for_document_ready_event(
+            doc_id, timeout_seconds=5.0, engine=db_engine
+        )
 
         assert event_data["document_id"] == doc_id
         assert event_data["document_title"] == TEST_DOC_TITLE
