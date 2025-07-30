@@ -161,7 +161,7 @@ class TestCreateEventListenerValidation:
 class TestEventListenerTestValidation:
     """Test validation in test_event_listener_tool."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.asyncio(loop_scope="function")
     async def test_test_listener_with_validation_errors(self) -> None:
         """Test testing a listener that shows validation errors in analysis."""
         # Mock the execution context with a proper mock database context
