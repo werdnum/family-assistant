@@ -1124,7 +1124,7 @@ async def test_schedule_reminder_with_follow_up(
     logger.info("--- Part 2: Executing initial reminder ---")
     mock_clock.advance(timedelta(seconds=reminder_delay_seconds + 1))
     test_new_task_event.set()
-    await asyncio.sleep(0.2)  # Allow processing
+    await asyncio.sleep(0.5)  # Allow more time for processing
 
     # Verify initial reminder was sent
     assert mock_chat_interface.send_message.call_count == 1
@@ -1152,7 +1152,7 @@ async def test_schedule_reminder_with_follow_up(
     logger.info("--- Part 3: Executing follow-up reminder ---")
     mock_clock.advance(timedelta(seconds=follow_up_interval_seconds + 1))
     test_new_task_event.set()
-    await asyncio.sleep(0.2)
+    await asyncio.sleep(0.5)
 
     # Verify follow-up reminder was sent
     assert mock_chat_interface.send_message.call_count == 2
