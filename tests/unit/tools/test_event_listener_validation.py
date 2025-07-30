@@ -6,11 +6,9 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.events.sources import BaseEventSource
 from family_assistant.events.validation import ValidationError, ValidationResult
-from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import events
 from family_assistant.tools.event_listeners import create_event_listener_tool
 from family_assistant.tools.types import ToolExecutionContext
@@ -169,52 +167,53 @@ class TestEventListenerTestValidation:
     @pytest.mark.asyncio
     async def test_test_listener_with_validation_errors(
         self,
-        db_engine: AsyncEngine,
         debug_async_resources: None,
         session_event_loop_debug: None,
     ) -> None:
         """Test testing a listener that shows validation errors in analysis."""
-        # Create execution context with real database
-        async with DatabaseContext(engine=db_engine) as db_context:
-            exec_context = MagicMock(spec=ToolExecutionContext)
-            exec_context.db_context = db_context
+        # Create execution context with mocked database context
+        exec_context = MagicMock(spec=ToolExecutionContext)
 
-            # Mock event processor and source
-            mock_source = MagicMock(spec=BaseEventSource)
-            mock_source.source_id = "home_assistant"
-            mock_source.validate_match_conditions = AsyncMock(
-                return_value=ValidationResult(
-                    valid=False,
-                    errors=[
-                        ValidationError(
-                            field="entity_id",
-                            value="invalid.entity",
-                            error="Invalid entity ID format",
-                            suggestion="Format: domain.object_id",
-                        )
-                    ],
-                )
+        # Mock the database context to avoid real database operations
+        mock_db_context = AsyncMock()
+        mock_db_context.events = AsyncMock()
+        mock_db_context.events.get_recent_events = AsyncMock(return_value=[])
+        exec_context.db_context = mock_db_context
+
+        # Mock event processor and source
+        mock_source = MagicMock(spec=BaseEventSource)
+        mock_source.source_id = "home_assistant"
+        mock_source.validate_match_conditions = AsyncMock(
+            return_value=ValidationResult(
+                valid=False,
+                errors=[
+                    ValidationError(
+                        field="entity_id",
+                        value="invalid.entity",
+                        error="Invalid entity ID format",
+                        suggestion="Format: domain.object_id",
+                    )
+                ],
             )
+        )
 
-            # Setup the event sources
-            exec_context.event_sources = {"home_assistant": mock_source}
+        # Setup the event sources
+        exec_context.event_sources = {"home_assistant": mock_source}
 
-            # Call the function directly
-            result = await events.test_event_listener_tool(
-                exec_context=exec_context,
-                source="home_assistant",
-                match_conditions={"entity_id": "invalid.entity"},
-                hours=1,
-            )
+        # Call the function directly
+        result = await events.test_event_listener_tool(
+            exec_context=exec_context,
+            source="home_assistant",
+            match_conditions={"entity_id": "invalid.entity"},
+            hours=1,
+        )
 
-            # Parse result
-            data = json.loads(result)
+        # Parse result
+        data = json.loads(result)
 
-            # Check that validation errors appear in analysis
-            assert data["matched_events"] == []
-            assert data["total_tested"] == 0
-            assert (
-                "analysis" in data
-            )  # Validation errors shown even when no events tested
-            assert "VALIDATION ISSUES FOUND:" in data["analysis"][0]
-            assert any("Invalid entity ID format" in msg for msg in data["analysis"])
+        # Check that validation errors appear in analysis
+        assert data["matched_events"] == []
+        assert data["total_tested"] == 0
+        assert "analysis" in data  # Validation errors shown even when no events tested
+        assert "VALIDATION ISSUES FOUND:" in data["analysis"][0]
+        assert any("Invalid entity ID format" in msg for msg in data["analysis"])
