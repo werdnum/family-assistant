@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.events.sources import BaseEventSource
 from family_assistant.events.validation import ValidationError, ValidationResult
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import events
@@ -29,7 +30,8 @@ class TestCreateEventListenerValidation:
         exec_context.db_context = AsyncMock()  # Ensure db_context is async-compatible
 
         # Mock event processor and source
-        mock_source = AsyncMock()
+        mock_source = MagicMock(spec=BaseEventSource)
+        mock_source.source_id = "home_assistant"
         mock_source.validate_match_conditions = AsyncMock(
             return_value=ValidationResult(
                 valid=False,
@@ -95,7 +97,8 @@ class TestCreateEventListenerValidation:
         exec_context.interface_type = "test"
 
         # Mock event processor and source
-        mock_source = AsyncMock()
+        mock_source = MagicMock(spec=BaseEventSource)
+        mock_source.source_id = "home_assistant"
         mock_source.validate_match_conditions = AsyncMock(
             return_value=ValidationResult(
                 valid=True, warnings=["Cannot validate state without entity_id"]
@@ -174,7 +177,8 @@ class TestEventListenerTestValidation:
             exec_context.db_context = db_context
 
             # Mock event processor and source
-            mock_source = AsyncMock()
+            mock_source = MagicMock(spec=BaseEventSource)
+            mock_source.source_id = "home_assistant"
             mock_source.validate_match_conditions = AsyncMock(
                 return_value=ValidationResult(
                     valid=False,

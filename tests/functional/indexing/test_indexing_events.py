@@ -32,6 +32,7 @@ async def poll_for_document_ready_event(
     doc_id: int,
     timeout_seconds: float = 2.0,
     poll_interval: float = 0.1,
+    engine: AsyncEngine | None = None,
 ) -> dict[str, Any]:
     """Poll for DOCUMENT_READY event to appear in recent_events table.
 
@@ -53,7 +54,7 @@ async def poll_for_document_ready_event(
     max_attempts = int(timeout_seconds / poll_interval)
 
     for _ in range(max_attempts):
-        async with get_db_context() as db_ctx:
+        async with get_db_context(engine=engine) as db_ctx:
             stmt = select(recent_events_table.c.event_data).where(
                 and_(
                     recent_events_table.c.source_id == "indexing",
@@ -118,7 +119,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
     )
 
     # Create event listener that captures events
-    async with get_db_context() as db_ctx:
+    async with get_db_context(engine=db_engine) as db_ctx:
         await db_ctx.events.create_event_listener(
             name="Test Document Ready Listener",
             description="Test listener for document ready events",
@@ -138,7 +139,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
         await asyncio.sleep(0.1)
 
         # Create a document
-        async with get_db_context() as db_ctx:
+        async with get_db_context(engine=db_engine) as db_ctx:
             test_doc = MockDocument(
                 source_type="test_upload",
                 source_id=f"test-{uuid.uuid4()}",
@@ -161,7 +162,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
         # In real scenario, the pipeline would create these tasks
 
         # Create embedding tasks
-        async with get_db_context() as db_ctx:
+        async with get_db_context(engine=db_engine) as db_ctx:
             # Title embedding task
             await db_ctx.tasks.enqueue(
                 task_id=f"embed_title_{doc_id}",
@@ -198,7 +199,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                 )
 
         # Process all embedding tasks
-        async with get_db_context() as db_ctx:
+        async with get_db_context(engine=db_engine) as db_ctx:
             # Process title embedding
             title_task = await db_ctx.tasks.dequeue(
                 task_types=["embed_and_store_batch"],
@@ -222,7 +223,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
 
         # Process chunk embeddings
         for _ in range(len(TEST_DOC_CHUNKS)):
-            async with get_db_context() as db_ctx:
+            async with get_db_context(engine=db_engine) as db_ctx:
                 chunk_task = await db_ctx.tasks.dequeue(
                     task_types=["embed_and_store_batch"],
                     worker_id="test-worker",
@@ -246,7 +247,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                 await db_ctx.tasks.update_status(chunk_task["task_id"], "done")
 
         # Poll for DOCUMENT_READY event and verify its contents
-        event_data = await poll_for_document_ready_event(doc_id)
+        event_data = await poll_for_document_ready_event(doc_id, engine=db_engine)
 
         assert event_data["document_id"] == doc_id
         assert event_data["document_title"] == TEST_DOC_TITLE
@@ -271,7 +272,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
     indexing_source = IndexingSource()
 
     # Create a document
-    async with get_db_context() as db_ctx:
+    async with get_db_context(engine=db_engine) as db_ctx:
         test_doc = MockDocument(
             source_type="test_upload",
             source_id=f"test-{uuid.uuid4()}",
@@ -322,7 +323,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
         model_name="test-model", dimensions=128
     )
 
-    async with get_db_context() as db_ctx:
+    async with get_db_context(engine=db_engine) as db_ctx:
         first_task = await db_ctx.tasks.dequeue(
             task_types=["embed_and_store_batch"],
             worker_id="test-worker",
@@ -364,7 +365,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
 async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> None:
     """Test full integration with event listeners triggering on document ready."""
     # Clean up any leftover tasks from previous tests to ensure isolation
-    async with get_db_context() as db_ctx:
+    async with get_db_context(engine=db_engine) as db_ctx:
         await db_ctx.execute_with_retry(
             tasks_table.delete().where(
                 tasks_table.c.task_type == "embed_and_store_batch"
@@ -375,7 +376,7 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
     indexing_source = IndexingSource()
 
     # Create event listener
-    async with get_db_context() as db_ctx:
+    async with get_db_context(engine=db_engine) as db_ctx:
         await db_ctx.events.create_event_listener(
             name="Newsletter Ready Listener",
             description="Test listener for newsletter ready events",
@@ -395,7 +396,7 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
         )
 
     # Create and process a newsletter document
-    async with get_db_context() as db_ctx:
+    async with get_db_context(engine=db_engine) as db_ctx:
         test_doc = MockDocument(
             source_type="email",
             source_id="newsletter@school.edu",
@@ -432,7 +433,7 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
         model_name="test-model", dimensions=128
     )
 
-    async with get_db_context() as db_ctx:
+    async with get_db_context(engine=db_engine) as db_ctx:
         task = await db_ctx.tasks.dequeue(
             task_types=["embed_and_store_batch"],
             worker_id="test-worker",
@@ -474,7 +475,7 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
             await handle_embed_and_store_batch(exec_context, task["payload"])
 
             # Poll for the event and verify
-            event_data = await poll_for_document_ready_event(doc_id)
+            event_data = await poll_for_document_ready_event(doc_id, engine=db_engine)
 
             assert event_data["document_title"] == "School Newsletter - December 2024"
             assert event_data["document_metadata"] == {
@@ -503,7 +504,7 @@ async def test_document_ready_event_includes_rich_metadata(
     )
 
     # Create a document with rich metadata
-    async with get_db_context() as db_ctx:
+    async with get_db_context(engine=db_engine) as db_ctx:
         test_doc = MockDocument(
             source_type="pdf",
             source_id=f"test-pdf-{uuid.uuid4()}",
@@ -555,7 +556,7 @@ async def test_document_ready_event_includes_rich_metadata(
         processor_task = asyncio.create_task(event_processor.start())
         await asyncio.sleep(0.1)
 
-        async with get_db_context() as db_ctx:
+        async with get_db_context(engine=db_engine) as db_ctx:
             task = await db_ctx.tasks.dequeue(
                 task_types=["embed_and_store_batch"],
                 worker_id="test-worker",
@@ -579,7 +580,9 @@ async def test_document_ready_event_includes_rich_metadata(
             await db_ctx.tasks.update_status(task["task_id"], "done")
 
         # Poll for the event with longer timeout for rich metadata test
-        event_data = await poll_for_document_ready_event(doc_id, timeout_seconds=3.0)
+        event_data = await poll_for_document_ready_event(
+            doc_id, timeout_seconds=3.0, engine=db_engine
+        )
 
         # Verify all fields are present
         assert event_data["document_id"] == doc_id
@@ -628,7 +631,7 @@ async def test_document_ready_event_handles_none_metadata(
     )
 
     # Create a document with None metadata
-    async with get_db_context() as db_ctx:
+    async with get_db_context(engine=db_engine) as db_ctx:
         test_doc = MockDocument(
             source_type="note",
             source_id=f"test-note-{uuid.uuid4()}",
@@ -670,7 +673,7 @@ async def test_document_ready_event_handles_none_metadata(
         # Give processor time to start
         await asyncio.sleep(0.1)
 
-        async with get_db_context() as db_ctx:
+        async with get_db_context(engine=db_engine) as db_ctx:
             task = await db_ctx.tasks.dequeue(
                 task_types=["embed_and_store_batch"],
                 worker_id="test-worker",
@@ -694,7 +697,7 @@ async def test_document_ready_event_handles_none_metadata(
             await db_ctx.tasks.update_status(task["task_id"], "done")
 
         # Poll for DOCUMENT_READY event
-        event_data = await poll_for_document_ready_event(doc_id)
+        event_data = await poll_for_document_ready_event(doc_id, engine=db_engine)
 
         assert event_data["document_id"] == doc_id
         assert event_data["document_type"] == "note"
@@ -715,7 +718,7 @@ async def test_document_ready_event_handles_none_metadata(
 @pytest.mark.asyncio
 async def test_json_extraction_compatibility(db_engine: AsyncEngine) -> None:
     """Test that JSON extraction works correctly with both SQLite and PostgreSQL."""
-    async with get_db_context() as db_ctx:
+    async with get_db_context(engine=db_engine) as db_ctx:
         # Clean up any existing test tasks
         await db_ctx.execute_with_retry(
             tasks_table.delete().where(tasks_table.c.task_id.like("test_json_%"))
@@ -752,7 +755,7 @@ async def test_json_extraction_compatibility(db_engine: AsyncEngine) -> None:
 @pytest.mark.asyncio
 async def test_json_extraction_cross_database(db_engine: AsyncEngine) -> None:
     """Test JSON extraction works with both SQLite and PostgreSQL."""
-    async with get_db_context() as db_ctx:
+    async with get_db_context(engine=db_engine) as db_ctx:
         # Clean up any existing test tasks
         await db_ctx.execute_with_retry(
             tasks_table.delete().where(
