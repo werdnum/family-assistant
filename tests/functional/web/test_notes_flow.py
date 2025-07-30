@@ -8,6 +8,7 @@ from tests.functional.web.pages.notes_page import NotesPage
 from .conftest import WebTestFixture
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_create_note_full_flow(web_test_fixture: WebTestFixture) -> None:
     """Test complete note creation flow from UI."""
@@ -44,6 +45,7 @@ async def test_create_note_full_flow(web_test_fixture: WebTestFixture) -> None:
     assert note_data["include_in_prompt"] is True
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_edit_note_flow(web_test_fixture: WebTestFixture) -> None:
     """Test editing an existing note through the UI."""
@@ -81,6 +83,7 @@ async def test_edit_note_flow(web_test_fixture: WebTestFixture) -> None:
     assert note_data["include_in_prompt"] is False
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_delete_note_flow(web_test_fixture: WebTestFixture) -> None:
     """Test deleting a note through the UI."""
@@ -111,6 +114,7 @@ async def test_delete_note_flow(web_test_fixture: WebTestFixture) -> None:
     assert new_count == initial_count - 1
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 @pytest.mark.skip(reason="Search functionality not yet implemented in UI")
 async def test_search_notes_flow(web_test_fixture: WebTestFixture) -> None:
@@ -119,6 +123,7 @@ async def test_search_notes_flow(web_test_fixture: WebTestFixture) -> None:
     pass  # Should show all created notes
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_empty_state_display(web_test_fixture: WebTestFixture) -> None:
     """Test that empty state is shown when no notes exist."""
@@ -141,6 +146,7 @@ async def test_empty_state_display(web_test_fixture: WebTestFixture) -> None:
         assert not await notes_page.is_empty_state_visible()
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_note_form_validation(web_test_fixture: WebTestFixture) -> None:
     """Test form validation for note creation."""
@@ -186,6 +192,7 @@ async def test_note_form_validation(web_test_fixture: WebTestFixture) -> None:
     await page.wait_for_url(f"{web_test_fixture.base_url}/")
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_concurrent_note_operations(web_test_fixture: WebTestFixture) -> None:
     """Test that the UI handles concurrent operations gracefully."""

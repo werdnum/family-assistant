@@ -7,6 +7,7 @@ import pytest
 from tests.functional.web.pages import BasePage
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_base_page_navigation(web_test_fixture: Any) -> None:
     """Test that the base page can navigate to different routes."""
@@ -23,6 +24,7 @@ async def test_base_page_navigation(web_test_fixture: Any) -> None:
     assert "/notes" in web_test_fixture.page.url
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_base_page_console_errors(web_test_fixture: Any) -> None:
     """Test that we can capture console errors."""
