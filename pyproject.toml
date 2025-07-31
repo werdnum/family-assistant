@@ -272,12 +272,7 @@ shell = "cd frontend && npm run check"
 
 [tool.poe.tasks.format-and-lint]
 help = "Format and lint both Python and JavaScript/TypeScript code"
-sequence = [
-    { cmd = "poe format" },
-    { cmd = "poe frontend-format" },
-    { cmd = "poe lint" },
-    { cmd = "poe frontend-lint" }
-]
+shell = "scripts/format-and-lint.sh"
 
 
 [tool.ruff.lint.isort]
