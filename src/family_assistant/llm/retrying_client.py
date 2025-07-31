@@ -8,8 +8,10 @@ This implementation mimics LiteLLM's simple retry strategy:
 """
 
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
+from . import LLMStreamEvent
 from .base import (
     LLMProviderError,
     ProviderConnectionError,
@@ -176,6 +178,34 @@ class RetryingLLMClient:
                 provider="unknown",
                 model=self.primary_model,
             )
+
+    async def generate_response_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """Generate streaming response with retry and fallback logic."""
+        # For now, we'll use a simple approach: delegate directly to primary client
+        # without retry logic for streaming. In the future, we could implement
+        # retry logic that buffers events and replays them on retry.
+        logger.info(f"Streaming from primary model ({self.primary_model})")
+
+        try:
+            async for event in self.primary_client.generate_response_stream(
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+            ):
+                yield event
+        except Exception as e:
+            # For streaming, fallback is more complex as we can't replay already sent events
+            # For now, we'll just log and re-raise
+            logger.error(
+                f"Streaming from primary model {self.primary_model} failed: {e}",
+                exc_info=True,
+            )
+            raise
 
     async def format_user_message_with_file(
         self,

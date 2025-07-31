@@ -1,0 +1,54 @@
+interactions:
+- request:
+    body: '{"contents": [{"parts": [{"text": "Count from 1 to 5, with each number
+      on a new line."}], "role": "user"}], "generationConfig": {}}'
+    headers:
+      Content-Type:
+      - application/json
+      user-agent:
+      - google-genai-sdk/1.22.0 gl-python/3.12.3
+      x-goog-api-client:
+      - google-genai-sdk/1.22.0 gl-python/3.12.3
+    method: post
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"1\\n2\\n3\\n\"}],\"role\":
+        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 17,\"candidatesTokenCount\":
+        5,\"totalTokenCount\": 22,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        17}]},\"modelVersion\": \"gemini-2.5-flash-lite-preview-06-17\",\"responseId\":
+        \"X9iGaJmlBanUz7IP_ND7oAo\"}\r\n\r\ndata: {\"candidates\": [{\"content\":
+        {\"parts\": [{\"text\": \"4\\n5\"}],\"role\": \"model\"},\"finishReason\":
+        \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 17,\"candidatesTokenCount\":
+        8,\"totalTokenCount\": 25,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        17}]},\"modelVersion\": \"gemini-2.5-flash-lite-preview-06-17\",\"responseId\":
+        \"X9iGaJmlBanUz7IP_ND7oAo\"}\r\n\r\n"
+    headers:
+      Alt-Svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      Content-Disposition:
+      - attachment
+      Content-Type:
+      - text/event-stream
+      Date:
+      - Mon, 28 Jul 2025 01:54:39 GMT
+      Server:
+      - scaffolding on HTTPServer2
+      Server-Timing:
+      - gfet4t7; dur=606
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Origin
+      - X-Origin
+      - Referer
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - SAMEORIGIN
+      X-XSS-Protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

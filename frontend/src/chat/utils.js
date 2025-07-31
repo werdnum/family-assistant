@@ -1,11 +1,13 @@
 // Utility function to format relative time
 export const formatRelativeTime = (date) => {
-  if (!date) return '';
-  
+  if (!date) {
+    return '';
+  }
+
   const now = new Date();
   const messageDate = new Date(date);
   const diffInSeconds = Math.floor((now - messageDate) / 1000);
-  
+
   if (diffInSeconds < 60) {
     return 'just now';
   } else if (diffInSeconds < 3600) {

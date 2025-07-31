@@ -1,0 +1,146 @@
+interactions:
+- request:
+    body: '{"messages":[{"role":"user","content":"Write exactly this text: ''The quick
+      brown fox jumps over the lazy dog.''"}],"model":"gpt-4.1-nano","stream":true}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '151'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+      user-agent:
+      - AsyncOpenAI/Python 1.92.2
+      x-stainless-arch:
+      - arm64
+      x-stainless-async:
+      - async:asyncio
+      x-stainless-lang:
+      - python
+      x-stainless-os:
+      - Linux
+      x-stainless-package-version:
+      - 1.92.2
+      x-stainless-read-timeout:
+      - '600'
+      x-stainless-retry-count:
+      - '0'
+      x-stainless-runtime:
+      - CPython
+      x-stainless-runtime-version:
+      - 3.12.3
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    body:
+      string: 'data: {"id":"chatcmpl-By7pyjYtETku9gXAaO2JDdWJGOoia","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":null,"finish_reason":null}]}
+
+
+        data: {"id":"chatcmpl-By7pyjYtETku9gXAaO2JDdWJGOoia","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{"content":"The"},"logprobs":null,"finish_reason":null}]}
+
+
+        data: {"id":"chatcmpl-By7pyjYtETku9gXAaO2JDdWJGOoia","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{"content":"
+        quick"},"logprobs":null,"finish_reason":null}]}
+
+
+        data: {"id":"chatcmpl-By7pyjYtETku9gXAaO2JDdWJGOoia","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{"content":"
+        brown"},"logprobs":null,"finish_reason":null}]}
+
+
+        data: {"id":"chatcmpl-By7pyjYtETku9gXAaO2JDdWJGOoia","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{"content":"
+        fox"},"logprobs":null,"finish_reason":null}]}
+
+
+        data: {"id":"chatcmpl-By7pyjYtETku9gXAaO2JDdWJGOoia","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{"content":"
+        jumps"},"logprobs":null,"finish_reason":null}]}
+
+
+        data: {"id":"chatcmpl-By7pyjYtETku9gXAaO2JDdWJGOoia","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{"content":"
+        over"},"logprobs":null,"finish_reason":null}]}
+
+
+        data: {"id":"chatcmpl-By7pyjYtETku9gXAaO2JDdWJGOoia","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{"content":"
+        the"},"logprobs":null,"finish_reason":null}]}
+
+
+        data: {"id":"chatcmpl-By7pyjYtETku9gXAaO2JDdWJGOoia","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{"content":"
+        lazy"},"logprobs":null,"finish_reason":null}]}
+
+
+        data: {"id":"chatcmpl-By7pyjYtETku9gXAaO2JDdWJGOoia","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{"content":"
+        dog"},"logprobs":null,"finish_reason":null}]}
+
+
+        data: {"id":"chatcmpl-By7pyjYtETku9gXAaO2JDdWJGOoia","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{"content":"."},"logprobs":null,"finish_reason":null}]}
+
+
+        data: {"id":"chatcmpl-By7pyjYtETku9gXAaO2JDdWJGOoia","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}]}
+
+
+        data: [DONE]
+
+
+        '
+    headers:
+      CF-RAY:
+      - 9660ec8e8ee62def-SYD
+      Connection:
+      - keep-alive
+      Content-Type:
+      - text/event-stream; charset=utf-8
+      Date:
+      - Mon, 28 Jul 2025 02:25:06 GMT
+      Server:
+      - cloudflare
+      Set-Cookie:
+      - __cf_bm=W8wbSXYmf8dG4hn3VWzdZOkf30ZsFzAfxMenmG_Iegc-1753669506-1.0.1.1-QzKZlZbIHTfkOTWdQ_jfRwkuDLVqPyQzSs3J546tt2jJyvkP92z6GGTNdMKAnMlJNJhHJAKkpuCyMm6l.4wrZYELK5ndcQrFs3Gha6Hjo5E;
+        path=/; expires=Mon, 28-Jul-25 02:55:06 GMT; domain=.api.openai.com; HttpOnly;
+        Secure; SameSite=None
+      - _cfuvid=j7aw0NzdCH8I2zXElGpJ9VsrinRK32KLf4X8PxlCmtM-1753669506790-0.0.1.1-604800000;
+        path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+      Transfer-Encoding:
+      - chunked
+      X-Content-Type-Options:
+      - nosniff
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      cf-cache-status:
+      - DYNAMIC
+      openai-organization:
+      - REDACTED
+      openai-processing-ms:
+      - '225'
+      openai-project:
+      - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      x-envoy-upstream-service-time:
+      - '230'
+      x-ratelimit-limit-requests:
+      - '500'
+      x-ratelimit-limit-tokens:
+      - '200000'
+      x-ratelimit-remaining-requests:
+      - '499'
+      x-ratelimit-remaining-tokens:
+      - '199980'
+      x-ratelimit-reset-requests:
+      - 120ms
+      x-ratelimit-reset-tokens:
+      - 6ms
+      x-request-id:
+      - req_609a21860d5b57b792eab48d93d1810f
+    status:
+      code: 200
+      message: OK
+version: 1

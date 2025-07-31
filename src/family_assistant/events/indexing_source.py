@@ -31,8 +31,11 @@ class IndexingSource(BaseEventSource, EventSource):
         """Initialize indexing event source."""
         self.processor: EventProcessor | None = None
         self._running = False
-        self._event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1000)
+        self._event_queue: asyncio.Queue[
+            tuple[dict[str, Any], asyncio.Future[None]]
+        ] = asyncio.Queue(maxsize=1000)
         self._processor_task: asyncio.Task | None = None
+        self._pending_events: set[asyncio.Future[None]] = set()
 
     @property
     def source_id(self) -> str:
@@ -55,7 +58,7 @@ class IndexingSource(BaseEventSource, EventSource):
                 await self._processor_task
         logger.info(f"Stopped indexing event source [{self.source_id}]")
 
-    async def emit_event(self, event_data: dict[str, Any]) -> None:
+    async def emit_event(self, event_data: dict[str, Any]) -> asyncio.Future[None]:
         """
         Emit an indexing event.
 
@@ -64,33 +67,75 @@ class IndexingSource(BaseEventSource, EventSource):
                 - event_type: IndexingEventType value
                 - document_id: ID of the document
                 - Additional fields based on event type
+
+        Returns:
+            A Future that completes when the event has been processed
         """
+        future = asyncio.get_running_loop().create_future()
+
         if not self._running:
             logger.warning(
                 f"Attempted to emit event while source not running: {event_data}"
             )
-            return
+            future.set_result(None)
+            return future
 
         try:
-            self._event_queue.put_nowait(event_data)
+            self._event_queue.put_nowait((event_data, future))
+            self._pending_events.add(future)
         except asyncio.QueueFull:
             logger.error(
                 f"Event queue full, dropping indexing event: {event_data.get('event_type')}"
             )
+            future.set_exception(
+                asyncio.QueueFull(
+                    f"Event queue full, dropping event: {event_data.get('event_type')}"
+                )
+            )
+
+        return future
 
     async def _process_events(self) -> None:
         """Process events from the queue asynchronously."""
         while self._running:
             try:
                 # Wait for events with timeout to allow checking _running flag
-                event = await asyncio.wait_for(self._event_queue.get(), timeout=1.0)
+                event_data, future = await asyncio.wait_for(
+                    self._event_queue.get(), timeout=1.0
+                )
 
                 # Send to processor
-                if self.processor:
-                    await self.processor.process_event(self.source_id, event)
+                try:
+                    if self.processor:
+                        await self.processor.process_event(self.source_id, event_data)
+                    future.set_result(None)
+                except Exception as e:
+                    future.set_exception(e)
+                    raise
+                finally:
+                    # Clean up the future from pending set
+                    self._pending_events.discard(future)
 
             except asyncio.TimeoutError:
                 # No event within timeout, continue loop to check _running
                 continue
             except Exception as e:
                 logger.error(f"Error processing queued event: {e}", exc_info=True)
+
+    async def wait_for_pending_events(self, timeout: float = 10.0) -> None:
+        """Wait for all pending events to be processed.
+
+        Args:
+            timeout: Maximum time to wait in seconds
+
+        Raises:
+            asyncio.TimeoutError: If timeout is reached before all events are processed
+        """
+        start_time = asyncio.get_running_loop().time()
+        while self._event_queue.qsize() > 0 or self._pending_events:
+            if asyncio.get_running_loop().time() - start_time > timeout:
+                raise asyncio.TimeoutError(
+                    f"Timeout waiting for events. Queue size: {self._event_queue.qsize()}, "
+                    f"Pending futures: {len(self._pending_events)}"
+                )
+            await asyncio.sleep(0.01)

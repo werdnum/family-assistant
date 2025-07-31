@@ -3,7 +3,7 @@ import logging
 import re
 import traceback  # Added for error traceback
 import uuid  # Added for unique task IDs
-from collections.abc import Awaitable, Callable  # Added Union, Awaitable
+from collections.abc import AsyncIterator, Awaitable, Callable  # Added Union, Awaitable
 from dataclasses import dataclass  # Added
 from datetime import (  # Added timezone
     datetime,
@@ -23,10 +23,10 @@ from .context_providers import ContextProvider
 from .interfaces import ChatInterface  # Import ChatInterface
 
 # Import the LLM interface and output structure
-from .llm import LLMInterface, LLMOutput
+from .llm import LLMInterface, LLMStreamEvent
 
 # Import DatabaseContext for type hinting
-from .storage.context import DatabaseContext
+from .storage.context import DatabaseContext, get_db_context
 
 # Import ToolsProvider interface and context
 from .tools import ToolExecutionContext, ToolNotFoundError, ToolsProvider
@@ -191,15 +191,14 @@ class ProcessingService:
         ) = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
         """
-        Sends the conversation history to the LLM via the injected client,
-        handles potential tool calls using the injected tools provider,
-        and returns the list of all messages generated during the turn,
-        along with the reasoning info from the final LLM call.
+        Non-streaming version of process_message that uses the streaming generator internally.
+
+        This method maintains backward compatibility by collecting all streaming events
+        and returning the complete list of messages and final reasoning info.
 
         Args:
             db_context: The database context.
             messages: A list of message dictionaries for the LLM.
-            # --- Updated args based on refactoring plan ---
             interface_type: Identifier for the interaction interface (e.g., 'telegram').
             conversation_id: Identifier for the conversation (e.g., chat ID string).
             user_name: The name of the user for context.
@@ -213,22 +212,69 @@ class ProcessingService:
               (assistant requests, tool responses, final answer).
             - A dictionary containing reasoning/usage info from the final LLM call (or None).
         """
-        final_content: str | None = None  # Store final text response from LLM
-        final_reasoning_info: dict[str, Any] | None = (
-            None  # Initialize to ensure it's always bound
-        )
-        max_iterations = 5  # Safety limit for tool call loops
+        # Use the streaming generator and collect all messages
+        turn_messages: list[dict[str, Any]] = []
+        final_reasoning_info: dict[str, Any] | None = None
+
+        async for event, message_dict in self.process_message_stream(
+            db_context=db_context,
+            messages=messages,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            user_name=user_name,
+            turn_id=turn_id,
+            chat_interface=chat_interface,
+            request_confirmation_callback=request_confirmation_callback,
+        ):
+            # Collect messages that should be saved
+            if message_dict and message_dict.get("role"):
+                turn_messages.append(message_dict)
+
+            # Extract reasoning info from done events
+            if event.type == "done" and event.metadata and "message" in event.metadata:
+                assistant_msg = event.metadata["message"]
+                if assistant_msg.get("reasoning_info"):
+                    final_reasoning_info = assistant_msg["reasoning_info"]
+
+        return turn_messages, final_reasoning_info
+
+    async def process_message_stream(
+        self,
+        db_context: DatabaseContext,
+        messages: list[dict[str, Any]],
+        interface_type: str,
+        conversation_id: str,
+        user_name: str,
+        turn_id: str,
+        chat_interface: ChatInterface | None,
+        request_confirmation_callback: (
+            Callable[
+                [str, str, str | None, str, str, dict[str, Any], float],
+                Awaitable[bool],
+            ]
+            | None
+        ) = None,
+    ) -> AsyncIterator[tuple[LLMStreamEvent, dict[str, Any]]]:
+        """
+        Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
+
+        Yields tuples of (event, message_dict) where:
+        - event: The LLMStreamEvent object
+        - message_dict: The message dictionary to be saved to history (for assistant/tool messages)
+
+        This generator handles the same logic as process_message but yields events incrementally.
+        """
+        final_content: str | None = None
+        final_reasoning_info: dict[str, Any] | None = None
+        max_iterations = 5
         current_iteration = 1
 
-        # --- Get Tool Definitions ---
-        # List to store all messages generated *within this turn*
-        # This list will be returned by the function
-        turn_messages: list[dict[str, Any]] = []
+        # Get tool definitions
         all_tool_definitions = await self.tools_provider.get_tool_definitions()
         tools_for_llm = all_tool_definitions
+        logger.debug(f"Total available tools: {len(all_tool_definitions)}")
 
         if request_confirmation_callback is None:
-            # If no confirmation mechanism is available, filter out tools that require it.
             confirmable_tool_names = self.service_config.tools_config.get(
                 "confirm_tools", []
             )
@@ -242,85 +288,63 @@ class ProcessingService:
                     if tool_def.get("function", {}).get("name")
                     not in confirmable_tool_names
                 ]
-                logger.info(
-                    f"Providing {len(tools_for_llm)} tools to LLM after filtering (originally {len(all_tool_definitions)})."
-                )
-            else:
-                logger.info(
-                    "No confirmation callback, but no tools are listed in 'confirm_tools'. All tools will be available."
+                logger.debug(
+                    f"Tools after filtering out confirmable tools: {len(tools_for_llm)}"
                 )
 
-        if tools_for_llm:
-            logger.info(f"Providing {len(tools_for_llm)} tools to LLM.")
-        else:
-            logger.info(
-                "No tools available to provide to LLM (either none defined or all filtered out)."
-            )
-
-        # --- Tool Call Loop ---
+        # Tool call loop
         while current_iteration <= max_iterations:
             logger.debug(
-                f"Starting LLM interaction loop iteration {current_iteration}/{max_iterations}"
+                f"Starting streaming LLM interaction loop iteration {current_iteration}/{max_iterations}"
             )
 
-            # --- Log messages being sent to LLM at INFO level ---
+            # Stream from LLM
+            accumulated_content = []
+            tool_calls_from_stream = []
+
             try:
-                logger.info(
-                    f"Sending {len(messages)} messages to LLM (iteration {current_iteration}):\n{json.dumps(messages, indent=2, default=str)}"
-                )  # Use default=str for non-serializable types
-            except Exception as json_err:
-                logger.info(
-                    f"Sending {len(messages)} messages to LLM (iteration {current_iteration}) - JSON dump failed: {json_err}. Raw list snippet: {str(messages)[:1000]}..."
-                )  # Log snippet on failure
+                async for event in self.llm_client.generate_response_stream(
+                    messages=messages,
+                    tools=tools_for_llm if current_iteration < max_iterations else None,
+                    tool_choice=(
+                        "auto"
+                        if tools_for_llm and current_iteration < max_iterations
+                        else "none"
+                    ),
+                ):
+                    # Yield content events as they come
+                    if event.type == "content" and event.content:
+                        accumulated_content.append(event.content)
+                        yield (event, {})  # No message to save yet
 
-            # --- LLM Call ---
-            # Any exception from generate_response (e.g., APIError after retries/fallback)
-            # will now propagate up from here.
-            llm_output: LLMOutput = await self.llm_client.generate_response(
-                messages=messages,
-                tools=tools_for_llm,  # Use the potentially filtered list
-                # Allow tools on all iterations except the last forced one?
-                # Or force 'none' if the previous call didn't request tools?
-                # Let's allow 'auto' for now, unless we hit max iterations.
-                tool_choice=(
-                    "auto"
-                    if tools_for_llm
-                    and current_iteration < max_iterations  # Check tools_for_llm
-                    else "none"
-                ),
+                    # Collect tool calls
+                    elif event.type == "tool_call" and event.tool_call:
+                        tool_calls_from_stream.append(event.tool_call)
+                        yield (event, {})  # No message to save yet
+
+                    # Handle done event
+                    elif event.type == "done":
+                        final_reasoning_info = event.metadata
+
+                    # Handle errors
+                    elif event.type == "error":
+                        logger.error(f"Stream error: {event.error}")
+                        raise RuntimeError(f"LLM streaming error: {event.error}")
+
+            except Exception as e:
+                logger.error(f"Error in LLM streaming: {e}", exc_info=True)
+                raise
+
+            # Combine accumulated content
+            final_content = (
+                "".join(accumulated_content) if accumulated_content else None
             )
 
-            # Store content and reasoning from the latest call
-            # Content will be overwritten in the next iteration if there are tool calls,
-            # so only the final iteration's content persists.
-            final_content = llm_output.content.strip() if llm_output.content else None
-            final_reasoning_info = (
-                llm_output.reasoning_info
-            )  # This will hold the reasoning of the *last* LLM call
-            if final_content:
-                logger.debug(
-                    f"LLM provided text content in iteration {current_iteration}: {final_content[:100]}..."
-                )
-            else:
-                logger.debug(
-                    f"LLM provided no text content in iteration {current_iteration}."
-                )
-
-            # --- Convert ToolCallItem objects to dicts for storage/LLM API ---
-            # raw_tool_calls_from_llm is now list[ToolCallItem] | None
-            raw_tool_call_items_from_llm = llm_output.tool_calls
-
-            # serialized_tool_calls_for_turn will be list[dict[str, Any]] | None
-            # This is what gets stored in DB and sent to next LLM call.
-            serialized_tool_calls_for_turn = None
-            if raw_tool_call_items_from_llm:
-                serialized_tool_calls_for_turn = []
-                for tool_call_item in raw_tool_call_items_from_llm:
-                    # Convert ToolCallItem and its ToolCallFunction to dicts
-                    # This uses dataclasses.asdict implicitly if ToolCallItem is a dataclass
-                    # or requires manual conversion if it's a NamedTuple.
-                    # Since we chose dataclass, asdict is the way.
-                    # However, asdict is recursive. We want a specific structure.
+            # Convert tool calls to serialized format
+            serialized_tool_calls = None
+            if tool_calls_from_stream:
+                serialized_tool_calls = []
+                for tool_call_item in tool_calls_from_stream:
                     tool_call_dict = {
                         "id": tool_call_item.id,
                         "type": tool_call_item.type,
@@ -329,228 +353,313 @@ class ProcessingService:
                             "arguments": tool_call_item.function.arguments,
                         },
                     }
-                    serialized_tool_calls_for_turn.append(tool_call_dict)
-            # --- End of ToolCallItem to dict conversion ---
+                    serialized_tool_calls.append(tool_call_dict)
 
-            # --- Add Assistant Message to Turn History ---
-            # This includes the LLM's text response AND any tool calls it requested
-            # This message will be saved to the DB by the caller.
+            # Create assistant message
             assistant_message_for_turn = {
-                # Note: turn_id, interface_type, conversation_id, timestamp, thread_root_id added by caller
                 "role": "assistant",
-                "content": final_content,  # Keep full content for storage/UI/debugging
-                "tool_calls": serialized_tool_calls_for_turn,  # Use serialized version
-                "reasoning_info": (
-                    final_reasoning_info
-                ),  # Include reasoning for this step
-                "tool_call_id": None,  # Not applicable for assistant role
-                "error_traceback": None,  # Not applicable for assistant role
+                "content": final_content,
+                "tool_calls": serialized_tool_calls,
+                "reasoning_info": final_reasoning_info,
+                "tool_call_id": None,
+                "error_traceback": None,
             }
-            turn_messages.append(assistant_message_for_turn)
 
-            # --- Add Assistant Message to Context for *Next* LLM Call ---
-            # Format for the LLM API (content + tool_calls list)
+            # Yield a synthetic "done" event with the complete assistant message
+            yield (
+                LLMStreamEvent(
+                    type="done", metadata={"message": assistant_message_for_turn}
+                ),
+                assistant_message_for_turn,
+            )
+
+            # Add to context for next iteration
             llm_context_assistant_message = {
                 "role": "assistant",
                 "content": final_content,
-                "tool_calls": serialized_tool_calls_for_turn,  # Use serialized version
+                "tool_calls": serialized_tool_calls,
             }
-            # If content is None, OpenAI API might ignore it or require empty string depending on version/model.
-            # LiteLLM generally handles None content correctly for tool_calls messages.
             messages.append(llm_context_assistant_message)
 
-            # --- Loop Condition: Break if no tool calls requested ---
-            if not serialized_tool_calls_for_turn:  # Check the serialized version
+            # Break if no tool calls
+            if not serialized_tool_calls:
                 logger.info(
-                    "LLM response received with no further tool calls (after serialization)."
+                    "LLM streaming response received with no further tool calls."
                 )
-                break  # Exit the loop
-            # --- Execute Tool Calls and Prepare Responses ---
-            # --- Execute Tool Calls and Prepare Responses ---
-            tool_response_messages_for_llm = []  # For next LLM call context
-            # Iterate over the ToolCallItem objects if they exist
-            if raw_tool_call_items_from_llm:
-                for tool_call_item_obj in raw_tool_call_items_from_llm:
-                    call_id = tool_call_item_obj.id
-                    function_name = tool_call_item_obj.function.name
-                    function_args_str = tool_call_item_obj.function.arguments
+                break
 
-                    # Note: Validation for presence of id, type, function.name, function.arguments
-                    # should ideally be handled during ToolCallItem creation in LiteLLMClient.
-                    # Here, we assume they are valid if the object was created.
+            # Execute tool calls
+            tool_response_messages_for_llm = []
 
-                    # The following error handling for missing call_id or function_name
-                    # might be redundant if LiteLLMClient guarantees valid objects.
-                    # However, keeping a light check for robustness.
-                    if not call_id or not function_name:
-                        logger.error(
-                            f"Skipping invalid tool call object in iteration {current_iteration}: id='{call_id}', name='{function_name}'"
-                        )
-                        # Define the error message content for invalid tool call structure
-                        error_content_invalid_struct = (
-                            "Error: Invalid tool call structure."
-                        )
-                        error_traceback_invalid_struct = (
-                            "Invalid tool call structure received from LLM."
-                        )
-                        safe_call_id = (
-                            call_id or f"missing_id_{uuid.uuid4()}"
-                        )  # Use original call_id if available
-                        safe_function_name = function_name or "unknown_function"
+            for tool_call_item_obj in tool_calls_from_stream:
+                call_id = tool_call_item_obj.id
+                function_name = tool_call_item_obj.function.name
+                function_args_str = tool_call_item_obj.function.arguments
 
-                        # Create the error message dictionary for the turn history
-                        tool_response_message_for_turn_invalid_struct = {
-                            "role": "tool",
-                            "tool_call_id": safe_call_id,
-                            "content": error_content_invalid_struct,
-                            "error_traceback": error_traceback_invalid_struct,
-                        }
-                        turn_messages.append(
-                            tool_response_message_for_turn_invalid_struct
-                        )
-                        # Create the error message for the *next* LLM call context
-                        llm_context_error_message_invalid_struct = {
-                            "tool_call_id": safe_call_id,
-                            "role": "tool",
-                            "name": safe_function_name,  # LLM expects name for tool role message
-                            "content": error_content_invalid_struct,
-                        }
-                        tool_response_messages_for_llm.append(
-                            llm_context_error_message_invalid_struct
-                        )
-                        continue  # Skip to the next tool_call_item_obj
-
-                    # If call_id and function_name are valid, proceed here.
-
-                    # --- Argument Parsing ---
-                    try:
-                        arguments = json.loads(function_args_str)
-                    except json.JSONDecodeError:
-                        logger.error(
-                            f"Failed to parse arguments for tool call {function_name} (call_id: {call_id}, iteration {current_iteration}): {function_args_str}"
-                        )
-                        # Prepare error response for this specific tool call
-                        error_content_args = (
-                            f"Error: Invalid arguments format for {function_name}."
-                        )
-                        error_traceback_args = f"JSONDecodeError: {function_args_str}"
-
-                        turn_messages.append({
-                            "role": "tool",
-                            "tool_call_id": call_id,
-                            "content": error_content_args,
-                            "error_traceback": error_traceback_args,
-                        })
-                        tool_response_messages_for_llm.append({
-                            "role": "tool",
-                            "tool_call_id": call_id,
-                            "content": error_content_args,
-                        })
-                        continue  # Skip to the next tool_call_item_obj
-
-                    # --- Tool Execution ---
-                    logger.info(
-                        f"Executing tool '{function_name}' with args: {arguments} (call_id: {call_id}, iteration: {current_iteration})"
+                # Validate tool call
+                if not call_id or not function_name:
+                    logger.error(
+                        f"Invalid tool call: id='{call_id}', name='{function_name}'"
                     )
-                    tool_execution_context = ToolExecutionContext(
-                        interface_type=interface_type,
-                        conversation_id=conversation_id,
-                        user_name=user_name,  # Pass user_name
-                        turn_id=turn_id,
-                        db_context=db_context,
-                        chat_interface=chat_interface,
-                        timezone_str=self.timezone_str,
-                        request_confirmation_callback=request_confirmation_callback,
-                        processing_service=self,
-                        clock=self.clock,  # Pass the clock from ProcessingService
-                        home_assistant_client=self.home_assistant_client,  # Pass HA client
-                        event_sources=self.event_sources,  # Pass event sources map
-                        # Also pass indexing_source directly for backward compatibility
-                        indexing_source=(
-                            self.event_sources.get("indexing")
-                            if self.event_sources
-                            else None
+                    error_content = "Error: Invalid tool call structure."
+                    error_traceback = "Invalid tool call structure received from LLM."
+
+                    tool_response_message = {
+                        "role": "tool",
+                        "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
+                        "content": error_content,
+                        "error_traceback": error_traceback,
+                    }
+
+                    # Yield tool result event
+                    yield (
+                        LLMStreamEvent(
+                            type="tool_result",
+                            tool_call_id=call_id,
+                            tool_result=error_content,
+                            error=error_traceback,
                         ),
+                        tool_response_message,
                     )
 
-                    tool_response_content_val = None  # Renamed to avoid conflict
-                    tool_error_traceback_val = None  # Renamed to avoid conflict
+                    tool_response_messages_for_llm.append({
+                        "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
+                        "role": "tool",
+                        "name": function_name or "unknown_function",
+                        "content": error_content,
+                    })
+                    continue
 
-                    try:
-                        tool_response_content_val = (
-                            await self.tools_provider.execute_tool(
-                                name=function_name,
-                                arguments=arguments,
-                                context=tool_execution_context,
-                            )
-                        )
-                        logger.debug(
-                            f"Tool '{function_name}' (call_id: {call_id}) executed. Result type: {type(tool_response_content_val)}. Result (first 200 chars): {str(tool_response_content_val)[:200]}"
-                        )
-                    except ToolNotFoundError as tnfe:
-                        logger.error(
-                            f"Tool execution failed (iteration {current_iteration}): {tnfe}"
-                        )
-                        tool_response_content_val = f"Error: {tnfe}"
-                        tool_error_traceback_val = str(tnfe)
-                    except Exception as exec_err:
-                        logger.error(
-                            f"Unexpected error executing tool {function_name} (iteration {current_iteration}): {exec_err}",
-                            exc_info=True,
-                        )
-                        tool_response_content_val = (
-                            f"Error: Unexpected error executing {function_name}."
-                        )
-                        tool_error_traceback_val = traceback.format_exc()
+                # Parse arguments
+                try:
+                    arguments = json.loads(function_args_str)
+                except json.JSONDecodeError:
+                    logger.error(
+                        f"Failed to parse arguments for {function_name}: {function_args_str}"
+                    )
+                    error_content = (
+                        f"Error: Invalid arguments format for {function_name}."
+                    )
+                    error_traceback = f"JSONDecodeError: {function_args_str}"
 
-                    # Add successful or error tool response to turn history
-                    turn_messages.append({
+                    tool_response_message = {
                         "role": "tool",
                         "tool_call_id": call_id,
-                        "content": tool_response_content_val,
-                        "error_traceback": tool_error_traceback_val,
-                    })
-                    # Add successful or error tool response to LLM context for next call
+                        "content": error_content,
+                        "error_traceback": error_traceback,
+                    }
+
+                    yield (
+                        LLMStreamEvent(
+                            type="tool_result",
+                            tool_call_id=call_id,
+                            tool_result=error_content,
+                            error=error_traceback,
+                        ),
+                        tool_response_message,
+                    )
+
                     tool_response_messages_for_llm.append({
                         "role": "tool",
                         "tool_call_id": call_id,
-                        "content": tool_response_content_val,
+                        "content": error_content,
                     })
-                    # End of processing for this specific tool_call_item_obj
-            # --- End of loop over raw_tool_call_items_from_llm ---
+                    continue
 
-            # --- After processing all tool calls for this iteration (if any) ---
+                # Execute tool
+                logger.info(f"Executing tool '{function_name}' with args: {arguments}")
+                tool_execution_context = ToolExecutionContext(
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    user_name=user_name,
+                    turn_id=turn_id,
+                    db_context=db_context,
+                    chat_interface=chat_interface,
+                    timezone_str=self.timezone_str,
+                    request_confirmation_callback=request_confirmation_callback,
+                    processing_service=self,
+                    clock=self.clock,
+                    home_assistant_client=self.home_assistant_client,
+                    event_sources=self.event_sources,
+                    indexing_source=(
+                        self.event_sources.get("indexing")
+                        if self.event_sources
+                        else None
+                    ),
+                )
+
+                try:
+                    # Check for confirmation requirements
+                    confirm_tools_list = self.service_config.tools_config.get(
+                        "confirm_tools", []
+                    )
+                    if function_name in confirm_tools_list:
+                        if request_confirmation_callback:
+                            logger.info(
+                                f"Tool '{function_name}' requires user confirmation."
+                            )
+                            confirmation_granted = await request_confirmation_callback(
+                                interface_type,
+                                conversation_id,
+                                None,  # interface_message_id
+                                user_name,
+                                function_name,
+                                arguments,
+                                60.0,  # timeout
+                            )
+                            if not confirmation_granted:
+                                logger.info(
+                                    f"User denied confirmation for tool '{function_name}'."
+                                )
+                                result = "Tool execution cancelled by user."
+                                tool_response_message = {
+                                    "role": "tool",
+                                    "tool_call_id": call_id,
+                                    "content": result,
+                                    "error_traceback": None,
+                                }
+
+                                yield (
+                                    LLMStreamEvent(
+                                        type="tool_result",
+                                        tool_call_id=call_id,
+                                        tool_result=result,
+                                    ),
+                                    tool_response_message,
+                                )
+
+                                tool_response_messages_for_llm.append({
+                                    "tool_call_id": call_id,
+                                    "role": "tool",
+                                    "name": function_name,
+                                    "content": result,
+                                })
+                                continue
+                        else:
+                            logger.warning(
+                                f"Tool '{function_name}' requires confirmation but no callback available."
+                            )
+                            result = "Tool requires user confirmation but no confirmation mechanism is available."
+                            tool_response_message = {
+                                "role": "tool",
+                                "tool_call_id": call_id,
+                                "content": result,
+                                "error_traceback": None,
+                            }
+
+                            yield (
+                                LLMStreamEvent(
+                                    type="tool_result",
+                                    tool_call_id=call_id,
+                                    tool_result=result,
+                                ),
+                                tool_response_message,
+                            )
+
+                            tool_response_messages_for_llm.append({
+                                "tool_call_id": call_id,
+                                "role": "tool",
+                                "name": function_name,
+                                "content": result,
+                            })
+                            continue
+
+                    # Execute the tool
+                    result = await self.tools_provider.execute_tool(
+                        function_name, arguments, tool_execution_context
+                    )
+                    logger.info(f"Tool '{function_name}' executed successfully.")
+
+                    tool_response_message = {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": result,
+                        "error_traceback": None,
+                    }
+
+                    yield (
+                        LLMStreamEvent(
+                            type="tool_result", tool_call_id=call_id, tool_result=result
+                        ),
+                        tool_response_message,
+                    )
+
+                    tool_response_messages_for_llm.append({
+                        "tool_call_id": call_id,
+                        "role": "tool",
+                        "name": function_name,
+                        "content": result,
+                    })
+
+                except ToolNotFoundError:
+                    logger.error(f"Tool '{function_name}' not found.")
+                    error_content = f"Error: Tool '{function_name}' not found."
+                    error_traceback = traceback.format_exc()
+
+                    tool_response_message = {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": error_content,
+                        "error_traceback": error_traceback,
+                    }
+
+                    yield (
+                        LLMStreamEvent(
+                            type="tool_result",
+                            tool_call_id=call_id,
+                            tool_result=error_content,
+                            error=error_traceback,
+                        ),
+                        tool_response_message,
+                    )
+
+                    tool_response_messages_for_llm.append({
+                        "tool_call_id": call_id,
+                        "role": "tool",
+                        "name": function_name,
+                        "content": error_content,
+                    })
+
+                except Exception as e:
+                    logger.error(
+                        f"Error executing tool '{function_name}': {e}", exc_info=True
+                    )
+                    error_content = f"Error executing {function_name}: {str(e)}"
+                    error_traceback = traceback.format_exc()
+
+                    tool_response_message = {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": error_content,
+                        "error_traceback": error_traceback,
+                    }
+
+                    yield (
+                        LLMStreamEvent(
+                            type="tool_result",
+                            tool_call_id=call_id,
+                            tool_result=error_content,
+                            error=error_traceback,
+                        ),
+                        tool_response_message,
+                    )
+
+                    tool_response_messages_for_llm.append({
+                        "tool_call_id": call_id,
+                        "role": "tool",
+                        "name": function_name,
+                        "content": error_content,
+                    })
+
+            # Add tool responses to messages for next iteration
             messages.extend(tool_response_messages_for_llm)
-
-            # Increment iteration counter
             current_iteration += 1
-            # --- Loop continues to next LLM call ---
 
-        # --- After Loop ---
+        # Check if we hit max iterations
         if current_iteration > max_iterations:
             logger.warning(
-                f"Reached maximum tool call iterations ({max_iterations}). Returning current state."
+                f"Reached maximum iterations ({max_iterations}) in streaming tool loop."
             )
-            # The last message in turn_messages should be the final assistant response
-            # (which was forced with tool_choice='none'). We can optionally add a note to its content.
-            if turn_messages and turn_messages[-1]["role"] == "assistant":
-                note = "\n\n(Note: Reached maximum processing depth.)"
-                if turn_messages[-1]["content"]:
-                    turn_messages[-1]["content"] += note
-                else:
-                    turn_messages[-1]["content"] = note.strip()
-
-        # Check if the *last* message generated was an assistant message with no content
-        # (This might happen if the final LLM call produced nothing, e.g., after tool errors)
-        if (
-            turn_messages
-            and turn_messages[-1]["role"] == "assistant"
-            and not turn_messages[-1].get("content")
-        ):
-            logger.warning("Final LLM response content was empty.")
-
-        # Return the complete list of messages generated in this turn, and the reasoning from the final LLM call
-        return turn_messages, final_reasoning_info
 
     def _format_history_for_llm(
         self, history_messages: list[dict[str, Any]]
@@ -1078,4 +1187,267 @@ class ProcessingService:
                 error_message_internal_id,
                 None,
                 processing_error_traceback,
+            )
+
+    async def handle_chat_interaction_stream(
+        self,
+        db_context: DatabaseContext,
+        interface_type: str,
+        conversation_id: str,
+        trigger_content_parts: list[dict[str, Any]],
+        trigger_interface_message_id: str | None,
+        user_name: str,
+        replied_to_interface_id: str | None = None,
+        chat_interface: ChatInterface | None = None,
+        request_confirmation_callback: (
+            Callable[
+                [str, str, str | None, str, str, dict[str, Any], float],
+                Awaitable[bool],
+            ]
+            | None
+        ) = None,
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """
+        Streaming version of handle_chat_interaction.
+
+        Yields LLMStreamEvent objects as the interaction progresses, providing
+        real-time updates on text generation, tool calls, and tool results.
+
+        Args:
+            Same as handle_chat_interaction
+
+        Yields:
+            LLMStreamEvent objects representing different stages of processing
+        """
+        turn_id = str(uuid.uuid4())
+        logger.info(
+            f"Starting streaming chat interaction. Turn ID: {turn_id}, "
+            f"Interface: {interface_type}, Conversation: {conversation_id}, "
+            f"User: {user_name}"
+        )
+
+        try:
+            # --- 1. Determine Thread Root ID & Save User Trigger Message ---
+            thread_root_id_for_turn: int | None = None
+            user_message_timestamp = self.clock.now()
+
+            if replied_to_interface_id:
+                try:
+                    replied_to_db_msg = (
+                        await db_context.message_history.get_by_interface_id(
+                            interface_type=interface_type,
+                            interface_message_id=replied_to_interface_id,
+                        )
+                    )
+                    if replied_to_db_msg:
+                        thread_root_id_for_turn = replied_to_db_msg.get(
+                            "thread_root_id"
+                        ) or replied_to_db_msg.get("internal_id")
+                        logger.info(
+                            f"Determined thread_root_id {thread_root_id_for_turn} from replied-to message"
+                        )
+                except Exception as thread_err:
+                    logger.error(
+                        f"Error determining thread root ID: {thread_err}",
+                        exc_info=True,
+                    )
+
+            # Prepare user message content
+            user_content_for_history = "[User message content]"
+            if trigger_content_parts:
+                first_text_part = next(
+                    (
+                        part.get("text")
+                        for part in trigger_content_parts
+                        if part.get("type") == "text"
+                    ),
+                    None,
+                )
+                if first_text_part:
+                    user_content_for_history = str(first_text_part)
+                elif trigger_content_parts[0].get("type") == "image_url":
+                    user_content_for_history = "[Image Attached]"
+
+            # Save user message in its own transaction to avoid long-running transactions
+            async with get_db_context(engine=db_context.engine) as user_msg_db:
+                saved_user_msg_record = await user_msg_db.message_history.add(
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    interface_message_id=trigger_interface_message_id,
+                    turn_id=turn_id,
+                    thread_root_id=thread_root_id_for_turn,
+                    timestamp=user_message_timestamp,
+                    role="user",
+                    content=user_content_for_history,
+                    tool_calls=None,
+                    reasoning_info=None,
+                    error_traceback=None,
+                    tool_call_id=None,
+                    processing_profile_id=self.service_config.id,
+                )
+
+            if saved_user_msg_record and not thread_root_id_for_turn:
+                thread_root_id_for_turn = saved_user_msg_record.get("internal_id")
+
+            # --- 2. Prepare LLM Context ---
+            try:
+                raw_history_messages = await db_context.message_history.get_recent(
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    limit=self.max_history_messages,
+                    max_age=timedelta(hours=self.history_max_age_hours),
+                    processing_profile_id=self.service_config.id,
+                )
+            except Exception as hist_err:
+                logger.error(
+                    f"Failed to get message history: {hist_err}", exc_info=True
+                )
+                raw_history_messages = []
+
+            # Filter out current trigger message
+            filtered_history_messages = []
+            if trigger_interface_message_id:
+                for h_msg in raw_history_messages:
+                    if (
+                        h_msg.get("interface_message_id")
+                        != trigger_interface_message_id
+                    ):
+                        filtered_history_messages.append(h_msg)
+            else:
+                filtered_history_messages = raw_history_messages
+
+            initial_messages_for_llm = self._format_history_for_llm(
+                filtered_history_messages
+            )
+
+            # Handle reply thread context
+            if replied_to_interface_id and thread_root_id_for_turn:
+                try:
+                    full_thread_messages_db = (
+                        await db_context.message_history.get_by_thread_id(
+                            thread_root_id=thread_root_id_for_turn,
+                            processing_profile_id=self.service_config.id,
+                        )
+                    )
+                    current_trigger_removed_from_thread = []
+                    if trigger_interface_message_id:
+                        for msg_in_thread in full_thread_messages_db:
+                            if (
+                                msg_in_thread.get("interface_message_id")
+                                != trigger_interface_message_id
+                            ):
+                                current_trigger_removed_from_thread.append(
+                                    msg_in_thread
+                                )
+                    else:
+                        current_trigger_removed_from_thread = full_thread_messages_db
+
+                    initial_messages_for_llm = self._format_history_for_llm(
+                        current_trigger_removed_from_thread
+                    )
+                except Exception as thread_fetch_err:
+                    logger.error(f"Error fetching thread history: {thread_fetch_err}")
+
+            messages_for_llm = initial_messages_for_llm
+
+            # Prune leading invalid messages
+            while messages_for_llm:
+                first_msg = messages_for_llm[0]
+                role = first_msg.get("role")
+                has_tool_calls = bool(first_msg.get("tool_calls"))
+                if role == "tool" or (role == "assistant" and has_tool_calls):
+                    messages_for_llm.pop(0)
+                else:
+                    break
+
+            # Prepare System Prompt
+            system_prompt_template = self.prompts.get(
+                "system_prompt",
+                "You are a helpful assistant. Current time is {current_time}.",
+            )
+
+            try:
+                local_tz = pytz.timezone(self.timezone_str)
+                current_time_str = (
+                    self.clock.now()
+                    .astimezone(local_tz)
+                    .strftime("%Y-%m-%d %H:%M:%S %Z")
+                )
+            except Exception:
+                current_time_str = datetime.now(timezone.utc).strftime(
+                    "%Y-%m-%d %H:%M:%S UTC"
+                )
+
+            aggregated_other_context_str = (
+                await self._aggregate_context_from_providers()
+            )
+
+            format_args = {
+                "user_name": user_name,
+                "current_time": current_time_str,
+                "aggregated_other_context": aggregated_other_context_str,
+                "server_url": self.server_url,
+                "profile_id": self.service_config.id,
+            }
+
+            # Safe format system prompt (simplified version)
+            try:
+                final_system_prompt = system_prompt_template.format(
+                    **format_args
+                ).strip()
+            except Exception:
+                final_system_prompt = system_prompt_template.strip()
+
+            if final_system_prompt:
+                messages_for_llm.insert(
+                    0, {"role": "system", "content": final_system_prompt}
+                )
+
+            # Add current user trigger message
+            llm_user_content: str | list[dict[str, Any]]
+            if (
+                len(trigger_content_parts) == 1
+                and trigger_content_parts[0].get("type") == "text"
+            ):
+                llm_user_content = trigger_content_parts[0]["text"]
+            else:
+                llm_user_content = trigger_content_parts
+
+            messages_for_llm.append({"role": "user", "content": llm_user_content})
+
+            # --- 3. Stream LLM Processing ---
+            async for event, message_dict in self.process_message_stream(
+                db_context=db_context,
+                messages=messages_for_llm,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                user_name=user_name,
+                turn_id=turn_id,
+                chat_interface=chat_interface,
+                request_confirmation_callback=request_confirmation_callback,
+            ):
+                # Yield the event to the caller
+                yield event
+
+                # Save messages as they're generated
+                if message_dict and message_dict.get("role"):
+                    msg_to_save = message_dict.copy()
+                    msg_to_save["interface_type"] = interface_type
+                    msg_to_save["conversation_id"] = conversation_id
+                    msg_to_save["turn_id"] = turn_id
+                    msg_to_save["thread_root_id"] = thread_root_id_for_turn
+                    msg_to_save["timestamp"] = msg_to_save.get(
+                        "timestamp", self.clock.now()
+                    )
+                    msg_to_save.setdefault("interface_message_id", None)
+                    msg_to_save["processing_profile_id"] = self.service_config.id
+
+                    # Save each message in its own transaction to avoid PostgreSQL transaction issues
+                    async with get_db_context(engine=db_context.engine) as msg_db:
+                        await msg_db.message_history.add(**msg_to_save)
+
+        except Exception as e:
+            logger.error(f"Error in streaming chat interaction: {e}", exc_info=True)
+            yield LLMStreamEvent(
+                type="error", error=str(e), metadata={"error_id": str(uuid.uuid4())}
             )

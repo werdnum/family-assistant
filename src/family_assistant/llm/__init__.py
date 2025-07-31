@@ -7,8 +7,9 @@ import io
 import json
 import logging
 import os
+from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass, field  # Added asdict
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import aiofiles  # type: ignore[import-untyped] # For async file operations
 import litellm  # Import litellm
@@ -82,6 +83,19 @@ class LLMOutput:
     )  # Store reasoning/usage data
 
 
+@dataclass
+class LLMStreamEvent:
+    """Event emitted during streaming LLM responses."""
+
+    type: Literal["content", "tool_call", "tool_result", "error", "done"]
+    content: str | None = None  # For content chunks
+    tool_call: ToolCallItem | None = None  # For tool calls
+    tool_call_id: str | None = None  # For correlating tool results
+    tool_result: str | None = None  # For tool execution results
+    error: str | None = None  # For error messages
+    metadata: dict[str, Any] | None = None  # Additional event metadata
+
+
 def _sanitize_tools_for_litellm(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Removes unsupported 'format' fields from string parameters in tool definitions
@@ -147,6 +161,23 @@ class LLMInterface(Protocol):
         """
         Generates a response from the LLM based on a pre-structured list of messages.
         (Existing method for direct message-based interaction)
+        """
+        ...
+
+    def generate_response_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """
+        Generates a streaming response from the LLM.
+
+        Yields LLMStreamEvent objects as the response is generated.
+        Must be implemented by all LLM clients (can use fallback implementation).
+
+        Note: This is typed as a regular method (not async def) that returns
+        AsyncIterator because it's an async generator function.
         """
         ...
 
@@ -658,6 +689,168 @@ class LiteLLMClient:
 
         return {"role": "user", "content": final_user_content}
 
+    def generate_response_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """Generate streaming response using LiteLLM."""
+        return self._generate_response_stream(messages, tools, tool_choice)
+
+    async def _generate_response_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """Internal async generator for streaming responses."""
+        try:
+            # Use primary model for streaming
+            completion_params = self.default_kwargs.copy()
+
+            # Apply model-specific parameters
+            for pattern, params in self.model_parameters.items():
+                matched = False
+                if pattern.endswith("-"):
+                    if self.model.startswith(pattern[:-1]):
+                        matched = True
+                elif self.model == pattern:
+                    matched = True
+
+                if matched:
+                    logger.debug(
+                        f"Applying streaming parameters for model '{self.model}' using pattern '{pattern}': {params}"
+                    )
+                    params_to_merge = params.copy()
+                    if "reasoning" in params_to_merge:
+                        params_to_merge.pop("reasoning")  # Not supported in streaming
+                    completion_params.update(params_to_merge)
+                    break
+
+            # Prepare streaming parameters
+            stream_params = {
+                "model": self.model,
+                "messages": messages,
+                "stream": True,  # Enable streaming
+                **completion_params,
+            }
+
+            # Add tools if provided
+            if tools:
+                sanitized_tools = _sanitize_tools_for_litellm(tools)
+                stream_params["tools"] = sanitized_tools
+                stream_params["tool_choice"] = tool_choice
+
+            logger.debug(
+                f"Starting streaming response from LiteLLM model {self.model} "
+                f"with {len(messages)} messages. Tools: {bool(tools)}"
+            )
+
+            # Make streaming API call
+            stream = await acompletion(**stream_params)
+
+            # Track current tool calls being built
+            current_tool_calls: dict[int, dict[str, Any]] = {}
+            chunk = None  # Initialize for pylint
+
+            async for chunk in stream:  # type: ignore[misc]
+                if not chunk or not chunk.choices:
+                    continue
+
+                delta = chunk.choices[0].delta
+                if not delta:
+                    continue
+
+                # Stream content chunks
+                if hasattr(delta, "content") and delta.content:
+                    yield LLMStreamEvent(type="content", content=delta.content)
+
+                # Handle tool calls
+                if hasattr(delta, "tool_calls") and delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        # LiteLLM should always provide an index for tool calls
+                        if not hasattr(tc_delta, "index"):
+                            logger.warning(
+                                "Tool call delta missing index attribute, defaulting to 0. "
+                                "This may cause issues with multiple tool calls."
+                            )
+                            idx = 0
+                        else:
+                            idx = tc_delta.index
+
+                        # Initialize new tool call
+                        if idx not in current_tool_calls:
+                            current_tool_calls[idx] = {
+                                "id": tc_delta.id if hasattr(tc_delta, "id") else None,
+                                "type": tc_delta.type
+                                if hasattr(tc_delta, "type")
+                                else "function",
+                                "function": {"name": "", "arguments": ""},
+                            }
+
+                        # Update tool call info
+                        tc_data = current_tool_calls[idx]
+                        if hasattr(tc_delta, "id") and tc_delta.id:
+                            tc_data["id"] = tc_delta.id
+                        if hasattr(tc_delta, "type") and tc_delta.type:
+                            tc_data["type"] = tc_delta.type
+
+                        # Accumulate function info
+                        if hasattr(tc_delta, "function") and tc_delta.function:
+                            if (
+                                hasattr(tc_delta.function, "name")
+                                and tc_delta.function.name
+                            ):
+                                tc_data["function"]["name"] = tc_delta.function.name
+                            if (
+                                hasattr(tc_delta.function, "arguments")
+                                and tc_delta.function.arguments
+                            ):
+                                tc_data["function"]["arguments"] += (
+                                    tc_delta.function.arguments
+                                )
+
+                        # Continue accumulating tool call data
+                        # We'll emit complete tool calls after the stream ends
+
+            # Emit any remaining tool calls
+            for tc_data in current_tool_calls.values():
+                if tc_data["id"] and tc_data["function"]["name"]:
+                    tool_call = ToolCallItem(
+                        id=tc_data["id"],
+                        type=tc_data["type"],
+                        function=ToolCallFunction(
+                            name=tc_data["function"]["name"],
+                            arguments=tc_data["function"]["arguments"] or "{}",
+                        ),
+                    )
+                    yield LLMStreamEvent(
+                        type="tool_call",
+                        tool_call=tool_call,
+                        tool_call_id=tc_data["id"],
+                    )
+
+            # Extract usage info if available
+            metadata = {}
+            if chunk and hasattr(chunk, "usage") and chunk.usage:
+                try:
+                    metadata["reasoning_info"] = chunk.usage.model_dump(mode="json")
+                except Exception as e:
+                    logger.warning(f"Could not serialize streaming usage data: {e}")
+
+            # Signal completion
+            yield LLMStreamEvent(type="done", metadata=metadata)
+
+        except Exception as e:
+            error_message = str(e)
+            logger.error(f"LiteLLM streaming error: {e}", exc_info=True)
+            yield LLMStreamEvent(
+                type="error",
+                error=error_message,
+                metadata={"error_id": str(e.__class__.__name__)},
+            )
+
 
 class RecordingLLMClient:
     """
@@ -673,9 +866,13 @@ class RecordingLLMClient:
             wrapped_client: The actual LLMInterface instance to use for generation.
             recording_path: Path to the file where interactions will be recorded (JSON Lines format).
         """
-        if not hasattr(wrapped_client, "generate_response"):
+        if not (
+            hasattr(wrapped_client, "generate_response")
+            and hasattr(wrapped_client, "generate_response_stream")
+            and hasattr(wrapped_client, "format_user_message_with_file")
+        ):
             raise TypeError("wrapped_client must implement the LLMInterface protocol.")
-        self.wrapped_client = wrapped_client
+        self.wrapped_client: LLMInterface = wrapped_client
         self.recording_path = recording_path
         # Ensure directory exists (optional, depends on desired behavior)
         os.makedirs(os.path.dirname(self.recording_path), exist_ok=True)
@@ -746,6 +943,22 @@ class RecordingLLMClient:
                 exc_info=True,
             )
             raise
+
+    async def generate_response_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """Delegates streaming to wrapped client - no recording for streams yet."""
+        # For now, just pass through to wrapped client
+        # Future: could record stream events
+        # Note: type: ignore needed due to basedpyright incorrectly flagging async generators from protocols
+        # as not iterable. This is a known limitation with protocol type inference.
+        async for event in self.wrapped_client.generate_response_stream(  # type: ignore[reportGeneralTypeIssues]
+            messages, tools, tool_choice
+        ):
+            yield event
 
     async def _record_interaction(
         self,
@@ -973,6 +1186,30 @@ class PlaybackLLMClient:
             f"No matching dict recorded interaction found in {self.recording_path} for the current input args."
         )
 
+    async def generate_response_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """
+        Plays back streaming response by converting recorded non-streaming response.
+        """
+        # Get the recorded response
+        response = await self.generate_response(messages, tools, tool_choice)
+
+        # Convert to stream events
+        if response.content:
+            yield LLMStreamEvent(type="content", content=response.content)
+
+        if response.tool_calls:
+            for tool_call in response.tool_calls:
+                yield LLMStreamEvent(
+                    type="tool_call", tool_call=tool_call, tool_call_id=tool_call.id
+                )
+
+        yield LLMStreamEvent(type="done", metadata=response.reasoning_info)
+
     async def _log_no_match_error(self, current_input_args: dict[str, Any]) -> None:
         """Logs an error when no matching interaction is found."""
         logger.error(
@@ -989,6 +1226,7 @@ class PlaybackLLMClient:
 __all__ = [
     "LLMInterface",
     "LLMOutput",
+    "LLMStreamEvent",
     "ToolCallFunction",
     "ToolCallItem",
     "LiteLLMClient",

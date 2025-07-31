@@ -2,8 +2,9 @@ import asyncio
 import json
 import logging
 import uuid  # Added for turn_id
+from collections.abc import Callable
 from datetime import timedelta, timezone
-from typing import TYPE_CHECKING  # Added TYPE_CHECKING
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -12,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface  # LLMOutput removed
 # Import select for direct DB queries
-from sqlalchemy.sql import select  # Import text
+from sqlalchemy.sql import select
 
 # Import necessary components from the application
 from family_assistant.interfaces import ChatInterface  # Import ChatInterface
@@ -40,6 +41,7 @@ from family_assistant.tools import (
     MCPToolsProvider,
 )
 from family_assistant.utils.clock import MockClock
+from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,  # Import the mock's LLMOutput
 )
@@ -62,7 +64,11 @@ CALLBACK_CONTEXT = "Remind me to check the test results"
 
 
 @pytest.mark.asyncio
-async def test_schedule_and_execute_callback(db_engine: AsyncEngine) -> None:
+async def test_schedule_and_execute_callback(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+    mock_clock: MockClock,
+) -> None:
     """
     Tests the full flow:
     1. User asks to schedule a callback.
@@ -76,8 +82,7 @@ async def test_schedule_and_execute_callback(db_engine: AsyncEngine) -> None:
     test_run_id = uuid.uuid4()
     logger.info(f"\n--- Running Callback Test ({test_run_id}) ---")
 
-    # --- Setup Mock Clock ---
-    mock_clock = MockClock()
+    # --- Use the provided mock_clock fixture ---
     initial_time = mock_clock.now()  # Use clock's initial time
 
     # --- Calculate future callback time ---
@@ -206,39 +211,16 @@ async def test_schedule_and_execute_callback(db_engine: AsyncEngine) -> None:
     mock_application.bot = mock_bot
     # Add other attributes if needed by tools/handlers (e.g., job_queue if used directly)
 
-    # Task Worker Events (use fresh events for each test run)
-    test_shutdown_event = asyncio.Event()
-    test_new_task_event = asyncio.Event()
-
-    # Instantiate Task Worker
-    # Add a mock embedding generator for the TaskWorker
-    mock_embedding_generator = MagicMock()
-    # Use AsyncMock for chat_interface as its methods are awaited
+    # --- Setup Task Worker using Fixture ---
     mock_chat_interface_for_worker = AsyncMock(spec=ChatInterface)
-    # Set a return value for send_message as it's used by the handler
     mock_chat_interface_for_worker.send_message.return_value = (
         "mock_message_id_callback_response"
     )
-
-    task_worker_instance = TaskWorker(
-        processing_service=processing_service,
-        chat_interface=mock_chat_interface_for_worker,  # Pass ChatInterface
-        calendar_config={},  # Pass empty dict for calendar_config
-        timezone_str=dummy_timezone_str,
-        embedding_generator=mock_embedding_generator,
-        clock=mock_clock,  # Inject mock_clock
-        shutdown_event_instance=test_shutdown_event,  # Pass the test-specific shutdown event
-        engine=db_engine,  # Pass the test database engine
+    task_worker_instance, test_new_task_event, _ = task_worker_manager(
+        processing_service,
+        mock_chat_interface_for_worker,
     )
-    # Register the necessary handler for this test
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
-
-    worker_task = asyncio.create_task(
-        task_worker_instance.run(test_new_task_event),  # Pass the test event
-        name=f"TaskWorker-{test_run_id}",
-    )
-    # Allow worker to start up and potentially process initial tasks if any (though none expected here)
-    await asyncio.sleep(0.01)
 
     # --- Part 1: Schedule the callback ---
     logger.info("--- Part 1: Scheduling Callback ---")
@@ -280,14 +262,37 @@ async def test_schedule_and_execute_callback(db_engine: AsyncEngine) -> None:
         timedelta(seconds=CALLBACK_DELAY_SECONDS + 1)
     )  # Advance past callback time
     test_new_task_event.set()  # Notify worker to check for tasks
-    await asyncio.sleep(0.1)  # Allow worker to process the task
+
+    # Wait for the callback task to complete
+    await wait_for_tasks_to_complete(
+        engine=db_engine,
+        task_types={"llm_callback"},
+        timeout_seconds=5.0,
+        poll_interval_seconds=0.1,
+    )
 
     # --- Part 3: Verify Callback Execution ---
     logger.info("--- Part 3: Verifying Callback Execution ---")
 
     # Assertion: Check if the mock_chat_interface_for_worker's send_message was called
     logger.info("Checking if mock_chat_interface_for_worker.send_message was called...")
-    mock_chat_interface_for_worker.send_message.assert_awaited_once()
+
+    # Wait for send_message to be called with a timeout
+    for _i in range(10):  # 10 * 0.1 = 1 second timeout
+        if mock_chat_interface_for_worker.send_message.called:
+            break
+        await asyncio.sleep(0.1)
+
+    # Wait for send_message to be called
+    for _ in range(10):  # 10 * 0.1 = 1 second timeout
+        if mock_chat_interface_for_worker.send_message.call_count >= 1:
+            break
+        await asyncio.sleep(0.1)
+
+    # Verify it was called exactly once
+    assert mock_chat_interface_for_worker.send_message.call_count == 1, (
+        f"Expected send_message to be called exactly once, but was called {mock_chat_interface_for_worker.send_message.call_count} times"
+    )
     _, call_kwargs = mock_chat_interface_for_worker.send_message.call_args
     assert call_kwargs.get("conversation_id") == str(TEST_CHAT_ID)
     sent_text = call_kwargs.get("text")
@@ -302,22 +307,16 @@ async def test_schedule_and_execute_callback(db_engine: AsyncEngine) -> None:
     )
 
     # --- Cleanup ---
-    logger.info("--- Cleanup ---")
-    logger.info("Signalling TaskWorker to shut down...")
-    test_shutdown_event.set()  # Signal worker loop to stop
-    try:
-        await asyncio.wait_for(worker_task, timeout=5.0)
-        logger.info("TaskWorker task finished.")
-    except asyncio.TimeoutError:
-        logger.warning("TaskWorker task did not finish within timeout during cleanup.")
-        worker_task.cancel()  # Force cancel if it didn't stop
-        await asyncio.sleep(0.1)  # Allow cancellation to process
-
+    # Cleanup is handled by the task_worker_manager fixture's finalizer
     logger.info(f"--- Callback Test ({test_run_id}) Passed ---")
 
 
 @pytest.mark.asyncio
-async def test_modify_pending_callback(db_engine: AsyncEngine) -> None:
+async def test_modify_pending_callback(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+    mock_clock: MockClock,
+) -> None:
     """
     Tests modifying a scheduled callback:
     1. User asks to schedule a callback.
@@ -336,12 +335,7 @@ async def test_modify_pending_callback(db_engine: AsyncEngine) -> None:
     user_message_id_schedule = 501
     user_message_id_modify = 502
 
-    mock_clock = MockClock()
     initial_time = mock_clock.now()
-
-    # Task Worker Events (use fresh events for each test run)
-    test_shutdown_event = asyncio.Event()
-    test_new_task_event = asyncio.Event()
 
     initial_callback_delay_seconds = 5
     initial_callback_dt = initial_time + timedelta(
@@ -489,22 +483,14 @@ async def test_modify_pending_callback(db_engine: AsyncEngine) -> None:
         "mock_message_id_modified_callback"
     )
 
-    test_new_task_event = asyncio.Event()
-    task_worker_instance = TaskWorker(
-        processing_service=processing_service,
-        chat_interface=mock_chat_interface_for_worker,
-        calendar_config={},  # Pass empty dict for calendar_config
-        timezone_str="UTC",
-        embedding_generator=AsyncMock(),
-        clock=mock_clock,  # Inject mock_clock
-        shutdown_event_instance=test_shutdown_event,  # Pass the test-specific shutdown event
-        engine=db_engine,  # Pass the test database engine
+    # Use the task_worker_manager factory
+    task_worker_instance, test_new_task_event, test_shutdown_event = (
+        task_worker_manager(
+            processing_service=processing_service,
+            chat_interface=mock_chat_interface_for_worker,
+        )
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
-    worker_task = asyncio.create_task(
-        task_worker_instance.run(test_new_task_event),
-        name=f"TaskWorker-Modify-{test_run_id}",
-    )
     await asyncio.sleep(0.01)  # Allow worker to start
 
     # --- Part 1: Schedule the initial callback ---
@@ -625,11 +611,28 @@ async def test_modify_pending_callback(db_engine: AsyncEngine) -> None:
         )
 
     test_new_task_event.set()  # Notify worker
-    await asyncio.sleep(0.1)  # Allow worker to process
+
+    # Wait for the modified callback task to complete
+    await wait_for_tasks_to_complete(
+        engine=db_engine,
+        task_ids={scheduled_task_id},
+        timeout_seconds=5.0,
+        poll_interval_seconds=0.1,
+    )
 
     # --- Part 4: Verify MODIFIED Callback Execution ---
     logger.info("--- Part 4: Verifying MODIFIED Callback Execution ---")
-    mock_chat_interface_for_worker.send_message.assert_awaited_once()
+
+    # Wait for send_message to be called with a timeout
+    for _i in range(10):  # 10 * 0.1 = 1 second timeout
+        if mock_chat_interface_for_worker.send_message.called:
+            break
+        await asyncio.sleep(0.1)
+
+    # Verify it was called exactly once
+    assert mock_chat_interface_for_worker.send_message.call_count == 1, (
+        f"Expected send_message to be called exactly once, but was called {mock_chat_interface_for_worker.send_message.call_count} times"
+    )
     _call_args, call_kwargs = mock_chat_interface_for_worker.send_message.call_args
     assert call_kwargs.get("conversation_id") == str(TEST_CHAT_ID)
     sent_text = call_kwargs.get("text")
@@ -641,33 +644,16 @@ async def test_modify_pending_callback(db_engine: AsyncEngine) -> None:
         "Verified mock_bot.send_message was called with the MODIFIED final response."
     )
 
-    # --- Cleanup ---
-    logger.info("--- Cleanup for Modify Test ---")
-    test_shutdown_event.set()  # Use the test-specific shutdown event
-    test_new_task_event.set()  # Wake up worker if it's waiting on the event
-    try:
-        await asyncio.wait_for(worker_task, timeout=5.0)
-        logger.info(f"TaskWorker-Modify-{test_run_id} task finished.")
-    except asyncio.TimeoutError:
-        logger.warning(
-            f"TaskWorker-Modify-{test_run_id} task did not finish within timeout. Cancelling."
-        )
-        worker_task.cancel()
-        try:
-            await worker_task  # Allow cancellation to propagate
-        except asyncio.CancelledError:
-            logger.info(f"TaskWorker-Modify-{test_run_id} task was cancelled.")
-    except Exception as e:
-        logger.error(
-            f"Error during TaskWorker-Modify-{test_run_id} cleanup: {e}", exc_info=True
-        )
-    finally:
-        test_shutdown_event.clear()  # Clear the test-specific event
+    # Cleanup is handled by the task_worker_manager fixture
     logger.info(f"--- Modify Callback Test ({test_run_id}) Passed ---")
 
 
 @pytest.mark.asyncio
-async def test_cancel_pending_callback(db_engine: AsyncEngine) -> None:
+async def test_cancel_pending_callback(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+    mock_clock: MockClock,
+) -> None:
     """
     Tests cancelling a scheduled callback:
     1. User asks to schedule a callback.
@@ -685,12 +671,7 @@ async def test_cancel_pending_callback(db_engine: AsyncEngine) -> None:
     user_message_id_schedule = 601
     user_message_id_cancel = 602
 
-    mock_clock = MockClock()
     initial_time = mock_clock.now()
-
-    # Task Worker Events (use fresh events for each test run)
-    test_shutdown_event = asyncio.Event()
-    test_new_task_event = asyncio.Event()
 
     initial_callback_delay_seconds = (
         5  # Short delay, it should be cancelled before this
@@ -823,23 +804,14 @@ async def test_cancel_pending_callback(db_engine: AsyncEngine) -> None:
         "mock_message_id_cancelled_callback"
     )
 
-    test_new_task_event = asyncio.Event()
-    task_worker_instance = TaskWorker(
-        processing_service=processing_service,
-        chat_interface=mock_chat_interface_for_worker,
-        calendar_config={},  # Pass empty dict for calendar_config
-        timezone_str="UTC",
-        embedding_generator=AsyncMock(),
-        clock=mock_clock,  # Inject mock_clock
-        shutdown_event_instance=test_shutdown_event,  # Pass the test-specific shutdown event
-        engine=db_engine,  # Pass the test database engine
+    # Use task_worker_manager fixture to create and start task worker
+    task_worker_instance, test_new_task_event, test_shutdown_event = (
+        task_worker_manager(
+            processing_service,
+            mock_chat_interface_for_worker,
+        )
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
-    worker_task = asyncio.create_task(
-        task_worker_instance.run(test_new_task_event),
-        name=f"TaskWorker-Cancel-{test_run_id}",
-    )
-    await asyncio.sleep(0.01)  # Allow worker to start
 
     # --- Part 1: Schedule the initial callback ---
     logger.info("--- Part 1: Scheduling initial callback for cancellation test ---")
@@ -946,9 +918,8 @@ async def test_cancel_pending_callback(db_engine: AsyncEngine) -> None:
     if duration_to_advance_past_schedule.total_seconds() > 0:
         mock_clock.advance(duration_to_advance_past_schedule)
     test_new_task_event.set()  # Notify worker
-    await asyncio.sleep(
-        0.1
-    )  # Allow worker to process (it should find nothing or a failed task)
+    # Give worker a small window to potentially pick up the task (it shouldn't)
+    await asyncio.sleep(0.5)
 
     # --- Part 4: Verify Callback Was NOT Executed ---
     logger.info("--- Part 4: Verifying Cancelled Callback Was NOT Executed ---")
@@ -967,32 +938,16 @@ async def test_cancel_pending_callback(db_engine: AsyncEngine) -> None:
     )
 
     # --- Cleanup ---
-    logger.info("--- Cleanup for Cancel Test ---")
-    test_shutdown_event.set()  # Use the test-specific shutdown event
-    test_new_task_event.set()  # Wake up worker if it's waiting on the event
-    try:
-        await asyncio.wait_for(worker_task, timeout=5.0)
-        logger.info(f"TaskWorker-Cancel-{test_run_id} task finished.")
-    except asyncio.TimeoutError:
-        logger.warning(
-            f"TaskWorker-Cancel-{test_run_id} task did not finish within timeout. Cancelling."
-        )
-        worker_task.cancel()
-        try:
-            await worker_task  # Allow cancellation to propagate
-        except asyncio.CancelledError:
-            logger.info(f"TaskWorker-Cancel-{test_run_id} task was cancelled.")
-    except Exception as e:
-        logger.error(
-            f"Error during TaskWorker-Cancel-{test_run_id} cleanup: {e}", exc_info=True
-        )
-    finally:
-        test_shutdown_event.clear()  # Clear the test-specific event
+    # Cleanup is handled by the task_worker_manager fixture
     logger.info(f"--- Cancel Callback Test ({test_run_id}) Passed ---")
 
 
 @pytest.mark.asyncio
-async def test_schedule_reminder_with_follow_up(db_engine: AsyncEngine) -> None:
+async def test_schedule_reminder_with_follow_up(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+    mock_clock: MockClock,
+) -> None:
     """
     Tests the schedule_reminder tool with follow-up functionality:
     1. User asks to schedule a reminder with follow-up enabled.
@@ -1007,11 +962,8 @@ async def test_schedule_reminder_with_follow_up(db_engine: AsyncEngine) -> None:
     test_run_id = uuid.uuid4()
     logger.info(f"\n--- Running Reminder with Follow-up Test ({test_run_id}) ---")
 
-    # Setup
-    mock_clock = MockClock()
+    # Setup - use provided mock_clock fixture
     initial_time = mock_clock.now()
-    test_shutdown_event = asyncio.Event()
-    test_new_task_event = asyncio.Event()
 
     # Timing configuration
     reminder_delay_seconds = 3
@@ -1144,22 +1096,12 @@ async def test_schedule_reminder_with_follow_up(db_engine: AsyncEngine) -> None:
     mock_chat_interface = AsyncMock(spec=ChatInterface)
     mock_chat_interface.send_message.return_value = "mock_reminder_message_id"
 
-    task_worker = TaskWorker(
+    # Use the task_worker_manager fixture
+    task_worker, test_new_task_event, test_shutdown_event = task_worker_manager(
         processing_service=processing_service,
         chat_interface=mock_chat_interface,
-        calendar_config={},  # Pass empty dict for calendar_config
-        timezone_str="UTC",
-        embedding_generator=AsyncMock(),
-        clock=mock_clock,
-        shutdown_event_instance=test_shutdown_event,
-        engine=db_engine,  # Pass the test database engine
     )
     task_worker.register_task_handler("llm_callback", handle_llm_callback)
-
-    worker_task = asyncio.create_task(
-        task_worker.run(test_new_task_event),
-        name=f"TaskWorker-Reminder-{test_run_id}",
-    )
     await asyncio.sleep(0.01)
 
     # --- Part 1: Schedule the reminder ---
@@ -1181,9 +1123,11 @@ async def test_schedule_reminder_with_follow_up(db_engine: AsyncEngine) -> None:
 
     # Verify task in DB has reminder config
     async with DatabaseContext(engine=db_engine) as db_context:
+        # Filter by conversation_id to avoid picking up tasks from parallel tests
         stmt = select(tasks_table).where(
             tasks_table.c.task_type == "llm_callback",
             tasks_table.c.status == "pending",
+            tasks_table.c.payload["conversation_id"].as_string() == str(TEST_CHAT_ID),
         )
         tasks = await db_context.fetch_all(stmt)
         assert len(tasks) == 1, "Expected exactly one pending reminder task"
@@ -1202,9 +1146,21 @@ async def test_schedule_reminder_with_follow_up(db_engine: AsyncEngine) -> None:
     logger.info("--- Part 2: Executing initial reminder ---")
     mock_clock.advance(timedelta(seconds=reminder_delay_seconds + 1))
     test_new_task_event.set()
-    await asyncio.sleep(0.2)  # Allow processing
 
-    # Verify initial reminder was sent
+    # Wait for the initial reminder task to complete
+    await wait_for_tasks_to_complete(
+        engine=db_engine,
+        task_ids={initial_task_id},
+        timeout_seconds=5.0,
+        poll_interval_seconds=0.1,
+    )
+
+    # Wait for and verify initial reminder was sent
+    for _ in range(10):  # 10 * 0.1 = 1 second timeout
+        if mock_chat_interface.send_message.call_count >= 1:
+            break
+        await asyncio.sleep(0.1)
+
     assert mock_chat_interface.send_message.call_count == 1
     call_kwargs = mock_chat_interface.send_message.call_args_list[0][1]
     assert reminder_message in call_kwargs["text"]
@@ -1212,9 +1168,11 @@ async def test_schedule_reminder_with_follow_up(db_engine: AsyncEngine) -> None:
 
     # Verify follow-up was scheduled
     async with DatabaseContext(engine=db_engine) as db_context:
+        # Filter by conversation_id to avoid picking up tasks from parallel tests
         stmt = select(tasks_table).where(
             tasks_table.c.task_type == "llm_callback",
             tasks_table.c.status == "pending",
+            tasks_table.c.payload["conversation_id"].as_string() == str(TEST_CHAT_ID),
         )
         tasks = await db_context.fetch_all(stmt)
         assert len(tasks) == 1, "Expected exactly one pending follow-up task"
@@ -1230,9 +1188,21 @@ async def test_schedule_reminder_with_follow_up(db_engine: AsyncEngine) -> None:
     logger.info("--- Part 3: Executing follow-up reminder ---")
     mock_clock.advance(timedelta(seconds=follow_up_interval_seconds + 1))
     test_new_task_event.set()
-    await asyncio.sleep(0.2)
 
-    # Verify follow-up reminder was sent
+    # Wait for the follow-up task to complete
+    await wait_for_tasks_to_complete(
+        engine=db_engine,
+        task_ids={follow_up_task_id},
+        timeout_seconds=5.0,
+        poll_interval_seconds=0.1,
+    )
+
+    # Wait for and verify follow-up reminder was sent
+    for _ in range(10):  # 10 * 0.1 = 1 second timeout
+        if mock_chat_interface.send_message.call_count >= 2:
+            break
+        await asyncio.sleep(0.1)
+
     assert mock_chat_interface.send_message.call_count == 2
     call_kwargs = mock_chat_interface.send_message.call_args_list[1][1]
     assert reminder_message in call_kwargs["text"]
@@ -1240,9 +1210,11 @@ async def test_schedule_reminder_with_follow_up(db_engine: AsyncEngine) -> None:
 
     # Verify another follow-up was scheduled (attempt 3 of 3)
     async with DatabaseContext(engine=db_engine) as db_context:
+        # Filter by conversation_id to avoid picking up tasks from parallel tests
         stmt = select(tasks_table).where(
             tasks_table.c.task_type == "llm_callback",
             tasks_table.c.status == "pending",
+            tasks_table.c.payload["conversation_id"].as_string() == str(TEST_CHAT_ID),
         )
         tasks = await db_context.fetch_all(stmt)
         assert len(tasks) == 1, "Expected exactly one pending second follow-up task"
@@ -1270,7 +1242,20 @@ async def test_schedule_reminder_with_follow_up(db_engine: AsyncEngine) -> None:
     # Execute the final follow-up (should still send but not schedule more)
     mock_clock.advance(timedelta(seconds=follow_up_interval_seconds + 1))
     test_new_task_event.set()
-    await asyncio.sleep(0.2)
+
+    # Wait for the final follow-up task to complete
+    await wait_for_tasks_to_complete(
+        engine=db_engine,
+        task_ids={second_follow_up["task_id"]},
+        timeout_seconds=5.0,
+        poll_interval_seconds=0.1,
+    )
+
+    # Wait for the final follow-up to be sent with a timeout
+    for _i in range(20):  # 20 * 0.1 = 2 second timeout
+        if mock_chat_interface.send_message.call_count == 3:
+            break
+        await asyncio.sleep(0.1)
 
     # Verify final follow-up was sent
     assert mock_chat_interface.send_message.call_count == 3
@@ -1278,31 +1263,32 @@ async def test_schedule_reminder_with_follow_up(db_engine: AsyncEngine) -> None:
 
     # Verify no more follow-ups scheduled (reached max_follow_ups)
     async with DatabaseContext(engine=db_engine) as db_context:
+        # Filter by conversation_id to avoid picking up tasks from parallel tests
         stmt = select(tasks_table).where(
             tasks_table.c.task_type == "llm_callback",
             tasks_table.c.status == "pending",
+            tasks_table.c.payload["conversation_id"].as_string() == str(TEST_CHAT_ID),
         )
         tasks = await db_context.fetch_all(stmt)
-        assert len(tasks) == 0, "No more reminders should be pending"
+        # No need to wait for tasks to be cleared - they should be gone immediately
+        # after the final follow-up completes since max_follow_ups was reached
+
+        assert len(tasks) == 0, (
+            f"Expected no pending tasks after max follow-ups, but found {len(tasks)}"
+        )
         logger.info("No additional follow-ups scheduled (reached max)")
 
     # --- Cleanup ---
-    logger.info("--- Cleanup ---")
-    test_shutdown_event.set()
-    test_new_task_event.set()
-    try:
-        await asyncio.wait_for(worker_task, timeout=5.0)
-        logger.info("TaskWorker finished")
-    except asyncio.TimeoutError:
-        logger.warning("TaskWorker timeout, cancelling")
-        worker_task.cancel()
-        await asyncio.sleep(0.1)
-
+    # Cleanup is handled by the task_worker_manager fixture
     logger.info(f"--- Reminder with Follow-up Test ({test_run_id}) Passed ---")
 
 
 @pytest.mark.asyncio
-async def test_schedule_recurring_callback(db_engine: AsyncEngine) -> None:
+async def test_schedule_recurring_callback(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+    mock_clock: MockClock,
+) -> None:
     """
     Tests the schedule_recurring_task tool:
     1. User asks to schedule a recurring callback (daily briefing).
@@ -1315,11 +1301,8 @@ async def test_schedule_recurring_callback(db_engine: AsyncEngine) -> None:
     test_run_id = uuid.uuid4()
     logger.info(f"\n--- Running Recurring Callback Test ({test_run_id}) ---")
 
-    # Setup
-    mock_clock = MockClock()
+    # Setup - use provided mock_clock fixture
     initial_time = mock_clock.now()
-    test_shutdown_event = asyncio.Event()
-    test_new_task_event = asyncio.Event()
 
     # Schedule daily callback at 8 AM
     initial_delay_seconds = 5  # First run in 5 seconds
@@ -1462,22 +1445,12 @@ async def test_schedule_recurring_callback(db_engine: AsyncEngine) -> None:
     mock_chat_interface = AsyncMock(spec=ChatInterface)
     mock_chat_interface.send_message.return_value = "mock_recurring_message_id"
 
-    task_worker = TaskWorker(
+    # Use the task_worker_manager fixture
+    task_worker, test_new_task_event, test_shutdown_event = task_worker_manager(
         processing_service=processing_service,
         chat_interface=mock_chat_interface,
-        calendar_config={},  # Pass empty dict for calendar_config
-        timezone_str="UTC",
-        embedding_generator=AsyncMock(),
-        clock=mock_clock,
-        shutdown_event_instance=test_shutdown_event,
-        engine=db_engine,
     )
     task_worker.register_task_handler("llm_callback", handle_llm_callback)
-
-    worker_task = asyncio.create_task(
-        task_worker.run(test_new_task_event),
-        name=f"TaskWorker-Recurring-{test_run_id}",
-    )
     await asyncio.sleep(0.01)
 
     # --- Part 1: Schedule the recurring callback ---
@@ -1502,9 +1475,11 @@ async def test_schedule_recurring_callback(db_engine: AsyncEngine) -> None:
 
     # Verify initial task in DB has recurrence rule
     async with DatabaseContext(engine=db_engine) as db_context:
+        # Filter by conversation_id to avoid picking up tasks from parallel tests
         stmt = select(tasks_table).where(
             tasks_table.c.task_type == "llm_callback",
             tasks_table.c.status == "pending",
+            tasks_table.c.payload["conversation_id"].as_string() == str(TEST_CHAT_ID),
         )
         tasks = await db_context.fetch_all(stmt)
         assert len(tasks) == 1, "Expected exactly one pending recurring task"
@@ -1520,9 +1495,21 @@ async def test_schedule_recurring_callback(db_engine: AsyncEngine) -> None:
     logger.info("--- Part 2: Executing first callback ---")
     mock_clock.advance(timedelta(seconds=initial_delay_seconds + 1))
     test_new_task_event.set()
-    await asyncio.sleep(0.2)  # Allow processing
 
-    # Verify first callback was sent
+    # Wait for the initial recurring task to complete
+    await wait_for_tasks_to_complete(
+        engine=db_engine,
+        task_ids={initial_task_id},
+        timeout_seconds=5.0,
+        poll_interval_seconds=0.1,
+    )
+
+    # Wait for and verify first callback was sent
+    for _ in range(10):  # 10 * 0.1 = 1 second timeout
+        if mock_chat_interface.send_message.call_count >= 1:
+            break
+        await asyncio.sleep(0.1)
+
     assert mock_chat_interface.send_message.call_count == 1
     call_kwargs = mock_chat_interface.send_message.call_args_list[0][1]
     assert "daily briefing" in call_kwargs["text"]
@@ -1530,9 +1517,11 @@ async def test_schedule_recurring_callback(db_engine: AsyncEngine) -> None:
 
     # Verify next occurrence was scheduled
     async with DatabaseContext(engine=db_engine) as db_context:
+        # Filter by conversation_id to avoid picking up tasks from parallel tests
         stmt = select(tasks_table).where(
             tasks_table.c.task_type == "llm_callback",
             tasks_table.c.status == "pending",
+            tasks_table.c.payload["conversation_id"].as_string() == str(TEST_CHAT_ID),
         )
         tasks = await db_context.fetch_all(stmt)
         assert len(tasks) == 1, "Expected exactly one pending next occurrence"
@@ -1562,31 +1551,7 @@ async def test_schedule_recurring_callback(db_engine: AsyncEngine) -> None:
     logger.info("  - Recurrence rule properly stored and processed")
 
     # --- Cleanup ---
-    logger.info("--- Cleanup for Recurring Test ---")
-    # Give the worker a moment to finish any in-progress operations
-    await asyncio.sleep(0.5)
-    test_shutdown_event.set()  # Signal shutdown
-    test_new_task_event.set()  # Wake up worker if it's waiting
-    try:
-        await asyncio.wait_for(worker_task, timeout=5.0)
-        logger.info(f"TaskWorker-Recurring-{test_run_id} task finished.")
-    except asyncio.TimeoutError:
-        logger.warning(
-            f"TaskWorker-Recurring-{test_run_id} task did not finish within timeout. Cancelling."
-        )
-        worker_task.cancel()
-        try:
-            await worker_task  # Allow cancellation to propagate
-        except asyncio.CancelledError:
-            logger.info(f"TaskWorker-Recurring-{test_run_id} task was cancelled.")
-    except Exception as e:
-        logger.error(
-            f"Error during TaskWorker-Recurring-{test_run_id} cleanup: {e}",
-            exc_info=True,
-        )
-    finally:
-        test_shutdown_event.clear()  # Clear the test-specific event
-
+    # Cleanup is handled by the task_worker_manager fixture
     logger.info(f"--- Recurring Callback Test ({test_run_id}) Passed ---")
 
 

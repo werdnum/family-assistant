@@ -11,7 +11,7 @@ const NavHeader = () => {
           <a href="/context">Context</a>
         </div>
         <span className="nav-separator">|</span>
-        
+
         {/* Documents */}
         <div className="nav-group">
           <span className="nav-label">Documents</span>
@@ -20,12 +20,14 @@ const NavHeader = () => {
           <a href="/vector-search">Search</a>
         </div>
         <span className="nav-separator">|</span>
-        
+
         {/* Chat & History */}
-        <a href="/chat" className="current-page">Chat</a>
+        <a href="/chat" className="current-page">
+          Chat
+        </a>
         <a href="/history">History</a>
         <span className="nav-separator">|</span>
-        
+
         {/* Automation */}
         <div className="nav-group">
           <span className="nav-label">Automation</span>
@@ -33,7 +35,7 @@ const NavHeader = () => {
           <a href="/event-listeners">Event Listeners</a>
         </div>
         <span className="nav-separator">|</span>
-        
+
         {/* Internal/Admin */}
         <div className="nav-group">
           <span className="nav-label">Internal</span>
@@ -42,7 +44,7 @@ const NavHeader = () => {
           <a href="/errors/">Error Logs</a>
         </div>
         <span className="nav-separator">|</span>
-        
+
         {/* Help */}
         <a href="/docs/">Help</a>
       </nav>

@@ -11,6 +11,7 @@ from tests.functional.web.pages.documents_page import DocumentsPage
 from .conftest import WebTestFixture
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 @pytest.mark.postgres
 @pytest.mark.skip(
@@ -143,6 +144,7 @@ async def test_upload_document_with_file_flow(web_test_fixture: WebTestFixture) 
         Path(temp_file_path).unlink(missing_ok=True)
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 @pytest.mark.postgres
 @pytest.mark.skip(
@@ -209,6 +211,7 @@ async def test_upload_document_with_content_parts_flow(
     assert "submitted" in success_msg.lower() or "success" in success_msg.lower()
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 @pytest.mark.postgres
 async def test_view_document_detail_flow(web_test_fixture: WebTestFixture) -> None:
@@ -256,6 +259,7 @@ async def test_view_document_detail_flow(web_test_fixture: WebTestFixture) -> No
         assert chunk_count >= 0  # At least verify the page loaded without error
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 @pytest.mark.postgres
 async def test_file_validation_flow(web_test_fixture: WebTestFixture) -> None:
@@ -303,6 +307,7 @@ async def test_file_validation_flow(web_test_fixture: WebTestFixture) -> None:
     # Note: The exact error message will depend on the API validation
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 @pytest.mark.postgres
 async def test_metadata_json_validation(web_test_fixture: WebTestFixture) -> None:
@@ -333,6 +338,7 @@ async def test_metadata_json_validation(web_test_fixture: WebTestFixture) -> Non
     # The API should return an error about invalid JSON
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_empty_documents_state(web_test_fixture: WebTestFixture) -> None:
     """Test the empty state display when no documents exist."""
@@ -356,6 +362,7 @@ async def test_empty_documents_state(web_test_fixture: WebTestFixture) -> None:
         assert not await docs_page.is_empty_state_visible()
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 @pytest.mark.postgres
 async def test_reindex_document_flow(web_test_fixture: WebTestFixture) -> None:
@@ -394,6 +401,7 @@ async def test_reindex_document_flow(web_test_fixture: WebTestFixture) -> None:
         assert await docs_page.is_document_present(test_title)
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 @pytest.mark.postgres
 async def test_multiple_document_upload_flow(web_test_fixture: WebTestFixture) -> None:
@@ -437,6 +445,7 @@ async def test_multiple_document_upload_flow(web_test_fixture: WebTestFixture) -
             )
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_pagination_flow(web_test_fixture: WebTestFixture) -> None:
     """Test pagination controls on the documents list page."""

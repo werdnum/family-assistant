@@ -1,12 +1,27 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
-import { Thread, ThreadLoading } from './Thread';
+import { Thread } from './Thread';
 import NavHeader from './NavHeader';
 import ConversationSidebar from './ConversationSidebar';
+import { useStreamingResponse } from './useStreamingResponse';
+import { LOADING_MARKER } from './constants';
 import './chat.css';
 import './thread.css';
 
-const ChatApp = () => {
+// Helper function to parse tool arguments
+const parseToolArguments = (args) => {
+  if (typeof args === 'string') {
+    try {
+      return JSON.parse(args);
+    } catch (e) {
+      console.error('Failed to parse tool arguments:', e);
+      return { raw: args };
+    }
+  }
+  return args;
+};
+
+const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 768);
@@ -14,9 +29,10 @@ const ChatApp = () => {
   const [conversations, setConversations] = useState([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
-  
+  const streamingMessageIdRef = useRef(null);
+
   // Fetch conversations list
-  const fetchConversations = async () => {
+  const fetchConversations = useCallback(async () => {
     try {
       setConversationsLoading(true);
       const response = await fetch('/api/v1/chat/conversations');
@@ -29,7 +45,86 @@ const ChatApp = () => {
     } finally {
       setConversationsLoading(false);
     }
-  };
+  }, []);
+
+  // Streaming callbacks
+  const handleStreamingMessage = useCallback((content) => {
+    if (streamingMessageIdRef.current) {
+      setMessages((prev) => {
+        // Update the loading message with actual content
+        return prev.map((msg) =>
+          msg.id === streamingMessageIdRef.current
+            ? { 
+                ...msg, 
+                content: [{ 
+                  type: 'text', 
+                  text: content // Use the accumulated content directly from the hook
+                }],
+                isLoading: false // Remove loading flag when content arrives
+              }
+            : msg
+        );
+      });
+    }
+  }, []);
+
+  const handleStreamingError = useCallback((error, _metadata) => {
+    console.error('Streaming error:', error, _metadata);
+    if (streamingMessageIdRef.current) {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === streamingMessageIdRef.current
+            ? {
+                ...msg,
+                content: [
+                  { type: 'text', text: 'Sorry, I encountered an error processing your message.' },
+                ],
+                isLoading: false, // Remove loading state on error
+              }
+            : msg
+        )
+      );
+      streamingMessageIdRef.current = null;
+    }
+  }, []);
+
+  const handleStreamingComplete = useCallback(
+    ({ content, toolCalls }) => {
+      if (toolCalls && toolCalls.length > 0 && streamingMessageIdRef.current) {
+        const contentParts = [];
+        if (content) {
+          contentParts.push({ type: 'text', text: content });
+        }
+        toolCalls.forEach((tc) => {
+          // Parse arguments if they're a string
+          const args = parseToolArguments(tc.arguments);
+          
+          contentParts.push({
+            type: 'tool-call',
+            toolCallId: tc.id,
+            toolName: tc.name,
+            args: args,
+          });
+        });
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === streamingMessageIdRef.current ? { ...msg, content: contentParts } : msg
+          )
+        );
+      }
+      fetchConversations();
+      streamingMessageIdRef.current = null;
+    },
+    [fetchConversations]
+  );
+
+  // Initialize streaming hook
+  const { sendStreamingMessage, isStreaming } = useStreamingResponse({
+    onMessage: handleStreamingMessage,
+    onError: handleStreamingError,
+    onComplete: handleStreamingComplete,
+  });
+
 
   // Handle window resize
   useEffect(() => {
@@ -43,27 +138,24 @@ const ChatApp = () => {
 
   // Initialize conversation ID from URL or localStorage
   useEffect(() => {
-    // Fetch conversations list first
     fetchConversations();
-    
+
     const urlParams = new URLSearchParams(window.location.search);
     const urlConversationId = urlParams.get('conversation_id');
     const lastConversationId = localStorage.getItem('lastConversationId');
-    
+
     if (urlConversationId) {
       setConversationId(urlConversationId);
       loadConversationMessages(urlConversationId);
     } else if (lastConversationId) {
       setConversationId(lastConversationId);
       loadConversationMessages(lastConversationId);
-      // Update URL without triggering reload
       window.history.replaceState({}, '', `/chat?conversation_id=${lastConversationId}`);
     } else {
-      // Create new conversation
       handleNewChat();
     }
   }, []);
-  
+
   // Load messages for a conversation
   const loadConversationMessages = async (convId) => {
     try {
@@ -71,73 +163,60 @@ const ChatApp = () => {
       const response = await fetch(`/api/v1/chat/conversations/${convId}/messages`);
       if (response.ok) {
         const data = await response.json();
-        
-        // Process messages and merge tool responses with their assistant messages
+
         const processedMessages = [];
-        const toolResponses = new Map(); // Map tool_call_id to tool response
-        
-        // First pass: collect tool responses
-        data.messages.forEach(msg => {
+        const toolResponses = new Map();
+
+        data.messages.forEach((msg) => {
           if (msg.role === 'tool' && msg.tool_call_id) {
             toolResponses.set(msg.tool_call_id, msg.content || 'Tool executed successfully');
           }
         });
-        
-        // Second pass: process messages, merging tool calls with their responses
-        data.messages.forEach(msg => {
-          // Skip tool messages as they're merged with assistant messages
+
+        data.messages.forEach((msg) => {
           if (msg.role === 'tool') {
             return;
           }
-          
-          // Handle assistant messages that might have tool calls
-          if (msg.role === 'assistant' && msg.tool_calls_info) {
-            let toolCallsInfo;
-            try {
-              toolCallsInfo = typeof msg.tool_calls_info === 'string' 
-                ? JSON.parse(msg.tool_calls_info) 
-                : msg.tool_calls_info;
-            } catch (e) {
-              toolCallsInfo = null;
-            }
-            
-            if (toolCallsInfo && toolCallsInfo.tool_calls) {
-              // Convert tool calls to content parts with their results
+
+          if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
               const content = [];
               if (msg.content) {
                 content.push({ type: 'text', text: msg.content });
               }
-              
-              toolCallsInfo.tool_calls.forEach(toolCall => {
+
+              msg.tool_calls.forEach((toolCall) => {
                 const toolResponse = toolResponses.get(toolCall.id);
+                // Extract the function name from the tool call
+                const toolName = toolCall.function?.name || toolCall.name || 'unknown';
+                // Parse arguments if they're a string
+                const args = parseToolArguments(toolCall.function?.arguments || toolCall.arguments);
+                
                 content.push({
                   type: 'tool-call',
                   toolCallId: toolCall.id,
-                  toolName: toolCall.name,
-                  args: toolCall.arguments,
-                  result: toolResponse ?? 'Tool result not available' // Provide fallback for missing results
+                  toolName: toolName,
+                  args: args,
+                  result: toolResponse ?? undefined,
                 });
               });
-              
+
               processedMessages.push({
                 id: `msg_${msg.internal_id}`,
                 role: 'assistant',
                 content: content,
-                createdAt: new Date(msg.timestamp)
+                createdAt: new Date(msg.timestamp),
               });
               return;
-            }
           }
-          
-          // Regular messages (user, assistant without tool calls, system)
+
           processedMessages.push({
             id: `msg_${msg.internal_id}`,
             role: msg.role,
             content: msg.content ? [{ type: 'text', text: msg.content }] : [],
-            createdAt: new Date(msg.timestamp)
+            createdAt: new Date(msg.timestamp),
           });
         });
-        
+
         setMessages(processedMessages);
       }
     } catch (error) {
@@ -146,135 +225,94 @@ const ChatApp = () => {
       setIsLoading(false);
     }
   };
-  
+
   // Handle conversation selection
   const handleConversationSelect = (convId) => {
     setConversationId(convId);
     localStorage.setItem('lastConversationId', convId);
     window.history.pushState({}, '', `/chat?conversation_id=${convId}`);
     loadConversationMessages(convId);
-    
-    // Close sidebar on mobile after selection
+
     if (window.innerWidth <= 768) {
       setSidebarOpen(false);
     }
   };
-  
+
   // Handle new chat creation
   const handleNewChat = () => {
-    const newConvId = `web_conv_${Date.now()}`;
+    const newConvId = `web_conv_${crypto.randomUUID()}`;
     setConversationId(newConvId);
     setMessages([]);
     localStorage.setItem('lastConversationId', newConvId);
     window.history.pushState({}, '', `/chat?conversation_id=${newConvId}`);
-    
-    // Note: The conversation list will be refreshed after the first message is sent
-    // since a conversation only exists in the backend after it has messages
-    
-    // Close sidebar on mobile after creating new chat
+
     if (window.innerWidth <= 768) {
       setSidebarOpen(false);
     }
   };
-  
+
   // Handle new messages from the user
-  const handleNew = useCallback(async (message) => {
-    // Add user message to state
-    const userMessage = {
-      id: `msg_${Date.now()}`,
-      role: 'user',
-      content: [{ type: 'text', text: message.content[0].text }],
-      createdAt: new Date()
-    };
-    
-    setMessages(prev => [...prev, userMessage]);
-    setIsLoading(true);
-    
-    try {
-      // Send message to backend
-      const response = await fetch('/api/v1/chat/send_message', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          prompt: message.content[0].text,
-          conversation_id: conversationId || `web_conv_${Date.now()}`,
-          profile_id: 'default_assistant', // You can make this configurable
-          interface_type: 'web' // Specify that this is from the web UI
-        }),
+  const handleNew = useCallback(
+    async (message) => {
+      const userMessage = {
+        id: `msg_${Date.now()}`,
+        role: 'user',
+        content: [{ type: 'text', text: message.content[0].text }],
+        createdAt: new Date(),
+      };
+
+      const assistantMessageId = `msg_${Date.now()}_assistant`;
+      // Add both user message and a loading assistant message
+      const loadingAssistantMessage = {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: [{ type: 'text', text: LOADING_MARKER }], // Special marker for loading state
+        isLoading: true, // Custom flag to indicate loading state
+        createdAt: new Date(),
+      };
+      
+      setMessages((prev) => [...prev, userMessage, loadingAssistantMessage]);
+
+      streamingMessageIdRef.current = assistantMessageId;
+
+      await sendStreamingMessage({
+        prompt: message.content[0].text,
+        conversationId: conversationId || `web_conv_${crypto.randomUUID()}`,
+        profileId: profileId,
+        interfaceType: 'web',
       });
-      
-      if (!response.ok) {
-        // Handle authentication errors
-        if (response.status === 401) {
-          window.location.href = '/login?next=/chat';
-          return;
-        }
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      
-      // Add assistant response to state
-      const assistantMessage = {
-        id: `msg_${Date.now()}_assistant`,
-        role: 'assistant',
-        content: [{ type: 'text', text: data.reply }],
-        createdAt: new Date()
-      };
-      
-      setMessages(prev => [...prev, assistantMessage]);
-      
-      // Refresh conversations to update the sidebar with the new message
-      fetchConversations();
-    } catch (error) {
-      console.error('Error sending message:', error);
-      // Add error message
-      const errorMessage = {
-        id: `msg_${Date.now()}_error`,
-        role: 'assistant',
-        content: [{ type: 'text', text: 'Sorry, I encountered an error processing your message.' }],
-        createdAt: new Date()
-      };
-      setMessages(prev => [...prev, errorMessage]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [conversationId]);
-  
-  // Convert backend message format to assistant-ui format
+    },
+    [conversationId, sendStreamingMessage, profileId]
+  );
+
   const convertMessage = useCallback((message) => {
-    // Messages are already in the correct format from our processing
     return message;
   }, []);
-  
-  // Create the runtime
+
   const runtime = useExternalStoreRuntime({
     messages,
-    isRunning: isLoading || !conversationId, // Prevent sending messages until conversationId is ready
+    isRunning: isLoading || isStreaming,
     onNew: handleNew,
     convertMessage,
   });
-  
+
   return (
-    <div className={`chat-app-wrapper ${sidebarOpen ? 'with-sidebar' : ''}`}>
+    <>
       <NavHeader />
-      <div className="chat-app-header">
-        <button 
-          className="sidebar-toggle"
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-          aria-label="Toggle sidebar"
-        >
-          ☰
-        </button>
-        <h1>Chat</h1>
-      </div>
-      <div className="chat-app-body">
-        {/* Overlay when sidebar is open on mobile */}
+      <div className={`chat-app-wrapper ${sidebarOpen ? 'with-sidebar' : ''}`}>
+        <div className="chat-app-header">
+          <button
+            className="sidebar-toggle"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            aria-label="Toggle sidebar"
+          >
+            ☰
+          </button>
+          <h1>Chat</h1>
+        </div>
+        <div className="chat-app-body">
         {sidebarOpen && isMobile && (
-          <div 
+          <div
             className="sidebar-overlay"
             onClick={() => setSidebarOpen(false)}
             aria-hidden="true"
@@ -296,11 +334,12 @@ const ChatApp = () => {
                 <div className="chat-info">
                   <h2>Family Assistant Chat</h2>
                   {conversationId && (
-                    <div className="conversation-id">Conversation: {conversationId.substring(0, 20)}...</div>
+                    <div className="conversation-id">
+                      Conversation: {conversationId.substring(0, 20)}...
+                    </div>
                   )}
                 </div>
                 <Thread />
-                {isLoading && messages.length > 0 && <ThreadLoading />}
               </div>
             </AssistantRuntimeProvider>
           </main>
@@ -309,7 +348,8 @@ const ChatApp = () => {
           </footer>
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 };
 

@@ -23,3 +23,17 @@ repos:
     rev: v0.17.0
     hooks:
       - id: yamlfmt
+  - repo: local
+    hooks:
+      - id: biome-format
+        name: biome-format
+        entry: bash -c 'cd frontend && npx @biomejs/biome format --write "$@"' --
+        language: system
+        files: ^frontend/.*\.(js|jsx|ts|tsx|json)$
+        pass_filenames: true
+      - id: eslint
+        name: eslint
+        entry: bash -c 'cd frontend && npx eslint --fix "$@"' --
+        language: system
+        files: ^frontend/.*\.(js|jsx|ts|tsx)$
+        pass_filenames: true

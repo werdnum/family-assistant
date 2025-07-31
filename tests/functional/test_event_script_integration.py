@@ -8,7 +8,8 @@ import asyncio
 import json
 import logging
 import uuid
-from unittest.mock import AsyncMock, MagicMock
+from collections.abc import Callable
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -44,6 +45,7 @@ logger = logging.getLogger(__name__)
 @pytest.mark.asyncio
 async def test_create_script_listener_via_tool_and_execute(
     db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
 ) -> None:
     """Test end-to-end: create script listener via tool, trigger event, verify execution."""
     test_run_id = uuid.uuid4()
@@ -152,9 +154,6 @@ log_motion()
         assert listener["action_type"] == EventActionType.script
 
     # Step 5: Set up infrastructure for event processing
-    shutdown_event = asyncio.Event()
-    new_task_event = asyncio.Event()
-
     # Event processor
     processor = EventProcessor(sources={}, sample_interval_hours=1.0)
     processor._running = True
@@ -180,22 +179,13 @@ log_motion()
         server_url=None,
     )
 
-    # Start task worker
-    task_worker = TaskWorker(
+    # Create task worker using fixture
+    mock_chat_interface = AsyncMock(spec=ChatInterface)
+    task_worker, new_task_event, shutdown_event = task_worker_manager(
         processing_service=processing_service,
-        chat_interface=AsyncMock(spec=ChatInterface),
-        timezone_str="UTC",
-        embedding_generator=MagicMock(),
-        calendar_config={},
-        shutdown_event_instance=shutdown_event,
-        engine=db_engine,
+        chat_interface=mock_chat_interface,
     )
     task_worker.register_task_handler("script_execution", handle_script_execution)
-
-    worker_task = asyncio.create_task(
-        task_worker.run(new_task_event), name=f"ScriptWorker-{test_run_id}"
-    )
-    await asyncio.sleep(0.1)
 
     # Step 6: Process event that should trigger the script
     await processor.process_event(
@@ -221,21 +211,14 @@ log_motion()
 
     logger.info("Script listener created via tool and executed successfully")
 
-    # Cleanup
-    shutdown_event.set()
-    new_task_event.set()
-    try:
-        await asyncio.wait_for(worker_task, timeout=2.0)
-    except asyncio.TimeoutError:
-        worker_task.cancel()
-        await asyncio.sleep(0.1)
-
+    # Cleanup is handled by the fixture automatically
     logger.info(f"--- Script Listener Tool Integration Test ({test_run_id}) Passed ---")
 
 
 @pytest.mark.asyncio
 async def test_script_listener_with_complex_conditions(
     db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
 ) -> None:
     """Test script listener with more complex match conditions and script logic."""
     test_run_id = uuid.uuid4()
@@ -314,9 +297,6 @@ process_temperature()
         assert json.loads(create_result)["success"] is True
 
     # Set up infrastructure
-    shutdown_event = asyncio.Event()
-    new_task_event = asyncio.Event()
-
     processor = EventProcessor(sources={}, sample_interval_hours=1.0)
     processor._running = True
     await processor._refresh_listener_cache()
@@ -340,21 +320,13 @@ process_temperature()
         server_url=None,
     )
 
-    task_worker = TaskWorker(
+    # Create task worker using fixture
+    mock_chat_interface = AsyncMock(spec=ChatInterface)
+    task_worker, new_task_event, shutdown_event = task_worker_manager(
         processing_service=processing_service,
-        chat_interface=AsyncMock(spec=ChatInterface),
-        timezone_str="UTC",
-        embedding_generator=MagicMock(),
-        calendar_config={},
-        shutdown_event_instance=shutdown_event,
-        engine=db_engine,
+        chat_interface=mock_chat_interface,
     )
     task_worker.register_task_handler("script_execution", handle_script_execution)
-
-    worker_task = asyncio.create_task(
-        task_worker.run(new_task_event), name=f"ComplexWorker-{test_run_id}"
-    )
-    await asyncio.sleep(0.1)
 
     # Test 1: Small temperature change (should not create note)
     await processor.process_event(
@@ -414,13 +386,5 @@ process_temperature()
 
     logger.info("Complex script listener executed conditional logic correctly")
 
-    # Cleanup
-    shutdown_event.set()
-    new_task_event.set()
-    try:
-        await asyncio.wait_for(worker_task, timeout=2.0)
-    except asyncio.TimeoutError:
-        worker_task.cancel()
-        await asyncio.sleep(0.1)
-
+    # Cleanup is handled by the fixture automatically
     logger.info(f"--- Complex Script Listener Test ({test_run_id}) Passed ---")

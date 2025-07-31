@@ -5,8 +5,10 @@ import rehypeSanitize from 'rehype-sanitize';
 
 // Secure markdown renderer for chat messages
 export const MarkdownText = ({ text }) => {
-  if (!text) return null;
-  
+  if (!text) {
+    return null;
+  }
+
   return (
     <div className="markdown-text">
       <ReactMarkdown
