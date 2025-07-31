@@ -1165,7 +1165,126 @@ export const ScheduleActionToolUI = ({ args, result, status }) => {
     </div>
   );
 };
-export const ScheduleRecurringActionToolUI = ToolFallback;
+// Tool UI for schedule_recurring_action
+export const ScheduleRecurringActionToolUI = ({ args, result, status }) => {
+  // Helper function to format date-time
+  const formatDateTime = (isoString) => {
+    if (!isoString) {
+      return 'Unknown time';
+    }
+    try {
+      return new Date(isoString).toLocaleString();
+    } catch (_e) {
+      return isoString;
+    }
+  };
+
+  // Helper function to format recurrence rule
+  const formatRecurrenceRule = (rrule) => {
+    if (!rrule) {
+      return 'Unknown recurrence';
+    }
+    
+    // Simple formatting for common patterns
+    if (rrule.includes('FREQ=DAILY')) {
+      const intervalMatch = rrule.match(/INTERVAL=(\d+)/);
+      const interval = intervalMatch ? parseInt(intervalMatch[1]) : 1;
+      return interval === 1 ? 'Daily' : `Every ${interval} days`;
+    } else if (rrule.includes('FREQ=WEEKLY')) {
+      const dayMatch = rrule.match(/BYDAY=([^;]+)/);
+      const days = dayMatch ? dayMatch[1] : '';
+      return days ? `Weekly on ${days.replace(/,/g, ', ')}` : 'Weekly';
+    } else if (rrule.includes('FREQ=HOURLY')) {
+      const intervalMatch = rrule.match(/INTERVAL=(\d+)/);
+      const interval = intervalMatch ? parseInt(intervalMatch[1]) : 1;
+      return interval === 1 ? 'Hourly' : `Every ${interval} hours`;
+    }
+    
+    return rrule;
+  };
+
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  return (
+    <div className={`tool-call-container tool-schedule-recurring-action ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">🔄 Schedule Recurring Action</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+
+      <div className="tool-schedule-recurring-action-content">
+        <div className="tool-schedule-details">
+          {args?.start_time && (
+            <div className="tool-schedule-start-time">
+              📅 Start Time: <strong>{formatDateTime(args.start_time)}</strong>
+            </div>
+          )}
+
+          {args?.recurrence_rule && (
+            <div className="tool-schedule-recurrence">
+              🔁 Recurrence: <strong>{formatRecurrenceRule(args.recurrence_rule)}</strong>
+              <div className="tool-schedule-rrule">
+                <small>RRULE: {args.recurrence_rule}</small>
+              </div>
+            </div>
+          )}
+
+          {args?.action_type && (
+            <div className="tool-schedule-action-type">
+              ⚡ Action Type: <strong>{args.action_type}</strong>
+            </div>
+          )}
+
+          {args?.task_name && (
+            <div className="tool-schedule-task-name">
+              🏷️ Task Name: <strong>{args.task_name}</strong>
+            </div>
+          )}
+
+          {args?.action_config && Object.keys(args.action_config).length > 0 && (
+            <div className="tool-schedule-action-config">
+              <div className="tool-section-label">Action Configuration:</div>
+              <pre className="tool-code-block">{JSON.stringify(args.action_config, null, 2)}</pre>
+            </div>
+          )}
+        </div>
+
+        {result && (
+          <div className="tool-schedule-recurring-action-result">
+            {status?.type === 'incomplete' ? (
+              <div className="tool-error-message">
+                <AlertCircleIcon size={16} />
+                <span>{result}</span>
+              </div>
+            ) : (
+              <div className="tool-success-message">
+                <CheckCircleIcon size={16} />
+                <span>{result}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Scheduling recurring action...</div>
+      )}
+    </div>
+  );
+};
 // Tool UI for get_full_document_content
 export const GetFullDocumentContentToolUI = ({ args, result, status }) => {
   // Helper function to count words and characters
@@ -1444,7 +1563,71 @@ export const IngestDocumentFromUrlToolUI = ({ args, result, status }) => {
     </div>
   );
 };
-export const GetUserDocumentationContentToolUI = ToolFallback;
+// Tool UI for get_user_documentation_content
+export const GetUserDocumentationContentToolUI = ({ args, result, status }) => {
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  return (
+    <div className={`tool-call-container tool-user-docs ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">📖 User Documentation</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+
+      <div className="tool-user-docs-content">
+        {args?.filename && (
+          <div className="tool-user-docs-request">
+            Reading documentation file: <strong>{args.filename}</strong>
+          </div>
+        )}
+
+        {result && (
+          <div className="tool-user-docs-result">
+            {status?.type === 'incomplete' ? (
+              <div className="tool-error-message">
+                <AlertCircleIcon size={16} />
+                <span>{result}</span>
+              </div>
+            ) : (
+              <div className="tool-user-docs-content-display">
+                <div className="tool-section-label">Documentation Content:</div>
+                <div className="tool-result-text">
+                  {result.length > 1000 ? (
+                    <>
+                      <div>{result.substring(0, 1000)}...</div>
+                      <div className="tool-content-truncated">
+                        Content truncated (showing first 1000 characters of {result.length} total)
+                      </div>
+                    </>
+                  ) : (
+                    result
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Reading documentation file...</div>
+      )}
+    </div>
+  );
+};
 // Tool UI for query_recent_events
 export const QueryRecentEventsToolUI = ({ args, result, status }) => {
   // Parse the result JSON if it's a string
@@ -1520,7 +1703,7 @@ export const QueryRecentEventsToolUI = ({ args, result, status }) => {
   }
 
   const events = parsedResult?.events || [];
-  const hasError = result && typeof result === 'string' && result.startsWith('Error:');
+  const hasError = status?.type === 'incomplete';
 
   return (
     <div
@@ -1821,7 +2004,7 @@ export const CreateEventListenerToolUI = ({ args, result, status }) => {
   const isSuccess = parsedResult?.success === true;
   const isError =
     parsedResult?.success === false ||
-    (result && typeof result === 'string' && result.startsWith('Error:'));
+    (status?.type === 'incomplete');
 
   // Determine status icon and classes
   let statusIcon = null;
@@ -2023,7 +2206,7 @@ export const ListEventListenersToolUI = ({ args, result, status }) => {
   const _isSuccess = parsedResult?.success === true;
   const isError =
     parsedResult?.success === false ||
-    (result && typeof result === 'string' && result.startsWith('Error:'));
+    (status?.type === 'incomplete');
 
   // Determine status icon and classes
   let statusIcon = null;
@@ -2163,7 +2346,7 @@ export const DeleteEventListenerToolUI = ({ args, result, status }) => {
   const isSuccess = parsedResult?.success === true;
   const isError =
     parsedResult?.success === false ||
-    (result && typeof result === 'string' && result.startsWith('Error:'));
+    (status?.type === 'incomplete');
 
   // Determine status icon and classes
   let statusIcon = null;
@@ -2259,7 +2442,7 @@ export const ToggleEventListenerToolUI = ({ args, result, status }) => {
   const isSuccess = parsedResult?.success === true;
   const isError =
     parsedResult?.success === false ||
-    (result && typeof result === 'string' && result.startsWith('Error:'));
+    (status?.type === 'incomplete');
 
   // Determine status icon and classes
   let statusIcon = null;
@@ -2564,7 +2747,67 @@ export const TestEventListenerScriptToolUI = ({ args, result, status }) => {
     </div>
   );
 };
-export const RenderHomeAssistantTemplateToolUI = ToolFallback;
+// Tool UI for render_home_assistant_template
+export const RenderHomeAssistantTemplateToolUI = ({ args, result, status }) => {
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  return (
+    <div className={`tool-call-container tool-ha-template ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">🏠 Home Assistant Template</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+
+      <div className="tool-ha-template-content">
+        {args?.template && (
+          <div className="tool-ha-template-input">
+            <div className="tool-section-label">Template:</div>
+            <pre className="tool-code-block">{args.template}</pre>
+          </div>
+        )}
+
+        {result && (
+          <div className="tool-ha-template-result">
+            {status?.type === 'incomplete' ? (
+              <div className="tool-error-message">
+                <AlertCircleIcon size={16} />
+                <span>{result}</span>
+              </div>
+            ) : (
+              <div className="tool-ha-template-output">
+                <div className="tool-section-label">Template Result:</div>
+                <div className="tool-result-text">
+                  {result === 'Template rendered to empty result' ? (
+                    <em className="tool-empty-result">Template rendered to empty result</em>
+                  ) : (
+                    result
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Rendering Home Assistant template...</div>
+      )}
+    </div>
+  );
+};
 // Tool UI for add_calendar_event
 export const AddCalendarEventToolUI = ({ args, result, status }) => {
   // Format the time in a human-readable way
@@ -2975,14 +3218,17 @@ export const ModifyCalendarEventToolUI = ({ args, result, status }) => {
 
           {args?.recurrence_rule !== undefined && (
             <div className="tool-calendar-change">
-              <strong>Recurrence:</strong> {args.recurrence_rule ? `🔄 ${args.recurrence_rule}` : '(removed)'}
+              <strong>Recurrence:</strong>{' '}
+              {args.recurrence_rule ? `🔄 ${args.recurrence_rule}` : '(removed)'}
             </div>
           )}
         </div>
       </div>
 
       {result && (
-        <div className={`tool-calendar-result ${isError ? 'tool-error-message' : isSuccess ? 'tool-success-message' : ''}`}>
+        <div
+          className={`tool-calendar-result ${isError ? 'tool-error-message' : isSuccess ? 'tool-success-message' : ''}`}
+        >
           {typeof result === 'string' ? result : 'Event modified successfully!'}
         </div>
       )}
@@ -3054,7 +3300,9 @@ export const DeleteCalendarEventToolUI = ({ args, result, status }) => {
       </div>
 
       {result && (
-        <div className={`tool-calendar-result ${isError ? 'tool-error-message' : isSuccess ? 'tool-success-message' : ''}`}>
+        <div
+          className={`tool-calendar-result ${isError ? 'tool-error-message' : isSuccess ? 'tool-success-message' : ''}`}
+        >
           {typeof result === 'string' ? result : 'Event deleted successfully!'}
         </div>
       )}
@@ -3238,8 +3486,160 @@ export const GetMessageHistoryToolUI = ({ args, result, status }) => {
     </div>
   );
 };
-export const SendMessageToUserToolUI = ToolFallback;
-export const ExecuteScriptToolUI = ToolFallback;
+// Tool UI for send_message_to_user
+export const SendMessageToUserToolUI = ({ args, result, status }) => {
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  return (
+    <div className={`tool-call-container tool-send-message ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">💬 Send Message</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+
+      <div className="tool-send-message-content">
+        <div className="tool-message-details">
+          {args?.target_chat_id && (
+            <div className="tool-message-recipient">
+              📱 To Chat ID: <strong>{args.target_chat_id}</strong>
+            </div>
+          )}
+
+          {args?.message_content && (
+            <div className="tool-message-content">
+              <div className="tool-section-label">Message:</div>
+              <div className="tool-message-text">
+                {args.message_content.length > 200 ? (
+                  <>
+                    <div>"{args.message_content.substring(0, 200)}..."</div>
+                    <div className="tool-content-truncated">
+                      Message truncated (showing first 200 characters of {args.message_content.length} total)
+                    </div>
+                  </>
+                ) : (
+                  `"${args.message_content}"`
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {result && (
+          <div className="tool-send-message-result">
+            {status?.type === 'incomplete' ? (
+              <div className="tool-error-message">
+                <AlertCircleIcon size={16} />
+                <span>{result}</span>
+              </div>
+            ) : (
+              <div className="tool-success-message">
+                <CheckCircleIcon size={16} />
+                <span>{result}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Sending message...</div>
+      )}
+    </div>
+  );
+};
+// Tool UI for execute_script
+export const ExecuteScriptToolUI = ({ args, result, status }) => {
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  return (
+    <div className={`tool-call-container tool-execute-script ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">⚡ Execute Script</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+
+      <div className="tool-execute-script-content">
+        {args?.script && (
+          <div className="tool-script-input">
+            <div className="tool-section-label">Starlark Script:</div>
+            <pre className="tool-code-block">
+              {args.script.length > 500 ? (
+                <>
+                  {args.script.substring(0, 500)}...
+                  <div className="tool-content-truncated">
+                    Script truncated (showing first 500 characters of {args.script.length} total)
+                  </div>
+                </>
+              ) : (
+                args.script
+              )}
+            </pre>
+          </div>
+        )}
+
+        {args?.globals && Object.keys(args.globals).length > 0 && (
+          <div className="tool-script-globals">
+            <div className="tool-section-label">Global Variables:</div>
+            <pre className="tool-code-block">{JSON.stringify(args.globals, null, 2)}</pre>
+          </div>
+        )}
+
+        {result && (
+          <div className="tool-script-result">
+            {status?.type === 'incomplete' ? (
+              <div className="tool-error-message">
+                <AlertCircleIcon size={16} />
+                <div className="tool-section-label">Script Error:</div>
+                <pre className="tool-error-text">{result}</pre>
+              </div>
+            ) : (
+              <div className="tool-script-output">
+                <div className="tool-section-label">Script Output:</div>
+                <div className="tool-result-text">
+                  {result.trim() === '' ? (
+                    <em className="tool-empty-result">Script executed successfully (no output)</em>
+                  ) : (
+                    <pre className="tool-script-result-block">{result}</pre>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Executing Starlark script...</div>
+      )}
+    </div>
+  );
+};
 
 // Create a map of tool UIs by name for easier access
 export const toolUIsByName = {

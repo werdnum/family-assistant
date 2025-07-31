@@ -601,7 +601,7 @@ const sampleToolCalls = [
       calendar_url: 'https://cal.example.com/work',
       new_summary: 'Daily Standup - Sprint 12',
     },
-    result: 'OK. Event \'Daily Standup\' updated: title to \'Daily Standup - Sprint 12\'.',
+    result: "OK. Event 'Daily Standup' updated: title to 'Daily Standup - Sprint 12'.",
     status: { type: 'complete' },
   },
   {
@@ -613,7 +613,8 @@ const sampleToolCalls = [
       new_start_time: '2024-12-22T15:30:00+01:00',
       new_end_time: '2024-12-22T16:30:00+01:00',
     },
-    result: 'OK. Event \'Doctor Appointment\' updated: start time to 2024-12-22T15:30:00+01:00, end time to 2024-12-22T16:30:00+01:00.',
+    result:
+      "OK. Event 'Doctor Appointment' updated: start time to 2024-12-22T15:30:00+01:00, end time to 2024-12-22T16:30:00+01:00.",
     status: { type: 'complete' },
   },
   {
@@ -625,10 +626,12 @@ const sampleToolCalls = [
       new_summary: 'Project Kickoff Meeting',
       new_start_time: '2024-12-23T10:00:00+01:00',
       new_end_time: '2024-12-23T11:30:00+01:00',
-      new_description: 'Introduction to the new project, team assignments, and initial planning session.',
+      new_description:
+        'Introduction to the new project, team assignments, and initial planning session.',
       recurrence_rule: 'FREQ=WEEKLY;BYDAY=MO',
     },
-    result: 'OK. Event \'Team Meeting\' updated: title to \'Project Kickoff Meeting\', start time to 2024-12-23T10:00:00+01:00, end time to 2024-12-23T11:30:00+01:00, description, recurrence rule.',
+    result:
+      "OK. Event 'Team Meeting' updated: title to 'Project Kickoff Meeting', start time to 2024-12-23T10:00:00+01:00, end time to 2024-12-23T11:30:00+01:00, description, recurrence rule.",
     status: { type: 'complete' },
   },
   {
@@ -640,7 +643,8 @@ const sampleToolCalls = [
       new_summary: 'One-time Workout Session',
       recurrence_rule: '',
     },
-    result: 'OK. Event \'Weekly Workout\' updated: title to \'One-time Workout Session\', removed recurrence.',
+    result:
+      "OK. Event 'Weekly Workout' updated: title to 'One-time Workout Session', removed recurrence.",
     status: { type: 'complete' },
   },
   {
@@ -651,7 +655,7 @@ const sampleToolCalls = [
       calendar_url: 'https://cal.example.com/personal',
       new_summary: 'Updated Title',
     },
-    result: 'Error: Event with UID \'nonexistent-event-123\' not found in calendar.',
+    result: "Error: Event with UID 'nonexistent-event-123' not found in calendar.",
     status: { type: 'complete' },
   },
   {
@@ -693,7 +697,7 @@ const sampleToolCalls = [
       uid: 'cancelled-appointment-123',
       calendar_url: 'https://cal.example.com/personal',
     },
-    result: 'OK. Event \'Doctor Appointment\' deleted from calendar.',
+    result: "OK. Event 'Doctor Appointment' deleted from calendar.",
     status: { type: 'complete' },
   },
   {
@@ -703,7 +707,7 @@ const sampleToolCalls = [
       uid: 'project-review-789',
       calendar_url: 'https://cal.example.com/work',
     },
-    result: 'OK. Event \'Project Review Meeting\' deleted from calendar.',
+    result: "OK. Event 'Project Review Meeting' deleted from calendar.",
     status: { type: 'complete' },
   },
   {
@@ -713,7 +717,7 @@ const sampleToolCalls = [
       uid: 'weekly-standup-recurring',
       calendar_url: 'https://cal.example.com/work',
     },
-    result: 'OK. Event \'Weekly Team Standup\' deleted from calendar.',
+    result: "OK. Event 'Weekly Team Standup' deleted from calendar.",
     status: { type: 'complete' },
   },
   {
@@ -723,7 +727,7 @@ const sampleToolCalls = [
       uid: 'nonexistent-event-delete',
       calendar_url: 'https://cal.example.com/personal',
     },
-    result: 'Error: Event with UID \'nonexistent-event-delete\' not found in calendar.',
+    result: "Error: Event with UID 'nonexistent-event-delete' not found in calendar.",
     status: { type: 'complete' },
   },
   {
@@ -2067,6 +2071,266 @@ def process_event(event_data):
       error: "KeyError: 'missing_key'",
     }),
     status: { type: 'complete' },
+  },
+  
+  // Utility Tool UIs
+  {
+    name: 'get_user_documentation_content',
+    title: 'Get User Documentation - Running',
+    args: {
+      filename: 'USER_GUIDE.md',
+    },
+    result: null,
+    status: { type: 'running' },
+  },
+  {
+    name: 'get_user_documentation_content',
+    title: 'Get User Documentation - Success',
+    args: {
+      filename: 'FEATURES.md',
+    },
+    result: '# Family Assistant Features\n\nThis document outlines the key features of the Family Assistant application:\n\n## Core Features\n- **Smart Chat Interface**: Interact with the assistant via Telegram or web interface\n- **Document Management**: Store, search, and retrieve documents and notes\n- **Calendar Integration**: Manage events and appointments\n- **Task Scheduling**: Set up automated tasks and reminders\n\n## Advanced Features\n- **Home Assistant Integration**: Control smart home devices\n- **Script Execution**: Run custom automation scripts\n- **Event Listeners**: Respond to system events automatically\n\nFor detailed usage instructions, see the USER_GUIDE.md file.',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'get_user_documentation_content',
+    title: 'Get User Documentation - File Not Found',
+    args: {
+      filename: 'NONEXISTENT.md',
+    },
+    result: 'Error: Documentation file NONEXISTENT.md not found.',
+    status: { type: 'incomplete', reason: 'error' },
+  },
+  {
+    name: 'get_user_documentation_content',
+    title: 'Get User Documentation - Access Denied',
+    args: {
+      filename: '../../../etc/passwd',
+    },
+    result: 'Error: Access denied. Invalid filename or extension \'../../../etc/passwd\'.',
+    status: { type: 'incomplete', reason: 'error' },
+  },
+  
+  {
+    name: 'render_home_assistant_template',
+    title: 'Home Assistant Template - Running',
+    args: {
+      template: '{{ states("sensor.temperature") }}°C',
+    },
+    result: null,
+    status: { type: 'running' },
+  },
+  {
+    name: 'render_home_assistant_template',
+    title: 'Home Assistant Template - Success',
+    args: {
+      template: 'The living room temperature is {{ states("sensor.living_room_temperature") }}°C and the humidity is {{ states("sensor.living_room_humidity") }}%',
+    },
+    result: 'The living room temperature is 22.5°C and the humidity is 45%',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'render_home_assistant_template',
+    title: 'Home Assistant Template - Empty Result',
+    args: {
+      template: '{{ states("sensor.nonexistent") if false }}',
+    },
+    result: 'Template rendered to empty result',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'render_home_assistant_template',
+    title: 'Home Assistant Template - Error',
+    args: {
+      template: '{{ invalid_function() }}',
+    },
+    result: 'Error: Home Assistant API error - Template error: unknown function invalid_function',
+    status: { type: 'incomplete', reason: 'error' },
+  },
+  
+  {
+    name: 'send_message_to_user',
+    title: 'Send Message - Running',
+    args: {
+      target_chat_id: 123456789,
+      message_content: 'Hello! This is a test message from the Family Assistant.',
+    },
+    result: null,
+    status: { type: 'running' },
+  },
+  {
+    name: 'send_message_to_user',
+    title: 'Send Message - Success',
+    args: {
+      target_chat_id: 987654321,
+      message_content: 'Your scheduled reminder: Don\'t forget to pick up groceries on your way home!',
+    },
+    result: 'Message sent successfully to user with Chat ID 987654321.',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'send_message_to_user',
+    title: 'Send Message - Long Content',
+    args: {
+      target_chat_id: 555666777,
+      message_content: 'This is a very long message that demonstrates how the UI handles content truncation. It contains a lot of text that might be too long to display comfortably in the UI without truncation. The message continues with more detailed information about various topics and explanations that would normally be quite lengthy in a real-world scenario.',
+    },
+    result: 'Message sent successfully to user with Chat ID 555666777.',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'send_message_to_user',
+    title: 'Send Message - Error',
+    args: {
+      target_chat_id: 123456789,
+      message_content: 'This message failed to send.',
+    },
+    result: 'Error: Could not send message to Chat ID 123456789. Details: User not found or blocked the bot.',
+    status: { type: 'incomplete', reason: 'error' },
+  },
+  
+  {
+    name: 'execute_script',
+    title: 'Execute Script - Running',
+    args: {
+      script: 'print("Hello from Starlark!")\nresult = 2 + 3\nprint("Result:", result)',
+      globals: null,
+    },
+    result: null,
+    status: { type: 'running' },
+  },
+  {
+    name: 'execute_script',
+    title: 'Execute Script - Success with Output',
+    args: {
+      script: 'def fibonacci(n):\n    if n <= 1:\n        return n\n    return fibonacci(n-1) + fibonacci(n-2)\n\nfor i in range(8):\n    print("fib(" + str(i) + ") =", fibonacci(i))',
+      globals: null,
+    },
+    result: 'fib(0) = 0\nfib(1) = 1\nfib(2) = 1\nfib(3) = 2\nfib(4) = 3\nfib(5) = 5\nfib(6) = 8\nfib(7) = 13',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'execute_script',
+    title: 'Execute Script - With Globals',
+    args: {
+      script: 'print("Processing data:", data)\nfor item in data["items"]:\n    print("- " + item["name"] + ": " + str(item["value"]))',
+      globals: {
+        data: {
+          items: [
+            { name: 'Temperature', value: 22.5 },
+            { name: 'Humidity', value: 45 },
+            { name: 'Pressure', value: 1013.25 },
+          ],
+        },
+      },
+    },
+    result: 'Processing data: {"items": [{"name": "Temperature", "value": 22.5}, {"name": "Humidity", "value": 45}, {"name": "Pressure", "value": 1013.25}]}\n- Temperature: 22.5\n- Humidity: 45\n- Pressure: 1013.25',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'execute_script',
+    title: 'Execute Script - Long Script Truncated',
+    args: {
+      script: 'def complex_calculation(data):\n    """This is a very long script that demonstrates\n    how the UI handles script truncation when the\n    script content is too long to display comfortably.\n    \n    The script continues with many lines of code\n    that would normally be quite lengthy in a\n    real-world automation scenario.\n    \n    It includes complex logic, data processing,\n    error handling, and various computational\n    operations that might be needed for advanced\n    automation tasks."""\n    \n    result = []\n    for i in range(len(data)):\n        processed = data[i] * 2 + 1\n        result.append(processed)\n    \n    return result\n\ndata = [1, 2, 3, 4, 5]\noutput = complex_calculation(data)\nprint("Processed data:", output)',
+      globals: null,
+    },
+    result: 'Processed data: [3, 5, 7, 9, 11]',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'execute_script',
+    title: 'Execute Script - No Output',
+    args: {
+      script: 'x = 42\ny = x * 2\n# This script runs but produces no output',
+      globals: null,
+    },
+    result: '',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'execute_script',
+    title: 'Execute Script - Error',
+    args: {
+      script: 'undefined_variable = some_missing_var + 5',
+      globals: null,
+    },
+    result: 'Error: Starlark execution failed - name \'some_missing_var\' is not defined',
+    status: { type: 'incomplete', reason: 'error' },
+  },
+  
+  {
+    name: 'schedule_recurring_action',
+    title: 'Schedule Recurring Action - Running',
+    args: {
+      start_time: '2024-12-25T09:00:00+00:00',
+      recurrence_rule: 'FREQ=DAILY;INTERVAL=1',
+      action_type: 'wake_llm',
+      action_config: {
+        context: 'Daily morning briefing',
+      },
+      task_name: 'Daily Briefing',
+    },
+    result: null,
+    status: { type: 'running' },
+  },
+  {
+    name: 'schedule_recurring_action',
+    title: 'Schedule Recurring Action - Daily Task',
+    args: {
+      start_time: '2024-12-25T08:00:00+00:00',
+      recurrence_rule: 'FREQ=DAILY;INTERVAL=1',
+      action_type: 'wake_llm',
+      action_config: {
+        context: 'Check weather and provide daily summary',
+        additional_instructions: 'Include traffic updates for commute',
+      },
+      task_name: 'Morning Weather Update',
+    },
+    result: 'OK. Recurring wake_llm action (Morning Weather Update) scheduled starting 2024-12-25T08:00:00+00:00',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'schedule_recurring_action',
+    title: 'Schedule Recurring Action - Weekly Script',
+    args: {
+      start_time: '2024-12-29T18:00:00+00:00',
+      recurrence_rule: 'FREQ=WEEKLY;BYDAY=SU',
+      action_type: 'script',
+      action_config: {
+        script_code: 'print("Running weekly backup script")\n# Perform backup operations\nprint("Backup completed successfully")',
+        environment: 'production',
+      },
+      task_name: 'Weekly Backup',
+    },
+    result: 'OK. Recurring script action (Weekly Backup) scheduled starting 2024-12-29T18:00:00+00:00',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'schedule_recurring_action',
+    title: 'Schedule Recurring Action - Hourly No Name',
+    args: {
+      start_time: '2024-12-25T10:00:00+00:00',
+      recurrence_rule: 'FREQ=HOURLY;INTERVAL=4',
+      action_type: 'wake_llm',
+      action_config: {
+        context: 'System health check every 4 hours',
+      },
+    },
+    result: 'OK. Recurring wake_llm action scheduled starting 2024-12-25T10:00:00+00:00',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'schedule_recurring_action',
+    title: 'Schedule Recurring Action - Error',
+    args: {
+      start_time: '2024-12-20T09:00:00+00:00',
+      recurrence_rule: 'FREQ=DAILY;INTERVAL=1',
+      action_type: 'wake_llm',
+      action_config: {},
+      task_name: 'Invalid Task',
+    },
+    result: 'Error: wake_llm action requires \'context\' in action_config',
+    status: { type: 'incomplete', reason: 'error' },
   },
 ];
 
