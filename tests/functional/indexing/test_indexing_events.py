@@ -52,11 +52,6 @@ async def poll_for_document_ready_event(
 
     from family_assistant.storage.events import recent_events_table
 
-    # Add initial delay to allow event processing to start
-    # This addresses the race condition where polling begins before
-    # the event has been dequeued and processed by the EventProcessor
-    await asyncio.sleep(0.2)
-
     max_attempts = int(timeout_seconds / poll_interval)
 
     for _ in range(max_attempts):
@@ -240,6 +235,9 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                 await handle_embed_and_store_batch(task_context, task["payload"])
                 await db_ctx.tasks.update_status(task["task_id"], "done")
                 tasks_processed += 1
+
+        # Wait for all events to be processed before polling
+        await indexing_source.wait_for_pending_events()
 
         # Poll for DOCUMENT_READY event and verify its contents
         # Use longer timeout since event processing is async
@@ -473,6 +471,9 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
             # Process embedding task - should emit event
             await handle_embed_and_store_batch(exec_context, task["payload"])
 
+            # Wait for all events to be processed before polling
+            await indexing_source.wait_for_pending_events()
+
             # Poll for the event and verify
             event_data = await poll_for_document_ready_event(doc_id, engine=db_engine)
 
@@ -577,6 +578,9 @@ async def test_document_ready_event_includes_rich_metadata(
             # Process task - should emit event with rich metadata
             await handle_embed_and_store_batch(exec_context, task["payload"])
             await db_ctx.tasks.update_status(task["task_id"], "done")
+
+        # Wait for all events to be processed before polling
+        await indexing_source.wait_for_pending_events()
 
         # Poll for the event with longer timeout for rich metadata test
         event_data = await poll_for_document_ready_event(
@@ -694,6 +698,9 @@ async def test_document_ready_event_handles_none_metadata(
             # Process task - should emit event even with None metadata
             await handle_embed_and_store_batch(exec_context, task["payload"])
             await db_ctx.tasks.update_status(task["task_id"], "done")
+
+        # Wait for all events to be processed before polling
+        await indexing_source.wait_for_pending_events()
 
         # Poll for DOCUMENT_READY event
         event_data = await poll_for_document_ready_event(doc_id, engine=db_engine)
