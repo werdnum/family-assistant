@@ -332,11 +332,11 @@ async def test_document_ready_not_emitted_with_pending_tasks(
         event_emitted = False
         original_emit = indexing_source.emit_event
 
-        async def track_emit(event_data: dict[str, Any]) -> None:
+        async def track_emit(event_data: dict[str, Any]) -> asyncio.Future[None]:
             nonlocal event_emitted
             if event_data.get("event_type") == IndexingEventType.DOCUMENT_READY.value:
                 event_emitted = True
-            await original_emit(event_data)
+            return await original_emit(event_data)
 
         indexing_source.emit_event = track_emit
 
