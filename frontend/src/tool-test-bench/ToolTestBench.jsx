@@ -1,8 +1,5 @@
 import React from 'react';
-import { 
-  toolUIsByName,
-  ToolFallback,
-} from '../chat/ToolUI';
+import { toolUIsByName, ToolFallback } from '../chat/ToolUI';
 
 // Sample data for testing different tool states
 const sampleToolCalls = [
@@ -12,10 +9,10 @@ const sampleToolCalls = [
     args: {
       title: 'Meeting Notes',
       content: 'Discussed the Q4 roadmap and budget allocations. Action items include...',
-      include_in_prompt: true
+      include_in_prompt: true,
     },
     result: null,
-    status: { type: 'running' }
+    status: { type: 'running' },
   },
   {
     name: 'add_or_update_note',
@@ -23,86 +20,88 @@ const sampleToolCalls = [
     args: {
       title: 'Shopping List',
       content: 'Milk, Eggs, Bread, Coffee',
-      include_in_prompt: false
+      include_in_prompt: false,
     },
     result: "Note 'Shopping List' has been created successfully.",
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'get_note',
     title: 'Get Note - Running',
     args: {
-      title: 'Meeting Notes'
+      title: 'Meeting Notes',
     },
     result: null,
-    status: { type: 'running' }
+    status: { type: 'running' },
   },
   {
     name: 'get_note',
     title: 'Get Note - Found (Included in Prompts)',
     args: {
-      title: 'Project Roadmap'
+      title: 'Project Roadmap',
     },
     result: JSON.stringify({
       exists: true,
       title: 'Project Roadmap',
-      content: 'Q1: Focus on user authentication and core features\nQ2: Implement advanced search and filtering\nQ3: Mobile app development\nQ4: Performance optimization and scaling',
-      include_in_prompt: true
+      content:
+        'Q1: Focus on user authentication and core features\nQ2: Implement advanced search and filtering\nQ3: Mobile app development\nQ4: Performance optimization and scaling',
+      include_in_prompt: true,
     }),
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'get_note',
     title: 'Get Note - Found (Not Included in Prompts)',
     args: {
-      title: 'Personal Shopping List'
+      title: 'Personal Shopping List',
     },
     result: JSON.stringify({
       exists: true,
       title: 'Personal Shopping List',
-      content: 'Groceries:\n- Organic milk\n- Free-range eggs\n- Whole grain bread\n- Fair trade coffee\n- Fresh vegetables for the week',
-      include_in_prompt: false
+      content:
+        'Groceries:\n- Organic milk\n- Free-range eggs\n- Whole grain bread\n- Fair trade coffee\n- Fresh vegetables for the week',
+      include_in_prompt: false,
     }),
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'get_note',
     title: 'Get Note - Not Found',
     args: {
-      title: 'Nonexistent Note'
+      title: 'Nonexistent Note',
     },
     result: JSON.stringify({
       exists: false,
       title: null,
       content: null,
-      include_in_prompt: null
+      include_in_prompt: null,
     }),
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'get_note',
     title: 'Get Note - Error',
     args: {
-      title: 'Error Test Note'
+      title: 'Error Test Note',
     },
     result: null,
-    status: { type: 'incomplete', reason: 'error' }
+    status: { type: 'incomplete', reason: 'error' },
   },
   {
     name: 'get_note',
     title: 'Get Note - Malformed JSON Response',
     args: {
-      title: 'Test Note'
+      title: 'Test Note',
     },
     result: 'This is not valid JSON, should fallback gracefully',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'list_notes',
     title: 'List Notes - Running',
     args: {},
     result: null,
-    status: { type: 'running' }
+    status: { type: 'running' },
   },
   {
     name: 'list_notes',
@@ -111,158 +110,170 @@ const sampleToolCalls = [
     result: JSON.stringify([
       {
         title: 'Project Roadmap',
-        content_preview: 'Q1: Focus on user authentication and core features. Q2: Implement advanced search and filtering...',
-        include_in_prompt: true
+        content_preview:
+          'Q1: Focus on user authentication and core features. Q2: Implement advanced search and filtering...',
+        include_in_prompt: true,
       },
       {
         title: 'Meeting Notes - Team Standup',
-        content_preview: 'Discussed sprint progress, blockers, and upcoming deliverables. Action items include...',
-        include_in_prompt: true
+        content_preview:
+          'Discussed sprint progress, blockers, and upcoming deliverables. Action items include...',
+        include_in_prompt: true,
       },
       {
         title: 'Personal Shopping List',
-        content_preview: 'Groceries: Organic milk, Free-range eggs, Whole grain bread, Fair trade coffee...',
-        include_in_prompt: false
+        content_preview:
+          'Groceries: Organic milk, Free-range eggs, Whole grain bread, Fair trade coffee...',
+        include_in_prompt: false,
       },
       {
         title: 'Vacation Planning',
-        content_preview: 'Summer trip ideas: Beach house rental, Mountain hiking, City exploration tours...',
-        include_in_prompt: false
-      }
+        content_preview:
+          'Summer trip ideas: Beach house rental, Mountain hiking, City exploration tours...',
+        include_in_prompt: false,
+      },
     ]),
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'list_notes',
     title: 'List Notes - Filtered (Include in Prompt Only)',
     args: {
-      include_in_prompt_only: true
+      include_in_prompt_only: true,
     },
     result: JSON.stringify([
       {
         title: 'Project Roadmap',
-        content_preview: 'Q1: Focus on user authentication and core features. Q2: Implement advanced search...',
-        include_in_prompt: true
+        content_preview:
+          'Q1: Focus on user authentication and core features. Q2: Implement advanced search...',
+        include_in_prompt: true,
       },
       {
         title: 'Important Decisions Log',
-        content_preview: 'Architecture decisions, technology choices, and their rationale. Key decisions include...',
-        include_in_prompt: true
-      }
+        content_preview:
+          'Architecture decisions, technology choices, and their rationale. Key decisions include...',
+        include_in_prompt: true,
+      },
     ]),
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'list_notes',
     title: 'List Notes - Empty Results',
     args: {},
     result: JSON.stringify([]),
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'list_notes',
     title: 'List Notes - Empty Results (Filtered)',
     args: {
-      include_in_prompt_only: true
+      include_in_prompt_only: true,
     },
     result: JSON.stringify([]),
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'list_notes',
     title: 'List Notes - Error',
     args: {},
     result: null,
-    status: { type: 'incomplete', reason: 'error' }
+    status: { type: 'incomplete', reason: 'error' },
   },
   {
     name: 'list_notes',
     title: 'List Notes - Malformed JSON Response',
     args: {},
     result: 'This is not valid JSON, should fallback gracefully',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'delete_note',
     title: 'Delete Note - Running',
     args: {
-      title: 'Old Meeting Notes'
+      title: 'Old Meeting Notes',
     },
     result: null,
-    status: { type: 'running' }
+    status: { type: 'running' },
   },
   {
     name: 'delete_note',
     title: 'Delete Note - Success',
     args: {
-      title: 'Shopping List'
+      title: 'Shopping List',
     },
     result: JSON.stringify({
       success: true,
-      message: "Note 'Shopping List' deleted successfully."
+      message: "Note 'Shopping List' deleted successfully.",
     }),
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'delete_note',
     title: 'Delete Note - Not Found',
     args: {
-      title: 'Nonexistent Note'
+      title: 'Nonexistent Note',
     },
     result: JSON.stringify({
       success: false,
-      message: "Note 'Nonexistent Note' not found."
+      message: "Note 'Nonexistent Note' not found.",
     }),
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'delete_note',
     title: 'Delete Note - Error',
     args: {
-      title: 'Error Test Note'
+      title: 'Error Test Note',
     },
     result: null,
-    status: { type: 'incomplete', reason: 'error' }
+    status: { type: 'incomplete', reason: 'error' },
   },
   {
     name: 'delete_note',
     title: 'Delete Note - Malformed JSON Response',
     args: {
-      title: 'Test Note'
+      title: 'Test Note',
     },
     result: 'This is not valid JSON, should fallback gracefully',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'search_documents',
     title: 'Search Documents - Running',
     args: {
-      query: 'project roadmap 2024'
+      query: 'project roadmap 2024',
     },
     result: null,
-    status: { type: 'running' }
+    status: { type: 'running' },
   },
   {
     name: 'search_documents',
     title: 'Search Documents - Complete',
     args: {
-      query: 'vacation policy'
+      query: 'vacation policy',
     },
     result: [
-      { title: 'HR Policy Document', snippet: '...employees are entitled to 15 days of paid vacation...' },
-      { title: 'Employee Handbook', snippet: '...vacation requests must be submitted 2 weeks in advance...' }
+      {
+        title: 'HR Policy Document',
+        snippet: '...employees are entitled to 15 days of paid vacation...',
+      },
+      {
+        title: 'Employee Handbook',
+        snippet: '...vacation requests must be submitted 2 weeks in advance...',
+      },
     ],
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'schedule_reminder',
     title: 'Schedule Reminder - Running',
     args: {
       message: 'Call the dentist for annual checkup',
-      time: '2024-12-20T14:00:00'
+      time: '2024-12-20T14:00:00',
     },
     result: null,
-    status: { type: 'running' }
+    status: { type: 'running' },
   },
   {
     name: 'schedule_reminder',
@@ -270,10 +281,10 @@ const sampleToolCalls = [
     args: {
       message: 'Team standup meeting',
       time: '2024-12-21T09:30:00',
-      recurring: false
+      recurring: false,
     },
     result: 'Reminder scheduled successfully for December 21, 2024 at 9:30 AM',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'schedule_reminder',
@@ -281,20 +292,20 @@ const sampleToolCalls = [
     args: {
       message: 'Take daily vitamins',
       time: '2024-12-20T08:00:00',
-      recurring: true
+      recurring: true,
     },
     result: 'Recurring reminder set up successfully',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'schedule_reminder',
     title: 'Schedule Reminder - Error',
     args: {
       message: 'Invalid time test',
-      time: 'invalid-time-format'
+      time: 'invalid-time-format',
     },
     result: null,
-    status: { type: 'incomplete', reason: 'error' }
+    status: { type: 'incomplete', reason: 'error' },
   },
   {
     name: 'schedule_action',
@@ -305,11 +316,11 @@ const sampleToolCalls = [
       action_data: {
         report_type: 'weekly_summary',
         recipients: ['manager@company.com', 'team@company.com'],
-        format: 'pdf'
-      }
+        format: 'pdf',
+      },
     },
     result: null,
-    status: { type: 'running' }
+    status: { type: 'running' },
   },
   {
     name: 'schedule_action',
@@ -320,12 +331,12 @@ const sampleToolCalls = [
       action_data: {
         backup_type: 'full',
         retention_days: 30,
-        compress: true
+        compress: true,
       },
-      recurring: false
+      recurring: false,
     },
     result: 'Action "Database backup" scheduled successfully for December 24, 2024 at 2:00 AM',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'schedule_action',
@@ -336,12 +347,12 @@ const sampleToolCalls = [
       action_data: {
         check_type: 'comprehensive',
         alert_threshold: 85,
-        services: ['database', 'api_server', 'cache', 'queue']
+        services: ['database', 'api_server', 'cache', 'queue'],
       },
-      recurring: true
+      recurring: true,
     },
     result: 'Recurring action "System health check" set up successfully',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'schedule_action',
@@ -351,11 +362,11 @@ const sampleToolCalls = [
       execution_time: '2024-12-25T01:00:00',
       action_data: {
         directory: '/tmp',
-        older_than_days: 7
-      }
+        older_than_days: 7,
+      },
     },
     result: 'Cleanup action scheduled successfully',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'schedule_action',
@@ -368,17 +379,17 @@ const sampleToolCalls = [
         environments: ['staging', 'production'],
         rollback_config: {
           enabled: true,
-          timeout_minutes: 10
+          timeout_minutes: 10,
         },
         notifications: {
           slack_channel: '#deployments',
-          email_list: ['devops@company.com']
-        }
+          email_list: ['devops@company.com'],
+        },
       },
-      recurring: false
+      recurring: false,
     },
     result: 'Deployment action configured and scheduled',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'schedule_action',
@@ -386,10 +397,10 @@ const sampleToolCalls = [
     args: {
       action_name: 'Restart cache service',
       execution_time: '2024-12-27T03:30:00',
-      action_data: {}
+      action_data: {},
     },
     result: 'Simple action scheduled without parameters',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'schedule_action',
@@ -398,11 +409,11 @@ const sampleToolCalls = [
       action_name: 'Invalid action test',
       execution_time: 'not-a-valid-time',
       action_data: {
-        test_param: 'value'
-      }
+        test_param: 'value',
+      },
     },
     result: null,
-    status: { type: 'incomplete', reason: 'error' }
+    status: { type: 'incomplete', reason: 'error' },
   },
   {
     name: 'add_calendar_event',
@@ -412,10 +423,10 @@ const sampleToolCalls = [
       summary: 'Doctor Appointment',
       start_time: '2024-12-20T14:30:00',
       end_time: '2024-12-20T15:30:00',
-      description: 'Annual checkup with Dr. Smith'
+      description: 'Annual checkup with Dr. Smith',
     },
     result: null,
-    status: { type: 'running' }
+    status: { type: 'running' },
   },
   {
     name: 'add_calendar_event',
@@ -425,10 +436,10 @@ const sampleToolCalls = [
       summary: 'Team Meeting',
       start_time: '2024-12-21T10:00:00',
       end_time: '2024-12-21T11:00:00',
-      description: 'Weekly team standup and project updates'
+      description: 'Weekly team standup and project updates',
     },
     result: 'Calendar event "Team Meeting" has been created successfully.',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'add_calendar_event',
@@ -439,10 +450,10 @@ const sampleToolCalls = [
       start_time: '2024-12-25T00:00:00',
       end_time: '2024-12-25T23:59:59',
       all_day: true,
-      description: 'Christmas Day - Family time'
+      description: 'Christmas Day - Family time',
     },
     result: 'All-day event created successfully.',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'add_calendar_event',
@@ -453,10 +464,10 @@ const sampleToolCalls = [
       start_time: '2024-07-15T00:00:00',
       end_time: '2024-07-22T23:59:59',
       all_day: true,
-      description: 'Family trip to the beach'
+      description: 'Family trip to the beach',
     },
     result: 'Multi-day event created successfully.',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'add_calendar_event',
@@ -467,10 +478,10 @@ const sampleToolCalls = [
       start_time: '2024-12-20T09:00:00',
       end_time: '2024-12-20T09:30:00',
       description: 'Daily team sync meeting',
-      recurrence_rule: 'FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR'
+      recurrence_rule: 'FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR',
     },
     result: 'Recurring event created successfully.',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'add_calendar_event',
@@ -479,10 +490,10 @@ const sampleToolCalls = [
       calendar_url: 'https://cal.example.com/invalid',
       summary: 'Failed Event',
       start_time: 'invalid-date-format',
-      end_time: '2024-12-20T15:30:00'
+      end_time: '2024-12-20T15:30:00',
     },
     result: null,
-    status: { type: 'incomplete', reason: 'error' }
+    status: { type: 'incomplete', reason: 'error' },
   },
   {
     name: 'search_calendar_events',
@@ -490,10 +501,10 @@ const sampleToolCalls = [
     args: {
       search_text: 'meeting',
       date_range_start: '2024-12-20',
-      date_range_end: '2024-12-25'
+      date_range_end: '2024-12-25',
     },
     result: null,
-    status: { type: 'running' }
+    status: { type: 'running' },
   },
   {
     name: 'search_calendar_events',
@@ -501,7 +512,7 @@ const sampleToolCalls = [
     args: {
       search_text: 'team',
       date_range_start: '2024-12-20',
-      max_results: 5
+      max_results: 5,
     },
     result: `Found 3 event(s):
 
@@ -522,7 +533,7 @@ const sampleToolCalls = [
    End: 2024-12-23 16:00 PST
    UID: team-retro-345-678
    Calendar: https://cal.example.com/work`,
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'search_calendar_events',
@@ -530,17 +541,17 @@ const sampleToolCalls = [
     args: {
       search_text: 'nonexistent',
       date_range_start: '2024-12-20',
-      date_range_end: '2024-12-25'
+      date_range_end: '2024-12-25',
     },
     result: 'No events found matching the search criteria.',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'search_calendar_events',
     title: 'Search Calendar Events - Date Range Only',
     args: {
       date_range_start: '2024-12-20',
-      date_range_end: '2024-12-22'
+      date_range_end: '2024-12-22',
     },
     result: `Found 2 event(s):
 
@@ -555,41 +566,209 @@ const sampleToolCalls = [
    End: 2024-12-21 23:59 PST
    UID: vacation-123-456
    Calendar: https://cal.example.com/personal`,
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'search_calendar_events',
     title: 'Search Calendar Events - Error',
     args: {
       search_text: 'meeting',
-      date_range_start: '2024-12-20'
+      date_range_start: '2024-12-20',
     },
     result: 'Error: CalDAV is not configured. Cannot search calendar events.',
-    status: { type: 'incomplete', reason: 'error' }
+    status: { type: 'incomplete', reason: 'error' },
+  },
+  // Calendar modification tools
+  {
+    name: 'modify_calendar_event',
+    title: 'Modify Calendar Event - Running',
+    args: {
+      uid: 'event-12345-abcdef',
+      calendar_url: 'https://cal.example.com/personal',
+      new_summary: 'Updated Team Meeting',
+      new_start_time: '2024-12-21T14:00:00+01:00',
+      new_end_time: '2024-12-21T15:00:00+01:00',
+      new_description: 'Updated agenda: Q4 review and 2025 planning',
+    },
+    result: null,
+    status: { type: 'running' },
+  },
+  {
+    name: 'modify_calendar_event',
+    title: 'Modify Calendar Event - Complete (Title Only)',
+    args: {
+      uid: 'team-standup-456-789',
+      calendar_url: 'https://cal.example.com/work',
+      new_summary: 'Daily Standup - Sprint 12',
+    },
+    result: 'OK. Event \'Daily Standup\' updated: title to \'Daily Standup - Sprint 12\'.',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'modify_calendar_event',
+    title: 'Modify Calendar Event - Complete (Time Change)',
+    args: {
+      uid: 'doctor-appointment-789-012',
+      calendar_url: 'https://cal.example.com/personal',
+      new_start_time: '2024-12-22T15:30:00+01:00',
+      new_end_time: '2024-12-22T16:30:00+01:00',
+    },
+    result: 'OK. Event \'Doctor Appointment\' updated: start time to 2024-12-22T15:30:00+01:00, end time to 2024-12-22T16:30:00+01:00.',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'modify_calendar_event',
+    title: 'Modify Calendar Event - Complete (Full Update)',
+    args: {
+      uid: 'meeting-abc-123',
+      calendar_url: 'https://cal.example.com/work',
+      new_summary: 'Project Kickoff Meeting',
+      new_start_time: '2024-12-23T10:00:00+01:00',
+      new_end_time: '2024-12-23T11:30:00+01:00',
+      new_description: 'Introduction to the new project, team assignments, and initial planning session.',
+      recurrence_rule: 'FREQ=WEEKLY;BYDAY=MO',
+    },
+    result: 'OK. Event \'Team Meeting\' updated: title to \'Project Kickoff Meeting\', start time to 2024-12-23T10:00:00+01:00, end time to 2024-12-23T11:30:00+01:00, description, recurrence rule.',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'modify_calendar_event',
+    title: 'Modify Calendar Event - Remove Recurrence',
+    args: {
+      uid: 'recurring-event-456',
+      calendar_url: 'https://cal.example.com/personal',
+      new_summary: 'One-time Workout Session',
+      recurrence_rule: '',
+    },
+    result: 'OK. Event \'Weekly Workout\' updated: title to \'One-time Workout Session\', removed recurrence.',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'modify_calendar_event',
+    title: 'Modify Calendar Event - Event Not Found',
+    args: {
+      uid: 'nonexistent-event-123',
+      calendar_url: 'https://cal.example.com/personal',
+      new_summary: 'Updated Title',
+    },
+    result: 'Error: Event with UID \'nonexistent-event-123\' not found in calendar.',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'modify_calendar_event',
+    title: 'Modify Calendar Event - Calendar Access Error',
+    args: {
+      uid: 'event-789-xyz',
+      calendar_url: 'https://cal.example.com/restricted',
+      new_summary: 'Updated Meeting',
+    },
+    result: 'Error: CalDAV configuration is incomplete. Cannot modify event.',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'modify_calendar_event',
+    title: 'Modify Calendar Event - System Error',
+    args: {
+      uid: 'system-error-event',
+      calendar_url: 'https://cal.example.com/personal',
+      new_summary: 'Test Event',
+    },
+    result: null,
+    status: { type: 'incomplete', reason: 'error' },
+  },
+  {
+    name: 'delete_calendar_event',
+    title: 'Delete Calendar Event - Running',
+    args: {
+      uid: 'old-meeting-456-789',
+      calendar_url: 'https://cal.example.com/work',
+    },
+    result: null,
+    status: { type: 'running' },
+  },
+  {
+    name: 'delete_calendar_event',
+    title: 'Delete Calendar Event - Success',
+    args: {
+      uid: 'cancelled-appointment-123',
+      calendar_url: 'https://cal.example.com/personal',
+    },
+    result: 'OK. Event \'Doctor Appointment\' deleted from calendar.',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'delete_calendar_event',
+    title: 'Delete Calendar Event - Success (Work Event)',
+    args: {
+      uid: 'project-review-789',
+      calendar_url: 'https://cal.example.com/work',
+    },
+    result: 'OK. Event \'Project Review Meeting\' deleted from calendar.',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'delete_calendar_event',
+    title: 'Delete Calendar Event - Success (Recurring Event)',
+    args: {
+      uid: 'weekly-standup-recurring',
+      calendar_url: 'https://cal.example.com/work',
+    },
+    result: 'OK. Event \'Weekly Team Standup\' deleted from calendar.',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'delete_calendar_event',
+    title: 'Delete Calendar Event - Event Not Found',
+    args: {
+      uid: 'nonexistent-event-delete',
+      calendar_url: 'https://cal.example.com/personal',
+    },
+    result: 'Error: Event with UID \'nonexistent-event-delete\' not found in calendar.',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'delete_calendar_event',
+    title: 'Delete Calendar Event - Calendar Access Error',
+    args: {
+      uid: 'restricted-event-123',
+      calendar_url: 'https://cal.example.com/restricted',
+    },
+    result: 'Error: CalDAV configuration is incomplete. Cannot delete event.',
+    status: { type: 'complete' },
+  },
+  {
+    name: 'delete_calendar_event',
+    title: 'Delete Calendar Event - System Error',
+    args: {
+      uid: 'system-error-delete',
+      calendar_url: 'https://cal.example.com/personal',
+    },
+    result: null,
+    status: { type: 'incomplete', reason: 'error' },
   },
   {
     name: 'unknown_tool',
     title: 'Unknown Tool - Error State',
     args: {
-      some_param: 'value'
+      some_param: 'value',
     },
     result: null,
-    status: { type: 'incomplete', reason: 'error' }
+    status: { type: 'incomplete', reason: 'error' },
   },
   {
     name: 'get_full_document_content',
     title: 'Get Document Content - Running',
     args: {
-      document_id: 'doc-123-user-manual'
+      document_id: 'doc-123-user-manual',
     },
     result: null,
-    status: { type: 'running' }
+    status: { type: 'running' },
   },
   {
     name: 'get_full_document_content',
     title: 'Get Document Content - Short Text Document',
     args: {
-      document_id: 'doc-456-meeting-notes'
+      document_id: 'doc-456-meeting-notes',
     },
     result: `Team Meeting Notes - Q4 Planning
 
@@ -612,13 +791,13 @@ Action Items:
 - Bob: Research competitive analysis
 - Carol: Draft team structure document
 - David: Schedule follow-up meetings with stakeholders`,
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'get_full_document_content',
     title: 'Get Document Content - Long Document (Truncated)',
     args: {
-      document_id: 'doc-789-technical-specification'
+      document_id: 'doc-789-technical-specification',
     },
     result: `Technical Specification Document
 Project: Family Assistant Platform
@@ -758,13 +937,13 @@ calendar_events:
 - recurrence_rule (TEXT)
 
 This document continues for several more sections covering security, performance, testing, and deployment procedures...`,
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'get_full_document_content',
     title: 'Get Document Content - Markdown Document',
     args: {
-      document_id: 'doc-101-readme'
+      document_id: 'doc-101-readme',
     },
     result: `# Family Assistant
 
@@ -824,13 +1003,13 @@ The application follows a modular architecture:
 ## License
 
 MIT License - see LICENSE file for details.`,
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'get_full_document_content',
     title: 'Get Document Content - Code File',
     args: {
-      document_id: 'doc-202-python-script'
+      document_id: 'doc-202-python-script',
     },
     result: `#!/usr/bin/env python3
 """
@@ -952,52 +1131,52 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())`,
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'get_full_document_content',
     title: 'Get Document Content - Document Not Found',
     args: {
-      document_id: 'doc-nonexistent-file'
+      document_id: 'doc-nonexistent-file',
     },
     result: 'Error: Document with ID "doc-nonexistent-file" not found in the system.',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'get_full_document_content',
     title: 'Get Document Content - Permission Error',
     args: {
-      document_id: 'doc-restricted-access'
+      document_id: 'doc-restricted-access',
     },
     result: 'Error: Access denied. You do not have permission to read this document.',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'get_full_document_content',
     title: 'Get Document Content - System Error',
     args: {
-      document_id: 'doc-system-failure'
+      document_id: 'doc-system-failure',
     },
     result: null,
-    status: { type: 'incomplete', reason: 'error' }
+    status: { type: 'incomplete', reason: 'error' },
   },
   {
     name: 'ingest_document_from_url',
     title: 'Ingest Document from URL - Running',
     args: {
-      url: 'https://docs.example.com/user-manual.pdf'
+      url: 'https://docs.example.com/user-manual.pdf',
     },
     result: null,
-    status: { type: 'running' }
+    status: { type: 'running' },
   },
   {
     name: 'ingest_document_from_url',
     title: 'Ingest Document from URL - Success',
     args: {
-      url: 'https://api.github.com/repos/owner/repo/contents/README.md'
+      url: 'https://api.github.com/repos/owner/repo/contents/README.md',
     },
     result: 'Document successfully ingested and indexed. Added 1 document with 15 chunks.',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'ingest_document_from_url',
@@ -1008,29 +1187,30 @@ if __name__ == "__main__":
         title: 'AI Research Paper 2024',
         author: 'Dr. Jane Smith',
         category: 'research',
-        tags: ['AI', 'machine learning', 'research']
-      }
+        tags: ['AI', 'machine learning', 'research'],
+      },
     },
-    result: 'Document "AI Research Paper 2024" has been successfully processed and added to the knowledge base.',
-    status: { type: 'complete' }
+    result:
+      'Document "AI Research Paper 2024" has been successfully processed and added to the knowledge base.',
+    status: { type: 'complete' },
   },
   {
     name: 'ingest_document_from_url',
     title: 'Ingest Document from URL - Web Page',
     args: {
-      url: 'https://blog.example.com/how-to-setup-development-environment'
+      url: 'https://blog.example.com/how-to-setup-development-environment',
     },
     result: 'Web page content successfully ingested. Extracted 2,450 words across 8 sections.',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'ingest_document_from_url',
     title: 'Ingest Document from URL - Long URL',
     args: {
-      url: 'https://very-long-domain-name-for-testing-url-truncation.example.com/path/to/very/deep/nested/directory/structure/with/multiple/segments/document-with-very-long-filename.pdf?version=2024&format=latest&include_metadata=true'
+      url: 'https://very-long-domain-name-for-testing-url-truncation.example.com/path/to/very/deep/nested/directory/structure/with/multiple/segments/document-with-very-long-filename.pdf?version=2024&format=latest&include_metadata=true',
     },
     result: 'Document ingested successfully from remote server.',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'ingest_document_from_url',
@@ -1039,66 +1219,68 @@ if __name__ == "__main__":
       url: 'https://company.sharepoint.com/sites/docs/proposal.docx',
       metadata: {
         department: 'Sales',
-        confidential: true
-      }
+        confidential: true,
+      },
     },
     result: 'Word document processed successfully. Extracted text and formatting information.',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'ingest_document_from_url',
     title: 'Ingest Document from URL - Markdown File',
     args: {
-      url: 'https://raw.githubusercontent.com/owner/repo/main/CHANGELOG.md'
+      url: 'https://raw.githubusercontent.com/owner/repo/main/CHANGELOG.md',
     },
     result: 'Markdown document ingested and structured content extracted.',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'ingest_document_from_url',
     title: 'Ingest Document from URL - Access Denied',
     args: {
-      url: 'https://private.example.com/confidential-document.pdf'
+      url: 'https://private.example.com/confidential-document.pdf',
     },
-    result: 'Error: Access denied. Unable to retrieve document from the specified URL. Please check permissions.',
-    status: { type: 'complete' }
+    result:
+      'Error: Access denied. Unable to retrieve document from the specified URL. Please check permissions.',
+    status: { type: 'complete' },
   },
   {
     name: 'ingest_document_from_url',
     title: 'Ingest Document from URL - Invalid URL',
     args: {
-      url: 'not-a-valid-url'
+      url: 'not-a-valid-url',
     },
     result: 'Error: Invalid URL format. Please provide a valid HTTP or HTTPS URL.',
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'ingest_document_from_url',
     title: 'Ingest Document from URL - Network Error',
     args: {
-      url: 'https://unreachable-server.example.com/document.pdf'
+      url: 'https://unreachable-server.example.com/document.pdf',
     },
     result: null,
-    status: { type: 'incomplete', reason: 'error' }
+    status: { type: 'incomplete', reason: 'error' },
   },
   {
     name: 'ingest_document_from_url',
     title: 'Ingest Document from URL - Unsupported Format',
     args: {
-      url: 'https://example.com/video-file.mp4'
+      url: 'https://example.com/video-file.mp4',
     },
-    result: 'Error: Unsupported file format. Only text documents, PDFs, and web pages are supported.',
-    status: { type: 'complete' }
+    result:
+      'Error: Unsupported file format. Only text documents, PDFs, and web pages are supported.',
+    status: { type: 'complete' },
   },
   {
     name: 'get_message_history',
     title: 'Get Message History - Running',
     args: {
       interface_type: 'telegram',
-      limit: 10
+      limit: 10,
     },
     result: null,
-    status: { type: 'running' }
+    status: { type: 'running' },
   },
   {
     name: 'get_message_history',
@@ -1106,7 +1288,7 @@ if __name__ == "__main__":
     args: {
       interface_type: 'web',
       limit: 5,
-      user_name: 'alice'
+      user_name: 'alice',
     },
     result: JSON.stringify([
       {
@@ -1114,38 +1296,40 @@ if __name__ == "__main__":
         content: 'Can you help me organize my notes for the upcoming project meeting?',
         timestamp: '2024-12-20T14:30:00Z',
         interface_type: 'web',
-        user_name: 'alice'
+        user_name: 'alice',
       },
       {
         role: 'assistant',
-        content: 'I\'d be happy to help you organize your notes! Let me search for any existing notes related to your project and then we can create a structured agenda.',
+        content:
+          "I'd be happy to help you organize your notes! Let me search for any existing notes related to your project and then we can create a structured agenda.",
         timestamp: '2024-12-20T14:30:15Z',
         interface_type: 'web',
-        user_name: 'alice'
+        user_name: 'alice',
       },
       {
         role: 'user',
         content: 'Great! I need to cover the Q4 roadmap, budget allocations, and team assignments.',
         timestamp: '2024-12-20T14:31:00Z',
         interface_type: 'web',
-        user_name: 'alice'
+        user_name: 'alice',
       },
       {
         role: 'assistant',
-        content: 'Perfect! I\'ll help you create a comprehensive meeting agenda covering those three key areas. Let me start by checking your existing notes and then we can structure everything properly.',
+        content:
+          "Perfect! I'll help you create a comprehensive meeting agenda covering those three key areas. Let me start by checking your existing notes and then we can structure everything properly.",
         timestamp: '2024-12-20T14:31:20Z',
         interface_type: 'web',
-        user_name: 'alice'
+        user_name: 'alice',
       },
       {
         role: 'system',
         content: 'Context updated with project-related notes and calendar events.',
         timestamp: '2024-12-20T14:31:25Z',
         interface_type: 'web',
-        user_name: 'system'
-      }
+        user_name: 'system',
+      },
     ]),
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'get_message_history',
@@ -1153,7 +1337,7 @@ if __name__ == "__main__":
     args: {
       interface_type: 'telegram',
       limit: 3,
-      user_name: 'bob'
+      user_name: 'bob',
     },
     result: JSON.stringify([
       {
@@ -1161,117 +1345,123 @@ if __name__ == "__main__":
         content: '/remind me to call mom tomorrow at 2pm',
         timestamp: '2024-12-19T18:45:00Z',
         interface_type: 'telegram',
-        user_name: 'bob'
+        user_name: 'bob',
       },
       {
         role: 'assistant',
-        content: 'I\'ve scheduled a reminder for you to call mom tomorrow (December 20th) at 2:00 PM. You\'ll receive a notification when it\'s time!',
+        content:
+          "I've scheduled a reminder for you to call mom tomorrow (December 20th) at 2:00 PM. You'll receive a notification when it's time!",
         timestamp: '2024-12-19T18:45:05Z',
         interface_type: 'telegram',
-        user_name: 'bob'
+        user_name: 'bob',
       },
       {
         role: 'user',
         content: 'Thanks! Also, can you add "buy groceries" to my shopping list note?',
         timestamp: '2024-12-19T18:46:00Z',
         interface_type: 'telegram',
-        user_name: 'bob'
-      }
+        user_name: 'bob',
+      },
     ]),
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'get_message_history',
     title: 'Get Message History - Mixed Interfaces',
     args: {
-      limit: 8
+      limit: 8,
     },
     result: JSON.stringify([
       {
         role: 'user',
-        content: 'What\'s on my calendar for next week?',
+        content: "What's on my calendar for next week?",
         timestamp: '2024-12-20T09:15:00Z',
         interface_type: 'telegram',
-        user_name: 'carol'
+        user_name: 'carol',
       },
       {
         role: 'assistant',
         content: 'Let me check your calendar for next week...',
         timestamp: '2024-12-20T09:15:05Z',
         interface_type: 'telegram',
-        user_name: 'carol'
+        user_name: 'carol',
       },
       {
         role: 'user',
-        content: 'I need to schedule a team meeting to discuss the new project requirements. Can you help me find a time that works for everyone?',
+        content:
+          'I need to schedule a team meeting to discuss the new project requirements. Can you help me find a time that works for everyone?',
         timestamp: '2024-12-20T11:30:00Z',
         interface_type: 'web',
-        user_name: 'david'
+        user_name: 'david',
       },
       {
         role: 'assistant',
-        content: 'I\'ll help you schedule that team meeting. Let me search for available time slots and check everyone\'s calendars.',
+        content:
+          "I'll help you schedule that team meeting. Let me search for available time slots and check everyone's calendars.",
         timestamp: '2024-12-20T11:30:10Z',
         interface_type: 'web',
-        user_name: 'david'
+        user_name: 'david',
       },
       {
         role: 'user',
         content: 'Please create a note about the client feedback we received today.',
         timestamp: '2024-12-20T16:20:00Z',
         interface_type: 'email',
-        user_name: 'eve'
+        user_name: 'eve',
       },
       {
         role: 'assistant',
-        content: 'I\'ve created a new note titled "Client Feedback - December 20, 2024" with the key points from today\'s discussion.',
+        content:
+          'I\'ve created a new note titled "Client Feedback - December 20, 2024" with the key points from today\'s discussion.',
         timestamp: '2024-12-20T16:20:25Z',
         interface_type: 'email',
-        user_name: 'eve'
-      }
+        user_name: 'eve',
+      },
     ]),
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'get_message_history',
     title: 'Get Message History - Long Message Content',
     args: {
       interface_type: 'web',
-      limit: 2
+      limit: 2,
     },
     result: JSON.stringify([
       {
         role: 'user',
-        content: 'I need to prepare a comprehensive project proposal for the executive team. The proposal should include a detailed analysis of our current market position, competitive landscape, projected costs and benefits, timeline with key milestones, risk assessment and mitigation strategies, resource requirements including personnel and technology needs, and expected ROI calculations. This is a critical presentation that could determine the future direction of our product development efforts for the next two years.',
+        content:
+          'I need to prepare a comprehensive project proposal for the executive team. The proposal should include a detailed analysis of our current market position, competitive landscape, projected costs and benefits, timeline with key milestones, risk assessment and mitigation strategies, resource requirements including personnel and technology needs, and expected ROI calculations. This is a critical presentation that could determine the future direction of our product development efforts for the next two years.',
         timestamp: '2024-12-20T13:00:00Z',
         interface_type: 'web',
-        user_name: 'frank'
+        user_name: 'frank',
       },
       {
         role: 'assistant',
-        content: 'I\'ll help you create a comprehensive project proposal for the executive team. This is indeed a critical presentation, and I\'ll make sure we cover all the essential elements you mentioned. Let me break this down into structured sections: 1) Executive Summary, 2) Market Analysis, 3) Competitive Landscape, 4) Financial Projections, 5) Implementation Timeline, 6) Risk Assessment, 7) Resource Planning, and 8) ROI Analysis. I\'ll start by gathering relevant information from your existing notes and documents to build a solid foundation for each section.',
+        content:
+          "I'll help you create a comprehensive project proposal for the executive team. This is indeed a critical presentation, and I'll make sure we cover all the essential elements you mentioned. Let me break this down into structured sections: 1) Executive Summary, 2) Market Analysis, 3) Competitive Landscape, 4) Financial Projections, 5) Implementation Timeline, 6) Risk Assessment, 7) Resource Planning, and 8) ROI Analysis. I'll start by gathering relevant information from your existing notes and documents to build a solid foundation for each section.",
         timestamp: '2024-12-20T13:00:30Z',
         interface_type: 'web',
-        user_name: 'frank'
-      }
+        user_name: 'frank',
+      },
     ]),
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'get_message_history',
     title: 'Get Message History - Empty Results',
     args: {
       interface_type: 'telegram',
-      user_name: 'nonexistent_user'
+      user_name: 'nonexistent_user',
     },
     result: JSON.stringify([]),
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'get_message_history',
     title: 'Get Message History - No Filter (All Messages)',
     args: {
-      limit: 15
+      limit: 15,
     },
     result: JSON.stringify([
       {
@@ -1279,45 +1469,605 @@ if __name__ == "__main__":
         content: 'Hello!',
         timestamp: '2024-12-20T08:00:00Z',
         interface_type: 'telegram',
-        user_name: 'alice'
+        user_name: 'alice',
       },
       {
         role: 'assistant',
         content: 'Hello! How can I help you today?',
         timestamp: '2024-12-20T08:00:05Z',
         interface_type: 'telegram',
-        user_name: 'alice'
+        user_name: 'alice',
       },
       {
         role: 'system',
         content: 'User session started',
         timestamp: '2024-12-20T08:00:00Z',
         interface_type: 'telegram',
-        user_name: 'system'
-      }
+        user_name: 'system',
+      },
     ]),
-    status: { type: 'complete' }
+    status: { type: 'complete' },
   },
   {
     name: 'get_message_history',
     title: 'Get Message History - Error',
     args: {
       interface_type: 'telegram',
-      limit: 10
+      limit: 10,
     },
     result: null,
-    status: { type: 'incomplete', reason: 'error' }
+    status: { type: 'incomplete', reason: 'error' },
   },
   {
     name: 'get_message_history',
     title: 'Get Message History - Malformed JSON Response',
     args: {
       interface_type: 'web',
-      limit: 5
+      limit: 5,
     },
     result: 'This is not valid JSON, should fallback gracefully to show raw text',
-    status: { type: 'complete' }
-  }
+    status: { type: 'complete' },
+  },
+  // Event system tools
+  {
+    name: 'query_recent_events',
+    title: 'Query Recent Events - Running',
+    args: {
+      source_id: 'home_assistant',
+      hours: 24,
+      limit: 10,
+    },
+    result: null,
+    status: { type: 'running' },
+  },
+  {
+    name: 'query_recent_events',
+    title: 'Query Recent Events - Complete with Results',
+    args: {
+      source_id: 'home_assistant',
+      hours: 6,
+      limit: 5,
+    },
+    result: JSON.stringify({
+      count: 3,
+      events: [
+        {
+          event_id: 'evt_001',
+          source_id: 'home_assistant',
+          timestamp: '2024-12-20T14:30:00Z',
+          event_data: {
+            entity_id: 'sensor.temperature',
+            state: '22.5',
+            attributes: { unit: '°C', friendly_name: 'Living Room Temperature' },
+          },
+          triggered_listeners: ['listener_temp_alert'],
+        },
+        {
+          event_id: 'evt_002',
+          source_id: 'home_assistant',
+          timestamp: '2024-12-20T13:15:00Z',
+          event_data: {
+            entity_id: 'binary_sensor.front_door',
+            state: 'off',
+            attributes: { friendly_name: 'Front Door', device_class: 'door' },
+          },
+          triggered_listeners: [],
+        },
+        {
+          event_id: 'evt_003',
+          source_id: 'home_assistant',
+          timestamp: '2024-12-20T12:45:00Z',
+          event_data: {
+            entity_id: 'light.bedroom',
+            state: 'on',
+            attributes: { brightness: 180, friendly_name: 'Bedroom Light' },
+          },
+          triggered_listeners: ['listener_light_automation'],
+        },
+      ],
+    }),
+    status: { type: 'complete' },
+  },
+  {
+    name: 'query_recent_events',
+    title: 'Query Recent Events - No Results',
+    args: {
+      source_id: 'indexing',
+      hours: 1,
+    },
+    result: JSON.stringify({
+      message: 'No events found in the specified time range.',
+    }),
+    status: { type: 'complete' },
+  },
+  {
+    name: 'create_event_listener',
+    title: 'Create Event Listener - Running',
+    args: {
+      name: 'Temperature Alert',
+      source: 'home_assistant',
+      conditions: [
+        {
+          field: 'entity_id',
+          operator: 'equals',
+          value: 'sensor.temperature',
+        },
+        {
+          field: 'state',
+          operator: 'greater_than',
+          value: '25',
+        },
+      ],
+      action_type: 'wake_llm',
+      action_data: {
+        message: 'Temperature is high: {state}°C',
+      },
+    },
+    result: null,
+    status: { type: 'running' },
+  },
+  {
+    name: 'create_event_listener',
+    title: 'Create Event Listener - Success',
+    args: {
+      name: 'Door Security Alert',
+      source: 'home_assistant',
+      conditions: [
+        {
+          field: 'entity_id',
+          operator: 'equals',
+          value: 'binary_sensor.front_door',
+        },
+        {
+          field: 'state',
+          operator: 'equals',
+          value: 'on',
+        },
+      ],
+      action_type: 'wake_llm',
+      action_data: {
+        message: 'Front door opened at {timestamp}',
+        priority: 'high',
+      },
+      enabled: true,
+      one_time: false,
+    },
+    result: JSON.stringify({
+      success: true,
+      listener_id: 'listener_123',
+      message: 'Event listener "Door Security Alert" created successfully.',
+    }),
+    status: { type: 'complete' },
+  },
+  {
+    name: 'list_event_listeners',
+    title: 'List Event Listeners - Running',
+    args: {
+      source: 'home_assistant',
+    },
+    result: null,
+    status: { type: 'running' },
+  },
+  {
+    name: 'list_event_listeners',
+    title: 'List Event Listeners - Complete with Results',
+    args: {
+      enabled: true,
+    },
+    result: JSON.stringify({
+      success: true,
+      count: 3,
+      listeners: [
+        {
+          id: 'listener_001',
+          name: 'Temperature Monitor',
+          source: 'home_assistant',
+          enabled: true,
+          one_time: false,
+          daily_executions: 5,
+          last_execution_at: '2024-12-20T14:30:00Z',
+          created_at: '2024-12-15T10:00:00Z',
+        },
+        {
+          id: 'listener_002',
+          name: 'Door Security Alert',
+          source: 'home_assistant',
+          enabled: true,
+          one_time: false,
+          daily_executions: 2,
+          last_execution_at: '2024-12-20T09:15:00Z',
+          created_at: '2024-12-18T16:30:00Z',
+        },
+        {
+          id: 'listener_003',
+          name: 'One-time Test Listener',
+          source: 'home_assistant',
+          enabled: true,
+          one_time: true,
+          daily_executions: 0,
+          last_execution_at: null,
+          created_at: '2024-12-20T12:00:00Z',
+        },
+      ],
+    }),
+    status: { type: 'complete' },
+  },
+  {
+    name: 'list_event_listeners',
+    title: 'List Event Listeners - Empty Results',
+    args: {
+      source: 'indexing',
+    },
+    result: JSON.stringify({
+      success: true,
+      count: 0,
+      listeners: [],
+    }),
+    status: { type: 'complete' },
+  },
+  {
+    name: 'delete_event_listener',
+    title: 'Delete Event Listener - Running',
+    args: {
+      listener_id: 'listener_456',
+    },
+    result: null,
+    status: { type: 'running' },
+  },
+  {
+    name: 'delete_event_listener',
+    title: 'Delete Event Listener - Success',
+    args: {
+      listener_id: 'listener_789',
+    },
+    result: JSON.stringify({
+      success: true,
+      message: 'Event listener deleted successfully.',
+    }),
+    status: { type: 'complete' },
+  },
+  {
+    name: 'delete_event_listener',
+    title: 'Delete Event Listener - Not Found',
+    args: {
+      listener_id: 'listener_nonexistent',
+    },
+    result: JSON.stringify({
+      success: false,
+      message: 'Event listener with ID "listener_nonexistent" not found.',
+    }),
+    status: { type: 'complete' },
+  },
+  {
+    name: 'toggle_event_listener',
+    title: 'Toggle Event Listener - Enable (Running)',
+    args: {
+      listener_id: 'listener_123',
+      enabled: true,
+    },
+    result: null,
+    status: { type: 'running' },
+  },
+  {
+    name: 'toggle_event_listener',
+    title: 'Toggle Event Listener - Enable Success',
+    args: {
+      listener_id: 'listener_456',
+      enabled: true,
+    },
+    result: JSON.stringify({
+      success: true,
+      message: 'Event listener "Temperature Monitor" has been enabled.',
+    }),
+    status: { type: 'complete' },
+  },
+  {
+    name: 'toggle_event_listener',
+    title: 'Toggle Event Listener - Disable Success',
+    args: {
+      listener_id: 'listener_789',
+      enabled: false,
+    },
+    result: JSON.stringify({
+      success: true,
+      message: 'Event listener "Door Alert" has been disabled.',
+    }),
+    status: { type: 'complete' },
+  },
+  {
+    name: 'toggle_event_listener',
+    title: 'Toggle Event Listener - Error',
+    args: {
+      listener_id: 'listener_invalid',
+      enabled: true,
+    },
+    result: JSON.stringify({
+      success: false,
+      message: 'Event listener with ID "listener_invalid" not found.',
+    }),
+    status: { type: 'complete' },
+  },
+
+  // Event Validation Tools
+  {
+    name: 'test_event_listener',
+    title: 'Test Event Listener - Running',
+    args: {
+      source: 'home_assistant',
+      hours: 24,
+      match_conditions: {
+        entity_id: 'sensor.temperature',
+      },
+    },
+    result: null,
+    status: { type: 'running' },
+  },
+  {
+    name: 'test_event_listener',
+    title: 'Test Event Listener - Success with Matches',
+    args: {
+      source: 'indexing',
+      hours: 48,
+      match_conditions: {
+        document_type: 'pdf',
+        status: 'processed',
+      },
+    },
+    result: JSON.stringify({
+      matched_count: 15,
+      total_tested: 32,
+      message: 'Found 15 matching events out of 32 total events in the last 48 hours.',
+      analysis: [
+        'Most matches occurred during business hours (9-17)',
+        'Peak activity on Tuesday and Wednesday',
+        'Processing time averaged 2.3 seconds per document',
+      ],
+      matched_events: [
+        {
+          timestamp: '2024-01-15T14:30:00Z',
+          event_data: {
+            document_type: 'pdf',
+            status: 'processed',
+            file_name: 'quarterly_report.pdf',
+            processing_time: 2.1,
+          },
+        },
+        {
+          timestamp: '2024-01-15T16:45:00Z',
+          event_data: {
+            document_type: 'pdf',
+            status: 'processed',
+            file_name: 'meeting_minutes.pdf',
+            processing_time: 1.8,
+          },
+        },
+        {
+          timestamp: '2024-01-16T09:15:00Z',
+          event_data: {
+            document_type: 'pdf',
+            status: 'processed',
+            file_name: 'invoice_jan_2024.pdf',
+            processing_time: 3.2,
+          },
+        },
+      ],
+    }),
+    status: { type: 'complete' },
+  },
+  {
+    name: 'test_event_listener',
+    title: 'Test Event Listener - No Matches',
+    args: {
+      source: 'webhook',
+      hours: 12,
+      match_conditions: {
+        event_type: 'payment_received',
+        amount: { $gt: 1000 },
+      },
+    },
+    result: JSON.stringify({
+      matched_count: 0,
+      total_tested: 8,
+      message: 'No events matched the specified conditions in the last 12 hours.',
+      analysis: [
+        'Total webhook events received: 8',
+        'No payment events exceeded $1000 threshold',
+        'Largest payment was $750',
+      ],
+      matched_events: [],
+    }),
+    status: { type: 'complete' },
+  },
+  {
+    name: 'test_event_listener',
+    title: 'Test Event Listener - Error',
+    args: {
+      source: 'invalid_source',
+      hours: 6,
+      match_conditions: {},
+    },
+    result: JSON.stringify({
+      error: 'Invalid event source: invalid_source',
+      message: 'Supported sources are: home_assistant, indexing, webhook',
+    }),
+    status: { type: 'complete' },
+  },
+  {
+    name: 'validate_event_listener_script',
+    title: 'Validate Script - Running',
+    args: {
+      script_code: `
+def process_event(event_data):
+    temperature = event_data.get('temperature', 0)
+    if temperature > 25:
+        return {"action": "turn_on_ac", "temperature": temperature}
+    return None
+      `.trim(),
+    },
+    result: null,
+    status: { type: 'running' },
+  },
+  {
+    name: 'validate_event_listener_script',
+    title: 'Validate Script - Success',
+    args: {
+      script_code: `
+def process_event(event_data):
+    sensor_value = event_data.get('value', 0)
+    threshold = event_data.get('threshold', 50)
+    
+    if sensor_value > threshold:
+        return {
+            "alert": True,
+            "message": f"Sensor value {sensor_value} exceeds threshold {threshold}",
+            "severity": "high" if sensor_value > threshold * 1.5 else "medium"
+        }
+    return {"alert": False}
+      `.trim(),
+    },
+    result: JSON.stringify({
+      success: true,
+      message: 'Script validation passed. Syntax is correct and function signature is valid.',
+    }),
+    status: { type: 'complete' },
+  },
+  {
+    name: 'validate_event_listener_script',
+    title: 'Validate Script - Syntax Error',
+    args: {
+      script_code: `
+def process_event(event_data):
+    temperature = event_data.get('temperature', 0
+    if temperature > 25:
+        return {"action": "turn_on_ac"}
+    return None
+      `.trim(),
+    },
+    result: JSON.stringify({
+      success: false,
+      error: 'SyntaxError: unexpected EOF while parsing',
+      line: 2,
+      message: 'Script contains syntax errors and cannot be executed.',
+    }),
+    status: { type: 'complete' },
+  },
+  {
+    name: 'test_event_listener_script',
+    title: 'Test Script - Running',
+    args: {
+      script_code: `
+def process_event(event_data):
+    motion_detected = event_data.get('motion', False)
+    time_of_day = event_data.get('hour', 12)
+    
+    if motion_detected and (time_of_day < 7 or time_of_day > 22):
+        return {
+            "action": "turn_on_lights",
+            "brightness": 30,
+            "reason": "Motion detected during night hours"
+        }
+    return None
+      `.trim(),
+      sample_event: {
+        motion: true,
+        hour: 23,
+        location: 'hallway',
+        timestamp: '2024-01-15T23:15:00Z',
+      },
+      timeout: 5,
+    },
+    result: null,
+    status: { type: 'running' },
+  },
+  {
+    name: 'test_event_listener_script',
+    title: 'Test Script - Success',
+    args: {
+      script_code: `
+def process_event(event_data):
+    door_state = event_data.get('state', 'closed')
+    armed = event_data.get('armed', False)
+    
+    if door_state == 'open' and armed:
+        return {
+            "alert": True,
+            "action": "send_notification",
+            "message": "Door opened while system is armed!",
+            "priority": "high"
+        }
+    return {"alert": False}
+      `.trim(),
+      sample_event: {
+        state: 'open',
+        armed: true,
+        door_id: 'front_door',
+        timestamp: '2024-01-15T14:30:00Z',
+      },
+      timeout: 10,
+    },
+    result: JSON.stringify({
+      success: true,
+      message: 'Script executed successfully with no errors.',
+      result: {
+        alert: true,
+        action: 'send_notification',
+        message: 'Door opened while system is armed!',
+        priority: 'high',
+      },
+    }),
+    status: { type: 'complete' },
+  },
+  {
+    name: 'test_event_listener_script',
+    title: 'Test Script - Returns None',
+    args: {
+      script_code: `
+def process_event(event_data):
+    temperature = event_data.get('temperature', 20)
+    comfort_range = (18, 24)
+    
+    if comfort_range[0] <= temperature <= comfort_range[1]:
+        return None  # No action needed
+    
+    return {"action": "adjust_temperature", "target": 22}
+      `.trim(),
+      sample_event: {
+        temperature: 21,
+        humidity: 45,
+        room: 'living_room',
+      },
+      timeout: 3,
+    },
+    result: JSON.stringify({
+      success: true,
+      message: 'Script executed successfully with no errors.',
+      result: null,
+    }),
+    status: { type: 'complete' },
+  },
+  {
+    name: 'test_event_listener_script',
+    title: 'Test Script - Runtime Error',
+    args: {
+      script_code: `
+def process_event(event_data):
+    # This will cause a runtime error
+    value = event_data['missing_key']  # KeyError
+    return {"value": value * 2}
+      `.trim(),
+      sample_event: {
+        temperature: 25,
+        timestamp: '2024-01-15T12:00:00Z',
+      },
+      timeout: 5,
+    },
+    result: JSON.stringify({
+      success: false,
+      message: 'Script execution failed with runtime error.',
+      error: "KeyError: 'missing_key'",
+    }),
+    status: { type: 'complete' },
+  },
 ];
 
 export const ToolTestBench = () => {
@@ -1331,11 +2081,11 @@ export const ToolTestBench = () => {
       <div className="tool-grid">
         {sampleToolCalls.map((toolCall, index) => {
           const ToolUI = toolUIsByName[toolCall.name] || ToolFallback;
-          
+
           return (
             <div key={index} className="tool-test-section">
               <h3>{toolCall.title}</h3>
-              <ToolUI 
+              <ToolUI
                 toolName={toolCall.name}
                 args={toolCall.args}
                 result={toolCall.result}
@@ -1352,12 +2102,14 @@ export const ToolTestBench = () => {
         <details>
           <summary>Tool List</summary>
           <ul>
-            {Object.keys(toolUIsByName).sort().map(toolName => (
-              <li key={toolName}>
-                <code>{toolName}</code>
-                {toolUIsByName[toolName] === ToolFallback && ' (using fallback)'}
-              </li>
-            ))}
+            {Object.keys(toolUIsByName)
+              .sort()
+              .map((toolName) => (
+                <li key={toolName}>
+                  <code>{toolName}</code>
+                  {toolUIsByName[toolName] === ToolFallback && ' (using fallback)'}
+                </li>
+              ))}
           </ul>
         </details>
       </div>
