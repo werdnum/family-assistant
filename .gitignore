@@ -23,3 +23,6 @@ dev_family_assistant.db*
 
 # Build artifacts
 src/family_assistant/static/dist/
+
+# Test debugging logs
+test-asyncio-logs/

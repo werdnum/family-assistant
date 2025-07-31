@@ -1,17 +1,22 @@
 import asyncio
 import contextlib
+import faulthandler
 import gc
+import json
 import logging
 import os
 import pathlib
 import shutil
+import signal
 import socket
 import subprocess
 import sys  # Import sys module
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import AsyncGenerator, Callable, Generator
+from datetime import datetime
 from typing import Any, Protocol
 from unittest.mock import MagicMock, patch
 
@@ -40,6 +45,41 @@ from family_assistant.storage.vector import init_vector_db  # Corrected import p
 from family_assistant.task_worker import TaskWorker
 from family_assistant.utils.clock import MockClock
 
+# Enable faulthandler for debugging hangs
+faulthandler.enable()
+
+
+# Add signal handler for debugging
+def dump_stacks(sig: int, frame: Any) -> None:
+    """Signal handler to dump all thread stacks."""
+    print("\n\n=== SIGNAL RECEIVED: DUMPING ALL STACKS ===", file=sys.stderr)
+    faulthandler.dump_traceback(file=sys.stderr, all_threads=True)
+
+    # Also dump asyncio state
+    try:
+        loop = asyncio.get_running_loop()
+        print(f"\nEvent loop running: {loop.is_running()}", file=sys.stderr)
+        tasks = asyncio.all_tasks(loop)
+        print(f"Active tasks: {len(tasks)}", file=sys.stderr)
+        for task in tasks:
+            print(f"\nTask: {task}", file=sys.stderr)
+            print(f"  Done: {task.done()}", file=sys.stderr)
+            if not task.done():
+                print("  Stack:", file=sys.stderr)
+                for frame in task.get_stack():
+                    print(
+                        f"    {frame.f_code.co_filename}:{frame.f_lineno} in {frame.f_code.co_name}",
+                        file=sys.stderr,
+                    )
+    except RuntimeError:
+        print("No running event loop", file=sys.stderr)
+    print("=== END STACK DUMP ===\n", file=sys.stderr)
+
+
+# Register signal handler for SIGUSR1 (kill -USR1 <pid>)
+if hasattr(signal, "SIGUSR1"):
+    signal.signal(signal.SIGUSR1, dump_stacks)
+
 # Configure logging for tests (optional, but can be helpful)
 logging.basicConfig(level=logging.INFO)
 
@@ -49,8 +89,268 @@ os.environ["FAMILY_ASSISTANT_DISABLE_DB_ERROR_LOGGING"] = "1"
 
 logger = logging.getLogger(__name__)
 
+# Global file handle for asyncio state logging
+_asyncio_state_file = None
+_background_monitor_thread = None
+_monitor_stop_event = None
 
-@pytest.fixture(scope="session")
+
+def _background_monitor_worker(
+    log_file_path: pathlib.Path, stop_event: threading.Event
+) -> None:
+    """Background thread that periodically dumps asyncio state."""
+    monitor_file = log_file_path.parent / f"monitor_{log_file_path.stem}.jsonl"
+
+    with open(monitor_file, "w", encoding="utf-8") as f:
+        while not stop_event.is_set():
+            # Dump state every 2 seconds
+            try:
+                # Dump thread information
+                threads_info = []
+                for thread in threading.enumerate():
+                    thread_info = {
+                        "name": thread.name,
+                        "ident": thread.ident,
+                        "daemon": thread.daemon,
+                        "is_alive": thread.is_alive(),
+                    }
+
+                    # Get stack trace for thread
+                    if thread.ident and thread.is_alive():
+                        frame = sys._current_frames().get(thread.ident)
+                        if frame:
+                            stack = []
+                            while frame and len(stack) < 10:  # Limit stack depth
+                                stack.append({
+                                    "file": frame.f_code.co_filename,
+                                    "line": frame.f_lineno,
+                                    "function": frame.f_code.co_name,
+                                })
+                                frame = frame.f_back
+                            thread_info["stack"] = stack
+
+                    threads_info.append(thread_info)
+
+                # Write state
+                state = {
+                    "timestamp": datetime.now().isoformat(),
+                    "phase": "background_monitor",
+                    "threads": threads_info,
+                    "thread_count": len(threads_info),
+                }
+
+                f.write(json.dumps(state) + "\n")
+                f.flush()
+
+            except Exception as e:
+                f.write(
+                    json.dumps({
+                        "timestamp": datetime.now().isoformat(),
+                        "phase": "background_monitor_error",
+                        "error": str(e),
+                    })
+                    + "\n"
+                )
+                f.flush()
+
+            # Wait 2 seconds or until stopped
+            stop_event.wait(2.0)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def asyncio_state_logger() -> Generator[None, None, None]:
+    """Open JSONL file for logging asyncio state throughout the test session."""
+    global _asyncio_state_file, _background_monitor_thread, _monitor_stop_event
+
+    # Create a unique log file for this test run
+    log_dir = pathlib.Path("test-asyncio-logs")
+    log_dir.mkdir(exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = log_dir / f"asyncio_state_{timestamp}_{os.getpid()}.jsonl"
+
+    _asyncio_state_file = open(log_path, "w", encoding="utf-8")  # noqa: SIM115
+    logger.info(f"Logging asyncio state to: {log_path}")
+
+    # Start background monitor thread
+    _monitor_stop_event = threading.Event()
+    _background_monitor_thread = threading.Thread(
+        target=_background_monitor_worker,
+        args=(log_path, _monitor_stop_event),
+        name="AsyncioStateMonitor",
+        daemon=True,
+    )
+    _background_monitor_thread.start()
+    logger.info("Started background asyncio state monitor")
+
+    yield
+
+    # Stop monitor thread
+    logger.info("Stopping background asyncio state monitor")
+    _monitor_stop_event.set()
+    _background_monitor_thread.join(timeout=5.0)
+
+    _asyncio_state_file.close()
+    _asyncio_state_file = None
+
+
+def _capture_asyncio_state(phase: str, test_id: str) -> dict[str, Any]:
+    """Capture current asyncio state and return as dict."""
+    state = {
+        "timestamp": datetime.now().isoformat(),
+        "phase": phase,
+        "test_id": test_id,
+        "pid": os.getpid(),
+        "tid": threading.get_ident() if "threading" in sys.modules else None,
+    }
+
+    try:
+        loop = asyncio.get_running_loop()
+        state["has_loop"] = True
+        state["loop_running"] = loop.is_running()
+        state["loop_closed"] = loop.is_closed()
+        state["loop_debug"] = loop.get_debug()
+
+        # Get all tasks
+        all_tasks = asyncio.all_tasks(loop)
+        state["total_tasks"] = len(all_tasks)
+
+        # Categorize tasks
+        tasks_info = []
+        for task in all_tasks:
+            task_info = {
+                "name": task.get_name(),
+                "done": task.done(),
+                "cancelled": task.cancelled(),
+            }
+
+            if not task.done():
+                try:
+                    coro = task.get_coro()
+                    task_info["coro_name"] = (
+                        coro.__name__ if hasattr(coro, "__name__") else str(coro)
+                    )
+                    task_info["coro_type"] = type(coro).__name__
+
+                    # Get stack info
+                    stack = task.get_stack()
+                    if stack:
+                        # Just get the top few frames
+                        task_info["stack_depth"] = len(stack)
+                        task_info["top_frames"] = []
+                        for frame in stack[:3]:
+                            task_info["top_frames"].append({
+                                "file": frame.f_code.co_filename,
+                                "line": frame.f_lineno,
+                                "function": frame.f_code.co_name,
+                            })
+                except Exception as e:
+                    task_info["error"] = str(e)
+
+            tasks_info.append(task_info)
+
+        state["tasks"] = tasks_info
+
+        # Count by state
+        state["pending_tasks"] = sum(1 for t in all_tasks if not t.done())
+        state["done_tasks"] = sum(
+            1 for t in all_tasks if t.done() and not t.cancelled()
+        )
+        state["cancelled_tasks"] = sum(1 for t in all_tasks if t.cancelled())
+
+    except RuntimeError:
+        state["has_loop"] = False
+
+    return state
+
+
+@pytest_asyncio.fixture(autouse=True, scope="function")
+async def log_asyncio_state_per_test(
+    request: pytest.FixtureRequest,
+) -> AsyncGenerator[None, None]:
+    """Log asyncio state before and after each test."""
+    global _asyncio_state_file
+
+    if _asyncio_state_file is None:
+        yield
+        return
+
+    test_id = request.node.nodeid
+
+    # Get the current event loop
+    try:
+        event_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop
+        _asyncio_state_file.write(
+            json.dumps({
+                "timestamp": datetime.now().isoformat(),
+                "phase": "no_loop",
+                "test_id": test_id,
+                "error": "No running event loop",
+            })
+            + "\n"
+        )
+        _asyncio_state_file.flush()
+        yield
+        return
+
+    # Now we capture state with the actual event loop
+    def capture_with_loop(phase: str) -> dict[str, Any]:
+        state = {
+            "timestamp": datetime.now().isoformat(),
+            "phase": phase,
+            "test_id": test_id,
+            "pid": os.getpid(),
+            "tid": threading.get_ident() if "threading" in sys.modules else None,
+            "has_loop": True,
+            "loop_running": event_loop.is_running(),
+            "loop_closed": event_loop.is_closed(),
+            "loop_debug": event_loop.get_debug(),
+        }
+
+        # Get all tasks from the event loop
+        all_tasks = asyncio.all_tasks(event_loop)
+        state["total_tasks"] = len(all_tasks)
+
+        # Categorize tasks
+        tasks_info = []
+        for task in all_tasks:
+            task_info = {
+                "name": task.get_name(),
+                "done": task.done(),
+                "cancelled": task.cancelled(),
+            }
+            if not task.done():
+                coro = task.get_coro()
+                task_info["coro_name"] = (
+                    coro.__qualname__ if hasattr(coro, "__qualname__") else str(coro)
+                )
+                if hasattr(coro, "cr_frame") and coro.cr_frame:
+                    task_info["file"] = coro.cr_frame.f_code.co_filename
+                    task_info["line"] = coro.cr_frame.f_lineno
+            tasks_info.append(task_info)
+
+        state["tasks"] = tasks_info
+        state["pending_tasks"] = sum(1 for t in all_tasks if not t.done())
+        state["done_tasks"] = sum(1 for t in all_tasks if t.done())
+
+        return state
+
+    # Capture state before test
+    before_state = capture_with_loop("before")
+    _asyncio_state_file.write(json.dumps(before_state) + "\n")
+    _asyncio_state_file.flush()
+
+    yield
+
+    # Capture state after test
+    after_state = capture_with_loop("after")
+    _asyncio_state_file.write(json.dumps(after_state) + "\n")
+    _asyncio_state_file.flush()
+
+
+@pytest.fixture(scope="session", autouse=True)
 def session_event_loop_debug() -> Generator[None, None, None]:
     """Debug fixture to monitor session-scoped event loop health."""
     logger.info("\n=== Session Event Loop Debug Started ===")
@@ -66,9 +366,47 @@ def session_event_loop_debug() -> Generator[None, None, None]:
         # Check for lingering tasks
         tasks = asyncio.all_tasks(loop)
         logger.info(f"Tasks remaining in session loop: {len(tasks)}")
-        for task in tasks:
+        for i, task in enumerate(tasks):
+            logger.info(f"\nTask {i}: {task}")
+            logger.info(f"  Done: {task.done()}")
             if not task.done():
-                logger.warning(f"  - Pending task at session end: {task}")
+                logger.warning("  State: PENDING")
+                logger.warning(f"  Coroutine: {task.get_coro()}")
+                # Get stack trace
+                try:
+                    stack = task.get_stack()
+                    if stack:
+                        import traceback
+
+                        logger.warning("  Stack trace:")
+                        for frame in stack:
+                            logger.warning(
+                                f"    File {frame.f_code.co_filename}:{frame.f_lineno} in {frame.f_code.co_name}"
+                            )
+                            # Try to get more context
+                            frame_info = traceback.extract_stack(frame, limit=1)[0]
+                            logger.warning(f"      {frame_info.line}")
+                except Exception as e:
+                    logger.warning(f"  Could not get stack: {e}")
+            else:
+                try:
+                    result = task.result()
+                    logger.info(f"  Result: {result!r}")
+                except Exception as e:
+                    logger.info(f"  Exception: {type(e).__name__}: {e}")
+
+        # Check what's in the event loop's ready queue
+        if hasattr(loop, "_ready"):
+            logger.info(f"\nReady queue has {len(loop._ready)} items")
+            for i, item in enumerate(list(loop._ready)[:5]):  # First 5
+                logger.info(f"  Ready item {i}: {item}")
+
+        # Check for scheduled callbacks
+        if hasattr(loop, "_scheduled"):
+            logger.info(f"\nScheduled queue has {len(loop._scheduled)} items")
+            for i, item in enumerate(list(loop._scheduled)[:5]):  # First 5
+                logger.info(f"  Scheduled item {i}: {item}")
+
     except RuntimeError:
         logger.info("No running loop at session teardown")
     logger.info("=== End Session Event Loop Debug ===\n")
@@ -111,56 +449,119 @@ async def debug_async_resources(
     gc.collect()
 
     # Check for AsyncMock objects that might be lingering
-    mocks = [
-        obj
-        for obj in gc.get_objects()
-        if hasattr(obj, "_mock_name") and hasattr(obj, "_is_coroutine")
-    ]
-    if mocks:
-        logger.warning(f"Found {len(mocks)} AsyncMock objects in memory")
-        for mock in mocks[:5]:  # Show first 5
-            logger.warning(f"  - Mock: {mock}")
+    try:
+        from unittest.mock import AsyncMock
+
+        mocks = [obj for obj in gc.get_objects() if isinstance(obj, AsyncMock)]
+        if mocks:
+            logger.warning(f"Found {len(mocks)} AsyncMock objects in memory")
+            for mock in mocks[:5]:  # Show first 5
+                logger.warning(f"  - Mock: {mock}")
+    except Exception as e:
+        logger.warning(f"Could not check for AsyncMock objects: {e}")
 
     logger.info("=== End Async Debug Info ===")
 
 
-@pytest.hookimpl(tryfirst=True)
-def pytest_timeout_hook(item: pytest.Item, timeout: float) -> None:
-    """Called when a test times out."""
-    logger.error(f"\n\n=== TIMEOUT in {item.nodeid} after {timeout}s ===")
+# Note: pytest-timeout doesn't provide a hook for timeouts
+# The debugging will be done through the other fixtures
 
-    # Get the event loop and check its state
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Called after whole test run finished, right before returning the exit status."""
+    logger.info("\n\n=== PYTEST SESSION FINISH HOOK ===")
+    logger.info(f"Exit status: {exitstatus}")
+    logger.info(f"Test count: {session.testscollected}")
+    logger.info(f"Test failures: {session.testsfailed}")
+
+    # Check if there's still an event loop
     try:
         loop = asyncio.get_running_loop()
-        logger.error(f"Event loop running: {loop.is_running()}")
-        logger.error(f"Event loop closed: {loop.is_closed()}")
+        logger.error("EVENT LOOP STILL RUNNING AT SESSION FINISH!")
 
-        # Check all tasks
+        # Dump everything we can about the loop state
         all_tasks = asyncio.all_tasks(loop)
-        logger.error(f"Total tasks: {len(all_tasks)}")
-        for i, task in enumerate(all_tasks):
-            logger.error(f"\nTask {i}: {task}")
-            if not task.done():
-                logger.error("  State: PENDING")
-                logger.error(f"  Coro: {task.get_coro()}")
-                try:
-                    stack = task.get_stack()
-                    if stack:
-                        logger.error("  Stack trace:")
-                        for frame in stack:
-                            logger.error(f"    {frame}")
-                except Exception as e:
-                    logger.error(f"  Could not get stack: {e}")
-            else:
-                logger.error("  State: DONE")
-                try:
-                    logger.error(f"  Result: {task.result()}")
-                except Exception as e:
-                    logger.error(f"  Exception: {e}")
-    except RuntimeError:
-        logger.error("No running event loop")
+        logger.error(f"Tasks in loop: {len(all_tasks)}")
 
-    logger.error("=== END TIMEOUT DEBUG ===\n\n")
+        # Group tasks by state
+        pending_tasks = [t for t in all_tasks if not t.done()]
+        done_tasks = [t for t in all_tasks if t.done()]
+
+        logger.error(f"  Pending: {len(pending_tasks)}")
+        logger.error(f"  Done: {len(done_tasks)}")
+
+        # Detail on pending tasks
+        for i, task in enumerate(pending_tasks[:10]):  # First 10
+            logger.error(f"\nPending Task {i}:")
+            logger.error(f"  Task: {task}")
+            logger.error(f"  Coro: {task.get_coro()}")
+            try:
+                stack = task.get_stack()
+                if stack:
+                    logger.error("  Stack (top 3 frames):")
+                    for j, frame in enumerate(stack[:3]):
+                        logger.error(
+                            f"    [{j}] {frame.f_code.co_filename}:{frame.f_lineno} ({frame.f_code.co_name})"
+                        )
+            except Exception as e:
+                logger.error(f"  Error getting stack: {e}")
+
+        # Check if loop is closed
+        logger.error(f"\nLoop closed: {loop.is_closed()}")
+        logger.error(f"Loop running: {loop.is_running()}")
+
+    except RuntimeError:
+        logger.info("No event loop running at session finish (this is normal)")
+
+    logger.info("=== END SESSION FINISH HOOK ===\n\n")
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Called before test process is exited."""
+    logger.info("\n\n=== PYTEST UNCONFIGURE HOOK ===")
+    try:
+        loop = asyncio.get_running_loop()
+        logger.error("CRITICAL: Event loop STILL EXISTS in unconfigure hook!")
+        logger.error(f"Loop: {loop}")
+        logger.error(f"Running: {loop.is_running()}")
+        logger.error(f"Closed: {loop.is_closed()}")
+    except RuntimeError:
+        logger.info("No event loop in unconfigure (expected)")
+    logger.info("=== END UNCONFIGURE HOOK ===\n\n")
+
+
+# Create a fixture with a very low sort key to ensure it runs last
+@pytest.fixture(scope="session", autouse=True)
+def zzz_last_session_fixture() -> Generator[None, None, None]:
+    """This fixture should teardown after most others due to its name."""
+    logger.info("=== LAST SESSION FIXTURE SETUP ===")
+    yield
+    logger.info("=== LAST SESSION FIXTURE TEARDOWN ===")
+
+    # Check if event loop is still running
+    try:
+        loop = asyncio.get_running_loop()
+        logger.info(f"Event loop still running in last fixture: {loop}")
+        tasks = asyncio.all_tasks(loop)
+        logger.info(f"Tasks: {len(tasks)}")
+        for task in tasks:
+            logger.info(f"  Task: {task}")
+            if not task.done():
+                logger.info(f"    Pending: {task.get_coro()}")
+    except RuntimeError:
+        logger.info("No running event loop in last fixture")
+
+    # Log to file too
+    if _asyncio_state_file:
+        _asyncio_state_file.write(
+            json.dumps({
+                "timestamp": datetime.now().isoformat(),
+                "phase": "zzz_last_fixture_teardown",
+                "event": "checking_event_loop",
+            })
+            + "\n"
+        )
+        _asyncio_state_file.flush()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -387,6 +788,10 @@ async def db_engine(
             # TODO: Investigate if asyncpg or SQLAlchemy provides a more deterministic way
             # to wait for all connections to be closed.
             await asyncio.sleep(0.1)
+
+        # Ensure all pending tasks from this fixture complete
+        # This is critical with session-scoped event loops to prevent task accumulation
+        await asyncio.sleep(0)  # Let the event loop process any pending callbacks
 
         logger.info("Test engine disposed.")
         logger.info("Restored original storage.base.engine.")

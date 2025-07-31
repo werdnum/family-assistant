@@ -165,11 +165,7 @@ class TestEventListenerTestValidation:
     """Test validation in test_event_listener_tool."""
 
     @pytest.mark.asyncio
-    async def test_test_listener_with_validation_errors(
-        self,
-        debug_async_resources: None,
-        session_event_loop_debug: None,
-    ) -> None:
+    async def test_test_listener_with_validation_errors(self) -> None:
         """Test testing a listener that shows validation errors in analysis."""
         # Create execution context with mocked database context
         exec_context = MagicMock(spec=ToolExecutionContext)

@@ -450,3 +450,32 @@ class ConsoleErrorCollector:
 def console_error_checker(web_test_fixture: WebTestFixture) -> ConsoleErrorCollector:
     """Fixture that collects and checks console errors."""
     return ConsoleErrorCollector(web_test_fixture.page)
+
+
+# Override the playwright browser fixture to add timeout on close
+@pytest_asyncio.fixture(scope="session")
+async def browser(
+    launch_browser: Any,  # From playwright's fixtures
+) -> AsyncGenerator[Any, None]:
+    """Override playwright's browser fixture to add timeout on close.
+
+    This prevents the test suite from hanging when browser.close() gets stuck
+    waiting for protocol callbacks during session teardown.
+
+    This is a workaround for an issue with pytest-asyncio session-scoped event loops
+    and playwright browser fixtures. See:
+    - https://github.com/microsoft/playwright-pytest/issues/167
+    - https://github.com/pytest-dev/pytest-asyncio/issues/730
+    """
+    # Launch the browser using playwright's launch function
+    browser = await launch_browser()
+    yield browser
+
+    # Close with timeout to prevent hanging
+    try:
+        await asyncio.wait_for(browser.close(), timeout=10.0)
+        print("\n=== Browser closed successfully ===")
+    except asyncio.TimeoutError:
+        print("\n=== WARNING: Browser close timed out after 10s, forcing cleanup ===")
+        # The browser process will be cleaned up when Python exits
+        # We can't easily kill it from here without access to the process handle
