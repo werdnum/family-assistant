@@ -97,6 +97,7 @@ async def create_test_conversation(
 class TestHistoryNavigation:
     """Test basic navigation and display of message history."""
 
+    @pytest.mark.playwright
     async def test_history_page_loads(
         self, history_page: HistoryPage, web_test_fixture: Any
     ) -> None:
@@ -125,6 +126,7 @@ class TestHistoryNavigation:
             == 1
         )
 
+    @pytest.mark.playwright
     async def test_history_ui_elements(
         self, history_page: HistoryPage, web_test_fixture: Any
     ) -> None:

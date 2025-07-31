@@ -270,3 +270,7 @@ The reviewer should **NOT** focus on:
   that the hash has never been persisted).
 - Do NOT make blocking comments for issues that have been explicitly acknowledged in the commit
   message or where a TODO has been left. Advise, don't block.
+- Do NOT correct library usage based on your knowledge - your information might be outdated. Library
+  APIs evolve over time and the code may be using newer APIs that you're not aware of. That's what
+  type checking and tests are for. Only flag library usage if you can demonstrate it's objectively
+  wrong based on the imports and usage patterns within the codebase itself.

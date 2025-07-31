@@ -93,22 +93,23 @@ class HomeAssistantSource(BaseEventSource, EventSource):
         """Stop listening for events."""
         self._running = False
         tasks = [self._websocket_task, self._processor_task, self._health_check_task]
+
+        # Close the queue before cancelling tasks to signal consumers
+        if self._event_queue:
+            logger.debug(f"[{self.source_id}] Closing janus queue")
+            try:
+                self._event_queue.shutdown()
+                await self._event_queue.wait_closed()
+            except Exception as e:
+                logger.error(f"Error closing janus queue: {e}", exc_info=True)
+
         for task in tasks:
             if task:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
 
-        # Close janus queue properly
-        if self._event_queue:
-            logger.debug(f"[{self.source_id}] Closing janus queue")
-            try:
-                await self._event_queue.aclose()
-            except Exception as e:
-                logger.error(
-                    f"[{self.source_id}] Error closing janus queue: {e}", exc_info=True
-                )
-            self._event_queue = None
+        self._event_queue = None
 
         logger.info(f"Stopped Home Assistant event source [{self.source_id}]")
 
@@ -267,8 +268,17 @@ class HomeAssistantSource(BaseEventSource, EventSource):
                     self._event_queue.sync_q.put_nowait(processed_event)
                     # Update last event time for health check
                     self._last_event_time = time.time()
-                except Exception:  # janus uses standard queue.Full exception
-                    logger.warning(f"Event queue full, dropping event: {event_type}")
+                except janus.SyncQueueShutDown:
+                    # This is our signal to shut down the thread gracefully.
+                    # Re-raising will cause the _connect_and_listen loop to exit.
+                    logger.info(
+                        f"[{self.source_id}] Event queue closed, stopping listener thread."
+                    )
+                    raise
+                except Exception as e:  # Typically queue.Full
+                    logger.warning(
+                        f"Event queue full, dropping event: {event_type}. Error: {e}"
+                    )
             else:
                 logger.error("Event queue not initialized, dropping event")
 

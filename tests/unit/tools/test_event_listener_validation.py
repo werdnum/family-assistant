@@ -7,13 +7,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from family_assistant.events.sources import BaseEventSource
 from family_assistant.events.validation import ValidationError, ValidationResult
+from family_assistant.tools import events
 from family_assistant.tools.event_listeners import create_event_listener_tool
-from family_assistant.tools.events import test_event_listener_tool as test_listener_tool
 from family_assistant.tools.types import ToolExecutionContext
 
-# Tell pytest to not collect test_listener_tool as a test
-test_listener_tool.__test__ = False
+# Access test_event_listener_tool through the module to avoid modifying it
+# This prevents potential issues with parallel test execution
 
 
 class TestCreateEventListenerValidation:
@@ -24,9 +25,11 @@ class TestCreateEventListenerValidation:
         """Test creating a listener with validation errors."""
         # Mock the execution context
         exec_context = MagicMock(spec=ToolExecutionContext)
+        exec_context.db_context = AsyncMock()  # Ensure db_context is async-compatible
 
         # Mock event processor and source
-        mock_source = AsyncMock()
+        mock_source = MagicMock(spec=BaseEventSource)
+        mock_source.source_id = "home_assistant"
         mock_source.validate_match_conditions = AsyncMock(
             return_value=ValidationResult(
                 valid=False,
@@ -87,12 +90,13 @@ class TestCreateEventListenerValidation:
         """Test creating a listener with validation warnings only."""
         # Mock the execution context
         exec_context = MagicMock(spec=ToolExecutionContext)
-        exec_context.db_context = AsyncMock()
+        exec_context.db_context = AsyncMock()  # Ensure db_context is async-compatible
         exec_context.conversation_id = "test_conv"
         exec_context.interface_type = "test"
 
         # Mock event processor and source
-        mock_source = AsyncMock()
+        mock_source = MagicMock(spec=BaseEventSource)
+        mock_source.source_id = "home_assistant"
         mock_source.validate_match_conditions = AsyncMock(
             return_value=ValidationResult(
                 valid=True, warnings=["Cannot validate state without entity_id"]
@@ -163,12 +167,18 @@ class TestEventListenerTestValidation:
     @pytest.mark.asyncio
     async def test_test_listener_with_validation_errors(self) -> None:
         """Test testing a listener that shows validation errors in analysis."""
-        # Mock the execution context
+        # Create execution context with mocked database context
         exec_context = MagicMock(spec=ToolExecutionContext)
-        exec_context.db_context = AsyncMock()
+
+        # Mock the database context to avoid real database operations
+        mock_db_context = AsyncMock()
+        mock_db_context.events = AsyncMock()
+        mock_db_context.events.get_recent_events = AsyncMock(return_value=[])
+        exec_context.db_context = mock_db_context
 
         # Mock event processor and source
-        mock_source = AsyncMock()
+        mock_source = MagicMock(spec=BaseEventSource)
+        mock_source.source_id = "home_assistant"
         mock_source.validate_match_conditions = AsyncMock(
             return_value=ValidationResult(
                 valid=False,
@@ -186,18 +196,13 @@ class TestEventListenerTestValidation:
         # Setup the event sources
         exec_context.event_sources = {"home_assistant": mock_source}
 
-        # Mock database query result (no events)
-        with patch("family_assistant.tools.events.get_db_context") as mock_db:
-            mock_db_context = AsyncMock()
-            mock_db_context.fetch_all = AsyncMock(return_value=[])
-            mock_db.return_value.__aenter__.return_value = mock_db_context
-
-            result = await test_listener_tool(
-                exec_context=exec_context,
-                source="home_assistant",
-                match_conditions={"entity_id": "invalid.entity"},
-                hours=1,
-            )
+        # Call the function directly
+        result = await events.test_event_listener_tool(
+            exec_context=exec_context,
+            source="home_assistant",
+            match_conditions={"entity_id": "invalid.entity"},
+            hours=1,
+        )
 
         # Parse result
         data = json.loads(result)
@@ -205,4 +210,6 @@ class TestEventListenerTestValidation:
         # Check that validation errors appear in analysis
         assert data["matched_events"] == []
         assert data["total_tested"] == 0
-        assert "analysis" not in data  # No analysis when no events tested
+        assert "analysis" in data  # Validation errors shown even when no events tested
+        assert "VALIDATION ISSUES FOUND:" in data["analysis"][0]
+        assert any("Invalid entity ID format" in msg for msg in data["analysis"])

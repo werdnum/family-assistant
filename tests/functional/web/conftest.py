@@ -12,7 +12,7 @@ from typing import Any, NamedTuple
 import httpx
 import pytest
 import pytest_asyncio
-from playwright.async_api import Page, async_playwright
+from playwright.async_api import Page
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
@@ -126,8 +126,10 @@ def build_frontend_assets() -> None:
     need_rebuild = True
     if dist_dir.exists() and any(dist_dir.iterdir()):
         # Check if source files are newer than build
-        src_files = list(frontend_dir.glob("src/**/*.js")) + list(
-            frontend_dir.glob("src/**/*.css")
+        src_files = (
+            list(frontend_dir.glob("src/**/*.js"))
+            + list(frontend_dir.glob("src/**/*.jsx"))
+            + list(frontend_dir.glob("src/**/*.css"))
         )
         if src_files:
             newest_src = max(f.stat().st_mtime for f in src_files)
@@ -200,10 +202,10 @@ async def web_only_assistant(
             "client_secret": "",
             "discovery_url": "",
         },
-        "default_service_profile_id": "web_test_profile",
+        "default_service_profile_id": "default_assistant",
         "service_profiles": [
             {
-                "id": "web_test_profile",
+                "id": "default_assistant",
                 "description": "Test profile for web UI",
                 "processing_config": {
                     "prompts": {"system_prompt": "You are a helpful test assistant."},
@@ -232,7 +234,7 @@ async def web_only_assistant(
     assistant = Assistant(
         config=test_config,
         llm_client_overrides={
-            "web_test_profile": mock_llm_client
+            "default_assistant": mock_llm_client
         },  # Key by profile ID, not model name
     )
 
@@ -291,60 +293,46 @@ async def web_only_assistant(
 
 
 @pytest_asyncio.fixture(scope="function")
-async def playwright_page(
-    web_only_assistant: Assistant,
-) -> AsyncGenerator[Page, None]:
-    """Provide Playwright browser page for tests."""
-    async with async_playwright() as p:
-        # Launch browser in headless mode by default
-        browser = await p.chromium.launch(
-            headless=os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false"
-        )
-
-        # Create browser context with viewport size
-        context = await browser.new_context(
-            viewport={"width": 1280, "height": 720},
-            locale="en-US",
-        )
-
-        # Create a new page
-        page = await context.new_page()
-
-        # Set up console message logging for debugging
-        page.on(
-            "console", lambda msg: print(f"[Browser Console] {msg.type}: {msg.text}")
-        )
-
-        # Set up request/response logging for debugging (optional)
-        if os.getenv("PLAYWRIGHT_DEBUG_NETWORK"):
-            page.on(
-                "request",
-                lambda req: print(f"[Network Request] {req.method} {req.url}"),
-            )
-            page.on(
-                "response",
-                lambda res: print(f"[Network Response] {res.status} {res.url}"),
-            )
-
-        yield page
-
-        # Cleanup
-        await context.close()
-        await browser.close()
-
-
-@pytest_asyncio.fixture(scope="function")
 async def web_test_fixture(
-    playwright_page: Page,
+    page: Page,
     web_only_assistant: Assistant,
     vite_and_api_ports: tuple[int, int],
     build_frontend_assets: None,  # Ensure frontend is built before tests
 ) -> WebTestFixture:
     """Combined fixture providing all web test dependencies."""
+
+    # Set up console message logging for debugging
+    def log_console(msg: Any) -> None:
+        print(f"[Browser Console] {msg.type}: {msg.text}")
+        # Also log location for errors
+        if msg.type == "error":
+            print(f"  Location: {msg.location}")
+
+    page.on("console", log_console)
+
+    # Set up request/response logging for debugging
+    # Always log API requests to help debug
+    def log_request(req: Any) -> None:
+        if "/api/" in req.url:
+            print(f"[API Request] {req.method} {req.url}")
+            if req.method == "POST":
+                print(f"  Body: {req.post_data}")
+        elif req.url.endswith(".js") or req.url.endswith(".css"):
+            print(f"[Asset Request] {req.method} {req.url}")
+
+    def log_response(res: Any) -> None:
+        if "/api/" in res.url:
+            print(f"[API Response] {res.status} {res.url}")
+        elif res.url.endswith(".js") or res.url.endswith(".css"):
+            print(f"[Asset Response] {res.status} {res.url}")
+
+    page.on("request", log_request)
+    page.on("response", log_response)
+
     _, api_port = vite_and_api_ports
     return WebTestFixture(
         assistant=web_only_assistant,
-        page=playwright_page,
+        page=page,
         base_url=f"http://localhost:{api_port}",  # Direct to API server (serves built assets)
     )
 
@@ -462,3 +450,59 @@ class ConsoleErrorCollector:
 def console_error_checker(web_test_fixture: WebTestFixture) -> ConsoleErrorCollector:
     """Fixture that collects and checks console errors."""
     return ConsoleErrorCollector(web_test_fixture.page)
+
+
+# Override the playwright browser fixture to add timeout on close
+@pytest_asyncio.fixture(scope="session")
+async def browser(
+    launch_browser: Any,  # From playwright's fixtures
+) -> AsyncGenerator[Any, None]:
+    """Override playwright's browser fixture to add timeout on close.
+
+    This prevents the test suite from hanging when browser.close() gets stuck
+    waiting for protocol callbacks during session teardown.
+
+    This is a workaround for an issue with pytest-asyncio session-scoped event loops
+    and playwright browser fixtures. See:
+    - https://github.com/microsoft/playwright-pytest/issues/167
+    - https://github.com/pytest-dev/pytest-asyncio/issues/730
+    """
+    # Launch the browser using playwright's launch function
+    browser = await launch_browser()
+    yield browser
+
+    # Close with timeout to prevent hanging
+    try:
+        await asyncio.wait_for(browser.close(), timeout=10.0)
+        print("\n=== Browser closed successfully ===")
+    except asyncio.TimeoutError:
+        print("\n=== WARNING: Browser close timed out after 10s, forcing cleanup ===")
+    # If timeout occurs, we let pytest-playwright handle any remaining cleanup
+
+
+# Override the playwright fixture to add timeout on stop
+@pytest_asyncio.fixture(scope="session")
+async def playwright() -> AsyncGenerator[Any, None]:
+    """Override playwright's main fixture to add timeout on stop.
+
+    This prevents the test suite from hanging when playwright.stop() gets stuck
+    during session teardown.
+
+    This is part of the workaround for pytest-asyncio session-scoped event loops.
+    """
+    from playwright.async_api import async_playwright
+
+    # Start playwright using the context manager
+    pw_context_manager = async_playwright()
+    pw = await pw_context_manager.start()
+
+    yield pw
+
+    # Stop with timeout to prevent hanging
+    try:
+        await asyncio.wait_for(
+            pw_context_manager.__aexit__(None, None, None), timeout=10.0
+        )
+        print("\n=== Playwright stopped successfully ===")
+    except asyncio.TimeoutError:
+        print("\n=== WARNING: Playwright stop timed out after 10s, forcing cleanup ===")

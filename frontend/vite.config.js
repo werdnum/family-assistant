@@ -12,7 +12,7 @@ export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     legacy({
-      targets: ['defaults', 'not IE 11']
+      targets: ['defaults', 'not IE 11'],
     }),
     // Custom plugin to handle clean URLs (e.g., /chat -> /chat.html)
     {
@@ -27,8 +27,8 @@ export default defineConfig(({ mode }) => ({
           }
           next();
         });
-      }
-    }
+      },
+    },
   ],
   build: {
     // Generate a manifest file to connect assets to Jinja2
@@ -51,14 +51,19 @@ export default defineConfig(({ mode }) => ({
     // Listen on all interfaces for remote access
     host: true,
     // Allow specific hosts for development access
-    allowedHosts: ['localhost', 'grotten.home.alexandtaylor.com', 'family-assistant-dev.alexsmith.dev'],
+    allowedHosts: [
+      'localhost',
+      'grotten.home.alexandtaylor.com',
+      'family-assistant-dev.alexsmith.dev',
+    ],
     // Proxy all non-asset requests to our FastAPI backend
     proxy: {
       // Proxy everything except Vite's own paths, static assets, and HTML entry points
-      '^(?!/@vite|/@react-refresh|/src|/node_modules|/__vite_ping|/index\.html|/chat\.html|/chat$).*': {
-        target: `http://127.0.0.1:${process.env.VITE_API_PORT || 8000}`,
-        changeOrigin: true,
-      }
+      '^(?!/@vite|/@react-refresh|/src|/node_modules|/__vite_ping|/index\.html|/chat\.html|/chat$).*':
+        {
+          target: `http://127.0.0.1:${process.env.VITE_API_PORT || 8000}`,
+          changeOrigin: true,
+        },
     },
   },
 }));

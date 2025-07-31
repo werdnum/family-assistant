@@ -5,6 +5,7 @@ import {
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
+  useMessage,
 } from '@assistant-ui/react';
 import {
   ArrowDownIcon,
@@ -20,9 +21,19 @@ import {
   Loader2Icon,
 } from 'lucide-react';
 import classNames from 'classnames';
-import { formatRelativeTime } from './utils';
+// import { formatRelativeTime } from './utils';
 import { MarkdownText } from './MarkdownText';
 import { TooltipIconButton } from './TooltipIconButton';
+import { LOADING_MARKER } from './constants';
+import { toolUIsByName, ToolFallback } from './ToolUI';
+
+const messageContentComponents = {
+  Text: MarkdownText,
+  tools: {
+    by_name: toolUIsByName,
+    Fallback: ToolFallback,
+  },
+};
 
 export const Thread = () => {
   return (
@@ -86,19 +97,19 @@ const ThreadWelcomeSuggestions = () => {
   const suggestions = [
     {
       prompt: "What's on my calendar today?",
-      icon: "📅",
+      icon: '📅',
     },
     {
-      prompt: "Add a note about groceries",
-      icon: "📝",
+      prompt: 'Add a note about groceries',
+      icon: '📝',
     },
     {
-      prompt: "Search my documents for recipes",
-      icon: "🔍",
+      prompt: 'Search my documents for recipes',
+      icon: '🔍',
     },
     {
-      prompt: "What tasks do I have pending?",
-      icon: "✅",
+      prompt: 'What tasks do I have pending?',
+      icon: '✅',
     },
   ];
 
@@ -174,7 +185,7 @@ const UserMessage = () => {
         </div>
         <div className="message-content-wrapper">
           <div className="message-bubble user-bubble" data-testid="user-message-content">
-            <MessagePrimitive.Content components={{ Text: 'span' }} />
+            <MessagePrimitive.Content />
           </div>
           <div className="message-avatar user-avatar">
             <UserIcon size={20} />
@@ -206,10 +217,7 @@ const UserActionBar = () => {
 const EditComposer = () => {
   return (
     <ComposerPrimitive.Root className="edit-composer">
-      <ComposerPrimitive.Input 
-        className="edit-composer-input"
-        autoFocus
-      />
+      <ComposerPrimitive.Input className="edit-composer-input" autoFocus />
       <div className="edit-composer-actions">
         <ComposerPrimitive.Cancel asChild>
           <button className="edit-cancel-btn">Cancel</button>
@@ -223,8 +231,17 @@ const EditComposer = () => {
 };
 
 const AssistantMessage = () => {
+  const message = useMessage();
+  
+  // Check if message is loading by checking for our special marker
+  // The assistant-ui library might not pass through our custom isLoading property
+  const isLoading = message?.content?.[0]?.text === LOADING_MARKER;
+  
   return (
-    <MessagePrimitive.Root className="message-root assistant-message" data-testid="assistant-message">
+    <MessagePrimitive.Root
+      className="message-root assistant-message"
+      data-testid="assistant-message"
+    >
       <div className="message-container">
         <div className="message-header">
           <MessageTimestamp />
@@ -234,7 +251,15 @@ const AssistantMessage = () => {
             <BotIcon size={20} />
           </div>
           <div className="message-bubble assistant-bubble" data-testid="assistant-message-content">
-            <MessagePrimitive.Content components={{ Text: MarkdownText }} />
+            {isLoading ? (
+              <div className="typing-indicator">
+                <span className="typing-dot"></span>
+                <span className="typing-dot"></span>
+                <span className="typing-dot"></span>
+              </div>
+            ) : (
+              <MessagePrimitive.Content components={messageContentComponents} />
+            )}
           </div>
         </div>
         <AssistantActionBar />
@@ -301,26 +326,8 @@ const MessageTimestamp = () => {
   // This would need to be passed down from the parent component in a real implementation
   return (
     <MessagePrimitive.If hasBranchPicker={false}>
-      <time className="message-timestamp">
-        just now
-      </time>
+      <time className="message-timestamp">just now</time>
     </MessagePrimitive.If>
   );
 };
 
-// Loading indicator component
-export const ThreadLoading = () => {
-  return (
-    <div className="thread-loading">
-      <div className="loading-message">
-        <div className="message-avatar assistant-avatar">
-          <BotIcon size={20} />
-        </div>
-        <div className="loading-bubble">
-          <Loader2Icon size={16} className="loading-spinner" />
-          <span>Thinking...</span>
-        </div>
-      </div>
-    </div>
-  );
-};

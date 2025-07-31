@@ -4,6 +4,7 @@ Functional tests for the event listener system.
 
 import asyncio
 import json
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import MagicMock
@@ -16,6 +17,7 @@ from family_assistant.events.processor import EventProcessor
 from family_assistant.events.storage import EventStorage
 from family_assistant.storage import get_db_context
 from family_assistant.storage.events import EventSourceType
+from family_assistant.task_worker import TaskWorker
 from family_assistant.tools.events import query_recent_events_tool
 from family_assistant.tools.events import (
     test_event_listener_tool as event_listener_test_tool,
@@ -573,7 +575,10 @@ async def test_cleanup_old_events(db_engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_end_to_end_event_listener_wakes_llm(db_engine: AsyncEngine) -> None:
+async def test_end_to_end_event_listener_wakes_llm(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+) -> None:
     """Test end-to-end flow: event triggers listener which enqueues LLM callback task."""
     from sqlalchemy import text
 
@@ -691,7 +696,7 @@ async def test_end_to_end_event_listener_wakes_llm(db_engine: AsyncEngine) -> No
 
     from family_assistant.interfaces import ChatInterface
     from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-    from family_assistant.task_worker import TaskWorker, handle_llm_callback
+    from family_assistant.task_worker import handle_llm_callback
     from family_assistant.tools import (
         CompositeToolsProvider,
         LocalToolsProvider,
@@ -761,26 +766,12 @@ async def test_end_to_end_event_listener_wakes_llm(db_engine: AsyncEngine) -> No
     mock_chat_interface = AsyncMock(spec=ChatInterface)
     mock_chat_interface.send_message.return_value = "mock_message_id"
 
-    # Create events for worker coordination
-    shutdown_event = asyncio.Event()
-    new_task_event = asyncio.Event()
-
-    # Create and start task worker
-    task_worker = TaskWorker(
-        processing_service=processing_service,
-        chat_interface=mock_chat_interface,
-        timezone_str="UTC",
-        embedding_generator=MagicMock(),
-        calendar_config={},
-        clock=None,
-        shutdown_event_instance=shutdown_event,
+    # Use task_worker_manager fixture to create and start task worker
+    task_worker, new_task_event, shutdown_event = task_worker_manager(
+        processing_service,
+        mock_chat_interface,
     )
     task_worker.register_task_handler("llm_callback", handle_llm_callback)
-
-    worker_task = asyncio.create_task(
-        task_worker.run(new_task_event),
-        name="TestEventListenerWorker",
-    )
 
     # Give worker time to start
     await asyncio.sleep(0.1)
@@ -797,14 +788,7 @@ async def test_end_to_end_event_listener_wakes_llm(db_engine: AsyncEngine) -> No
     assert call_kwargs["conversation_id"] == "test_chat_123"
     assert "Motion detected" in call_kwargs["text"]
 
-    # Cleanup
-    shutdown_event.set()
-    new_task_event.set()  # Wake up worker if waiting
-    try:
-        await asyncio.wait_for(worker_task, timeout=2.0)
-    except asyncio.TimeoutError:
-        worker_task.cancel()
-        await asyncio.sleep(0.1)
+    # Cleanup is handled by the task_worker_manager fixture
 
 
 @pytest.mark.asyncio

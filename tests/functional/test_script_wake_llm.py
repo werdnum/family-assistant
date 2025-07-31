@@ -5,6 +5,7 @@ Functional tests for script wake_llm functionality.
 import asyncio
 import logging
 import uuid
+from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -35,7 +36,10 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_script_wake_llm_single_call(db_engine: AsyncEngine) -> None:
+async def test_script_wake_llm_single_call(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+) -> None:
     """Test that a script can wake the LLM with a single context."""
     test_run_id = uuid.uuid4()
     logger.info(f"\n--- Running Script Wake LLM Single Call Test ({test_run_id}) ---")

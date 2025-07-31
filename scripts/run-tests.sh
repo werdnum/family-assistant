@@ -148,7 +148,14 @@ if [ $SKIP_LINT -eq 0 ]; then
     # Start pytest
     echo "${BLUE}  ▸ Starting pytest...${NC}"
     timer_start
-    scripts/run_with_memory_limit.sh pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PARALLELISM $PYTEST_ARGS &
+    
+    # Check if memory limit is explicitly requested via environment variable
+    if [ "${USE_MEMORY_LIMIT:-0}" = "1" ]; then
+        scripts/run_with_memory_limit.sh pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PARALLELISM $PYTEST_ARGS &
+    else
+        # Default: run without memory limit
+        pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PARALLELISM $PYTEST_ARGS &
+    fi
     TEST_PID=$!
     TEST_START=$START_TIME
 

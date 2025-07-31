@@ -99,6 +99,7 @@ async def check_endpoint(
     return failures, warnings
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_ui_endpoint_accessibility_playwright(
     web_test_fixture: Any,
@@ -138,6 +139,7 @@ async def test_ui_endpoint_accessibility_playwright(
         print("Warnings encountered:\n" + "\n".join(all_warnings))
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_navigation_links_work(
     web_test_fixture: Any,
@@ -177,6 +179,7 @@ async def test_navigation_links_work(
     console_error_checker.assert_no_errors()
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_responsive_design_mobile(
     web_test_fixture: Any,
@@ -213,6 +216,7 @@ async def test_responsive_design_mobile(
     console_error_checker.assert_no_errors()
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_form_interactions(
     web_test_fixture: Any,
@@ -250,6 +254,7 @@ async def test_form_interactions(
     console_error_checker.assert_no_errors()
 
 
+@pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_loading_states(
     web_test_fixture: Any,

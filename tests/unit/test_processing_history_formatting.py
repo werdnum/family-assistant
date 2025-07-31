@@ -3,11 +3,13 @@ Unit tests for the history formatting logic in ProcessingService.
 """
 
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import Mock
 
 import pytest
 
+from family_assistant.llm import LLMStreamEvent
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.tools.types import ToolExecutionContext
 
@@ -16,6 +18,16 @@ from family_assistant.tools.types import ToolExecutionContext
 class MockLLMClient:
     async def generate_response(self, *args: Any, **kwargs: Any) -> Mock:
         return Mock()  # Not used in the tested method
+
+    def generate_response_stream(
+        self, *args: Any, **kwargs: Any
+    ) -> AsyncIterator[LLMStreamEvent]:
+        # Return an async generator that yields nothing
+        async def empty_generator() -> AsyncIterator[LLMStreamEvent]:
+            return
+            yield  # Make it a generator
+
+        return empty_generator()
 
     async def format_user_message_with_file(
         self,

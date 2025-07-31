@@ -5,7 +5,8 @@ Functional tests for script execution via event listeners.
 import asyncio
 import logging
 import uuid
-from unittest.mock import AsyncMock, MagicMock
+from collections.abc import Callable
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -31,7 +32,10 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_script_execution_creates_note(db_engine: AsyncEngine) -> None:
+async def test_script_execution_creates_note(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+) -> None:
     """Test end-to-end flow: event triggers script that creates a note."""
     test_run_id = uuid.uuid4()
     logger.info(f"\n--- Running Script Execution Test ({test_run_id}) ---")
@@ -60,9 +64,6 @@ add_or_update_note(
         )
 
     # Step 2: Create minimal infrastructure
-    shutdown_event = asyncio.Event()
-    new_task_event = asyncio.Event()
-
     # Event processor
     processor = EventProcessor(sources={}, sample_interval_hours=1.0)
     processor._running = True
@@ -98,21 +99,12 @@ add_or_update_note(
         server_url=None,
     )
 
-    # Start task worker
-    task_worker = TaskWorker(
-        processing_service=processing_service,
-        chat_interface=AsyncMock(spec=ChatInterface),
-        timezone_str="UTC",
-        embedding_generator=MagicMock(),
-        calendar_config={},
-        shutdown_event_instance=shutdown_event,
-        engine=db_engine,
+    # Start task worker using the fixture
+    worker, new_task_event, shutdown_event = task_worker_manager(
+        processing_service,
+        AsyncMock(spec=ChatInterface),
     )
-    task_worker.register_task_handler("script_execution", handle_script_execution)
-
-    worker_task = asyncio.create_task(
-        task_worker.run(new_task_event), name=f"ScriptWorker-{test_run_id}"
-    )
+    worker.register_task_handler("script_execution", handle_script_execution)
     await asyncio.sleep(0.1)
 
     # Step 3: Process event that triggers the script
@@ -137,21 +129,14 @@ add_or_update_note(
 
     logger.info("Script executed successfully and created note")
 
-    # Cleanup
-    shutdown_event.set()
-    new_task_event.set()
-    try:
-        await asyncio.wait_for(worker_task, timeout=2.0)
-    except asyncio.TimeoutError:
-        worker_task.cancel()
-        await asyncio.sleep(0.1)
-
+    # Cleanup is handled by the task_worker_manager fixture
     logger.info(f"--- Script Execution Test ({test_run_id}) Passed ---")
 
 
 @pytest.mark.asyncio
 async def test_script_with_syntax_error_creates_no_note(
     db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
 ) -> None:
     """Test that script with syntax error doesn't create any notes."""
     test_run_id = uuid.uuid4()
@@ -173,9 +158,6 @@ async def test_script_with_syntax_error_creates_no_note(
         )
 
     # Step 2: Create infrastructure
-    shutdown_event = asyncio.Event()
-    new_task_event = asyncio.Event()
-
     processor = EventProcessor(sources={}, sample_interval_hours=1.0)
     processor._running = True
     await processor._refresh_listener_cache()
@@ -208,20 +190,12 @@ async def test_script_with_syntax_error_creates_no_note(
         server_url=None,
     )
 
-    task_worker = TaskWorker(
-        processing_service=processing_service,
-        chat_interface=AsyncMock(spec=ChatInterface),
-        timezone_str="UTC",
-        embedding_generator=MagicMock(),
-        calendar_config={},
-        shutdown_event_instance=shutdown_event,
-        engine=db_engine,
+    # Start task worker using the fixture
+    worker, new_task_event, shutdown_event = task_worker_manager(
+        processing_service,
+        AsyncMock(spec=ChatInterface),
     )
-    task_worker.register_task_handler("script_execution", handle_script_execution)
-
-    worker_task = asyncio.create_task(
-        task_worker.run(new_task_event), name=f"ErrorWorker-{test_run_id}"
-    )
+    worker.register_task_handler("script_execution", handle_script_execution)
     await asyncio.sleep(0.1)
 
     # Step 3: Process event
@@ -247,20 +221,15 @@ async def test_script_with_syntax_error_creates_no_note(
 
     logger.info("Confirmed no notes created for script with syntax error")
 
-    # Cleanup
-    shutdown_event.set()
-    new_task_event.set()
-    try:
-        await asyncio.wait_for(worker_task, timeout=2.0)
-    except asyncio.TimeoutError:
-        worker_task.cancel()
-        await asyncio.sleep(0.1)
-
+    # Cleanup is handled by the task_worker_manager fixture
     logger.info(f"--- Script Syntax Error Test ({test_run_id}) Passed ---")
 
 
 @pytest.mark.asyncio
-async def test_script_creates_multiple_notes(db_engine: AsyncEngine) -> None:
+async def test_script_creates_multiple_notes(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+) -> None:
     """Test that script can create multiple notes using different tools."""
     test_run_id = uuid.uuid4()
     logger.info(f"\n--- Running Script Multi-Note Test ({test_run_id}) ---")
@@ -296,9 +265,6 @@ add_or_update_note(
         )
 
     # Step 2: Create infrastructure
-    shutdown_event = asyncio.Event()
-    new_task_event = asyncio.Event()
-
     processor = EventProcessor(sources={}, sample_interval_hours=1.0)
     processor._running = True
     await processor._refresh_listener_cache()
@@ -331,20 +297,12 @@ add_or_update_note(
         server_url=None,
     )
 
-    task_worker = TaskWorker(
-        processing_service=processing_service,
-        chat_interface=AsyncMock(spec=ChatInterface),
-        timezone_str="UTC",
-        embedding_generator=MagicMock(),
-        calendar_config={},
-        shutdown_event_instance=shutdown_event,
-        engine=db_engine,
+    # Start task worker using the fixture
+    worker, new_task_event, shutdown_event = task_worker_manager(
+        processing_service,
+        AsyncMock(spec=ChatInterface),
     )
-    task_worker.register_task_handler("script_execution", handle_script_execution)
-
-    worker_task = asyncio.create_task(
-        task_worker.run(new_task_event), name=f"MultiWorker-{test_run_id}"
-    )
+    worker.register_task_handler("script_execution", handle_script_execution)
     await asyncio.sleep(0.1)
 
     # Step 3: Process event
@@ -376,13 +334,5 @@ add_or_update_note(
 
     logger.info("Script successfully created multiple notes")
 
-    # Cleanup
-    shutdown_event.set()
-    new_task_event.set()
-    try:
-        await asyncio.wait_for(worker_task, timeout=2.0)
-    except asyncio.TimeoutError:
-        worker_task.cancel()
-        await asyncio.sleep(0.1)
-
+    # Cleanup is handled by the task_worker_manager fixture
     logger.info(f"--- Script Multi-Note Test ({test_run_id}) Passed ---")

@@ -18,6 +18,12 @@ from sqlalchemy.exc import DBAPIError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.sql import Delete, Insert, Select, Update
 
+try:
+    from asyncpg.exceptions import InFailedSQLTransactionError
+except ImportError:
+    # asyncpg not available (e.g., when using SQLite)
+    InFailedSQLTransactionError = None
+
 if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
 
@@ -150,6 +156,16 @@ class DatabaseContext:
                         exc_info=True,
                     )
                     raise  # Re-raise immediately, do not retry
+
+                # Check if this is a PostgreSQL transaction abort error
+                if InFailedSQLTransactionError and isinstance(
+                    e.orig, InFailedSQLTransactionError
+                ):
+                    logger.error(
+                        "PostgreSQL transaction is aborted. Cannot retry within same transaction.",
+                        exc_info=True,
+                    )
+                    raise  # Re-raise immediately, retrying won't help
 
                 # Log other DBAPI errors and proceed with retry logic
                 logger.warning(

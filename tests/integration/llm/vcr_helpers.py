@@ -52,6 +52,10 @@ def normalize_llm_request_body(body: dict[str, Any]) -> dict[str, Any]:
     if "tool_choice" in body:
         normalized["tool_choice"] = body["tool_choice"]
 
+    # Handle streaming parameter
+    if "stream" in body:
+        normalized["stream"] = body["stream"]
+
     # Handle other parameters (temperature, max_tokens, etc.)
     for key in [
         "temperature",
