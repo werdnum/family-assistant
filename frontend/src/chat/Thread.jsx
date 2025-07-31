@@ -18,7 +18,6 @@ import {
   SendHorizontalIcon,
   UserIcon,
   BotIcon,
-  Loader2Icon,
 } from 'lucide-react';
 import classNames from 'classnames';
 // import { formatRelativeTime } from './utils';

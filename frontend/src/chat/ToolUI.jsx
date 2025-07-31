@@ -1,6 +1,5 @@
 import React from 'react';
-import { makeAssistantToolUI } from '@assistant-ui/react';
-import { CheckCircleIcon, ClockIcon, AlertCircleIcon } from 'lucide-react';
+import { CheckCircleIcon, ClockIcon, AlertCircleIcon, DownloadIcon } from 'lucide-react';
 
 // Generic fallback tool UI that handles any tool call
 const ToolFallback = ({ toolName, args, result, status }) => {
@@ -102,17 +101,1892 @@ export const SearchDocumentsToolUI = ({ args, result, status }) => {
     );
 };
 
+// Tool UI for get_note
+export const GetNoteToolUI = ({ args, result, status }) => {
+  // Parse the result JSON if it's a string
+  let parsedResult = null;
+  let parseError = false;
+  
+  if (result && typeof result === 'string') {
+    try {
+      parsedResult = JSON.parse(result);
+    } catch (_e) {
+      parseError = true;
+    }
+  } else if (result && typeof result === 'object') {
+    parsedResult = result;
+  }
+
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+  
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  return (
+    <div className={`tool-call-container tool-get-note ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">📖 Get Note</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+      
+      <div className="tool-get-note-content">
+        {args?.title && (
+          <div className="tool-get-note-search">
+            Looking for: <strong>"{args.title}"</strong>
+          </div>
+        )}
+        
+        {parsedResult && !parseError && (
+          <div className="tool-get-note-result">
+            {parsedResult.exists ? (
+              <div className="tool-note-found">
+                <div className="tool-note-title">
+                  <strong>{parsedResult.title}</strong>
+                </div>
+                
+                {parsedResult.content && (
+                  <div className="tool-note-content-display">
+                    <div className="tool-section-label">Content:</div>
+                    <div className="tool-note-text">{parsedResult.content}</div>
+                  </div>
+                )}
+                
+                {parsedResult.include_in_prompt !== null && (
+                  <div className="tool-note-prompt-status">
+                    {parsedResult.include_in_prompt ? (
+                      <span className="tool-note-included">🔄 Included in prompts</span>
+                    ) : (
+                      <span className="tool-note-not-included">⏸️ Not included in prompts</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="tool-note-not-found">
+                ❌ Note not found
+              </div>
+            )}
+          </div>
+        )}
+        
+        {result && parseError && (
+          <div className="tool-get-note-raw-result">
+            <div className="tool-section-label">Result:</div>
+            <div className="tool-result-text">{result}</div>
+          </div>
+        )}
+      </div>
+      
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Searching for note...</div>
+      )}
+    </div>
+  );
+};
+// Tool UI for list_notes
+export const ListNotesToolUI = ({ args, result, status }) => {
+  // Parse the result array if it's a string
+  let parsedResult = null;
+  let parseError = false;
+  
+  if (result && typeof result === 'string') {
+    try {
+      parsedResult = JSON.parse(result);
+    } catch (_e) {
+      parseError = true;
+    }
+  } else if (result && Array.isArray(result)) {
+    parsedResult = result;
+  }
+
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+  
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  const notes = Array.isArray(parsedResult) ? parsedResult : [];
+  const hasFilter = args?.include_in_prompt_only === true;
+
+  return (
+    <div className={`tool-call-container tool-list-notes ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">📋 List Notes</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+      
+      <div className="tool-list-notes-params">
+        {hasFilter && (
+          <div className="tool-filter-indicator">
+            📌 Showing only notes included in prompts
+          </div>
+        )}
+      </div>
+      
+      {result && !parseError && (
+        <div className="tool-list-notes-results">
+          {notes.length > 0 ? (
+            <div className="tool-notes-list">
+              <div className="tool-results-count">
+                Found {notes.length} note{notes.length !== 1 ? 's' : ''}:
+              </div>
+              {notes.map((note, index) => (
+                <div key={index} className="tool-note-item">
+                  <div className="tool-note-header">
+                    <div className="tool-note-title">
+                      <strong>{note.title}</strong>
+                    </div>
+                    <div className="tool-note-prompt-status">
+                      {note.include_in_prompt ? (
+                        <span className="tool-note-included">🔄 In prompts</span>
+                      ) : (
+                        <span className="tool-note-not-included">⏸️ Not in prompts</span>
+                      )}
+                    </div>
+                  </div>
+                  {note.content_preview && (
+                    <div className="tool-note-preview">
+                      {note.content_preview}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="tool-no-results">
+              {hasFilter 
+                ? "No notes found that are included in prompts." 
+                : "No notes found."}
+            </div>
+          )}
+        </div>
+      )}
+      
+      {result && parseError && (
+        <div className="tool-list-notes-raw-result">
+          <div className="tool-section-label">Result:</div>
+          <div className="tool-result-text">{result}</div>
+        </div>
+      )}
+      
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Loading notes...</div>
+      )}
+    </div>
+  );
+};
+// Tool UI for delete_note
+export const DeleteNoteToolUI = ({ args, result, status }) => {
+  // Parse the result JSON if it's a string
+  let parsedResult = null;
+  let parseError = false;
+  
+  if (result && typeof result === 'string') {
+    try {
+      parsedResult = JSON.parse(result);
+    } catch (_e) {
+      parseError = true;
+    }
+  } else if (result && typeof result === 'object') {
+    parsedResult = result;
+  }
+
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+  
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    // Show success/failure based on parsed result
+    if (parsedResult?.success) {
+      statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+      statusClass = 'tool-complete';
+    } else {
+      statusIcon = <AlertCircleIcon size={16} />;
+      statusClass = 'tool-error';
+    }
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  return (
+    <div className={`tool-call-container tool-delete-note ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">🗑️ Delete Note</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+      
+      <div className="tool-delete-note-content">
+        {args?.title && (
+          <div className="tool-delete-note-target">
+            Deleting: <strong>"{args.title}"</strong>
+          </div>
+        )}
+        
+        {parsedResult && !parseError && (
+          <div className="tool-delete-note-result">
+            {parsedResult.success ? (
+              <div className="tool-delete-success">
+                ✅ {parsedResult.message || 'Note deleted successfully'}
+              </div>
+            ) : (
+              <div className="tool-delete-failure">
+                ❌ {parsedResult.message || 'Failed to delete note'}
+              </div>
+            )}
+          </div>
+        )}
+        
+        {result && parseError && (
+          <div className="tool-delete-note-raw-result">
+            <div className="tool-section-label">Result:</div>
+            <div className="tool-result-text">{result}</div>
+          </div>
+        )}
+      </div>
+      
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Deleting note...</div>
+      )}
+    </div>
+  );
+};
+export const DelegateToServiceToolUI = ToolFallback;
+// Tool UI for schedule_reminder
+export const ScheduleReminderToolUI = ({ args, result, status }) => {
+  // Format the time in a human-readable way
+  const formatTime = (isoString) => {
+    if (!isoString) {
+      return 'Unknown time';
+    }
+    try {
+      const date = new Date(isoString);
+      return date.toLocaleString(undefined, {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (_e) {
+      return isoString; // fallback to raw string if parsing fails
+    }
+  };
+
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+  
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  return (
+    <div className={`tool-call-container tool-reminder ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">⏰ Schedule Reminder</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+      
+      <div className="tool-reminder-content">
+        {args?.message && (
+          <div className="tool-reminder-message">
+            <strong>{args.message}</strong>
+          </div>
+        )}
+        
+        {args?.time && (
+          <div className="tool-reminder-time">
+            📅 {formatTime(args.time)}
+          </div>
+        )}
+        
+        {args?.recurring && (
+          <div className="tool-reminder-recurring">
+            🔄 Recurring reminder
+          </div>
+        )}
+      </div>
+      
+      {result && (
+        <div className="tool-reminder-result">
+          {typeof result === 'string' ? result : 'Reminder scheduled successfully!'}
+        </div>
+      )}
+      
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Scheduling reminder...</div>
+      )}
+    </div>
+  );
+};
+// Tool UI for schedule_future_callback
+export const ScheduleFutureCallbackToolUI = ({ args, result, status }) => {
+  // Format the time in a human-readable way
+  const formatTime = (isoString) => {
+    if (!isoString) {
+      return 'Unknown time';
+    }
+    try {
+      const date = new Date(isoString);
+      return date.toLocaleString(undefined, {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (_e) {
+      return isoString; // fallback to raw string if parsing fails
+    }
+  };
+
+  // Helper function to display callback data in a readable format
+  const formatCallbackData = (callbackData) => {
+    if (!callbackData || typeof callbackData !== 'object') {
+      return null;
+    }
+    
+    const entries = Object.entries(callbackData);
+    if (entries.length === 0) {
+      return null;
+    }
+    
+    return entries.map(([key, value]) => (
+      <div key={key} className="tool-callback-data-item">
+        <strong>{key}:</strong> {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+      </div>
+    ));
+  };
+
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+  
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  return (
+    <div className={`tool-call-container tool-callback ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">⏳ Schedule Future Callback</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+      
+      <div className="tool-callback-content">
+        {args?.description && (
+          <div className="tool-callback-description">
+            <strong>{args.description}</strong>
+          </div>
+        )}
+        
+        {args?.callback_time && (
+          <div className="tool-callback-time">
+            🕐 {formatTime(args.callback_time)}
+          </div>
+        )}
+        
+        {args?.callback_data && Object.keys(args.callback_data).length > 0 && (
+          <div className="tool-callback-data">
+            <div className="tool-section-label">Callback Data:</div>
+            <div className="tool-callback-data-list">
+              {formatCallbackData(args.callback_data)}
+            </div>
+          </div>
+        )}
+      </div>
+      
+      {result && (
+        <div className="tool-callback-result">
+          {typeof result === 'string' ? result : 'Callback scheduled successfully!'}
+        </div>
+      )}
+      
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Scheduling callback...</div>
+      )}
+    </div>
+  );
+};
+// Tool UI for schedule_recurring_task
+export const ScheduleRecurringTaskToolUI = ({ args, result, status }) => {
+  // Helper function to display task parameters in a readable format
+  const formatTaskParameters = (taskParams) => {
+    if (!taskParams || typeof taskParams !== 'object') {
+      return null;
+    }
+    
+    const entries = Object.entries(taskParams);
+    if (entries.length === 0) {
+      return null;
+    }
+    
+    return entries.map(([key, value]) => (
+      <div key={key} className="tool-task-param-item">
+        <strong>{key}:</strong> {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+      </div>
+    ));
+  };
+
+  // Helper function to format schedule pattern for display
+  const formatSchedulePattern = (pattern) => {
+    if (!pattern) {
+      return 'Unknown schedule';
+    }
+    
+    // Common patterns to make more readable
+    const readablePatterns = {
+      '0 9 * * 1-5': 'Weekdays at 9:00 AM',
+      '0 0 * * 0': 'Every Sunday at midnight',
+      '0 0 1 * *': 'First day of every month',
+      '0 12 * * *': 'Daily at noon',
+      '*/15 * * * *': 'Every 15 minutes',
+      '0 */4 * * *': 'Every 4 hours',
+      '30 8 * * 1': 'Every Monday at 8:30 AM'
+    };
+    
+    return readablePatterns[pattern] || `Cron: ${pattern}`;
+  };
+
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+  
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  return (
+    <div className={`tool-call-container tool-recurring-task ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">🔄 Schedule Recurring Task</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+      
+      <div className="tool-recurring-task-content">
+        {args?.task_name && (
+          <div className="tool-task-name">
+            <strong>{args.task_name}</strong>
+          </div>
+        )}
+        
+        {args?.schedule_pattern && (
+          <div className="tool-task-schedule">
+            📅 {formatSchedulePattern(args.schedule_pattern)}
+          </div>
+        )}
+        
+        {args?.description && (
+          <div className="tool-task-description">
+            {args.description}
+          </div>
+        )}
+        
+        {args?.task_parameters && Object.keys(args.task_parameters).length > 0 && (
+          <div className="tool-task-parameters">
+            <div className="tool-section-label">Parameters:</div>
+            <div className="tool-task-parameters-list">
+              {formatTaskParameters(args.task_parameters)}
+            </div>
+          </div>
+        )}
+        
+        {args?.enabled === false && (
+          <div className="tool-task-disabled">
+            ⏸️ Task scheduled as disabled
+          </div>
+        )}
+      </div>
+      
+      {result && (
+        <div className="tool-recurring-task-result">
+          {typeof result === 'string' ? result : 'Recurring task scheduled successfully!'}
+        </div>
+      )}
+      
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Creating recurring task...</div>
+      )}
+    </div>
+  );
+};
+// Tool UI for list_pending_callbacks
+export const ListPendingCallbacksToolUI = ({ args, result, status }) => {
+  // Parse the result array if it's a string
+  let parsedResult = null;
+  let parseError = false;
+  
+  if (result && typeof result === 'string') {
+    try {
+      parsedResult = JSON.parse(result);
+    } catch (_e) {
+      parseError = true;
+    }
+  } else if (result && Array.isArray(result)) {
+    parsedResult = result;
+  }
+
+  // Helper function to format timestamp
+  const formatTimestamp = (timestamp) => {
+    if (!timestamp) {
+      return 'Unknown time';
+    }
+    try {
+      const date = new Date(timestamp);
+      return date.toLocaleString(undefined, {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (_e) {
+      return timestamp; // fallback to raw string if parsing fails
+    }
+  };
+
+  // Helper function to get status icon for callback
+  const getCallbackStatusIcon = (callback) => {
+    if (callback.status === 'pending') {
+      return '⏳';
+    }
+    if (callback.status === 'completed') {
+      return '✅';
+    }
+    if (callback.status === 'failed') {
+      return '❌';
+    }
+    if (callback.status === 'cancelled') {
+      return '🚫';
+    }
+    return '📌';
+  };
+
+  // Helper function to truncate long descriptions
+  const truncateDescription = (description, maxLength = 100) => {
+    if (!description || description.length <= maxLength) {
+      return description;
+    }
+    return description.substring(0, maxLength) + '...';
+  };
+
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+  
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  const callbacks = Array.isArray(parsedResult) ? parsedResult : [];
+
+  return (
+    <div className={`tool-call-container tool-list-callbacks ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">📋 Pending Callbacks</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+      
+      <div className="tool-list-callbacks-params">
+        {args?.limit && (
+          <div className="tool-filter-indicator">
+            📊 Limit: {args.limit} callbacks
+          </div>
+        )}
+      </div>
+      
+      {result && !parseError && (
+        <div className="tool-list-callbacks-results">
+          {callbacks.length > 0 ? (
+            <div className="tool-callbacks-list">
+              <div className="tool-results-count">
+                Found {callbacks.length} callback{callbacks.length !== 1 ? 's' : ''}:
+              </div>
+              {callbacks.map((callback, index) => (
+                <div key={index} className="tool-callback-item">
+                  <div className="tool-callback-header">
+                    <div className="tool-callback-status">
+                      {getCallbackStatusIcon(callback)} <strong>{callback.status || 'pending'}</strong>
+                    </div>
+                    <div className="tool-callback-id">
+                      ID: {callback.id || callback.callback_id || `#${index + 1}`}
+                    </div>
+                  </div>
+                  
+                  {callback.description && (
+                    <div className="tool-callback-description">
+                      {truncateDescription(callback.description)}
+                    </div>
+                  )}
+                  
+                  {callback.callback_time && (
+                    <div className="tool-callback-time">
+                      🕐 {formatTimestamp(callback.callback_time)}
+                    </div>
+                  )}
+                  
+                  {callback.created_at && (
+                    <div className="tool-callback-created">
+                      📅 Created: {formatTimestamp(callback.created_at)}
+                    </div>
+                  )}
+                  
+                  {callback.callback_data && Object.keys(callback.callback_data).length > 0 && (
+                    <div className="tool-callback-data-preview">
+                      📄 Has callback data ({Object.keys(callback.callback_data).length} keys)
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="tool-no-results">
+              No pending callbacks found.
+            </div>
+          )}
+        </div>
+      )}
+      
+      {result && parseError && (
+        <div className="tool-list-callbacks-raw-result">
+          <div className="tool-section-label">Result:</div>
+          <div className="tool-result-text">{result}</div>
+        </div>
+      )}
+      
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Loading pending callbacks...</div>
+      )}
+    </div>
+  );
+};
+// Tool UI for modify_pending_callback
+export const ModifyPendingCallbackToolUI = ({ args, result, status }) => {
+  // Format the time in a human-readable way
+  const formatTime = (isoString) => {
+    if (!isoString) {
+      return 'Unknown time';
+    }
+    try {
+      const date = new Date(isoString);
+      return date.toLocaleString(undefined, {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (_e) {
+      return isoString; // fallback to raw string if parsing fails
+    }
+  };
+
+  // Helper function to display changes in a before/after format
+  const formatChanges = (changes) => {
+    if (!changes || typeof changes !== 'object') {
+      return null;
+    }
+    
+    const entries = Object.entries(changes);
+    if (entries.length === 0) {
+      return null;
+    }
+    
+    return entries.map(([key, value]) => {
+      // Handle special formatting for time fields
+      if (key.includes('time') && typeof value === 'string') {
+        return (
+          <div key={key} className="tool-modify-change-item">
+            <strong>{key}:</strong> {formatTime(value)}
+          </div>
+        );
+      }
+      
+      return (
+        <div key={key} className="tool-modify-change-item">
+          <strong>{key}:</strong> {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+        </div>
+      );
+    });
+  };
+
+  // Parse result to check if it contains old/new values comparison
+  let parsedResult = null;
+  
+  if (result && typeof result === 'string') {
+    try {
+      parsedResult = JSON.parse(result);
+    } catch (_e) {
+      // Result is not valid JSON, will be handled as string
+    }
+  } else if (result && typeof result === 'object') {
+    parsedResult = result;
+  }
+
+  // Check if the operation was successful
+  const isSuccess = parsedResult?.success !== false && 
+                   (!result || !result.toString().toLowerCase().includes('error'));
+
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+  
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    if (isSuccess) {
+      statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+      statusClass = 'tool-complete';
+    } else {
+      statusIcon = <AlertCircleIcon size={16} />;
+      statusClass = 'tool-error';
+    }
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  return (
+    <div className={`tool-call-container tool-modify-callback ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">✏️ Modify Callback</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+      
+      <div className="tool-modify-callback-content">
+        {args?.callback_id && (
+          <div className="tool-callback-id">
+            Callback ID: <strong>{args.callback_id}</strong>
+          </div>
+        )}
+        
+        {args?.changes && Object.keys(args.changes).length > 0 && (
+          <div className="tool-modify-changes">
+            <div className="tool-section-label">Changes:</div>
+            <div className="tool-modify-changes-list">
+              {formatChanges(args.changes)}
+            </div>
+          </div>
+        )}
+        
+        {/* Show old vs new values if available in result */}
+        {parsedResult && parsedResult.old_values && parsedResult.new_values && (
+          <div className="tool-modify-comparison">
+            <div className="tool-modify-before">
+              <div className="tool-section-label">Before:</div>
+              <div className="tool-modify-values">
+                {formatChanges(parsedResult.old_values)}
+              </div>
+            </div>
+            <div className="tool-modify-after">
+              <div className="tool-section-label">After:</div>
+              <div className="tool-modify-values">
+                {formatChanges(parsedResult.new_values)}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+      
+      {result && (
+        <div className="tool-modify-callback-result">
+          {isSuccess ? (
+            <div className="tool-modify-success">
+              ✅ {typeof result === 'string' ? result : 'Callback modified successfully!'}
+            </div>
+          ) : (
+            <div className="tool-modify-error">
+              ❌ {typeof result === 'string' ? result : 'Failed to modify callback'}
+            </div>
+          )}
+        </div>
+      )}
+      
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Modifying callback...</div>
+      )}
+    </div>
+  );
+};
+// Tool UI for cancel_pending_callback
+export const CancelPendingCallbackToolUI = ({ args, result, status }) => {
+  // Parse result to check if it contains callback details
+  let parsedResult = null;
+  
+  if (result && typeof result === 'string') {
+    try {
+      parsedResult = JSON.parse(result);
+    } catch (_e) {
+      // Result is not valid JSON, will be handled as string
+    }
+  } else if (result && typeof result === 'object') {
+    parsedResult = result;
+  }
+
+  // Check if the operation was successful
+  const isSuccess = parsedResult?.success !== false && 
+                   (!result || !result.toString().toLowerCase().includes('error'));
+
+  // Format the time in a human-readable way
+  const formatTime = (isoString) => {
+    if (!isoString) {
+      return 'Unknown time';
+    }
+    try {
+      const date = new Date(isoString);
+      return date.toLocaleString(undefined, {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (_e) {
+      return isoString; // fallback to raw string if parsing fails
+    }
+  };
+
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+  
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    if (isSuccess) {
+      statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+      statusClass = 'tool-complete';
+    } else {
+      statusIcon = <AlertCircleIcon size={16} />;
+      statusClass = 'tool-error';
+    }
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  return (
+    <div className={`tool-call-container tool-cancel-callback ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">🚫 Cancel Callback</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+      
+      <div className="tool-cancel-callback-content">
+        {args?.callback_id && (
+          <div className="tool-callback-id">
+            Cancelling Callback ID: <strong>{args.callback_id}</strong>
+          </div>
+        )}
+        
+        {/* Show callback details if available in result */}
+        {parsedResult && parsedResult.callback && (
+          <div className="tool-cancelled-callback-details">
+            <div className="tool-section-label">Cancelled Callback Details:</div>
+            <div className="tool-callback-details">
+              {parsedResult.callback.description && (
+                <div className="tool-callback-description">
+                  📝 {parsedResult.callback.description}
+                </div>
+              )}
+              {parsedResult.callback.callback_time && (
+                <div className="tool-callback-time">
+                  🕐 Was scheduled for: {formatTime(parsedResult.callback.callback_time)}
+                </div>
+              )}
+              {parsedResult.callback.status && (
+                <div className="tool-callback-original-status">
+                  📊 Previous status: {parsedResult.callback.status}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        
+        {args?.reason && (
+          <div className="tool-cancel-reason">
+            <div className="tool-section-label">Reason:</div>
+            <div className="tool-reason-text">{args.reason}</div>
+          </div>
+        )}
+      </div>
+      
+      {result && (
+        <div className="tool-cancel-callback-result">
+          {isSuccess ? (
+            <div className="tool-cancel-success">
+              ✅ {typeof result === 'string' ? result : 'Callback cancelled successfully!'}
+            </div>
+          ) : (
+            <div className="tool-cancel-error">
+              ❌ {typeof result === 'string' ? result : 'Failed to cancel callback'}
+            </div>
+          )}
+        </div>
+      )}
+      
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Cancelling callback...</div>
+      )}
+    </div>
+  );
+};
+// Tool UI for schedule_action
+export const ScheduleActionToolUI = ({ args, result, status }) => {
+  // Format the time in a human-readable way
+  const formatTime = (isoString) => {
+    if (!isoString) {
+      return 'Unknown time';
+    }
+    try {
+      const date = new Date(isoString);
+      return date.toLocaleString(undefined, {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (_e) {
+      return isoString; // fallback to raw string if parsing fails
+    }
+  };
+
+  // Helper function to display action data in a readable format
+  const formatActionData = (actionData) => {
+    if (!actionData || typeof actionData !== 'object') {return null;}
+    
+    // For simple objects, display key-value pairs nicely
+    const entries = Object.entries(actionData);
+    if (entries.length === 0) {
+      return null;
+    }
+    
+    return entries.map(([key, value]) => (
+      <div key={key} className="tool-action-data-item">
+        <strong>{key}:</strong> {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+      </div>
+    ));
+  };
+
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+  
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  return (
+    <div className={`tool-call-container tool-action ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">⚡ Schedule Action</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+      
+      <div className="tool-action-content">
+        {args?.action_name && (
+          <div className="tool-action-name">
+            <strong>{args.action_name}</strong>
+          </div>
+        )}
+        
+        {args?.execution_time && (
+          <div className="tool-action-time">
+            🕐 {formatTime(args.execution_time)}
+          </div>
+        )}
+        
+        {args?.action_data && Object.keys(args.action_data).length > 0 && (
+          <div className="tool-action-data">
+            <div className="tool-section-label">Parameters:</div>
+            <div className="tool-action-data-list">
+              {formatActionData(args.action_data)}
+            </div>
+          </div>
+        )}
+        
+        {args?.recurring && (
+          <div className="tool-action-recurring">
+            🔄 Recurring action
+          </div>
+        )}
+      </div>
+      
+      {result && (
+        <div className="tool-action-result">
+          {typeof result === 'string' ? result : 'Action scheduled successfully!'}
+        </div>
+      )}
+      
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Scheduling action...</div>
+      )}
+    </div>
+  );
+};
+export const ScheduleRecurringActionToolUI = ToolFallback;
+// Tool UI for get_full_document_content
+export const GetFullDocumentContentToolUI = ({ args, result, status }) => {
+  // Helper function to count words and characters
+  const getContentStats = (content) => {
+    if (!content || typeof content !== 'string') {return { chars: 0, words: 0 };}
+    const chars = content.length;
+    const words = content.trim() ? content.trim().split(/\s+/).length : 0;
+    return { chars, words };
+  };
+
+  // Helper function to format file size
+  const formatSize = (chars) => {
+    if (chars < 1024) {return `${chars} chars`;}
+    if (chars < 1024 * 1024) {return `${(chars / 1024).toFixed(1)}KB`;}
+    return `${(chars / (1024 * 1024)).toFixed(1)}MB`;
+  };
+
+  // State for content expansion (for long content)
+  const [isExpanded, setIsExpanded] = React.useState(false);
+  const MAX_PREVIEW_CHARS = 500;
+  const shouldTruncate = result && typeof result === 'string' && result.length > MAX_PREVIEW_CHARS;
+
+  // Check if result indicates an error or not found
+  const isError = result && typeof result === 'string' && (
+    result.toLowerCase().includes('error') || 
+    result.toLowerCase().includes('not found') ||
+    result.toLowerCase().includes('failed')
+  );
+
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+  
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    if (isError) {
+      statusIcon = <AlertCircleIcon size={16} />;
+      statusClass = 'tool-error';
+    } else {
+      statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+      statusClass = 'tool-complete';
+    }
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  const stats = result && typeof result === 'string' ? getContentStats(result) : { chars: 0, words: 0 };
+  const displayContent = shouldTruncate && !isExpanded 
+    ? result.substring(0, MAX_PREVIEW_CHARS) + '...'
+    : result;
+
+  return (
+    <div className={`tool-call-container tool-document ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">📄 Get Document Content</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+      
+      <div className="tool-document-content">
+        {args?.document_id && (
+          <div className="tool-document-id">
+            Document ID: <strong>{args.document_id}</strong>
+          </div>
+        )}
+        
+        {result && (
+          <div className="tool-document-result">
+            {isError ? (
+              <div className="tool-document-error">
+                ❌ {result}
+              </div>
+            ) : (
+              <div className="tool-document-success">
+                <div className="tool-document-stats">
+                  📊 {formatSize(stats.chars)} • {stats.words.toLocaleString()} words
+                </div>
+                
+                <div className="tool-document-text">
+                  <div className="tool-section-label">Content:</div>
+                  <div className="tool-document-content-display">
+                    <pre>{displayContent}</pre>
+                    {shouldTruncate && (
+                      <button 
+                        className="tool-document-expand-btn"
+                        onClick={() => setIsExpanded(!isExpanded)}
+                        type="button"
+                      >
+                        {isExpanded ? '🔼 Show less' : '🔽 Show more'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Retrieving document content...</div>
+      )}
+    </div>
+  );
+};
+// Tool UI for ingest_document_from_url
+export const IngestDocumentFromUrlToolUI = ({ args, result, status }) => {
+  // Helper function to truncate long URLs
+  const truncateUrl = (url, maxLength = 60) => {
+    if (!url || url.length <= maxLength) {return url;}
+    
+    // Try to keep the domain and end of the path visible
+    try {
+      const urlObj = new window.URL(url);
+      const domain = urlObj.hostname;
+      const path = urlObj.pathname + urlObj.search;
+      
+      if (domain.length + path.length <= maxLength) {
+        return `${domain}${path}`;
+      }
+      
+      const availablePathLength = maxLength - domain.length - 3; // 3 for "..."
+      if (availablePathLength > 10) {
+        const endPath = path.slice(-availablePathLength);
+        return `${domain}...${endPath}`;
+      }
+    } catch (_e) {
+      // Fallback for invalid URLs
+    }
+    
+    // Fallback: simple truncation
+    return url.substring(0, maxLength - 3) + '...';
+  };
+
+  // Helper function to extract domain/hostname for display
+  const getDomainFromUrl = (url) => {
+    try {
+      return new window.URL(url).hostname;
+    } catch (_e) {
+      return 'unknown domain';
+    }
+  };
+
+  // Helper function to get file type from URL
+  const getFileTypeFromUrl = (url) => {
+    try {
+      const urlObj = new window.URL(url);
+      const pathname = urlObj.pathname.toLowerCase();
+      
+      if (pathname.endsWith('.pdf')) {return 'PDF';}
+      if (pathname.endsWith('.doc') || pathname.endsWith('.docx')) {return 'Word';}
+      if (pathname.endsWith('.txt')) {return 'Text';}
+      if (pathname.endsWith('.md')) {return 'Markdown';}
+      if (pathname.endsWith('.html') || pathname.endsWith('.htm')) {return 'Web page';}
+      if (pathname.includes('/')) {return 'Web page';}
+      
+      return 'Document';
+    } catch (_e) {
+      return 'Document';
+    }
+  };
+
+  // Check if result indicates success or failure
+  const isSuccess = result && typeof result === 'string' && (
+    result.toLowerCase().includes('success') || 
+    result.toLowerCase().includes('ingested') ||
+    result.toLowerCase().includes('processed') ||
+    result.toLowerCase().includes('added')
+  );
+  
+  const isError = result && typeof result === 'string' && (
+    result.toLowerCase().includes('error') || 
+    result.toLowerCase().includes('failed') ||
+    result.toLowerCase().includes('unable')
+  );
+
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+  
+  if (status?.type === 'running') {
+    statusIcon = <DownloadIcon size={16} className="animate-bounce" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    if (isError) {
+      statusIcon = <AlertCircleIcon size={16} />;
+      statusClass = 'tool-error';
+    } else {
+      statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+      statusClass = 'tool-complete';
+    }
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  const fileType = args?.url ? getFileTypeFromUrl(args.url) : 'Document';
+  const domain = args?.url ? getDomainFromUrl(args.url) : '';
+  const truncatedUrl = args?.url ? truncateUrl(args.url) : '';
+
+  return (
+    <div className={`tool-call-container tool-ingest-url ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">📥 Ingest Document from URL</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+      
+      <div className="tool-ingest-url-content">
+        {args?.url && (
+          <div className="tool-ingest-url-details">
+            <div className="tool-ingest-url-main">
+              <div className="tool-ingest-url-type">
+                📄 {fileType}
+              </div>
+              <div className="tool-ingest-url-address" title={args.url}>
+                🌐 {truncatedUrl}
+              </div>
+              {domain && (
+                <div className="tool-ingest-url-domain">
+                  from {domain}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        
+        {args?.metadata && Object.keys(args.metadata).length > 0 && (
+          <div className="tool-ingest-metadata">
+            <div className="tool-section-label">Metadata:</div>
+            <div className="tool-metadata-items">
+              {Object.entries(args.metadata).map(([key, value]) => (
+                <div key={key} className="tool-metadata-item">
+                  <strong>{key}:</strong> {String(value)}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        
+        {result && (
+          <div className="tool-ingest-result">
+            {isError ? (
+              <div className="tool-ingest-error">
+                ❌ {result}
+              </div>
+            ) : isSuccess ? (
+              <div className="tool-ingest-success">
+                ✅ {result}
+              </div>
+            ) : (
+              <div className="tool-ingest-info">
+                {result}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Downloading and ingesting document...</div>
+      )}
+    </div>
+  );
+};
+export const GetUserDocumentationContentToolUI = ToolFallback;
+export const QueryRecentEventsToolUI = ToolFallback;
+export const TestEventListenerToolUI = ToolFallback;
+export const CreateEventListenerToolUI = ToolFallback;
+export const ListEventListenersToolUI = ToolFallback;
+export const DeleteEventListenerToolUI = ToolFallback;
+export const ToggleEventListenerToolUI = ToolFallback;
+export const ValidateEventListenerScriptToolUI = ToolFallback;
+export const TestEventListenerScriptToolUI = ToolFallback;
+export const RenderHomeAssistantTemplateToolUI = ToolFallback;
+// Tool UI for add_calendar_event
+export const AddCalendarEventToolUI = ({ args, result, status }) => {
+  // Format the time in a human-readable way
+  const formatTime = (isoString) => {
+    if (!isoString) {
+      return 'Unknown time';
+    }
+    try {
+      const date = new Date(isoString);
+      return date.toLocaleString(undefined, {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (_e) {
+      return isoString; // fallback to raw string if parsing fails
+    }
+  };
+
+  // Format date only (for all-day events)
+  const formatDate = (isoString) => {
+    if (!isoString) {return 'Unknown date';}
+    try {
+      const date = new Date(isoString);
+      return date.toLocaleDateString(undefined, {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
+    } catch (_e) {
+      return isoString; // fallback to raw string if parsing fails
+    }
+  };
+
+  // Check if it's a multi-day all-day event
+  const isMultiDayEvent = (startTime, endTime, allDay) => {
+    if (!allDay || !startTime || !endTime) {return false;}
+    try {
+      const start = new Date(startTime);
+      const end = new Date(endTime);
+      return start.toDateString() !== end.toDateString();
+    } catch (_e) {
+      return false;
+    }
+  };
+
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+  
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  return (
+    <div className={`tool-call-container tool-calendar ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">📅 Calendar Event</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+      
+      <div className="tool-calendar-content">
+        {args?.summary && (
+          <div className="tool-calendar-summary">
+            <strong>{args.summary}</strong>
+          </div>
+        )}
+        
+        {args?.start_time && (
+          <div className="tool-calendar-time">
+            {args?.all_day ? (
+              // All-day event display
+              isMultiDayEvent(args.start_time, args.end_time, args.all_day) ? (
+                <span>📅 {formatDate(args.start_time)} - {formatDate(args.end_time)} (All day)</span>
+              ) : (
+                <span>📅 {formatDate(args.start_time)} (All day)</span>
+              )
+            ) : (
+              // Timed event display
+              args?.end_time ? (
+                <span>🕐 {formatTime(args.start_time)} - {formatTime(args.end_time)}</span>
+              ) : (
+                <span>🕐 {formatTime(args.start_time)}</span>
+              )
+            )}
+          </div>
+        )}
+        
+        {args?.description && (
+          <div className="tool-calendar-description">
+            {args.description}
+          </div>
+        )}
+        
+        {args?.recurrence_rule && (
+          <div className="tool-calendar-recurrence">
+            🔄 Recurring event
+          </div>
+        )}
+        
+        {args?.calendar_url && (
+          <div className="tool-calendar-location">
+            📍 Calendar: {args.calendar_url.split('/').pop() || 'Unknown'}
+          </div>
+        )}
+      </div>
+      
+      {result && (
+        <div className="tool-calendar-result">
+          {typeof result === 'string' ? result : 'Event created successfully!'}
+        </div>
+      )}
+      
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Creating calendar event...</div>
+      )}
+    </div>
+  );
+};
+// Tool UI for search_calendar_events
+export const SearchCalendarEventsToolUI = ({ args, result, status }) => {
+  // Helper function to parse events from the result string
+  const parseEvents = (resultStr) => {
+    if (!resultStr || typeof resultStr !== 'string') {return [];}
+    
+    // Check if it's an error message
+    if (resultStr.includes('Error:') || resultStr.includes('No events found')) {
+      return [];
+    }
+    
+    const lines = resultStr.split('\n');
+    const events = [];
+    let currentEvent = null;
+    
+    for (const line of lines) {
+      const trimmed = line.trim();
+      
+      // Event number lines like "1. Meeting Title"
+      if (/^\d+\.\s/.test(trimmed)) {
+        if (currentEvent) {
+          events.push(currentEvent);
+        }
+        currentEvent = {
+          summary: trimmed.replace(/^\d+\.\s/, ''),
+          start: '',
+          end: '',
+          uid: '',
+          calendar_url: ''
+        };
+      } else if (currentEvent) {
+        // Parse event details
+        if (trimmed.startsWith('Start:')) {
+          currentEvent.start = trimmed.replace('Start:', '').trim();
+        } else if (trimmed.startsWith('End:')) {
+          currentEvent.end = trimmed.replace('End:', '').trim();
+        } else if (trimmed.startsWith('UID:')) {
+          currentEvent.uid = trimmed.replace('UID:', '').trim();
+        } else if (trimmed.startsWith('Calendar:')) {
+          currentEvent.calendar_url = trimmed.replace('Calendar:', '').trim();
+        }
+      }
+    }
+    
+    if (currentEvent) {
+      events.push(currentEvent);
+    }
+    
+    return events;
+  };
+
+  // Helper function to format date/time for display
+  const formatDateTime = (dateTimeStr) => {
+    if (!dateTimeStr || dateTimeStr === 'No start time' || dateTimeStr === 'No end time') {
+      return dateTimeStr || 'Unknown time';
+    }
+    
+    try {
+      // Try to parse and format the date
+      const date = new Date(dateTimeStr);
+      if (isNaN(date.getTime())) {
+        return dateTimeStr; // Return as-is if can't parse  
+      }
+      
+      return date.toLocaleString(undefined, {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (_e) {
+      return dateTimeStr; // fallback to raw string if parsing fails
+    }
+  };
+
+  // Helper function to get calendar name from URL
+  const getCalendarName = (calendarUrl) => {
+    if (!calendarUrl) {return 'Unknown calendar';}
+    try {
+      const urlParts = calendarUrl.split('/');
+      return urlParts[urlParts.length - 1] || 'Calendar';
+    } catch (_e) {
+      return 'Calendar';
+    }
+  };
+
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+  
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  const events = result ? parseEvents(result) : [];
+  const hasError = result && typeof result === 'string' && result.includes('Error:');
+  const noResults = result && typeof result === 'string' && result.includes('No events found');
+
+  return (
+    <div className={`tool-call-container tool-calendar-search ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">🔍📅 Search Calendar Events</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+      
+      <div className="tool-calendar-search-params">
+        {args?.search_text && (
+          <div className="tool-search-query">
+            🔎 <strong>"{args.search_text}"</strong>
+          </div>
+        )}
+        
+        {(args?.date_range_start || args?.date_range_end) && (
+          <div className="tool-search-daterange">
+            📅 {args.date_range_start || 'Today'} → {args.date_range_end || '3 months'}
+          </div>
+        )}
+        
+        {args?.max_results && (
+          <div className="tool-search-limit">
+            📊 Max results: {args.max_results}
+          </div>
+        )}
+      </div>
+      
+      {result && (
+        <div className="tool-calendar-search-results">
+          {hasError ? (
+            <div className="tool-error-message">
+              {result}
+            </div>
+          ) : noResults ? (
+            <div className="tool-no-results">
+              No events found matching the search criteria.
+            </div>
+          ) : events.length > 0 ? (
+            <div className="tool-events-list">
+              <div className="tool-results-count">
+                Found {events.length} event{events.length !== 1 ? 's' : ''}:
+              </div>
+              {events.map((event, index) => (
+                <div key={index} className="tool-event-item">
+                  <div className="tool-event-summary">
+                    <strong>{event.summary}</strong>
+                  </div>
+                  <div className="tool-event-time">
+                    🕐 {formatDateTime(event.start)}
+                    {event.end && ` → ${formatDateTime(event.end)}`}
+                  </div>
+                  <div className="tool-event-calendar">
+                    📍 {getCalendarName(event.calendar_url)}
+                  </div>
+                  {event.uid && (
+                    <div className="tool-event-uid">
+                      🔑 {event.uid}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="tool-result-text">{result}</div>
+          )}
+        </div>
+      )}
+      
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Searching calendar events...</div>
+      )}
+    </div>
+  );
+};
+export const ModifyCalendarEventToolUI = ToolFallback;
+export const DeleteCalendarEventToolUI = ToolFallback;
+// Tool UI for get_message_history
+export const GetMessageHistoryToolUI = ({ args, result, status }) => {
+  // Parse the result array if it's a string
+  let parsedResult = null;
+  let parseError = false;
+  
+  if (result && typeof result === 'string') {
+    try {
+      parsedResult = JSON.parse(result);
+    } catch (_e) {
+      parseError = true;
+    }
+  } else if (result && Array.isArray(result)) {
+    parsedResult = result;
+  }
+
+  // Determine status icon and classes
+  let statusIcon = null;
+  let statusClass = '';
+  
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  // Helper function to format timestamp
+  const formatTimestamp = (timestamp) => {
+    if (!timestamp) {
+      return 'Unknown time';
+    }
+    try {
+      const date = new Date(timestamp);
+      return date.toLocaleString(undefined, {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (_e) {
+      return timestamp; // fallback to raw string if parsing fails
+    }
+  };
+
+  // Helper function to truncate long content
+  const truncateContent = (content, maxLength = 150) => {
+    if (!content || content.length <= maxLength) {return content;}
+    return content.substring(0, maxLength) + '...';
+  };
+
+  // Helper function to get role icon
+  const getRoleIcon = (role) => {
+    switch (role?.toLowerCase()) {
+      case 'user': return '👤';
+      case 'assistant': return '🤖';
+      case 'system': return '⚙️';
+      default: return '💬';
+    }
+  };
+
+  // Helper function to get interface icon
+  const getInterfaceIcon = (interfaceType) => {
+    switch (interfaceType?.toLowerCase()) {
+      case 'telegram': return '📱';
+      case 'web': return '🌐';
+      case 'email': return '📧';
+      default: return '💬';
+    }
+  };
+
+  const messages = Array.isArray(parsedResult) ? parsedResult : [];
+
+  return (
+    <div className={`tool-call-container tool-message-history ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">💬 Message History</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+      
+      <div className="tool-message-history-params">
+        {args?.interface_type && (
+          <div className="tool-filter-indicator">
+            {getInterfaceIcon(args.interface_type)} Interface: <strong>{args.interface_type}</strong>
+          </div>
+        )}
+        {args?.user_name && (
+          <div className="tool-filter-indicator">
+            👤 User: <strong>{args.user_name}</strong>
+          </div>
+        )}
+        {args?.limit && (
+          <div className="tool-filter-indicator">
+            📊 Limit: {args.limit} messages
+          </div>
+        )}
+      </div>
+      
+      {result && !parseError && (
+        <div className="tool-message-history-results">
+          {messages.length > 0 ? (
+            <div className="tool-messages-list">
+              <div className="tool-results-count">
+                Found {messages.length} message{messages.length !== 1 ? 's' : ''}:
+              </div>
+              {messages.map((message, index) => (
+                <div key={index} className={`tool-message-item tool-message-${message.role?.toLowerCase() || 'unknown'}`}>
+                  <div className="tool-message-header">
+                    <div className="tool-message-role">
+                      {getRoleIcon(message.role)} <strong>{message.role || 'Unknown'}</strong>
+                    </div>
+                    <div className="tool-message-timestamp">
+                      🕐 {formatTimestamp(message.timestamp)}
+                    </div>
+                  </div>
+                  
+                  {message.content && (
+                    <div className="tool-message-content">
+                      {truncateContent(message.content)}
+                    </div>
+                  )}
+                  
+                  <div className="tool-message-meta">
+                    {message.interface_type && (
+                      <span className="tool-message-interface">
+                        {getInterfaceIcon(message.interface_type)} {message.interface_type}
+                      </span>
+                    )}
+                    {message.user_name && (
+                      <span className="tool-message-user">
+                        👤 {message.user_name}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="tool-no-results">
+              No messages found matching the criteria.
+            </div>
+          )}
+        </div>
+      )}
+      
+      {result && parseError && (
+        <div className="tool-message-history-raw-result">
+          <div className="tool-section-label">Result:</div>
+          <div className="tool-result-text">{result}</div>
+        </div>
+      )}
+      
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Loading message history...</div>
+      )}
+    </div>
+  );
+};
+export const SendMessageToUserToolUI = ToolFallback;
+export const ExecuteScriptToolUI = ToolFallback;
+
 // Create a map of tool UIs by name for easier access
 export const toolUIsByName = {
+  // Implemented tool UIs
   'add_or_update_note': AddOrUpdateNoteToolUI,
   'search_documents': SearchDocumentsToolUI,
+  
+  // Placeholder tool UIs (using ToolFallback)
+  'get_note': GetNoteToolUI,
+  'list_notes': ListNotesToolUI,
+  'delete_note': DeleteNoteToolUI,
+  'delegate_to_service': DelegateToServiceToolUI,
+  'schedule_reminder': ScheduleReminderToolUI,
+  'schedule_future_callback': ScheduleFutureCallbackToolUI,
+  'schedule_recurring_task': ScheduleRecurringTaskToolUI,
+  'list_pending_callbacks': ListPendingCallbacksToolUI,
+  'modify_pending_callback': ModifyPendingCallbackToolUI,
+  'cancel_pending_callback': CancelPendingCallbackToolUI,
+  'schedule_action': ScheduleActionToolUI,
+  'schedule_recurring_action': ScheduleRecurringActionToolUI,
+  'get_full_document_content': GetFullDocumentContentToolUI,
+  'ingest_document_from_url': IngestDocumentFromUrlToolUI,
+  'get_user_documentation_content': GetUserDocumentationContentToolUI,
+  'query_recent_events': QueryRecentEventsToolUI,
+  'test_event_listener': TestEventListenerToolUI,
+  'create_event_listener': CreateEventListenerToolUI,
+  'list_event_listeners': ListEventListenersToolUI,
+  'delete_event_listener': DeleteEventListenerToolUI,
+  'toggle_event_listener': ToggleEventListenerToolUI,
+  'validate_event_listener_script': ValidateEventListenerScriptToolUI,
+  'test_event_listener_script': TestEventListenerScriptToolUI,
+  'render_home_assistant_template': RenderHomeAssistantTemplateToolUI,
+  'add_calendar_event': AddCalendarEventToolUI,
+  'search_calendar_events': SearchCalendarEventsToolUI,
+  'modify_calendar_event': ModifyCalendarEventToolUI,
+  'delete_calendar_event': DeleteCalendarEventToolUI,
+  'get_message_history': GetMessageHistoryToolUI,
+  'send_message_to_user': SendMessageToUserToolUI,
+  'execute_script': ExecuteScriptToolUI,
 };
-
-// Export all tool UIs as an array
-export const toolUIs = [
-  AddOrUpdateNoteToolUI,
-  SearchDocumentsToolUI,
-];
 
 // Export ToolFallback separately
 export { ToolFallback };

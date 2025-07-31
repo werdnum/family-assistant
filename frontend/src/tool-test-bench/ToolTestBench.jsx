@@ -1,0 +1,1366 @@
+import React from 'react';
+import { 
+  toolUIsByName,
+  ToolFallback,
+} from '../chat/ToolUI';
+
+// Sample data for testing different tool states
+const sampleToolCalls = [
+  {
+    name: 'add_or_update_note',
+    title: 'Note Tool - Running',
+    args: {
+      title: 'Meeting Notes',
+      content: 'Discussed the Q4 roadmap and budget allocations. Action items include...',
+      include_in_prompt: true
+    },
+    result: null,
+    status: { type: 'running' }
+  },
+  {
+    name: 'add_or_update_note',
+    title: 'Note Tool - Complete',
+    args: {
+      title: 'Shopping List',
+      content: 'Milk, Eggs, Bread, Coffee',
+      include_in_prompt: false
+    },
+    result: "Note 'Shopping List' has been created successfully.",
+    status: { type: 'complete' }
+  },
+  {
+    name: 'get_note',
+    title: 'Get Note - Running',
+    args: {
+      title: 'Meeting Notes'
+    },
+    result: null,
+    status: { type: 'running' }
+  },
+  {
+    name: 'get_note',
+    title: 'Get Note - Found (Included in Prompts)',
+    args: {
+      title: 'Project Roadmap'
+    },
+    result: JSON.stringify({
+      exists: true,
+      title: 'Project Roadmap',
+      content: 'Q1: Focus on user authentication and core features\nQ2: Implement advanced search and filtering\nQ3: Mobile app development\nQ4: Performance optimization and scaling',
+      include_in_prompt: true
+    }),
+    status: { type: 'complete' }
+  },
+  {
+    name: 'get_note',
+    title: 'Get Note - Found (Not Included in Prompts)',
+    args: {
+      title: 'Personal Shopping List'
+    },
+    result: JSON.stringify({
+      exists: true,
+      title: 'Personal Shopping List',
+      content: 'Groceries:\n- Organic milk\n- Free-range eggs\n- Whole grain bread\n- Fair trade coffee\n- Fresh vegetables for the week',
+      include_in_prompt: false
+    }),
+    status: { type: 'complete' }
+  },
+  {
+    name: 'get_note',
+    title: 'Get Note - Not Found',
+    args: {
+      title: 'Nonexistent Note'
+    },
+    result: JSON.stringify({
+      exists: false,
+      title: null,
+      content: null,
+      include_in_prompt: null
+    }),
+    status: { type: 'complete' }
+  },
+  {
+    name: 'get_note',
+    title: 'Get Note - Error',
+    args: {
+      title: 'Error Test Note'
+    },
+    result: null,
+    status: { type: 'incomplete', reason: 'error' }
+  },
+  {
+    name: 'get_note',
+    title: 'Get Note - Malformed JSON Response',
+    args: {
+      title: 'Test Note'
+    },
+    result: 'This is not valid JSON, should fallback gracefully',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'list_notes',
+    title: 'List Notes - Running',
+    args: {},
+    result: null,
+    status: { type: 'running' }
+  },
+  {
+    name: 'list_notes',
+    title: 'List Notes - Complete with Notes',
+    args: {},
+    result: JSON.stringify([
+      {
+        title: 'Project Roadmap',
+        content_preview: 'Q1: Focus on user authentication and core features. Q2: Implement advanced search and filtering...',
+        include_in_prompt: true
+      },
+      {
+        title: 'Meeting Notes - Team Standup',
+        content_preview: 'Discussed sprint progress, blockers, and upcoming deliverables. Action items include...',
+        include_in_prompt: true
+      },
+      {
+        title: 'Personal Shopping List',
+        content_preview: 'Groceries: Organic milk, Free-range eggs, Whole grain bread, Fair trade coffee...',
+        include_in_prompt: false
+      },
+      {
+        title: 'Vacation Planning',
+        content_preview: 'Summer trip ideas: Beach house rental, Mountain hiking, City exploration tours...',
+        include_in_prompt: false
+      }
+    ]),
+    status: { type: 'complete' }
+  },
+  {
+    name: 'list_notes',
+    title: 'List Notes - Filtered (Include in Prompt Only)',
+    args: {
+      include_in_prompt_only: true
+    },
+    result: JSON.stringify([
+      {
+        title: 'Project Roadmap',
+        content_preview: 'Q1: Focus on user authentication and core features. Q2: Implement advanced search...',
+        include_in_prompt: true
+      },
+      {
+        title: 'Important Decisions Log',
+        content_preview: 'Architecture decisions, technology choices, and their rationale. Key decisions include...',
+        include_in_prompt: true
+      }
+    ]),
+    status: { type: 'complete' }
+  },
+  {
+    name: 'list_notes',
+    title: 'List Notes - Empty Results',
+    args: {},
+    result: JSON.stringify([]),
+    status: { type: 'complete' }
+  },
+  {
+    name: 'list_notes',
+    title: 'List Notes - Empty Results (Filtered)',
+    args: {
+      include_in_prompt_only: true
+    },
+    result: JSON.stringify([]),
+    status: { type: 'complete' }
+  },
+  {
+    name: 'list_notes',
+    title: 'List Notes - Error',
+    args: {},
+    result: null,
+    status: { type: 'incomplete', reason: 'error' }
+  },
+  {
+    name: 'list_notes',
+    title: 'List Notes - Malformed JSON Response',
+    args: {},
+    result: 'This is not valid JSON, should fallback gracefully',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'delete_note',
+    title: 'Delete Note - Running',
+    args: {
+      title: 'Old Meeting Notes'
+    },
+    result: null,
+    status: { type: 'running' }
+  },
+  {
+    name: 'delete_note',
+    title: 'Delete Note - Success',
+    args: {
+      title: 'Shopping List'
+    },
+    result: JSON.stringify({
+      success: true,
+      message: "Note 'Shopping List' deleted successfully."
+    }),
+    status: { type: 'complete' }
+  },
+  {
+    name: 'delete_note',
+    title: 'Delete Note - Not Found',
+    args: {
+      title: 'Nonexistent Note'
+    },
+    result: JSON.stringify({
+      success: false,
+      message: "Note 'Nonexistent Note' not found."
+    }),
+    status: { type: 'complete' }
+  },
+  {
+    name: 'delete_note',
+    title: 'Delete Note - Error',
+    args: {
+      title: 'Error Test Note'
+    },
+    result: null,
+    status: { type: 'incomplete', reason: 'error' }
+  },
+  {
+    name: 'delete_note',
+    title: 'Delete Note - Malformed JSON Response',
+    args: {
+      title: 'Test Note'
+    },
+    result: 'This is not valid JSON, should fallback gracefully',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'search_documents',
+    title: 'Search Documents - Running',
+    args: {
+      query: 'project roadmap 2024'
+    },
+    result: null,
+    status: { type: 'running' }
+  },
+  {
+    name: 'search_documents',
+    title: 'Search Documents - Complete',
+    args: {
+      query: 'vacation policy'
+    },
+    result: [
+      { title: 'HR Policy Document', snippet: '...employees are entitled to 15 days of paid vacation...' },
+      { title: 'Employee Handbook', snippet: '...vacation requests must be submitted 2 weeks in advance...' }
+    ],
+    status: { type: 'complete' }
+  },
+  {
+    name: 'schedule_reminder',
+    title: 'Schedule Reminder - Running',
+    args: {
+      message: 'Call the dentist for annual checkup',
+      time: '2024-12-20T14:00:00'
+    },
+    result: null,
+    status: { type: 'running' }
+  },
+  {
+    name: 'schedule_reminder',
+    title: 'Schedule Reminder - Complete',
+    args: {
+      message: 'Team standup meeting',
+      time: '2024-12-21T09:30:00',
+      recurring: false
+    },
+    result: 'Reminder scheduled successfully for December 21, 2024 at 9:30 AM',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'schedule_reminder',
+    title: 'Schedule Reminder - Recurring',
+    args: {
+      message: 'Take daily vitamins',
+      time: '2024-12-20T08:00:00',
+      recurring: true
+    },
+    result: 'Recurring reminder set up successfully',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'schedule_reminder',
+    title: 'Schedule Reminder - Error',
+    args: {
+      message: 'Invalid time test',
+      time: 'invalid-time-format'
+    },
+    result: null,
+    status: { type: 'incomplete', reason: 'error' }
+  },
+  {
+    name: 'schedule_action',
+    title: 'Schedule Action - Running',
+    args: {
+      action_name: 'Send weekly report',
+      execution_time: '2024-12-23T10:00:00',
+      action_data: {
+        report_type: 'weekly_summary',
+        recipients: ['manager@company.com', 'team@company.com'],
+        format: 'pdf'
+      }
+    },
+    result: null,
+    status: { type: 'running' }
+  },
+  {
+    name: 'schedule_action',
+    title: 'Schedule Action - Complete',
+    args: {
+      action_name: 'Database backup',
+      execution_time: '2024-12-24T02:00:00',
+      action_data: {
+        backup_type: 'full',
+        retention_days: 30,
+        compress: true
+      },
+      recurring: false
+    },
+    result: 'Action "Database backup" scheduled successfully for December 24, 2024 at 2:00 AM',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'schedule_action',
+    title: 'Schedule Action - Recurring',
+    args: {
+      action_name: 'System health check',
+      execution_time: '2024-12-20T06:00:00',
+      action_data: {
+        check_type: 'comprehensive',
+        alert_threshold: 85,
+        services: ['database', 'api_server', 'cache', 'queue']
+      },
+      recurring: true
+    },
+    result: 'Recurring action "System health check" set up successfully',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'schedule_action',
+    title: 'Schedule Action - Simple Parameters',
+    args: {
+      action_name: 'Clean temporary files',
+      execution_time: '2024-12-25T01:00:00',
+      action_data: {
+        directory: '/tmp',
+        older_than_days: 7
+      }
+    },
+    result: 'Cleanup action scheduled successfully',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'schedule_action',
+    title: 'Schedule Action - Complex Nested Data',
+    args: {
+      action_name: 'Deploy application update',
+      execution_time: '2024-12-26T20:00:00',
+      action_data: {
+        version: '2.1.0',
+        environments: ['staging', 'production'],
+        rollback_config: {
+          enabled: true,
+          timeout_minutes: 10
+        },
+        notifications: {
+          slack_channel: '#deployments',
+          email_list: ['devops@company.com']
+        }
+      },
+      recurring: false
+    },
+    result: 'Deployment action configured and scheduled',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'schedule_action',
+    title: 'Schedule Action - No Parameters',
+    args: {
+      action_name: 'Restart cache service',
+      execution_time: '2024-12-27T03:30:00',
+      action_data: {}
+    },
+    result: 'Simple action scheduled without parameters',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'schedule_action',
+    title: 'Schedule Action - Error',
+    args: {
+      action_name: 'Invalid action test',
+      execution_time: 'not-a-valid-time',
+      action_data: {
+        test_param: 'value'
+      }
+    },
+    result: null,
+    status: { type: 'incomplete', reason: 'error' }
+  },
+  {
+    name: 'add_calendar_event',
+    title: 'Calendar Event - Running',
+    args: {
+      calendar_url: 'https://cal.example.com/personal',
+      summary: 'Doctor Appointment',
+      start_time: '2024-12-20T14:30:00',
+      end_time: '2024-12-20T15:30:00',
+      description: 'Annual checkup with Dr. Smith'
+    },
+    result: null,
+    status: { type: 'running' }
+  },
+  {
+    name: 'add_calendar_event',
+    title: 'Calendar Event - Complete',
+    args: {
+      calendar_url: 'https://cal.example.com/work',
+      summary: 'Team Meeting',
+      start_time: '2024-12-21T10:00:00',
+      end_time: '2024-12-21T11:00:00',
+      description: 'Weekly team standup and project updates'
+    },
+    result: 'Calendar event "Team Meeting" has been created successfully.',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'add_calendar_event',
+    title: 'Calendar Event - All Day',
+    args: {
+      calendar_url: 'https://cal.example.com/personal',
+      summary: 'Vacation Day',
+      start_time: '2024-12-25T00:00:00',
+      end_time: '2024-12-25T23:59:59',
+      all_day: true,
+      description: 'Christmas Day - Family time'
+    },
+    result: 'All-day event created successfully.',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'add_calendar_event',
+    title: 'Calendar Event - Multi-day All Day',
+    args: {
+      calendar_url: 'https://cal.example.com/personal',
+      summary: 'Summer Vacation',
+      start_time: '2024-07-15T00:00:00',
+      end_time: '2024-07-22T23:59:59',
+      all_day: true,
+      description: 'Family trip to the beach'
+    },
+    result: 'Multi-day event created successfully.',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'add_calendar_event',
+    title: 'Calendar Event - Recurring',
+    args: {
+      calendar_url: 'https://cal.example.com/work',
+      summary: 'Daily Standup',
+      start_time: '2024-12-20T09:00:00',
+      end_time: '2024-12-20T09:30:00',
+      description: 'Daily team sync meeting',
+      recurrence_rule: 'FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR'
+    },
+    result: 'Recurring event created successfully.',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'add_calendar_event',
+    title: 'Calendar Event - Error',
+    args: {
+      calendar_url: 'https://cal.example.com/invalid',
+      summary: 'Failed Event',
+      start_time: 'invalid-date-format',
+      end_time: '2024-12-20T15:30:00'
+    },
+    result: null,
+    status: { type: 'incomplete', reason: 'error' }
+  },
+  {
+    name: 'search_calendar_events',
+    title: 'Search Calendar Events - Running',
+    args: {
+      search_text: 'meeting',
+      date_range_start: '2024-12-20',
+      date_range_end: '2024-12-25'
+    },
+    result: null,
+    status: { type: 'running' }
+  },
+  {
+    name: 'search_calendar_events',
+    title: 'Search Calendar Events - Complete with Results',
+    args: {
+      search_text: 'team',
+      date_range_start: '2024-12-20',
+      max_results: 5
+    },
+    result: `Found 3 event(s):
+
+1. Team Standup Meeting
+   Start: 2024-12-21 09:00 PST
+   End: 2024-12-21 09:30 PST
+   UID: team-standup-123-456
+   Calendar: https://cal.example.com/work
+
+2. Team Building Event
+   Start: 2024-12-22 14:00 PST
+   End: 2024-12-22 17:00 PST
+   UID: team-building-789-012
+   Calendar: https://cal.example.com/work
+
+3. Team Retrospective
+   Start: 2024-12-23 15:00 PST
+   End: 2024-12-23 16:00 PST
+   UID: team-retro-345-678
+   Calendar: https://cal.example.com/work`,
+    status: { type: 'complete' }
+  },
+  {
+    name: 'search_calendar_events',
+    title: 'Search Calendar Events - No Results',
+    args: {
+      search_text: 'nonexistent',
+      date_range_start: '2024-12-20',
+      date_range_end: '2024-12-25'
+    },
+    result: 'No events found matching the search criteria.',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'search_calendar_events',
+    title: 'Search Calendar Events - Date Range Only',
+    args: {
+      date_range_start: '2024-12-20',
+      date_range_end: '2024-12-22'
+    },
+    result: `Found 2 event(s):
+
+1. Doctor Appointment
+   Start: 2024-12-20 14:30 PST
+   End: 2024-12-20 15:30 PST
+   UID: doctor-appt-456-789
+   Calendar: https://cal.example.com/personal
+
+2. Vacation Day
+   Start: 2024-12-21 00:00 PST
+   End: 2024-12-21 23:59 PST
+   UID: vacation-123-456
+   Calendar: https://cal.example.com/personal`,
+    status: { type: 'complete' }
+  },
+  {
+    name: 'search_calendar_events',
+    title: 'Search Calendar Events - Error',
+    args: {
+      search_text: 'meeting',
+      date_range_start: '2024-12-20'
+    },
+    result: 'Error: CalDAV is not configured. Cannot search calendar events.',
+    status: { type: 'incomplete', reason: 'error' }
+  },
+  {
+    name: 'unknown_tool',
+    title: 'Unknown Tool - Error State',
+    args: {
+      some_param: 'value'
+    },
+    result: null,
+    status: { type: 'incomplete', reason: 'error' }
+  },
+  {
+    name: 'get_full_document_content',
+    title: 'Get Document Content - Running',
+    args: {
+      document_id: 'doc-123-user-manual'
+    },
+    result: null,
+    status: { type: 'running' }
+  },
+  {
+    name: 'get_full_document_content',
+    title: 'Get Document Content - Short Text Document',
+    args: {
+      document_id: 'doc-456-meeting-notes'
+    },
+    result: `Team Meeting Notes - Q4 Planning
+
+Attendees: Alice, Bob, Carol, David
+Date: December 15, 2024
+
+Agenda:
+1. Review Q3 performance metrics
+2. Discuss Q4 goals and objectives
+3. Budget allocation for 2025
+4. Team restructuring proposal
+
+Key Decisions:
+- Approved 15% budget increase for engineering team
+- New product launch scheduled for March 2025
+- Weekly check-ins to be implemented
+
+Action Items:
+- Alice: Prepare detailed budget proposal by Dec 20
+- Bob: Research competitive analysis
+- Carol: Draft team structure document
+- David: Schedule follow-up meetings with stakeholders`,
+    status: { type: 'complete' }
+  },
+  {
+    name: 'get_full_document_content',
+    title: 'Get Document Content - Long Document (Truncated)',
+    args: {
+      document_id: 'doc-789-technical-specification'
+    },
+    result: `Technical Specification Document
+Project: Family Assistant Platform
+Version: 2.1.0
+Last Updated: December 2024
+
+Table of Contents:
+1. Introduction
+2. System Architecture
+3. API Specifications
+4. Database Schema
+5. Security Requirements
+6. Performance Metrics
+7. Testing Procedures
+8. Deployment Guidelines
+
+1. Introduction
+================
+
+The Family Assistant Platform is a comprehensive solution designed to centralize family information management and automate various household tasks. This document outlines the technical specifications, architecture decisions, and implementation details for version 2.1.0.
+
+The system provides multiple interfaces including Telegram bot integration, web UI, and email webhook processing. It uses a modular architecture built with Python, FastAPI, and SQLAlchemy, supporting both SQLite and PostgreSQL databases.
+
+Key Features:
+- Multi-interface support (Telegram, Web, Email)
+- Intelligent document processing and indexing
+- Calendar integration with CalDAV support
+- Task scheduling and reminder system
+- Event-driven architecture
+- Vector-based semantic search
+- Background task processing
+- Configurable LLM integration
+
+2. System Architecture
+======================
+
+The application follows a layered architecture pattern:
+
+2.1 Presentation Layer
+- Web UI (React + Vite)
+- Telegram Bot Interface
+- Email Webhook Handler
+- REST API Endpoints
+
+2.2 Business Logic Layer
+- Processing Service
+- Tool System
+- Context Providers
+- Event System
+
+2.3 Data Layer
+- Repository Pattern Implementation
+- Database Abstraction
+- Vector Storage
+- File System Integration
+
+2.4 Infrastructure Layer
+- Task Queue System
+- Background Workers
+- External Service Integrations
+- Configuration Management
+
+The system uses dependency injection for loose coupling and follows SOLID principles throughout the codebase. All components are designed to be testable and maintainable.
+
+3. API Specifications
+=====================
+
+3.1 REST API Endpoints
+
+Authentication:
+All API endpoints require authentication via session cookies or API tokens.
+
+Base URL: https://api.familyassistant.com/v1
+
+3.1.1 Document Management
+GET /documents - List all documents
+POST /documents - Upload new document
+GET /documents/{id} - Get document metadata
+GET /documents/{id}/content - Get full document content
+PUT /documents/{id} - Update document
+DELETE /documents/{id} - Delete document
+
+3.1.2 Note Management  
+GET /notes - List notes with optional filtering
+POST /notes - Create new note
+GET /notes/{id} - Get specific note
+PUT /notes/{id} - Update note
+DELETE /notes/{id} - Delete note
+
+3.1.3 Calendar Integration
+GET /calendar/events - Search calendar events
+POST /calendar/events - Create new event
+PUT /calendar/events/{id} - Update event
+DELETE /calendar/events/{id} - Delete event
+
+3.1.4 Task Management
+GET /tasks - List pending tasks
+POST /tasks - Schedule new task
+GET /tasks/{id} - Get task status
+DELETE /tasks/{id} - Cancel task
+
+4. Database Schema
+==================
+
+The application uses SQLAlchemy ORM with Alembic migrations for schema management.
+
+4.1 Core Tables
+
+documents:
+- id (UUID, primary key)
+- title (VARCHAR(255))
+- content (TEXT)
+- content_type (VARCHAR(50))
+- file_path (VARCHAR(500))
+- upload_time (TIMESTAMP)
+- last_modified (TIMESTAMP)
+- metadata (JSON)
+
+notes:
+- id (UUID, primary key)  
+- title (VARCHAR(255))
+- content (TEXT)
+- include_in_prompt (BOOLEAN)
+- created_at (TIMESTAMP)
+- updated_at (TIMESTAMP)
+- tags (JSON)
+
+calendar_events:
+- id (UUID, primary key)
+- summary (VARCHAR(255))
+- description (TEXT)
+- start_time (TIMESTAMP)
+- end_time (TIMESTAMP)
+- all_day (BOOLEAN)
+- calendar_url (VARCHAR(500))
+- uid (VARCHAR(255))
+- recurrence_rule (TEXT)
+
+This document continues for several more sections covering security, performance, testing, and deployment procedures...`,
+    status: { type: 'complete' }
+  },
+  {
+    name: 'get_full_document_content',
+    title: 'Get Document Content - Markdown Document',
+    args: {
+      document_id: 'doc-101-readme'
+    },
+    result: `# Family Assistant
+
+A comprehensive family information management and automation platform.
+
+## Features
+
+- **Multi-Interface Support**: Telegram bot, Web UI, and Email integration
+- **Document Management**: Intelligent processing and semantic search
+- **Calendar Integration**: CalDAV support with event management
+- **Task Automation**: Scheduling and reminder system
+- **Context-Aware**: Dynamic prompt injection based on user data
+
+## Quick Start
+
+\`\`\`bash
+# Install dependencies
+uv pip install -e '.[dev]'
+
+# Run development server
+poe dev
+\`\`\`
+
+## Configuration
+
+Create a \`config.yaml\` file:
+
+\`\`\`yaml
+service_profiles:
+  - id: "default_assistant"
+    llm_client:
+      provider: "openai"
+      model: "gpt-4"
+    tools_config:
+      enable_local_tools: true
+\`\`\`
+
+## Architecture
+
+The application follows a modular architecture:
+
+1. **Entry Point** (\`__main__.py\`)
+2. **Core Assistant** (\`assistant.py\`)  
+3. **Processing Layer** (\`processing.py\`)
+4. **Storage Layer** (\`storage/\`)
+5. **Tools System** (\`tools/\`)
+6. **Web Interface** (\`web/\`)
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Run tests: \`poe test\`
+5. Submit a pull request
+
+## License
+
+MIT License - see LICENSE file for details.`,
+    status: { type: 'complete' }
+  },
+  {
+    name: 'get_full_document_content',
+    title: 'Get Document Content - Code File',
+    args: {
+      document_id: 'doc-202-python-script'
+    },
+    result: `#!/usr/bin/env python3
+"""
+Data processing script for Family Assistant
+Handles document indexing and vector embeddings
+"""
+
+import asyncio
+import logging
+from pathlib import Path
+from typing import List, Optional
+from dataclasses import dataclass
+
+from sqlalchemy import select
+from sentence_transformers import SentenceTransformer
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class DocumentChunk:
+    """Represents a chunk of document content for embedding."""
+    content: str
+    metadata: dict
+    document_id: str
+    chunk_index: int
+
+
+class DocumentProcessor:
+    """Processes documents for semantic search indexing."""
+    
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+        self.model = SentenceTransformer(model_name)
+        self.chunk_size = 512
+        self.overlap = 50
+    
+    async def process_document(self, document_path: Path) -> List[DocumentChunk]:
+        """
+        Process a document into chunks for embedding.
+        
+        Args:
+            document_path: Path to the document file
+            
+        Returns:
+            List of document chunks ready for embedding
+        """
+        content = await self._read_document(document_path)
+        chunks = self._create_chunks(content)
+        
+        processed_chunks = []
+        for i, chunk_text in enumerate(chunks):
+            chunk = DocumentChunk(
+                content=chunk_text,
+                metadata={
+                    "source": str(document_path),
+                    "chunk_size": len(chunk_text),
+                    "processing_time": asyncio.get_event_loop().time()
+                },
+                document_id=document_path.stem,
+                chunk_index=i
+            )
+            processed_chunks.append(chunk)
+        
+        return processed_chunks
+    
+    async def _read_document(self, path: Path) -> str:
+        """Read document content from file."""
+        try:
+            return path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            logger.warning(f"Failed to read {path} as UTF-8, trying latin-1")
+            return path.read_text(encoding="latin-1")
+    
+    def _create_chunks(self, content: str) -> List[str]:
+        """Split content into overlapping chunks."""
+        if len(content) <= self.chunk_size:
+            return [content]
+        
+        chunks = []
+        start = 0
+        
+        while start < len(content):
+            end = start + self.chunk_size
+            chunk = content[start:end]
+            
+            # Try to break at word boundary
+            if end < len(content):
+                last_space = chunk.rfind(' ')
+                if last_space > self.chunk_size * 0.8:
+                    end = start + last_space
+                    chunk = content[start:end]
+            
+            chunks.append(chunk.strip())
+            start = end - self.overlap
+        
+        return chunks
+    
+    def generate_embeddings(self, chunks: List[DocumentChunk]) -> List[List[float]]:
+        """Generate embeddings for document chunks."""
+        contents = [chunk.content for chunk in chunks]
+        embeddings = self.model.encode(contents, convert_to_numpy=True)
+        return embeddings.tolist()
+
+
+async def main():
+    """Main processing function."""
+    processor = DocumentProcessor()
+    documents_dir = Path("./documents")
+    
+    for doc_path in documents_dir.glob("*.txt"):
+        logger.info(f"Processing {doc_path}")
+        chunks = await processor.process_document(doc_path)
+        embeddings = processor.generate_embeddings(chunks)
+        
+        print(f"Generated {len(embeddings)} embeddings for {doc_path}")
+        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+            print(f"  Chunk {i}: {len(chunk.content)} chars, {len(embedding)} dims")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())`,
+    status: { type: 'complete' }
+  },
+  {
+    name: 'get_full_document_content',
+    title: 'Get Document Content - Document Not Found',
+    args: {
+      document_id: 'doc-nonexistent-file'
+    },
+    result: 'Error: Document with ID "doc-nonexistent-file" not found in the system.',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'get_full_document_content',
+    title: 'Get Document Content - Permission Error',
+    args: {
+      document_id: 'doc-restricted-access'
+    },
+    result: 'Error: Access denied. You do not have permission to read this document.',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'get_full_document_content',
+    title: 'Get Document Content - System Error',
+    args: {
+      document_id: 'doc-system-failure'
+    },
+    result: null,
+    status: { type: 'incomplete', reason: 'error' }
+  },
+  {
+    name: 'ingest_document_from_url',
+    title: 'Ingest Document from URL - Running',
+    args: {
+      url: 'https://docs.example.com/user-manual.pdf'
+    },
+    result: null,
+    status: { type: 'running' }
+  },
+  {
+    name: 'ingest_document_from_url',
+    title: 'Ingest Document from URL - Success',
+    args: {
+      url: 'https://api.github.com/repos/owner/repo/contents/README.md'
+    },
+    result: 'Document successfully ingested and indexed. Added 1 document with 15 chunks.',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'ingest_document_from_url',
+    title: 'Ingest Document from URL - Success with Metadata',
+    args: {
+      url: 'https://example.com/research-paper.pdf',
+      metadata: {
+        title: 'AI Research Paper 2024',
+        author: 'Dr. Jane Smith',
+        category: 'research',
+        tags: ['AI', 'machine learning', 'research']
+      }
+    },
+    result: 'Document "AI Research Paper 2024" has been successfully processed and added to the knowledge base.',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'ingest_document_from_url',
+    title: 'Ingest Document from URL - Web Page',
+    args: {
+      url: 'https://blog.example.com/how-to-setup-development-environment'
+    },
+    result: 'Web page content successfully ingested. Extracted 2,450 words across 8 sections.',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'ingest_document_from_url',
+    title: 'Ingest Document from URL - Long URL',
+    args: {
+      url: 'https://very-long-domain-name-for-testing-url-truncation.example.com/path/to/very/deep/nested/directory/structure/with/multiple/segments/document-with-very-long-filename.pdf?version=2024&format=latest&include_metadata=true'
+    },
+    result: 'Document ingested successfully from remote server.',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'ingest_document_from_url',
+    title: 'Ingest Document from URL - Word Document',
+    args: {
+      url: 'https://company.sharepoint.com/sites/docs/proposal.docx',
+      metadata: {
+        department: 'Sales',
+        confidential: true
+      }
+    },
+    result: 'Word document processed successfully. Extracted text and formatting information.',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'ingest_document_from_url',
+    title: 'Ingest Document from URL - Markdown File',
+    args: {
+      url: 'https://raw.githubusercontent.com/owner/repo/main/CHANGELOG.md'
+    },
+    result: 'Markdown document ingested and structured content extracted.',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'ingest_document_from_url',
+    title: 'Ingest Document from URL - Access Denied',
+    args: {
+      url: 'https://private.example.com/confidential-document.pdf'
+    },
+    result: 'Error: Access denied. Unable to retrieve document from the specified URL. Please check permissions.',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'ingest_document_from_url',
+    title: 'Ingest Document from URL - Invalid URL',
+    args: {
+      url: 'not-a-valid-url'
+    },
+    result: 'Error: Invalid URL format. Please provide a valid HTTP or HTTPS URL.',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'ingest_document_from_url',
+    title: 'Ingest Document from URL - Network Error',
+    args: {
+      url: 'https://unreachable-server.example.com/document.pdf'
+    },
+    result: null,
+    status: { type: 'incomplete', reason: 'error' }
+  },
+  {
+    name: 'ingest_document_from_url',
+    title: 'Ingest Document from URL - Unsupported Format',
+    args: {
+      url: 'https://example.com/video-file.mp4'
+    },
+    result: 'Error: Unsupported file format. Only text documents, PDFs, and web pages are supported.',
+    status: { type: 'complete' }
+  },
+  {
+    name: 'get_message_history',
+    title: 'Get Message History - Running',
+    args: {
+      interface_type: 'telegram',
+      limit: 10
+    },
+    result: null,
+    status: { type: 'running' }
+  },
+  {
+    name: 'get_message_history',
+    title: 'Get Message History - Complete with Messages',
+    args: {
+      interface_type: 'web',
+      limit: 5,
+      user_name: 'alice'
+    },
+    result: JSON.stringify([
+      {
+        role: 'user',
+        content: 'Can you help me organize my notes for the upcoming project meeting?',
+        timestamp: '2024-12-20T14:30:00Z',
+        interface_type: 'web',
+        user_name: 'alice'
+      },
+      {
+        role: 'assistant',
+        content: 'I\'d be happy to help you organize your notes! Let me search for any existing notes related to your project and then we can create a structured agenda.',
+        timestamp: '2024-12-20T14:30:15Z',
+        interface_type: 'web',
+        user_name: 'alice'
+      },
+      {
+        role: 'user',
+        content: 'Great! I need to cover the Q4 roadmap, budget allocations, and team assignments.',
+        timestamp: '2024-12-20T14:31:00Z',
+        interface_type: 'web',
+        user_name: 'alice'
+      },
+      {
+        role: 'assistant',
+        content: 'Perfect! I\'ll help you create a comprehensive meeting agenda covering those three key areas. Let me start by checking your existing notes and then we can structure everything properly.',
+        timestamp: '2024-12-20T14:31:20Z',
+        interface_type: 'web',
+        user_name: 'alice'
+      },
+      {
+        role: 'system',
+        content: 'Context updated with project-related notes and calendar events.',
+        timestamp: '2024-12-20T14:31:25Z',
+        interface_type: 'web',
+        user_name: 'system'
+      }
+    ]),
+    status: { type: 'complete' }
+  },
+  {
+    name: 'get_message_history',
+    title: 'Get Message History - Telegram Conversation',
+    args: {
+      interface_type: 'telegram',
+      limit: 3,
+      user_name: 'bob'
+    },
+    result: JSON.stringify([
+      {
+        role: 'user',
+        content: '/remind me to call mom tomorrow at 2pm',
+        timestamp: '2024-12-19T18:45:00Z',
+        interface_type: 'telegram',
+        user_name: 'bob'
+      },
+      {
+        role: 'assistant',
+        content: 'I\'ve scheduled a reminder for you to call mom tomorrow (December 20th) at 2:00 PM. You\'ll receive a notification when it\'s time!',
+        timestamp: '2024-12-19T18:45:05Z',
+        interface_type: 'telegram',
+        user_name: 'bob'
+      },
+      {
+        role: 'user',
+        content: 'Thanks! Also, can you add "buy groceries" to my shopping list note?',
+        timestamp: '2024-12-19T18:46:00Z',
+        interface_type: 'telegram',
+        user_name: 'bob'
+      }
+    ]),
+    status: { type: 'complete' }
+  },
+  {
+    name: 'get_message_history',
+    title: 'Get Message History - Mixed Interfaces',
+    args: {
+      limit: 8
+    },
+    result: JSON.stringify([
+      {
+        role: 'user',
+        content: 'What\'s on my calendar for next week?',
+        timestamp: '2024-12-20T09:15:00Z',
+        interface_type: 'telegram',
+        user_name: 'carol'
+      },
+      {
+        role: 'assistant',
+        content: 'Let me check your calendar for next week...',
+        timestamp: '2024-12-20T09:15:05Z',
+        interface_type: 'telegram',
+        user_name: 'carol'
+      },
+      {
+        role: 'user',
+        content: 'I need to schedule a team meeting to discuss the new project requirements. Can you help me find a time that works for everyone?',
+        timestamp: '2024-12-20T11:30:00Z',
+        interface_type: 'web',
+        user_name: 'david'
+      },
+      {
+        role: 'assistant',
+        content: 'I\'ll help you schedule that team meeting. Let me search for available time slots and check everyone\'s calendars.',
+        timestamp: '2024-12-20T11:30:10Z',
+        interface_type: 'web',
+        user_name: 'david'
+      },
+      {
+        role: 'user',
+        content: 'Please create a note about the client feedback we received today.',
+        timestamp: '2024-12-20T16:20:00Z',
+        interface_type: 'email',
+        user_name: 'eve'
+      },
+      {
+        role: 'assistant',
+        content: 'I\'ve created a new note titled "Client Feedback - December 20, 2024" with the key points from today\'s discussion.',
+        timestamp: '2024-12-20T16:20:25Z',
+        interface_type: 'email',
+        user_name: 'eve'
+      }
+    ]),
+    status: { type: 'complete' }
+  },
+  {
+    name: 'get_message_history',
+    title: 'Get Message History - Long Message Content',
+    args: {
+      interface_type: 'web',
+      limit: 2
+    },
+    result: JSON.stringify([
+      {
+        role: 'user',
+        content: 'I need to prepare a comprehensive project proposal for the executive team. The proposal should include a detailed analysis of our current market position, competitive landscape, projected costs and benefits, timeline with key milestones, risk assessment and mitigation strategies, resource requirements including personnel and technology needs, and expected ROI calculations. This is a critical presentation that could determine the future direction of our product development efforts for the next two years.',
+        timestamp: '2024-12-20T13:00:00Z',
+        interface_type: 'web',
+        user_name: 'frank'
+      },
+      {
+        role: 'assistant',
+        content: 'I\'ll help you create a comprehensive project proposal for the executive team. This is indeed a critical presentation, and I\'ll make sure we cover all the essential elements you mentioned. Let me break this down into structured sections: 1) Executive Summary, 2) Market Analysis, 3) Competitive Landscape, 4) Financial Projections, 5) Implementation Timeline, 6) Risk Assessment, 7) Resource Planning, and 8) ROI Analysis. I\'ll start by gathering relevant information from your existing notes and documents to build a solid foundation for each section.',
+        timestamp: '2024-12-20T13:00:30Z',
+        interface_type: 'web',
+        user_name: 'frank'
+      }
+    ]),
+    status: { type: 'complete' }
+  },
+  {
+    name: 'get_message_history',
+    title: 'Get Message History - Empty Results',
+    args: {
+      interface_type: 'telegram',
+      user_name: 'nonexistent_user'
+    },
+    result: JSON.stringify([]),
+    status: { type: 'complete' }
+  },
+  {
+    name: 'get_message_history',
+    title: 'Get Message History - No Filter (All Messages)',
+    args: {
+      limit: 15
+    },
+    result: JSON.stringify([
+      {
+        role: 'user',
+        content: 'Hello!',
+        timestamp: '2024-12-20T08:00:00Z',
+        interface_type: 'telegram',
+        user_name: 'alice'
+      },
+      {
+        role: 'assistant',
+        content: 'Hello! How can I help you today?',
+        timestamp: '2024-12-20T08:00:05Z',
+        interface_type: 'telegram',
+        user_name: 'alice'
+      },
+      {
+        role: 'system',
+        content: 'User session started',
+        timestamp: '2024-12-20T08:00:00Z',
+        interface_type: 'telegram',
+        user_name: 'system'
+      }
+    ]),
+    status: { type: 'complete' }
+  },
+  {
+    name: 'get_message_history',
+    title: 'Get Message History - Error',
+    args: {
+      interface_type: 'telegram',
+      limit: 10
+    },
+    result: null,
+    status: { type: 'incomplete', reason: 'error' }
+  },
+  {
+    name: 'get_message_history',
+    title: 'Get Message History - Malformed JSON Response',
+    args: {
+      interface_type: 'web',
+      limit: 5
+    },
+    result: 'This is not valid JSON, should fallback gracefully to show raw text',
+    status: { type: 'complete' }
+  }
+];
+
+export const ToolTestBench = () => {
+  return (
+    <div className="test-bench-container">
+      <div className="test-bench-header">
+        <h1>Tool UI Test Bench</h1>
+        <p>Preview and test tool UI components in different states</p>
+      </div>
+
+      <div className="tool-grid">
+        {sampleToolCalls.map((toolCall, index) => {
+          const ToolUI = toolUIsByName[toolCall.name] || ToolFallback;
+          
+          return (
+            <div key={index} className="tool-test-section">
+              <h3>{toolCall.title}</h3>
+              <ToolUI 
+                toolName={toolCall.name}
+                args={toolCall.args}
+                result={toolCall.result}
+                status={toolCall.status}
+              />
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="test-bench-footer">
+        <h2>Available Tools</h2>
+        <p>Total tools: {Object.keys(toolUIsByName).length}</p>
+        <details>
+          <summary>Tool List</summary>
+          <ul>
+            {Object.keys(toolUIsByName).sort().map(toolName => (
+              <li key={toolName}>
+                <code>{toolName}</code>
+                {toolUIsByName[toolName] === ToolFallback && ' (using fallback)'}
+              </li>
+            ))}
+          </ul>
+        </details>
+      </div>
+    </div>
+  );
+};
