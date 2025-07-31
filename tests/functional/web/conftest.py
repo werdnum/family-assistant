@@ -477,5 +477,32 @@ async def browser(
         print("\n=== Browser closed successfully ===")
     except asyncio.TimeoutError:
         print("\n=== WARNING: Browser close timed out after 10s, forcing cleanup ===")
-        # The browser process will be cleaned up when Python exits
-        # We can't easily kill it from here without access to the process handle
+    # If timeout occurs, we let pytest-playwright handle any remaining cleanup
+
+
+# Override the playwright fixture to add timeout on stop
+@pytest_asyncio.fixture(scope="session")
+async def playwright() -> AsyncGenerator[Any, None]:
+    """Override playwright's main fixture to add timeout on stop.
+
+    This prevents the test suite from hanging when playwright.stop() gets stuck
+    during session teardown.
+
+    This is part of the workaround for pytest-asyncio session-scoped event loops.
+    """
+    from playwright.async_api import async_playwright
+
+    # Start playwright using the context manager
+    pw_context_manager = async_playwright()
+    pw = await pw_context_manager.start()
+
+    yield pw
+
+    # Stop with timeout to prevent hanging
+    try:
+        await asyncio.wait_for(
+            pw_context_manager.__aexit__(None, None, None), timeout=10.0
+        )
+        print("\n=== Playwright stopped successfully ===")
+    except asyncio.TimeoutError:
+        print("\n=== WARNING: Playwright stop timed out after 10s, forcing cleanup ===")
