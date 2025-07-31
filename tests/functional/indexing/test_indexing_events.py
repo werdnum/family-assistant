@@ -52,6 +52,11 @@ async def poll_for_document_ready_event(
 
     from family_assistant.storage.events import recent_events_table
 
+    # Add initial delay to allow event processing to start
+    # This addresses the race condition where polling begins before
+    # the event has been dequeued and processed by the EventProcessor
+    await asyncio.sleep(0.2)
+
     max_attempts = int(timeout_seconds / poll_interval)
 
     for _ in range(max_attempts):
