@@ -140,10 +140,9 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
                 ...msg,
                 content: toolParts,
                 isLoading: false,
-                // Set message status to indicate tool calls are pending
+                // Set message status to indicate tool calls are running
                 status: {
-                  type: 'requires-action',
-                  reason: 'tool-calls',
+                  type: 'running',
                 },
               };
             }
@@ -187,9 +186,7 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
                 ...msg,
                 content: toolParts,
                 // Update status based on whether all tools are complete
-                status: allToolsComplete
-                  ? { type: 'complete', reason: 'stop' }
-                  : { type: 'requires-action', reason: 'tool-calls' },
+                status: allToolsComplete ? { type: 'complete' } : { type: 'running' },
               };
             }
             return msg;
