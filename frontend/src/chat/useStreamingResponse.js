@@ -81,11 +81,11 @@ export const useStreamingResponse = ({
               }
               continue;
             }
-            
+
             // Handle data lines
             if (line.startsWith('data: ')) {
               const data = line.slice(6);
-              
+
               // Skip the [DONE] marker
               if (data === '[DONE]') {
                 continue;
@@ -134,7 +134,7 @@ export const useStreamingResponse = ({
               } catch (e) {
                 console.error('Failed to parse SSE event:', e, 'Data:', data);
               }
-              
+
               // Reset event type after processing
               currentEventType = null;
             }

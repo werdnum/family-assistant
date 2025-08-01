@@ -46,5 +46,9 @@
   {
     "regexp": "\\bpytest\\b.*\\s+-[a-zA-Z]*v[a-zA-Z]*s[a-zA-Z]*\\s",
     "explanation": "pytest with -v and -s flags together creates excessive verbose output. Run pytest without these flags first. If you truly need verbose output after seeing the results, use separate flags like '-x -v -s' to bypass this check."
+  },
+  {
+    "regexp": "\\b(cd|pushd)\\s+frontend\\b.*(&&|;)\\s*npm",
+    "explanation": "Use 'npm ... --prefix frontend' instead of '(cd frontend && npm ...)' to avoid directory changes and follow project conventions."
   }
 ]

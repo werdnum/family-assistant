@@ -18,7 +18,6 @@ import {
   SendHorizontalIcon,
   UserIcon,
   BotIcon,
-  Loader2Icon,
 } from 'lucide-react';
 import classNames from 'classnames';
 // import { formatRelativeTime } from './utils';
@@ -232,11 +231,11 @@ const EditComposer = () => {
 
 const AssistantMessage = () => {
   const message = useMessage();
-  
+
   // Check if message is loading by checking for our special marker
   // The assistant-ui library might not pass through our custom isLoading property
   const isLoading = message?.content?.[0]?.text === LOADING_MARKER;
-  
+
   return (
     <MessagePrimitive.Root
       className="message-root assistant-message"
@@ -330,4 +329,3 @@ const MessageTimestamp = () => {
     </MessagePrimitive.If>
   );
 };
-

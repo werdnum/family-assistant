@@ -135,9 +135,17 @@ ${VIRTUAL_ENV:-.venv}/bin/pylint -j0 $TARGETS &
 PYLINT_PID=$!
 PYLINT_START=$START_TIME
 
+# Start frontend linting
+echo "${BLUE}  ▸ Starting frontend linting...${NC}"
+timer_start
+(cd frontend && npm run check) &
+FRONTEND_PID=$!
+FRONTEND_START=$START_TIME
+
 # Wait for processes and collect results
 PYRIGHT_EXIT=0
 PYLINT_EXIT=0
+FRONTEND_EXIT=0
 
 # Wait for pyright
 if wait $PYRIGHT_PID; then
@@ -163,6 +171,18 @@ else
     echo "${RED}  ❌ pylint failed (${ELAPSED}s)${NC}"
 fi
 
+# Wait for frontend linting
+if wait $FRONTEND_PID; then
+    END_TIME=$(date +%s)
+    ELAPSED=$((END_TIME - FRONTEND_START))
+    echo "${GREEN}  ✓ frontend linting completed successfully (${ELAPSED}s)${NC}"
+else
+    FRONTEND_EXIT=$?
+    END_TIME=$(date +%s)
+    ELAPSED=$((END_TIME - FRONTEND_START))
+    echo "${RED}  ❌ frontend linting failed (${ELAPSED}s)${NC}"
+fi
+
 # Calculate total time
 OVERALL_END=$(date +%s)
 TOTAL_TIME=$((OVERALL_END - OVERALL_START))
@@ -172,7 +192,7 @@ echo "${BLUE}━━━━━━━━━━━━━━━━━━━━━━�
 echo "${BLUE}Total time: ${TOTAL_TIME}s${NC}"
 
 # Exit with appropriate code
-if [ $PYRIGHT_EXIT -ne 0 ] || [ $PYLINT_EXIT -ne 0 ]; then
+if [ $PYRIGHT_EXIT -ne 0 ] || [ $PYLINT_EXIT -ne 0 ] || [ $FRONTEND_EXIT -ne 0 ]; then
     echo "${RED}Some checks failed!${NC}"
     exit 1
 else
