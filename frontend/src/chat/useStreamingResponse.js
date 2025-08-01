@@ -105,17 +105,29 @@ export const useStreamingResponse = ({
 
                   case 'tool_call':
                     if (payload.tool_call) {
-                      toolCalls.push({
+                      const newToolCall = {
                         id: payload.tool_call.id,
                         name: payload.tool_call.function.name,
                         arguments: payload.tool_call.function.arguments || '{}',
-                      });
+                      };
+                      toolCalls.push(newToolCall);
                       onToolCall(toolCalls);
                     }
                     break;
 
                   case 'tool_result':
-                    // Handle tool results if needed
+                    if (payload.tool_call_id && payload.result) {
+                      // Find the tool call and update it with the result
+                      const toolCallIndex = toolCalls.findIndex(
+                        (tc) => tc.id === payload.tool_call_id
+                      );
+                      if (toolCallIndex !== -1) {
+                        toolCalls[toolCallIndex].result = payload.result;
+                        // Don't set status on individual tool calls - it's managed at message level
+                        // Notify about the update with all tool calls
+                        onToolCall([...toolCalls]);
+                      }
+                    }
                     break;
 
                   case 'error':

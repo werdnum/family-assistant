@@ -30,6 +30,7 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
   const [conversationsLoading, setConversationsLoading] = useState(true);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const streamingMessageIdRef = useRef(null);
+  const toolCallMessageIdRef = useRef(null);
 
   // Fetch conversations list
   const fetchConversations = useCallback(async () => {
@@ -52,20 +53,29 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
     if (streamingMessageIdRef.current) {
       setMessages((prev) => {
         // Update the loading message with actual content
-        return prev.map((msg) =>
-          msg.id === streamingMessageIdRef.current
-            ? {
-                ...msg,
-                content: [
-                  {
-                    type: 'text',
-                    text: content, // Use the accumulated content directly from the hook
-                  },
-                ],
-                isLoading: false, // Remove loading flag when content arrives
-              }
-            : msg
-        );
+        return prev.map((msg) => {
+          if (msg.id === streamingMessageIdRef.current) {
+            // Preserve existing tool calls when updating text
+            const existingContent = msg.content || [];
+            const toolCalls = existingContent.filter((part) => part.type === 'tool-call');
+
+            // Create new content array with updated text and preserved tool calls
+            const newContent = [
+              {
+                type: 'text',
+                text: content, // Use the accumulated content directly from the hook
+              },
+              ...toolCalls, // Preserve any existing tool calls with their status and results
+            ];
+
+            return {
+              ...msg,
+              content: newContent,
+              isLoading: false, // Remove loading flag when content arrives
+            };
+          }
+          return msg;
+        });
       });
     }
   }, []);
@@ -90,73 +100,100 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
     }
   }, []);
 
-  const handleStreamingComplete = useCallback(
-    ({ content, toolCalls }) => {
-      if (streamingMessageIdRef.current) {
-        const contentParts = [];
-
-        // Always add text content if present
-        if (content) {
-          contentParts.push({ type: 'text', text: content });
-        }
-
-        // Add tool calls if present
-        if (toolCalls && toolCalls.length > 0) {
-          toolCalls.forEach((tc) => {
-            // Parse arguments if they're a string
-            const args = parseToolArguments(tc.arguments);
-
-            contentParts.push({
-              type: 'tool-call',
-              toolCallId: tc.id,
-              toolName: tc.name,
-              args: args,
-            });
-          });
-        }
-
-        // Update the message with the final content
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === streamingMessageIdRef.current
-              ? { ...msg, content: contentParts, isLoading: false }
-              : msg
-          )
-        );
-      }
-      fetchConversations();
-      streamingMessageIdRef.current = null;
-    },
-    [fetchConversations]
-  );
+  const handleStreamingComplete = useCallback(() => {
+    // No need to do anything here - messages are already properly set up
+    // Just clean up the references
+    fetchConversations();
+    streamingMessageIdRef.current = null;
+    toolCallMessageIdRef.current = null;
+  }, [fetchConversations]);
 
   // Handle tool calls during streaming
   const handleStreamingToolCall = useCallback((toolCalls) => {
-    if (streamingMessageIdRef.current && toolCalls && toolCalls.length > 0) {
+    if (toolCalls && toolCalls.length > 0) {
       setMessages((prev) => {
-        return prev.map((msg) => {
-          if (msg.id === streamingMessageIdRef.current) {
-            // Get existing content parts
-            const contentParts = [...(msg.content || [])];
+        let updatedMessages = [...prev];
 
-            // Remove any existing tool calls (to avoid duplicates)
-            const textParts = contentParts.filter((part) => part.type === 'text');
+        // If this is the first tool call, convert the loading message to a tool call message
+        if (!toolCallMessageIdRef.current && streamingMessageIdRef.current) {
+          updatedMessages = updatedMessages.map((msg) => {
+            if (msg.id === streamingMessageIdRef.current) {
+              // Store this as the tool call message ID
+              toolCallMessageIdRef.current = msg.id;
 
-            // Add tool calls
-            const toolParts = toolCalls.map((tc) => ({
-              type: 'tool-call',
-              toolCallId: tc.id,
-              toolName: tc.name,
-              args: parseToolArguments(tc.arguments),
-            }));
+              // Replace the loading message with tool calls
+              const toolParts = toolCalls.map((tc) => {
+                const args = parseToolArguments(tc.arguments);
+                return {
+                  type: 'tool-call',
+                  toolCallId: tc.id,
+                  toolName: tc.name,
+                  args: args,
+                  argsText:
+                    typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments),
+                  ...(tc.result && { result: tc.result }),
+                  // Note: status is on the message level, not on individual tool calls
+                };
+              });
 
-            return {
-              ...msg,
-              content: [...textParts, ...toolParts],
-            };
-          }
-          return msg;
-        });
+              return {
+                ...msg,
+                content: toolParts,
+                isLoading: false,
+                // Set message status to indicate tool calls are running
+                status: {
+                  type: 'running',
+                },
+              };
+            }
+            return msg;
+          });
+
+          // Add a new loading message for the text response
+          const textResponseMessageId = `${streamingMessageIdRef.current}_text`;
+          updatedMessages.push({
+            id: textResponseMessageId,
+            role: 'assistant',
+            content: [{ type: 'text', text: LOADING_MARKER }],
+            isLoading: true,
+            createdAt: new Date(),
+          });
+
+          // Update the streaming message ID to point to the text message
+          streamingMessageIdRef.current = textResponseMessageId;
+        } else if (toolCallMessageIdRef.current) {
+          // Update existing tool call message with new/updated tool calls
+          updatedMessages = updatedMessages.map((msg) => {
+            if (msg.id === toolCallMessageIdRef.current) {
+              const toolParts = toolCalls.map((tc) => {
+                const args = parseToolArguments(tc.arguments);
+                return {
+                  type: 'tool-call',
+                  toolCallId: tc.id,
+                  toolName: tc.name,
+                  args: args,
+                  argsText:
+                    typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments),
+                  ...(tc.result && { result: tc.result }),
+                  // Note: status is on the message level, not on individual tool calls
+                };
+              });
+
+              // Check if all tool calls have results
+              const allToolsComplete = toolParts.every((tc) => tc.result !== undefined);
+
+              return {
+                ...msg,
+                content: toolParts,
+                // Update status based on whether all tools are complete
+                status: allToolsComplete ? { type: 'complete' } : { type: 'running' },
+              };
+            }
+            return msg;
+          });
+        }
+
+        return updatedMessages;
       });
     }
   }, []);
@@ -239,6 +276,12 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
                 toolCallId: toolCall.id,
                 toolName: toolName,
                 args: args,
+                argsText:
+                  typeof toolCall.function?.arguments === 'string'
+                    ? toolCall.function.arguments
+                    : typeof toolCall.arguments === 'string'
+                      ? toolCall.arguments
+                      : JSON.stringify(args),
                 result: toolResponse ?? undefined,
               });
             });
