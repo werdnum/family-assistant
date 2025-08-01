@@ -1,0 +1,61 @@
+{
+  "formatters": {
+    "ensure_newline": {
+      "description": "Ensure files end with a newline (only if last line has content)",
+      "command": "sed -i -e '${ /./s/$/\\n/ }'",
+      "patterns": [
+        "*.py",
+        "*.js",
+        "*.jsx",
+        "*.ts",
+        "*.tsx",
+        "*.yaml",
+        "*.yml",
+        "*.toml",
+        "*.md",
+        "*.json",
+        "*.txt",
+        "*.sh",
+        "*.bash",
+        "*.css",
+        "*.scss",
+        "*.html",
+        "*.xml",
+        "*.cfg",
+        "*.ini",
+        "*.conf"
+      ]
+    },
+    "trim_trailing_whitespace": {
+      "description": "Remove trailing whitespace",
+      "command": "sed -i 's/[[:space:]]*$//'",
+      "patterns": [
+        "*.py",
+        "*.js",
+        "*.jsx",
+        "*.ts",
+        "*.tsx",
+        "*.yaml",
+        "*.yml",
+        "*.toml",
+        "*.md",
+        "*.json",
+        "*.sh",
+        "*.bash"
+      ],
+      "enabled": false
+    }
+  },
+  "exclude_patterns": [
+    "*.min.js",
+    "*.min.css",
+    "build/*",
+    "dist/*",
+    "node_modules/*",
+    ".venv/*",
+    "__pycache__/*",
+    "*.pyc",
+    "*.pyo",
+    "*.egg-info/*"
+  ]
+}
