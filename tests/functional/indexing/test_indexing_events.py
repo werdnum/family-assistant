@@ -3,7 +3,6 @@ Functional tests for document indexing events.
 """
 
 import asyncio
-import contextlib
 import json
 import logging
 import uuid
@@ -137,12 +136,9 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
             enabled=True,
         )
 
-    # Start event processor
-    processor_task = asyncio.create_task(event_processor.start())
-
     try:
-        # Give processor time to start and ensure listener cache is refreshed
-        await asyncio.sleep(0.3)
+        # Start processor and wait for it to be fully initialized
+        await event_processor.start()
 
         # Create a document
         async with get_db_context(engine=db_engine) as db_ctx:
@@ -255,9 +251,6 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
     finally:
         # Stop event processor
         await event_processor.stop()
-        processor_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await processor_task
 
 
 @pytest.mark.asyncio
@@ -462,11 +455,9 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
         # Skip the wake_llm handler test for now as it's complex to mock
         # The important part is that the event is emitted and stored
 
-        processor_task = None
         try:
-            # Start processor
-            processor_task = asyncio.create_task(event_processor.start())
-            await asyncio.sleep(0.1)
+            # Start processor and wait for it to be fully initialized
+            await event_processor.start()
 
             # Process embedding task - should emit event
             await handle_embed_and_store_batch(exec_context, task["payload"])
@@ -485,10 +476,6 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
         finally:
             # Stop processor
             await event_processor.stop()
-            if processor_task:
-                processor_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await processor_task
 
 
 @pytest.mark.asyncio
@@ -550,11 +537,9 @@ async def test_document_ready_event_includes_rich_metadata(
         model_name="test-model", dimensions=128
     )
 
-    processor_task = None
     try:
-        # Start event processor
-        processor_task = asyncio.create_task(event_processor.start())
-        await asyncio.sleep(0.1)
+        # Start event processor and wait for it to be fully initialized
+        await event_processor.start()
 
         async with get_db_context(engine=db_engine) as db_ctx:
             task = await db_ctx.tasks.dequeue(
@@ -613,10 +598,6 @@ async def test_document_ready_event_includes_rich_metadata(
     finally:
         # Clean up
         await event_processor.stop()
-        if processor_task:
-            processor_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await processor_task
 
 
 @pytest.mark.asyncio
@@ -669,12 +650,9 @@ async def test_document_ready_event_handles_none_metadata(
         model_name="test-model", dimensions=128
     )
 
-    # Start event processor
-    processor_task = asyncio.create_task(event_processor.start())
-
     try:
-        # Give processor time to start
-        await asyncio.sleep(0.1)
+        # Start event processor and wait for it to be fully initialized
+        await event_processor.start()
 
         async with get_db_context(engine=db_engine) as db_ctx:
             task = await db_ctx.tasks.dequeue(
@@ -716,9 +694,6 @@ async def test_document_ready_event_handles_none_metadata(
     finally:
         # Stop event processor
         await event_processor.stop()
-        processor_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await processor_task
 
 
 @pytest.mark.asyncio
