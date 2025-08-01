@@ -103,6 +103,7 @@ if [[ "$REVIEW_MODE" == "staged" ]]; then
     if ! git diff --cached --quiet; then
         DIFF=$(git diff --cached)
         DIFF_STAT=$(git diff --cached --stat)
+        readarray -t files_to_check < <(git diff --cached --name-only)
     else
         echo "${YELLOW}No staged changes to review${NC}"
         exit 0
@@ -111,6 +112,24 @@ else
     echo "${CYAN}Reviewing most recent commit...${NC}"
     DIFF=$(git show HEAD)
     DIFF_STAT=$(git show HEAD --stat)
+    readarray -t files_to_check < <(git show HEAD --name-only --pretty=format:)
+fi
+
+# Run pre-commit hooks on the files being reviewed
+if command -v pre-commit &> /dev/null && [[ -f "$REPO_ROOT/.pre-commit-config.yaml" ]] && [[ ${#files_to_check[@]} -gt 0 ]]; then
+    echo "${CYAN}Running pre-commit hooks on files being reviewed...${NC}"
+    if ! pre-commit run --files "${files_to_check[@]}"; then
+        echo "${RED}Error: Pre-commit hooks failed${NC}"
+        echo "Please fix the issues and stage any changes before running the review again."
+        exit 2
+    fi
+    echo ""
+elif [[ ${#files_to_check[@]} -eq 0 ]]; then
+    echo "${YELLOW}No files to check with pre-commit${NC}"
+else
+    echo "${YELLOW}Warning: pre-commit not available or .pre-commit-config.yaml not found${NC}"
+    echo "Skipping pre-commit validation."
+    echo ""
 fi
 
 # Create a temporary file for the LLM response
@@ -382,3 +401,4 @@ echo ""
 echo "Exit code: $EXIT_CODE"
 
 exit $EXIT_CODE
+
