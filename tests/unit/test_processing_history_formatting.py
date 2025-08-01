@@ -276,3 +276,108 @@ def test_format_history_handles_empty_tool_calls(
     ]
     actual_output = processing_service._format_history_for_llm(history_messages)
     assert actual_output == expected_output
+
+
+def test_web_specific_history_configuration() -> None:
+    """Test that web interface gets different history limits than other interfaces."""
+    # Create a service config with web-specific settings
+    mock_service_config = ProcessingServiceConfig(
+        prompts={},
+        timezone_str="UTC",
+        max_history_messages=5,  # Default for telegram
+        history_max_age_hours=24,  # Default for telegram
+        web_max_history_messages=100,  # Web-specific
+        web_history_max_age_hours=720,  # Web-specific (30 days)
+        tools_config={},
+        delegation_security_level="confirm",
+        id="test_web_history_profile",
+    )
+
+    processing_service = ProcessingService(
+        llm_client=MockLLMClient(),
+        tools_provider=MockToolsProvider(),
+        service_config=mock_service_config,
+        context_providers=[],
+        server_url="http://test.com",
+        app_config={},
+    )
+
+    # Test regular (non-web) history limits
+    assert processing_service.max_history_messages == 5
+    assert processing_service.history_max_age_hours == 24
+
+    # Test web-specific history limits
+    assert processing_service.web_max_history_messages == 100
+    assert processing_service.web_history_max_age_hours == 720
+
+    # Test that they're different
+    assert (
+        processing_service.max_history_messages
+        != processing_service.web_max_history_messages
+    )
+    assert (
+        processing_service.history_max_age_hours
+        != processing_service.web_history_max_age_hours
+    )
+
+
+def test_web_history_configuration_fallback() -> None:
+    """Test that web history configuration falls back to default when not specified."""
+    # Create a service config WITHOUT web-specific settings
+    mock_service_config = ProcessingServiceConfig(
+        prompts={},
+        timezone_str="UTC",
+        max_history_messages=10,
+        history_max_age_hours=48,
+        web_max_history_messages=None,  # Not specified
+        web_history_max_age_hours=None,  # Not specified
+        tools_config={},
+        delegation_security_level="confirm",
+        id="test_fallback_profile",
+    )
+
+    processing_service = ProcessingService(
+        llm_client=MockLLMClient(),
+        tools_provider=MockToolsProvider(),
+        service_config=mock_service_config,
+        context_providers=[],
+        server_url="http://test.com",
+        app_config={},
+    )
+
+    # Test that web-specific properties fall back to default values
+    assert (
+        processing_service.web_max_history_messages == 10
+    )  # Falls back to max_history_messages
+    assert (
+        processing_service.web_history_max_age_hours == 48
+    )  # Falls back to history_max_age_hours
+
+
+def test_web_history_configuration_with_zero_values() -> None:
+    """Test that web history configuration correctly handles zero values."""
+    # Create a service config with web-specific settings set to 0
+    mock_service_config = ProcessingServiceConfig(
+        prompts={},
+        timezone_str="UTC",
+        max_history_messages=10,
+        history_max_age_hours=48,
+        web_max_history_messages=0,  # Explicitly set to 0
+        web_history_max_age_hours=0,  # Explicitly set to 0
+        tools_config={},
+        delegation_security_level="confirm",
+        id="test_zero_values_profile",
+    )
+
+    processing_service = ProcessingService(
+        llm_client=MockLLMClient(),
+        tools_provider=MockToolsProvider(),
+        service_config=mock_service_config,
+        context_providers=[],
+        server_url="http://test.com",
+        app_config={},
+    )
+
+    # Test that zero values are respected, not treated as falsy and replaced with defaults
+    assert processing_service.web_max_history_messages == 0  # Should be 0, not 10
+    assert processing_service.web_history_max_age_hours == 0  # Should be 0, not 48

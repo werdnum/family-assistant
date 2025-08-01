@@ -149,6 +149,9 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
                 "timezone": "UTC",
                 "max_history_messages": 5,
                 "history_max_age_hours": 24,
+                # Web-specific history settings for better conversation context
+                "web_max_history_messages": 100,  # Much higher for web conversations
+                "web_history_max_age_hours": 720,  # 30 days - web conversations can be resumed later
                 # Default LLM model for profiles, can be overridden per profile
                 "llm_model": "gemini/gemini-2.5-pro-preview-05-06",  # Use actual default model string
             },
@@ -497,6 +500,8 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
                 "timezone",
                 "max_history_messages",
                 "history_max_age_hours",
+                "web_max_history_messages",
+                "web_history_max_age_hours",
                 "delegation_security_level",  # Add delegation_security_level here
             ]:
                 if scalar_key in profile_def["processing_config"]:
