@@ -94,12 +94,12 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
     ({ content, toolCalls }) => {
       if (streamingMessageIdRef.current) {
         const contentParts = [];
-
+        
         // Always add text content if present
         if (content) {
           contentParts.push({ type: 'text', text: content });
         }
-
+        
         // Add tool calls if present
         if (toolCalls && toolCalls.length > 0) {
           toolCalls.forEach((tc) => {
@@ -114,12 +114,12 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
             });
           });
         }
-
+        
         // Update the message with the final content
         setMessages((prev) =>
           prev.map((msg) =>
-            msg.id === streamingMessageIdRef.current
-              ? { ...msg, content: contentParts, isLoading: false }
+            msg.id === streamingMessageIdRef.current 
+              ? { ...msg, content: contentParts, isLoading: false } 
               : msg
           )
         );
@@ -138,10 +138,10 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
           if (msg.id === streamingMessageIdRef.current) {
             // Get existing content parts
             const contentParts = [...(msg.content || [])];
-
+            
             // Remove any existing tool calls (to avoid duplicates)
-            const textParts = contentParts.filter((part) => part.type === 'text');
-
+            const textParts = contentParts.filter(part => part.type === 'text');
+            
             // Add tool calls
             const toolParts = toolCalls.map((tc) => ({
               type: 'tool-call',
@@ -149,7 +149,7 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
               toolName: tc.name,
               args: parseToolArguments(tc.arguments),
             }));
-
+            
             return {
               ...msg,
               content: [...textParts, ...toolParts],
@@ -397,3 +397,4 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
 };
 
 export default ChatApp;
+
