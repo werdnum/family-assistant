@@ -313,6 +313,20 @@ async def test_tool_call_display(
     if all_assistant_content:
         assert "note" in all_assistant_content.lower()
 
+    # IMPORTANT: Verify tool UI elements are displayed
+    # Wait for tool UI elements to be rendered
+    await chat_page.wait_for_tool_call_display()
+
+    # Get tool calls that were displayed
+    tool_calls = await chat_page.get_tool_calls()
+    assert len(tool_calls) > 0, "Expected at least one tool UI element to be displayed"
+
+    # Verify the tool UI contains expected content
+    tool_display_text = tool_calls[0].get("display_text", "")
+    assert "add_or_update_note" in tool_display_text or "Note" in tool_display_text, (
+        f"Expected tool UI to show note-related content, got: {tool_display_text}"
+    )
+
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
