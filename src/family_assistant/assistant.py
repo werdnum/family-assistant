@@ -632,6 +632,12 @@ class Assistant:
                 timezone_str=profile_proc_conf_dict["timezone"],
                 max_history_messages=profile_proc_conf_dict["max_history_messages"],
                 history_max_age_hours=profile_proc_conf_dict["history_max_age_hours"],
+                web_max_history_messages=profile_proc_conf_dict.get(
+                    "web_max_history_messages"
+                ),
+                web_history_max_age_hours=profile_proc_conf_dict.get(
+                    "web_history_max_age_hours"
+                ),
                 tools_config=profile_tools_conf_dict,
                 delegation_security_level=profile_proc_conf_dict.get(
                     "delegation_security_level", "confirm"

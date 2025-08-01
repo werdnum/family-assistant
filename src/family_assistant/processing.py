@@ -53,6 +53,9 @@ class ProcessingServiceConfig:
     model_parameters: dict[str, dict[str, Any]] | None = None  # Corrected type
     fallback_model_id: str | None = None  # Added for LLM fallback
     fallback_model_parameters: dict[str, dict[str, Any]] | None = None  # Corrected type
+    # Web-specific history settings
+    web_max_history_messages: int | None = None  # If None, uses max_history_messages
+    web_history_max_age_hours: int | None = None  # If None, uses history_max_age_hours
 
 
 # --- Processing Service Class ---
@@ -134,6 +137,40 @@ class ProcessingService:
     @property
     def history_max_age_hours(self) -> int:
         return self.service_config.history_max_age_hours
+
+    @property
+    def web_max_history_messages(self) -> int:
+        # Use web-specific setting if available, otherwise fall back to default
+        if self.service_config.web_max_history_messages is not None:
+            return self.service_config.web_max_history_messages
+        return self.service_config.max_history_messages
+
+    @property
+    def web_history_max_age_hours(self) -> int:
+        # Use web-specific setting if available, otherwise fall back to default
+        if self.service_config.web_history_max_age_hours is not None:
+            return self.service_config.web_history_max_age_hours
+        return self.service_config.history_max_age_hours
+
+    def _get_history_limits_for_interface(
+        self, interface_type: str
+    ) -> tuple[int, timedelta]:
+        """Get history limits based on interface type.
+
+        Args:
+            interface_type: The type of interface (e.g., "web", "telegram", "api")
+
+        Returns:
+            Tuple of (max_messages, max_age_timedelta)
+        """
+        if interface_type == "web":
+            return self.web_max_history_messages, timedelta(
+                hours=self.web_history_max_age_hours
+            )
+        else:
+            return self.max_history_messages, timedelta(
+                hours=self.history_max_age_hours
+            )
 
     async def _aggregate_context_from_providers(self) -> str:
         """Gathers context fragments from all registered providers."""
@@ -877,12 +914,17 @@ class ProcessingService:
                     # For now, assuming add_message_to_history handles setting its own ID as root if None is passed.
 
             # --- 2. Prepare LLM Context (History, System Prompt) ---
+            # Use interface-specific history limits
+            history_limit, history_max_age = self._get_history_limits_for_interface(
+                interface_type
+            )
+
             try:
                 raw_history_messages = await db_context.message_history.get_recent(
                     interface_type=interface_type,
                     conversation_id=conversation_id,
-                    limit=self.max_history_messages,
-                    max_age=timedelta(hours=self.history_max_age_hours),
+                    limit=history_limit,
+                    max_age=history_max_age,
                     processing_profile_id=self.service_config.id,  # Filter by profile
                 )
             except Exception as hist_err:
@@ -1290,12 +1332,17 @@ class ProcessingService:
                 thread_root_id_for_turn = saved_user_msg_record.get("internal_id")
 
             # --- 2. Prepare LLM Context ---
+            # Use interface-specific history limits
+            history_limit, history_max_age = self._get_history_limits_for_interface(
+                interface_type
+            )
+
             try:
                 raw_history_messages = await db_context.message_history.get_recent(
                     interface_type=interface_type,
                     conversation_id=conversation_id,
-                    limit=self.max_history_messages,
-                    max_age=timedelta(hours=self.history_max_age_hours),
+                    limit=history_limit,
+                    max_age=history_max_age,
                     processing_profile_id=self.service_config.id,
                 )
             except Exception as hist_err:
