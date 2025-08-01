@@ -30,6 +30,17 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write|NotebookEdit|Update",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env python3 .claude/format-files.py"
+          }
+        ]
+      }
     ]
   }
 }
