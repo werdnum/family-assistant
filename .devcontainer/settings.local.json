@@ -89,7 +89,15 @@
       "Bash(./.devcontainer/run-full-tests-isolated.sh:*)",
       "Bash(./.devcontainer/run-full-tests-keep-on-failure.sh:*)",
       "Bash(kubectl rollout status:*)",
-      "Bash(./scripts/review-changes.sh:*)"
+      "Bash(./scripts/review-changes.sh:*)",
+      "mcp__playwright__*",
+      "Bash(npm run lint:*)",
+      "Bash(npm run format:*)",
+      "Bash(npm run check:*)",
+      "Bash(poe frontend-lint:*)",
+      "Bash(poe frontend-format:*)",
+      "Bash(poe frontend-check:*)",
+      "Bash(git checkout -b:*)"
     ],
     "deny": []
   },
@@ -109,3 +117,4 @@
     ]
   }
 }
+
