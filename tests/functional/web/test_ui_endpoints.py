@@ -14,7 +14,8 @@ from family_assistant.web.auth import AUTH_ENABLED
 # For pages that expect data (e.g., editing a specific note), we test with a
 # non-existent item to ensure it returns a client error (like 404) rather than a server error (500).
 BASE_UI_ENDPOINTS = [
-    ("/", "Notes List Page"),
+    ("/", "Root Page (Redirects to Chat)"),
+    ("/notes", "Notes List Page"),
     ("/notes/add", "Add Note Form Page"),
     ("/notes/edit/non_existent_note_for_test", "Edit Non-Existent Note Form Page"),
     ("/docs/", "Documentation Index Page (may redirect)"),
