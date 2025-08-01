@@ -329,4 +329,3 @@ const MessageTimestamp = () => {
     </MessagePrimitive.If>
   );
 };
-
