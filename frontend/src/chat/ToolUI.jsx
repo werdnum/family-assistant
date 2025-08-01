@@ -1184,7 +1184,7 @@ export const ScheduleRecurringActionToolUI = ({ args, result, status }) => {
     if (!rrule) {
       return 'Unknown recurrence';
     }
-    
+
     // Simple formatting for common patterns
     if (rrule.includes('FREQ=DAILY')) {
       const intervalMatch = rrule.match(/INTERVAL=(\d+)/);
@@ -1199,7 +1199,7 @@ export const ScheduleRecurringActionToolUI = ({ args, result, status }) => {
       const interval = intervalMatch ? parseInt(intervalMatch[1]) : 1;
       return interval === 1 ? 'Hourly' : `Every ${interval} hours`;
     }
-    
+
     return rrule;
   };
 
@@ -1219,7 +1219,10 @@ export const ScheduleRecurringActionToolUI = ({ args, result, status }) => {
   }
 
   return (
-    <div className={`tool-call-container tool-schedule-recurring-action ${statusClass}`} data-ui="tool-call-content">
+    <div
+      className={`tool-call-container tool-schedule-recurring-action ${statusClass}`}
+      data-ui="tool-call-content"
+    >
       <div className="tool-call-header">
         <span className="tool-name">🔄 Schedule Recurring Action</span>
         {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
@@ -1581,7 +1584,10 @@ export const GetUserDocumentationContentToolUI = ({ args, result, status }) => {
   }
 
   return (
-    <div className={`tool-call-container tool-user-docs ${statusClass}`} data-ui="tool-call-content">
+    <div
+      className={`tool-call-container tool-user-docs ${statusClass}`}
+      data-ui="tool-call-content"
+    >
       <div className="tool-call-header">
         <span className="tool-name">📖 User Documentation</span>
         {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
@@ -2002,9 +2008,7 @@ export const CreateEventListenerToolUI = ({ args, result, status }) => {
 
   // Check if the operation was successful
   const isSuccess = parsedResult?.success === true;
-  const isError =
-    parsedResult?.success === false ||
-    (status?.type === 'incomplete');
+  const isError = parsedResult?.success === false || status?.type === 'incomplete';
 
   // Determine status icon and classes
   let statusIcon = null;
@@ -2204,9 +2208,7 @@ export const ListEventListenersToolUI = ({ args, result, status }) => {
 
   // Check if the operation was successful
   const _isSuccess = parsedResult?.success === true;
-  const isError =
-    parsedResult?.success === false ||
-    (status?.type === 'incomplete');
+  const isError = parsedResult?.success === false || status?.type === 'incomplete';
 
   // Determine status icon and classes
   let statusIcon = null;
@@ -2344,9 +2346,7 @@ export const DeleteEventListenerToolUI = ({ args, result, status }) => {
 
   // Check if the operation was successful
   const isSuccess = parsedResult?.success === true;
-  const isError =
-    parsedResult?.success === false ||
-    (status?.type === 'incomplete');
+  const isError = parsedResult?.success === false || status?.type === 'incomplete';
 
   // Determine status icon and classes
   let statusIcon = null;
@@ -2440,9 +2440,7 @@ export const ToggleEventListenerToolUI = ({ args, result, status }) => {
 
   // Check if the operation was successful
   const isSuccess = parsedResult?.success === true;
-  const isError =
-    parsedResult?.success === false ||
-    (status?.type === 'incomplete');
+  const isError = parsedResult?.success === false || status?.type === 'incomplete';
 
   // Determine status icon and classes
   let statusIcon = null;
@@ -2765,7 +2763,10 @@ export const RenderHomeAssistantTemplateToolUI = ({ args, result, status }) => {
   }
 
   return (
-    <div className={`tool-call-container tool-ha-template ${statusClass}`} data-ui="tool-call-content">
+    <div
+      className={`tool-call-container tool-ha-template ${statusClass}`}
+      data-ui="tool-call-content"
+    >
       <div className="tool-call-header">
         <span className="tool-name">🏠 Home Assistant Template</span>
         {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
@@ -3504,7 +3505,10 @@ export const SendMessageToUserToolUI = ({ args, result, status }) => {
   }
 
   return (
-    <div className={`tool-call-container tool-send-message ${statusClass}`} data-ui="tool-call-content">
+    <div
+      className={`tool-call-container tool-send-message ${statusClass}`}
+      data-ui="tool-call-content"
+    >
       <div className="tool-call-header">
         <span className="tool-name">💬 Send Message</span>
         {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
@@ -3526,7 +3530,8 @@ export const SendMessageToUserToolUI = ({ args, result, status }) => {
                   <>
                     <div>"{args.message_content.substring(0, 200)}..."</div>
                     <div className="tool-content-truncated">
-                      Message truncated (showing first 200 characters of {args.message_content.length} total)
+                      Message truncated (showing first 200 characters of{' '}
+                      {args.message_content.length} total)
                     </div>
                   </>
                 ) : (
@@ -3554,9 +3559,7 @@ export const SendMessageToUserToolUI = ({ args, result, status }) => {
         )}
       </div>
 
-      {status?.type === 'running' && (
-        <div className="tool-running-message">Sending message...</div>
-      )}
+      {status?.type === 'running' && <div className="tool-running-message">Sending message...</div>}
     </div>
   );
 };
@@ -3578,7 +3581,10 @@ export const ExecuteScriptToolUI = ({ args, result, status }) => {
   }
 
   return (
-    <div className={`tool-call-container tool-execute-script ${statusClass}`} data-ui="tool-call-content">
+    <div
+      className={`tool-call-container tool-execute-script ${statusClass}`}
+      data-ui="tool-call-content"
+    >
       <div className="tool-call-header">
         <span className="tool-name">⚡ Execute Script</span>
         {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
