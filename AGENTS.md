@@ -31,8 +31,7 @@ The frontend is a modern React application built with Vite.
 All frontend code is located in the `frontend/` directory. To get started, install the dependencies:
 
 ```bash
-cd frontend
-npm install
+npm install --prefix frontend
 ```
 
 ### Development Server
@@ -50,8 +49,7 @@ This command starts both the FastAPI backend and the Vite frontend development s
 To build the frontend for production:
 
 ```bash
-cd frontend
-npm run build
+npm run build --prefix frontend
 ```
 
 This will create an optimized production build in `src/family_assistant/static/dist`.
@@ -60,9 +58,12 @@ This will create an optimized production build in `src/family_assistant/static/d
 
 We use ESLint for linting and Biome for formatting.
 
-- **Lint:** `npm run lint`
-- **Format:** `npm run format`
-- **Check both:** `npm run check`
+**Frontend linting commands:**
+- **Lint:** `poe frontend-lint` or `npm run lint --prefix frontend`
+- **Format:** `poe frontend-format` or `npm run format --prefix frontend`
+- **Check both:** `poe frontend-check` or `npm run check --prefix frontend`
+
+**Note**: The `--prefix frontend` pattern avoids directory changes and is preferred for scripts and subagents.
 
 These are also integrated into the pre-commit hooks and the main `scripts/format-and-lint.sh` script.
 

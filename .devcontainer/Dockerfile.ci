@@ -18,29 +18,30 @@ RUN npx playwright install-deps chromium || true && \
 
 # Pre-build frontend assets for CI
 # First copy only package files for better layer caching
-COPY --chown=claude:claude frontend/package*.json /tmp/frontend/
+COPY --chown=claude:claude frontend/package*.json /opt/frontend/
 
 # Switch to claude user for npm operations
 USER claude
-WORKDIR /tmp/frontend
+WORKDIR /opt/frontend
 
 # Install dependencies (cached when package.json doesn't change)
 RUN npm ci --no-audit --no-fund
 
 # Now copy the rest of the frontend source
-COPY --chown=claude:claude frontend /tmp/frontend/
+COPY --chown=claude:claude frontend /opt/frontend/
 
-# Build frontend
+# Build frontend and prepare dist assets
 RUN npm run build && \
     # Copy built assets to a known location
     mkdir -p /opt/frontend-dist && \
     cp -r ../src/family_assistant/static/dist/* /opt/frontend-dist/ && \
     # Also copy the .vite directory which contains the manifest
-    cp -r ../src/family_assistant/static/dist/.vite /opt/frontend-dist/.vite
+    cp -r ../src/family_assistant/static/dist/.vite /opt/frontend-dist/.vite && \
+    # Clean up source files but keep node_modules for CI linting
+    rm -rf src *.html *.js *.json
 
-# Clean up build directory
-USER root
-RUN rm -rf /tmp/frontend
+# The /opt/frontend directory now contains only node_modules
+# which will be bind-mounted over during CI runs
 
 # Set environment variables for CI mode
 ENV UV_CACHE_DIR=/opt/uv-cache

@@ -118,3 +118,13 @@ async def execute_tool_api(
             status_code=500,
             detail=f"An error occurred while executing tool '{tool_name}'.",
         ) from e
+
+
+@tools_api_router.get("/definitions")
+async def get_tool_definitions(request: Request) -> JSONResponse:
+    """Development endpoint to list all available tools."""
+    tool_definitions = getattr(request.app.state, "tool_definitions", [])
+    tool_names = [
+        t.get("function", {}).get("name", "unknown") for t in tool_definitions
+    ]
+    return JSONResponse(content={"tools": tool_names, "count": len(tool_names)})

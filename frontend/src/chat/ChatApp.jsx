@@ -54,13 +54,15 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
         // Update the loading message with actual content
         return prev.map((msg) =>
           msg.id === streamingMessageIdRef.current
-            ? { 
-                ...msg, 
-                content: [{ 
-                  type: 'text', 
-                  text: content // Use the accumulated content directly from the hook
-                }],
-                isLoading: false // Remove loading flag when content arrives
+            ? {
+                ...msg,
+                content: [
+                  {
+                    type: 'text',
+                    text: content, // Use the accumulated content directly from the hook
+                  },
+                ],
+                isLoading: false, // Remove loading flag when content arrives
               }
             : msg
         );
@@ -98,7 +100,7 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
         toolCalls.forEach((tc) => {
           // Parse arguments if they're a string
           const args = parseToolArguments(tc.arguments);
-          
+
           contentParts.push({
             type: 'tool-call',
             toolCallId: tc.id,
@@ -124,7 +126,6 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
     onError: handleStreamingError,
     onComplete: handleStreamingComplete,
   });
-
 
   // Handle window resize
   useEffect(() => {
@@ -179,34 +180,34 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
           }
 
           if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
-              const content = [];
-              if (msg.content) {
-                content.push({ type: 'text', text: msg.content });
-              }
+            const content = [];
+            if (msg.content) {
+              content.push({ type: 'text', text: msg.content });
+            }
 
-              msg.tool_calls.forEach((toolCall) => {
-                const toolResponse = toolResponses.get(toolCall.id);
-                // Extract the function name from the tool call
-                const toolName = toolCall.function?.name || toolCall.name || 'unknown';
-                // Parse arguments if they're a string
-                const args = parseToolArguments(toolCall.function?.arguments || toolCall.arguments);
-                
-                content.push({
-                  type: 'tool-call',
-                  toolCallId: toolCall.id,
-                  toolName: toolName,
-                  args: args,
-                  result: toolResponse ?? undefined,
-                });
-              });
+            msg.tool_calls.forEach((toolCall) => {
+              const toolResponse = toolResponses.get(toolCall.id);
+              // Extract the function name from the tool call
+              const toolName = toolCall.function?.name || toolCall.name || 'unknown';
+              // Parse arguments if they're a string
+              const args = parseToolArguments(toolCall.function?.arguments || toolCall.arguments);
 
-              processedMessages.push({
-                id: `msg_${msg.internal_id}`,
-                role: 'assistant',
-                content: content,
-                createdAt: new Date(msg.timestamp),
+              content.push({
+                type: 'tool-call',
+                toolCallId: toolCall.id,
+                toolName: toolName,
+                args: args,
+                result: toolResponse ?? undefined,
               });
-              return;
+            });
+
+            processedMessages.push({
+              id: `msg_${msg.internal_id}`,
+              role: 'assistant',
+              content: content,
+              createdAt: new Date(msg.timestamp),
+            });
+            return;
           }
 
           processedMessages.push({
@@ -270,7 +271,7 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
         isLoading: true, // Custom flag to indicate loading state
         createdAt: new Date(),
       };
-      
+
       setMessages((prev) => [...prev, userMessage, loadingAssistantMessage]);
 
       streamingMessageIdRef.current = assistantMessageId;
@@ -311,43 +312,43 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
           <h1>Chat</h1>
         </div>
         <div className="chat-app-body">
-        {sidebarOpen && isMobile && (
-          <div
-            className="sidebar-overlay"
-            onClick={() => setSidebarOpen(false)}
-            aria-hidden="true"
+          {sidebarOpen && isMobile && (
+            <div
+              className="sidebar-overlay"
+              onClick={() => setSidebarOpen(false)}
+              aria-hidden="true"
+            />
+          )}
+          <ConversationSidebar
+            conversations={conversations}
+            conversationsLoading={conversationsLoading}
+            currentConversationId={conversationId}
+            onConversationSelect={handleConversationSelect}
+            onNewChat={handleNewChat}
+            isOpen={sidebarOpen}
+            onRefresh={fetchConversations}
           />
-        )}
-        <ConversationSidebar
-          conversations={conversations}
-          conversationsLoading={conversationsLoading}
-          currentConversationId={conversationId}
-          onConversationSelect={handleConversationSelect}
-          onNewChat={handleNewChat}
-          isOpen={sidebarOpen}
-          onRefresh={fetchConversations}
-        />
-        <div className="chat-main-content">
-          <main>
-            <AssistantRuntimeProvider runtime={runtime}>
-              <div className="chat-container">
-                <div className="chat-info">
-                  <h2>Family Assistant Chat</h2>
-                  {conversationId && (
-                    <div className="conversation-id">
-                      Conversation: {conversationId.substring(0, 20)}...
-                    </div>
-                  )}
+          <div className="chat-main-content">
+            <main>
+              <AssistantRuntimeProvider runtime={runtime}>
+                <div className="chat-container">
+                  <div className="chat-info">
+                    <h2>Family Assistant Chat</h2>
+                    {conversationId && (
+                      <div className="conversation-id">
+                        Conversation: {conversationId.substring(0, 20)}...
+                      </div>
+                    )}
+                  </div>
+                  <Thread />
                 </div>
-                <Thread />
-              </div>
-            </AssistantRuntimeProvider>
-          </main>
-          <footer>
-            <p>&copy; {new Date().getFullYear()} Family Assistant</p>
-          </footer>
+              </AssistantRuntimeProvider>
+            </main>
+            <footer>
+              <p>&copy; {new Date().getFullYear()} Family Assistant</p>
+            </footer>
+          </div>
         </div>
-      </div>
       </div>
     </>
   );
