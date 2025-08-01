@@ -92,25 +92,35 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
 
   const handleStreamingComplete = useCallback(
     ({ content, toolCalls }) => {
-      if (toolCalls && toolCalls.length > 0 && streamingMessageIdRef.current) {
+      if (streamingMessageIdRef.current) {
         const contentParts = [];
+        
+        // Always add text content if present
         if (content) {
           contentParts.push({ type: 'text', text: content });
         }
-        toolCalls.forEach((tc) => {
-          // Parse arguments if they're a string
-          const args = parseToolArguments(tc.arguments);
+        
+        // Add tool calls if present
+        if (toolCalls && toolCalls.length > 0) {
+          toolCalls.forEach((tc) => {
+            // Parse arguments if they're a string
+            const args = parseToolArguments(tc.arguments);
 
-          contentParts.push({
-            type: 'tool-call',
-            toolCallId: tc.id,
-            toolName: tc.name,
-            args: args,
+            contentParts.push({
+              type: 'tool-call',
+              toolCallId: tc.id,
+              toolName: tc.name,
+              args: args,
+            });
           });
-        });
+        }
+        
+        // Update the message with the final content
         setMessages((prev) =>
           prev.map((msg) =>
-            msg.id === streamingMessageIdRef.current ? { ...msg, content: contentParts } : msg
+            msg.id === streamingMessageIdRef.current 
+              ? { ...msg, content: contentParts, isLoading: false } 
+              : msg
           )
         );
       }
@@ -120,11 +130,43 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
     [fetchConversations]
   );
 
+  // Handle tool calls during streaming
+  const handleStreamingToolCall = useCallback((toolCalls) => {
+    if (streamingMessageIdRef.current && toolCalls && toolCalls.length > 0) {
+      setMessages((prev) => {
+        return prev.map((msg) => {
+          if (msg.id === streamingMessageIdRef.current) {
+            // Get existing content parts
+            const contentParts = [...(msg.content || [])];
+            
+            // Remove any existing tool calls (to avoid duplicates)
+            const textParts = contentParts.filter(part => part.type === 'text');
+            
+            // Add tool calls
+            const toolParts = toolCalls.map((tc) => ({
+              type: 'tool-call',
+              toolCallId: tc.id,
+              toolName: tc.name,
+              args: parseToolArguments(tc.arguments),
+            }));
+            
+            return {
+              ...msg,
+              content: [...textParts, ...toolParts],
+            };
+          }
+          return msg;
+        });
+      });
+    }
+  }, []);
+
   // Initialize streaming hook
   const { sendStreamingMessage, isStreaming } = useStreamingResponse({
     onMessage: handleStreamingMessage,
     onError: handleStreamingError,
     onComplete: handleStreamingComplete,
+    onToolCall: handleStreamingToolCall,
   });
 
   // Handle window resize
@@ -355,3 +397,4 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
 };
 
 export default ChatApp;
+
