@@ -137,17 +137,16 @@ fi
 if [ $SKIP_LINT -eq 0 ]; then
     # Start basedpyright
     echo "${BLUE}  ▸ Starting basedpyright...${NC}"
-    timer_start
+    PYRIGHT_START=$(date +%s)
     ${VIRTUAL_ENV:-.venv}/bin/basedpyright src tests &
     PYRIGHT_PID=$!
-    PYRIGHT_START=$START_TIME
 
     # Give pyright a moment to start
     sleep 2
 
     # Start pytest
     echo "${BLUE}  ▸ Starting pytest...${NC}"
-    timer_start
+    TEST_START=$(date +%s)
     
     # Check if memory limit is explicitly requested via environment variable
     if [ "${USE_MEMORY_LIMIT:-0}" = "1" ]; then
@@ -157,27 +156,31 @@ if [ $SKIP_LINT -eq 0 ]; then
         pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PARALLELISM $PYTEST_ARGS &
     fi
     TEST_PID=$!
-    TEST_START=$START_TIME
 
     # Start pylint
     echo "${BLUE}  ▸ Starting pylint...${NC}"
-    timer_start
+    PYLINT_START=$(date +%s)
     ${VIRTUAL_ENV:-.venv}/bin/pylint -j0 src tests &
     PYLINT_PID=$!
-    PYLINT_START=$START_TIME
+
+    # Start frontend linting
+    echo "${BLUE}  ▸ Starting frontend linting...${NC}"
+    FRONTEND_START=$(date +%s)
+    (cd frontend && npm run check) &
+    FRONTEND_PID=$!
 else
     # Just run pytest when linting is skipped
     echo "${BLUE}  ▸ Starting pytest...${NC}"
-    timer_start
+    TEST_START=$(date +%s)
     pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PARALLELISM $PYTEST_ARGS &
     TEST_PID=$!
-    TEST_START=$START_TIME
 fi
 
 # Wait for processes and collect results
 PYRIGHT_EXIT=0
 TEST_EXIT=0
 PYLINT_EXIT=0
+FRONTEND_EXIT=0
 
 if [ $SKIP_LINT -eq 0 ]; then
     # Wait for pyright
@@ -215,6 +218,18 @@ if [ $SKIP_LINT -eq 0 ]; then
         ELAPSED=$((END_TIME - PYLINT_START))
         echo "${RED}  ❌ Linting failed (${ELAPSED}s)${NC}"
     fi
+
+    # Wait for frontend linting
+    if wait $FRONTEND_PID; then
+        END_TIME=$(date +%s)
+        ELAPSED=$((END_TIME - FRONTEND_START))
+        echo "${GREEN}  ✓ Frontend linting complete (${ELAPSED}s)${NC}"
+    else
+        FRONTEND_EXIT=$?
+        END_TIME=$(date +%s)
+        ELAPSED=$((END_TIME - FRONTEND_START))
+        echo "${RED}  ❌ Frontend linting failed (${ELAPSED}s)${NC}"
+    fi
 else
     # Just wait for tests when linting is skipped
     if wait $TEST_PID; then
@@ -238,7 +253,7 @@ echo "${BLUE}━━━━━━━━━━━━━━━━━━━━━━�
 echo "${BLUE}Total time: ${TOTAL_TIME}s${NC}"
 
 # Exit with appropriate code
-if [ $PYRIGHT_EXIT -ne 0 ] || [ $TEST_EXIT -ne 0 ] || [ $PYLINT_EXIT -ne 0 ]; then
+if [ $PYRIGHT_EXIT -ne 0 ] || [ $TEST_EXIT -ne 0 ] || [ $PYLINT_EXIT -ne 0 ] || [ $FRONTEND_EXIT -ne 0 ]; then
     echo "${RED}Some checks failed!${NC}"
     if [ -f .report.json ]; then
         echo ""
@@ -261,3 +276,4 @@ else
     fi
     exit 0
 fi
+

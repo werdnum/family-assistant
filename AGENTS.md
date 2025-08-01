@@ -42,7 +42,9 @@ To run the frontend development server with hot module replacement (HMR):
 poe dev
 ```
 
-This command starts both the FastAPI backend and the Vite frontend development server. The frontend is served on `http://localhost:5173`, and all API requests are proxied to the backend running on port 8000.
+This command starts both the FastAPI backend and the Vite frontend development server. The frontend
+is served on `http://localhost:5173`, and all API requests are proxied to the backend running on
+port 8000.
 
 ### Building for Production
 
@@ -59,20 +61,25 @@ This will create an optimized production build in `src/family_assistant/static/d
 We use ESLint for linting and Biome for formatting.
 
 **Frontend linting commands:**
+
 - **Lint:** `poe frontend-lint` or `npm run lint --prefix frontend`
 - **Format:** `poe frontend-format` or `npm run format --prefix frontend`
 - **Check both:** `poe frontend-check` or `npm run check --prefix frontend`
 
-**Note**: The `--prefix frontend` pattern avoids directory changes and is preferred for scripts and subagents.
+**Note**: The `--prefix frontend` pattern avoids directory changes and is preferred for scripts and
+subagents.
 
-These are also integrated into the pre-commit hooks and the main `scripts/format-and-lint.sh` script.
+These are also integrated into the pre-commit hooks and the main `scripts/format-and-lint.sh`
+script.
 
 ### Pages
 
 The application serves pages from two different systems:
 
--   **Vite:** The main chat interface (`/chat`) is a single-page application (SPA) served by Vite. The entry point is `frontend/chat.html`.
--   **Jinja2:** Other pages, such as the notes list and document management, are rendered by the FastAPI backend using Jinja2 templates.
+- **Vite:** The main chat interface (`/chat`) is a single-page application (SPA) served by Vite. The
+  entry point is `frontend/chat.html`.
+- **Jinja2:** Other pages, such as the notes list and document management, are rendered by the
+  FastAPI backend using Jinja2 templates.
 
 ## Development Commands
 
@@ -143,16 +150,19 @@ pytest tests/functional/test_specific.py -xq
 
 #### Playwright Tests
 
-End-to-end tests for the web UI are written using Playwright and can be found in `tests/functional/web/`. These tests are marked with `@pytest.mark.playwright`.
+End-to-end tests for the web UI are written using Playwright and can be found in
+`tests/functional/web/`. These tests are marked with `@pytest.mark.playwright`.
 
 **Debugging Playwright Tests:**
 
-When a Playwright test fails, `pytest-playwright` automatically captures screenshots and records a video of the test execution. These artifacts are invaluable for debugging.
+When a Playwright test fails, `pytest-playwright` automatically captures screenshots and records a
+video of the test execution. These artifacts are invaluable for debugging.
 
--   **Screenshots:** A screenshot is taken at the point of failure.
--   **Videos:** A video of the entire test run is saved.
+- **Screenshots:** A screenshot is taken at the point of failure.
+- **Videos:** A video of the entire test run is saved.
 
-By default, these are saved to the `test-results` directory. You can also use the `--screenshot on` and `--video on` flags to capture these artifacts for passing tests as well.
+By default, these are saved to the `test-results` directory. You can also use the `--screenshot on`
+and `--video on` flags to capture these artifacts for passing tests as well.
 
 #### Database Backend Selection
 
