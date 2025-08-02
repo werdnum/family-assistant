@@ -52,13 +52,13 @@ async def test_notes_page_accessible(web_test_fixture: WebTestFixture) -> None:
     page = web_test_fixture.page
     base_url = web_test_fixture.base_url
 
-    # Navigate to homepage first
-    await page.goto(base_url)
+    # Navigate to notes page
+    await page.goto(f"{base_url}/notes")
 
     # Wait for page to load
     await page.wait_for_load_state("networkidle")
 
-    # The homepage is the notes page, so check for notes-specific elements
+    # Check for notes-specific elements
     # Look for "Add New Note" button or link
     add_note_element = await page.wait_for_selector(
         "a[href='/notes/add'], button:has-text('Add New Note'), a.add-button",
