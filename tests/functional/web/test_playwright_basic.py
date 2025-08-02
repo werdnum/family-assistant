@@ -179,8 +179,8 @@ async def test_add_note_with_javascript(web_test_fixture: WebTestFixture) -> Non
     page = web_test_fixture.page
     base_url = web_test_fixture.base_url
 
-    # Navigate to homepage
-    await page.goto(base_url)
+    # Navigate to notes page
+    await page.goto(f"{base_url}/notes")
     await page.wait_for_load_state("networkidle")
 
     # Click on Add Note link/button

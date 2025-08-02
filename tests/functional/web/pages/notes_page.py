@@ -23,19 +23,14 @@ class NotesPage(BasePage):
 
     async def navigate_to_notes_list(self) -> None:
         """Navigate to the notes list page."""
-        await self.navigate_to("/")
+        await self.navigate_to("/notes")
         await self.wait_for_load()
 
     async def ensure_on_notes_list(self) -> None:
         """Navigate to notes list only if not already there."""
-        current_url = self.page.url
-        base_url_without_slash = self.base_url.rstrip("/")
-        if not (
-            current_url == self.base_url
-            or current_url == f"{self.base_url}/"
-            or current_url == base_url_without_slash
-            or current_url == f"{base_url_without_slash}/"
-        ):
+        current_url = self.page.url.rstrip("/")
+        expected_url = f"{self.base_url.rstrip('/')}/notes"
+        if current_url != expected_url:
             await self.navigate_to_notes_list()
 
     async def navigate_to_add_note(self) -> None:
