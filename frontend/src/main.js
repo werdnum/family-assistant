@@ -7,6 +7,9 @@ import 'simpledotcss/simple.css';
 // Import our custom CSS
 import './custom.css';
 
+// Import vanilla-jsoneditor and make it globally available
+import { createJSONEditor } from 'vanilla-jsoneditor';
+
 // Log that the frontend is loaded (for development)
 // console.log('Family Assistant frontend loaded');
 
@@ -15,3 +18,6 @@ window.FamilyAssistant = {
   version: '0.1.0',
   loaded: true,
 };
+
+// Make vanilla-jsoneditor available globally for Jinja2 templates
+window.createJSONEditor = createJSONEditor;
