@@ -24,6 +24,8 @@ export default defineConfig(({ mode }) => ({
           const url = new URL(req.url, 'http://localhost');
           if (url.pathname === '/chat') {
             req.url = '/chat.html' + url.search;
+          } else if (url.pathname === '/tools') {
+            req.url = '/tools.html' + url.search;
           } else if (url.pathname === '/tool-test-bench') {
             req.url = '/tool-test-bench.html' + url.search;
           }
@@ -44,6 +46,7 @@ export default defineConfig(({ mode }) => ({
       input: {
         main: path.resolve(__dirname, 'index.html'),
         chat: path.resolve(__dirname, 'chat.html'),
+        tools: path.resolve(__dirname, 'tools.html'),
         'tool-test-bench': path.resolve(__dirname, 'tool-test-bench.html'),
       },
     },
@@ -62,7 +65,7 @@ export default defineConfig(({ mode }) => ({
     // Proxy all non-asset requests to our FastAPI backend
     proxy: {
       // Proxy everything except Vite's own paths, static assets, and HTML entry points
-      '^(?!/@vite|/@react-refresh|/src|/node_modules|/__vite_ping|/index\.html|/chat\.html|/chat$|/tool-test-bench\.html|/tool-test-bench$).*':
+      '^(?!/@vite|/@react-refresh|/src|/node_modules|/__vite_ping|/index\.html|/chat\.html|/chat$|/tools\.html|/tools$|/tool-test-bench\.html|/tool-test-bench$).*':
         {
           target: `http://127.0.0.1:${process.env.VITE_API_PORT || 8000}`,
           changeOrigin: true,

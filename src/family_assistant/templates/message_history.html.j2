@@ -131,12 +131,13 @@
 
 {% block scripts_extra %}
 <!-- Load message history filter script -->
-<script src="{{ url_for('static', path='js/message_history_filters.js') }}"></script>
+<script src="{{ request.app.url_path_for('static', path='js/message_history_filters.js') }}"></script>
 
 <!-- Load vanilla-jsoneditor -->
 <script type="module">
-    import { createJSONEditor } from 'https://unpkg.com/vanilla-jsoneditor/standalone.js';
-    import { createJSONEditorWithCopy } from '{{ url_for('static', path='js/json_editor_copy.js') }}';
+    // createJSONEditor is available globally via main.js
+    const { createJSONEditor } = window;
+    import { createJSONEditorWithCopy } from '{{ request.app.url_path_for('static', path='js/json_editor_copy.js') }}';
 
     function initializeEditor(targetId, jsonData, buttonText = 'Copy JSON') {
         const target = document.getElementById(targetId);

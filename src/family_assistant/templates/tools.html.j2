@@ -54,6 +54,5 @@
 
 {% block scripts_extra %}
 <script src="https://cdn.jsdelivr.net/npm/@json-editor/json-editor@latest/dist/jsoneditor.min.js"></script>
-<script type="module" src="https://unpkg.com/vanilla-jsoneditor/standalone.js"></script>
 <script type="module" src="{{ request.app.url_path_for('static', path='js/json_editor_tool_tester.js') }}"></script>
 {% endblock %}
