@@ -189,7 +189,7 @@ async def test_note_form_validation(web_test_fixture: WebTestFixture) -> None:
     await page.click(notes_page.SAVE_BUTTON)
 
     # Should succeed now - wait for redirect to notes list
-    await page.wait_for_url(f"{web_test_fixture.base_url}/")
+    await page.wait_for_url(f"{web_test_fixture.base_url}/notes")
 
 
 @pytest.mark.playwright
