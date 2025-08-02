@@ -122,9 +122,8 @@ async def execute_tool_api(
 
 @tools_api_router.get("/definitions")
 async def get_tool_definitions(request: Request) -> JSONResponse:
-    """Development endpoint to list all available tools."""
+    """Development endpoint to list all available tools with their schemas."""
     tool_definitions = getattr(request.app.state, "tool_definitions", [])
-    tool_names = [
-        t.get("function", {}).get("name", "unknown") for t in tool_definitions
-    ]
-    return JSONResponse(content={"tools": tool_names, "count": len(tool_names)})
+    return JSONResponse(
+        content={"tools": tool_definitions, "count": len(tool_definitions)}
+    )

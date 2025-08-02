@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tools - Family Assistant</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 20px;
+        font-family: -apple-system, BlinkMacSystemFont, "Avenir Next", Avenir,
+          "Nimbus Sans L", Roboto, "Noto Sans", "Segoe UI", Arial, Helvetica,
+          "Helvetica Neue", sans-serif;
+        background-color: #f5f5f5;
+      }
+      .tools-header {
+        text-align: center;
+        margin-bottom: 40px;
+      }
+      .tools-header h1 {
+        color: #333;
+        margin-bottom: 10px;
+      }
+      .tools-header p {
+        color: #666;
+        font-size: 1.1rem;
+      }
+      .loading-message {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 200px;
+        font-size: 1.2rem;
+        color: #666;
+      }
+      #tools-root {
+        min-height: 100vh;
+      }
+    </style>
+</head>
+<body>
+    <div id="tools-root">
+        <div class="loading-message">Loading tools...</div>
+    </div>
+    
+    <script type="module" src="/src/tools/index.jsx"></script>
+</body>
+</html>

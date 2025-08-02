@@ -22,6 +22,7 @@
   "description": "Frontend assets for Family Assistant",
   "dependencies": {
     "@assistant-ui/react": "^0.5.0",
+    "@json-editor/json-editor": "^2.15.2",
     "@vitejs/plugin-legacy": "^7.0.0",
     "@vitejs/plugin-react": "^4.3.4",
     "classnames": "^2.5.1",

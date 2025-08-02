@@ -1,0 +1,71 @@
+"""
+Router for Vite-managed React pages.
+
+This router centralizes the handling of React pages served by Vite,
+including chat, tools, and tool-test-bench interfaces.
+"""
+
+import logging
+import os
+import pathlib
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse, Response
+
+logger = logging.getLogger(__name__)
+vite_pages_router = APIRouter()
+
+
+def _get_dev_mode_from_request(request: Request) -> bool:
+    """Get dev_mode from app config if available, otherwise from environment."""
+    if hasattr(request.app.state, "config") and "dev_mode" in request.app.state.config:
+        return request.app.state.config.get("dev_mode", False)
+    # Fallback to environment variable
+    return os.getenv("DEV_MODE", "false").lower() == "true"
+
+
+def _serve_vite_html_file(request: Request, html_filename: str) -> Response:
+    """Serve a Vite HTML file, either from dist (production) or frontend dir (dev)."""
+    dev_mode = _get_dev_mode_from_request(request)
+
+    if dev_mode:
+        # In dev mode, serve from frontend directory
+        # TODO: Replace with project root constant to reduce fragility
+        frontend_dir = (
+            pathlib.Path(__file__).parent.parent.parent.parent.parent / "frontend"
+        )
+        html_file = frontend_dir / html_filename
+        if html_file.exists():
+            return FileResponse(html_file, media_type="text/html")
+        else:
+            raise HTTPException(
+                status_code=404, detail=f"HTML file {html_filename} not found"
+            )
+    else:
+        # In production mode, serve from dist directory
+        static_dir = pathlib.Path(__file__).parent.parent.parent / "static" / "dist"
+        html_file = static_dir / html_filename
+        if html_file.exists():
+            return FileResponse(html_file, media_type="text/html")
+        else:
+            raise HTTPException(
+                status_code=404, detail=f"Built HTML file {html_filename} not found"
+            )
+
+
+@vite_pages_router.get("/chat", name="chat_ui")
+async def chat_ui(request: Request) -> Response:
+    """Serve the React chat interface."""
+    return _serve_vite_html_file(request, "chat.html")
+
+
+@vite_pages_router.get("/tools", name="tools_ui")
+async def tools_ui(request: Request) -> Response:
+    """Serve the React tools interface."""
+    return _serve_vite_html_file(request, "tools.html")
+
+
+@vite_pages_router.get("/tool-test-bench", name="tool_test_bench_ui")
+async def tool_test_bench_ui(request: Request) -> Response:
+    """Serve the React tool test bench interface."""
+    return _serve_vite_html_file(request, "tool-test-bench.html")

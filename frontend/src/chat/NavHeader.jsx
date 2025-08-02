@@ -1,6 +1,6 @@
 import React from 'react';
 
-const NavHeader = () => {
+const NavHeader = ({ currentPage = 'chat' }) => {
   return (
     <header>
       <nav>
@@ -22,7 +22,7 @@ const NavHeader = () => {
         <span className="nav-separator">|</span>
 
         {/* Chat & History */}
-        <a href="/chat" className="current-page">
+        <a href="/chat" className={currentPage === 'chat' ? 'current-page' : ''}>
           Chat
         </a>
         <a href="/history">History</a>
@@ -39,7 +39,9 @@ const NavHeader = () => {
         {/* Internal/Admin */}
         <div className="nav-group">
           <span className="nav-label">Internal</span>
-          <a href="/tools">Tools</a>
+          <a href="/tools" className={currentPage === 'tools' ? 'current-page' : ''}>
+            Tools
+          </a>
           <a href="/tasks">Task Queue</a>
           <a href="/errors/">Error Logs</a>
         </div>
