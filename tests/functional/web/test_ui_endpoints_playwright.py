@@ -14,7 +14,8 @@ from tests.functional.web.pages import BasePage
 # For pages that expect data (e.g., editing a specific note), we test with a
 # non-existent item to ensure it returns appropriate error rather than server error
 BASE_UI_ENDPOINTS = [
-    ("/", "Notes List Page", ["h1", "nav"]),
+    ("/", "Root Redirect Page", ["body"]),  # Now redirects to /chat
+    ("/notes", "Notes List Page", ["h1", "nav"]),
     ("/notes/add", "Add Note Form Page", ["form", "input", "button"]),
     (
         "/notes/edit/non_existent_note_for_test",
@@ -150,8 +151,8 @@ async def test_navigation_links_work(
     base_url = web_test_fixture.base_url
     base_page = BasePage(page, base_url)
 
-    # Start at home page
-    await base_page.navigate_to("/")
+    # Start at notes page (which has navigation)
+    await base_page.navigate_to("/notes")
     await base_page.wait_for_load()
 
     # Find and test navigation links
@@ -171,8 +172,8 @@ async def test_navigation_links_work(
             current_url = page.url
             assert base_url in current_url, f"Navigation failed for link: {href}"
 
-            # Go back to home for next test
-            await base_page.navigate_to("/")
+            # Go back to notes page for next test
+            await base_page.navigate_to("/notes")
             await base_page.wait_for_load()
 
     # Assert no console errors throughout navigation
@@ -195,7 +196,7 @@ async def test_responsive_design_mobile(
 
     # Test a few key pages
     mobile_test_pages = [
-        ("/", "Home"),
+        ("/notes", "Notes"),
         ("/notes/add", "Add Note"),
         ("/vector-search", "Search"),
     ]
