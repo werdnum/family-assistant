@@ -54,18 +54,30 @@
     </dl>
 </section>
 
-<!-- Match Conditions -->
+<!-- Trigger Conditions -->
 <section style="margin-top: 2rem;">
-    <h2>Match Conditions</h2>
-    <p style="color: var(--text-light);">Events must match all of these conditions to trigger this listener.</p>
-    {% if listener.formatted_conditions %}
+    <h2>Trigger Conditions</h2>
+    <p style="color: var(--text-light);">Events must match these conditions to trigger this listener.</p>
+    
+    {% if listener.condition_script %}
+    <!-- Starlark Condition Script -->
+    <h3>Condition Script (Starlark)</h3>
+    <div style="background-color: var(--bg-secondary); padding: 1rem; border-radius: 8px; overflow-x: auto;">
+        <pre><code class="language-python">{{ listener.condition_script }}</code></pre>
+    </div>
+    <p style="color: var(--text-light); font-size: 0.9em; margin-top: 0.5rem;">
+        This script receives an 'event' variable and must return True/False to determine if the listener triggers.
+    </p>
+    {% elif listener.formatted_conditions %}
+    <!-- JSON Match Conditions -->
+    <h3>JSON Match Conditions</h3>
     <ul>
         {% for condition in listener.formatted_conditions %}
         <li><code>{{ condition }}</code></li>
         {% endfor %}
     </ul>
     {% else %}
-    <p><em>No match conditions defined (matches all events from source).</em></p>
+    <p><em>No conditions defined (matches all events from source).</em></p>
     {% endif %}
 </section>
 

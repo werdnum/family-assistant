@@ -216,10 +216,34 @@
     </div>
     
     <div class="form-group">
-        <label>Match Conditions</label>
-        <div id="match-conditions-editor" class="json-editor-container"></div>
-        <input type="hidden" name="match_conditions" id="match-conditions-value" value="{{ listener.match_conditions | tojson }}">
-        <div class="help-text">Define when this listener should trigger. Common fields: entity_id, new_state.state, document_type</div>
+        <label>Trigger Conditions</label>
+        <div style="margin-bottom: 1rem;">
+            <input type="radio" id="conditions-json" name="condition_type" value="json" {% if not listener.condition_script %}checked{% endif %}>
+            <label for="conditions-json" style="display: inline; margin-left: 0.5rem; font-weight: normal;">JSON Match Conditions</label>
+        </div>
+        <div style="margin-bottom: 1rem;">
+            <input type="radio" id="conditions-script" name="condition_type" value="script" {% if listener.condition_script %}checked{% endif %}>
+            <label for="conditions-script" style="display: inline; margin-left: 0.5rem; font-weight: normal;">Starlark Condition Script</label>
+        </div>
+        
+        <!-- JSON Match Conditions -->
+        <div id="json-conditions-container" style="display: none;">
+            <div id="match-conditions-editor" class="json-editor-container"></div>
+            <input type="hidden" name="match_conditions" id="match-conditions-value" value="{{ listener.match_conditions | tojson }}">
+            <div class="help-text">Define when this listener should trigger. Common fields: entity_id, new_state.state, document_type</div>
+        </div>
+        
+        <!-- Starlark Condition Script -->
+        <div id="script-conditions-container" style="display: none;">
+            <div id="condition-script-editor-container">
+                <div id="condition-script-editor"></div>
+                <!-- Fallback textarea -->
+                <textarea id="condition-script-fallback" class="json-editor-textarea" style="display: none;">{{ listener.condition_script or '' }}</textarea>
+            </div>
+            <input type="hidden" name="condition_script" id="condition-script-value" value="{{ listener.condition_script or '' }}">
+            <div id="condition-validation-status" class="validation-pending">Ready to validate...</div>
+            <div class="help-text">Starlark script that returns True/False to determine if the listener should trigger. The 'event' variable contains the event data.</div>
+        </div>
     </div>
     
     <!-- Script fields (show/hide based on action type) -->
@@ -420,8 +444,10 @@ function initializeEditors() {
 
 // Script editor variables
 let scriptEditor = null;
+let conditionScriptEditor = null;
 let validationTimeout;
 window.scriptEditorInitialized = false;
+window.conditionScriptEditorInitialized = false;
 window.validationTimeout = null;
 
 // Function to initialize script editor
@@ -483,23 +509,89 @@ function initializeScriptEditor() {
     }
 }
 
+// Function to initialize condition script editor
+function initializeConditionScriptEditor() {
+    const fallbackTextarea = document.getElementById('condition-script-fallback');
+    const container = document.getElementById('condition-script-editor');
+    
+    // Try to use CodeMirror 5 if available
+    if (typeof CodeMirror !== 'undefined' && container) {
+        try {
+            const conditionScriptValue = document.getElementById('condition-script-value').value || '';
+            
+            // Initialize CodeMirror 5
+            window.conditionScriptEditor = CodeMirror(container, {
+                value: conditionScriptValue,
+                mode: 'python',  // Starlark is similar to Python
+                theme: 'default',
+                lineNumbers: true,
+                indentUnit: 4,
+                lineWrapping: true,
+                extraKeys: {
+                    "Tab": function(cm) {
+                        cm.replaceSelection("    ", "end");
+                    }
+                }
+            });
+            
+            // Hide fallback textarea
+            if (fallbackTextarea) {
+                fallbackTextarea.style.display = 'none';
+            }
+            
+            // Set up change handler for validation
+            window.conditionScriptEditor.on('change', function() {
+                clearTimeout(window.validationTimeout);
+                document.getElementById('condition-validation-status').textContent = 'Validating...';
+                document.getElementById('condition-validation-status').className = 'validation-pending';
+                window.validationTimeout = setTimeout(() => window.validateConditionScript(), 500);
+            });
+            
+            window.conditionScriptEditorInitialized = true;
+            console.log('CodeMirror 5 condition script editor initialized');
+            
+            // Initial validation
+            window.validateConditionScript();
+        } catch (error) {
+            console.error('Failed to initialize condition script CodeMirror:', error);
+            // Show fallback
+            if (fallbackTextarea) {
+                fallbackTextarea.style.display = 'block';
+            }
+        }
+    } else {
+        console.log('CodeMirror not available for condition script, using fallback textarea');
+        // Show fallback
+        if (fallbackTextarea) {
+            fallbackTextarea.style.display = 'block';
+        }
+    }
+}
+
 async function validateScript() {
     if (!window.scriptEditor) return;
     
     const statusDiv = document.getElementById('validation-status');
-    const sourceId = document.getElementById('source_id').value || "home_assistant";
+    const sourceElement = document.getElementById('source_id');
+    const sourceId = sourceElement ? sourceElement.value : null;
     
     try {
+        const requestBody = {
+            script_code: window.scriptEditor.getValue()  // CodeMirror 5 API
+        };
+        
+        // Only include sample_event if we have a source ID
+        if (sourceId) {
+            requestBody.sample_event = {
+                source_id: sourceId,
+                event_data: {}
+            };
+        }
+        
         const response = await fetch('/event-listeners/api/validate-script', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                script_code: window.scriptEditor.getValue(),  // CodeMirror 5 API
-                sample_event: {
-                    source_id: sourceId,
-                    event_data: {}
-                }
-            })
+            body: JSON.stringify(requestBody)
         });
         
         const result = await response.json();
@@ -520,6 +612,73 @@ async function validateScript() {
 // Make validateScript globally available
 window.validateScript = validateScript;
 
+async function validateConditionScript() {
+    if (!window.conditionScriptEditor) return;
+    
+    const statusDiv = document.getElementById('condition-validation-status');
+    const sourceElement = document.getElementById('source_id');
+    const sourceId = sourceElement ? sourceElement.value : null;
+    
+    try {
+        const requestBody = {
+            script_code: window.conditionScriptEditor.getValue()  // CodeMirror 5 API
+        };
+        
+        // Only include sample_event if we have a source ID
+        if (sourceId) {
+            requestBody.sample_event = {
+                source_id: sourceId,
+                event_data: {}
+            };
+        }
+        
+        const response = await fetch('/event-listeners/api/validate-script', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(requestBody)
+        });
+        
+        const result = await response.json();
+        if (result.valid) {
+            statusDiv.textContent = '✓ Condition script is valid';
+            statusDiv.className = 'validation-success';
+        } else {
+            const error = result.diagnostics[0];
+            statusDiv.textContent = `✗ Line ${error.line}: ${error.message}`;
+            statusDiv.className = 'validation-error';
+        }
+    } catch (e) {
+        statusDiv.textContent = '⚠ Could not validate condition script';
+        statusDiv.className = 'validation-error';
+    }
+}
+
+// Make validateConditionScript globally available
+window.validateConditionScript = validateConditionScript;
+
+// Function to show/hide condition type containers
+function showConditionFields() {
+    const conditionType = document.querySelector('input[name="condition_type"]:checked').value;
+    const isScript = conditionType === 'script';
+    
+    document.getElementById('json-conditions-container').style.display = isScript ? 'none' : 'block';
+    document.getElementById('script-conditions-container').style.display = isScript ? 'block' : 'none';
+    
+    // Clear the inactive field's value to ensure only the active condition type is submitted
+    if (isScript) {
+        // Using script, clear JSON conditions value
+        document.getElementById('match-conditions-value').value = '{}';
+    } else {
+        // Using JSON, clear condition script value
+        document.getElementById('condition-script-value').value = '';
+    }
+    
+    // Initialize condition script editor on first show if needed
+    if (isScript && !window.conditionScriptEditorInitialized) {
+        initializeConditionScriptEditor();
+    }
+}
+
 // Function to show/hide action fields
 function showActionFields() {
     const actionType = document.getElementById('action_type').value;
@@ -534,6 +693,12 @@ function showActionFields() {
     }
 }
 
+// Set up condition type change handlers
+const conditionTypeRadios = document.querySelectorAll('input[name="condition_type"]');
+conditionTypeRadios.forEach(radio => {
+    radio.addEventListener('change', showConditionFields);
+});
+
 // Set up action type change handler
 const actionTypeElement = document.getElementById('action_type');
 if (actionTypeElement) {
@@ -544,6 +709,7 @@ if (actionTypeElement) {
 }
 
 // Show correct fields on load
+showConditionFields();
 showActionFields();
 
 // Form submission
@@ -615,6 +781,18 @@ document.getElementById('edit-form').addEventListener('submit', (e) => {
         const fallbackTextarea = document.getElementById('script-editor-fallback');
         if (fallbackTextarea) {
             document.getElementById('script-code-value').value = fallbackTextarea.value;
+        }
+    }
+    
+    // Update condition script from editor or fallback
+    if (window.conditionScriptEditor && window.conditionScriptEditor.getValue) {
+        document.getElementById('condition-script-value').value = 
+            window.conditionScriptEditor.getValue();  // CodeMirror 5 API
+    } else {
+        // Use fallback textarea if CodeMirror didn't load
+        const fallbackTextarea = document.getElementById('condition-script-fallback');
+        if (fallbackTextarea) {
+            document.getElementById('condition-script-value').value = fallbackTextarea.value;
         }
     }
 });

@@ -353,6 +353,7 @@ class EventsRepository(BaseRepository):
         action_config: dict | None,
         one_time: bool,
         enabled: bool,
+        condition_script: str | None = None,
     ) -> bool:
         """
         Update an event listener.
@@ -366,6 +367,7 @@ class EventsRepository(BaseRepository):
             action_config: New action configuration (optional)
             one_time: Whether listener should auto-disable after first trigger
             enabled: Whether the listener is enabled
+            condition_script: Optional Starlark script for complex matching
 
         Returns:
             True if updated successfully, False if not found or unauthorized
@@ -392,6 +394,9 @@ class EventsRepository(BaseRepository):
         # Only update action_config if provided
         if action_config is not None:
             update_values["action_config"] = action_config
+
+        # Always update condition_script (can be None to clear it)
+        update_values["condition_script"] = condition_script
 
         # Update the listener
         stmt = (
