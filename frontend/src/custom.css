@@ -560,8 +560,51 @@ main pre {
 /* Responsive adjustments */
 @media (max-width: 768px) {
     body {
-        grid-template-columns: 1fr; /* Use full width on mobile */
-        margin: 0.5em;
+        /* !important needed to override SimpleCSS specificity */
+        grid-template-columns: 0 100% 0 !important; /* Use full width middle column on mobile */
+        margin: 0.5em !important;
+        max-width: 100vw !important;
+        box-sizing: border-box !important;
+        overflow-x: hidden !important;
+        width: auto !important; /* Let it size naturally within the viewport */
+    }
+    
+    /* Make tables responsive on mobile - use stacking layout */
+    table {
+        display: block;
+        max-width: 100%;
+        width: 100%;
+    }
+    
+    table thead,
+    table tbody,
+    table tr {
+        display: block;
+    }
+    
+    table tr {
+        border: 1px solid var(--border);
+        margin-bottom: 0.5em;
+        padding: 0.5em;
+        border-radius: 4px;
+        background-color: var(--bg);
+    }
+    
+    table td {
+        display: block;
+        text-align: left;
+        padding: 0.25em 0;
+        border: none;
+    }
+    
+    table td:before {
+        content: attr(data-label) ": ";
+        font-weight: bold;
+        margin-right: 0.5em;
+    }
+    
+    table th {
+        display: none;
     }
     
     nav {
