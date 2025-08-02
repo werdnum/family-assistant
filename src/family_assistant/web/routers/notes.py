@@ -13,11 +13,17 @@ logger = logging.getLogger(__name__)
 notes_router = APIRouter()
 
 
-@notes_router.get("/", response_class=HTMLResponse, name="ui_list_notes")
-async def read_root(
+@notes_router.get("/", response_class=RedirectResponse, name="ui_root_redirect")
+async def read_root(request: Request) -> RedirectResponse:
+    """Redirects the root path to the chat interface."""
+    return RedirectResponse(url="/chat", status_code=302)
+
+
+@notes_router.get("/notes", response_class=HTMLResponse, name="ui_list_notes")
+async def list_notes(
     request: Request, db_context: Annotated[DatabaseContext, Depends(get_db)]
 ) -> HTMLResponse:
-    """Serves the main page listing all notes."""
+    """Serves the page listing all notes."""
     templates = request.app.state.templates
     server_url = request.app.state.server_url
 

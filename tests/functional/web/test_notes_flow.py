@@ -27,7 +27,7 @@ async def test_create_note_full_flow(web_test_fixture: WebTestFixture) -> None:
     )
 
     # Verify we're redirected to the notes list
-    await expect(page).to_have_url(f"{web_test_fixture.base_url}/")
+    await expect(page).to_have_url(f"{web_test_fixture.base_url}/notes")
 
     # Verify the note appears in the list
     assert await notes_page.is_note_present(test_title)
@@ -70,7 +70,7 @@ async def test_edit_note_flow(web_test_fixture: WebTestFixture) -> None:
     )
 
     # Verify we're redirected to the notes list
-    await expect(page).to_have_url(f"{web_test_fixture.base_url}/")
+    await expect(page).to_have_url(f"{web_test_fixture.base_url}/notes")
 
     # Verify old title is gone and new title exists
     assert not await notes_page.is_note_present(original_title)
@@ -104,7 +104,7 @@ async def test_delete_note_flow(web_test_fixture: WebTestFixture) -> None:
     await notes_page.delete_note(title_to_delete)
 
     # Verify we're redirected to the notes list
-    await expect(page).to_have_url(f"{web_test_fixture.base_url}/")
+    await expect(page).to_have_url(f"{web_test_fixture.base_url}/notes")
 
     # Verify the note is gone
     assert not await notes_page.is_note_present(title_to_delete)
@@ -189,7 +189,7 @@ async def test_note_form_validation(web_test_fixture: WebTestFixture) -> None:
     await page.click(notes_page.SAVE_BUTTON)
 
     # Should succeed now - wait for redirect to notes list
-    await page.wait_for_url(f"{web_test_fixture.base_url}/")
+    await page.wait_for_url(f"{web_test_fixture.base_url}/notes")
 
 
 @pytest.mark.playwright
