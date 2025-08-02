@@ -389,6 +389,7 @@ async def update_listener(
     listener_id: int,
     name: Annotated[str, Form()],
     match_conditions: Annotated[str, Form()],  # JSON string
+    condition_script: Annotated[str | None, Form()] = None,  # Starlark script
     action_parameters: Annotated[str | None, Form()] = "{}",  # JSON string
     description: Annotated[str | None, Form()] = "",
     enabled: Annotated[str | None, Form()] = None,
@@ -403,13 +404,24 @@ async def update_listener(
     user = get_user_from_request(request)
 
     try:
-        # Parse match conditions JSON
-        try:
-            match_conditions_dict = json.loads(match_conditions)
-        except json.JSONDecodeError as e:
-            raise HTTPException(
-                status_code=400, detail="Invalid match conditions JSON"
-            ) from e
+        # Validate conditions: either match_conditions or condition_script must be provided
+        match_conditions_dict = {}
+        condition_script_value = None
+
+        if condition_script and condition_script.strip():
+            # Using condition script
+            condition_script_value = condition_script.strip()
+            # Set match_conditions to empty dict when using condition script
+            match_conditions_dict = {}
+        else:
+            # Using JSON match conditions
+            try:
+                match_conditions_dict = json.loads(match_conditions)
+                # Empty match conditions are allowed - they match all events from source
+            except json.JSONDecodeError as e:
+                raise HTTPException(
+                    status_code=400, detail="Invalid match conditions JSON"
+                ) from e
 
         # Convert checkbox values to booleans
         enabled_bool = enabled is not None
@@ -474,6 +486,7 @@ async def update_listener(
                 action_config=action_config,
                 one_time=one_time_bool,
                 enabled=enabled_bool,
+                condition_script=condition_script_value,
             )
 
             if not success:
@@ -502,6 +515,7 @@ async def create_listener(
     source_id: Annotated[str, Form()],
     action_type: Annotated[str, Form()],
     match_conditions: Annotated[str, Form()],  # JSON string
+    condition_script: Annotated[str | None, Form()] = None,  # Starlark script
     action_parameters: Annotated[str | None, Form()] = "{}",  # JSON string
     description: Annotated[str | None, Form()] = "",
     enabled: Annotated[str | None, Form()] = None,
@@ -517,13 +531,24 @@ async def create_listener(
     conversation_id = user.get("conversation_id", "") if user else ""
 
     try:
-        # Parse match conditions JSON
-        try:
-            match_conditions_dict = json.loads(match_conditions)
-        except json.JSONDecodeError as e:
-            raise HTTPException(
-                status_code=400, detail="Invalid match conditions JSON"
-            ) from e
+        # Validate conditions: either match_conditions or condition_script must be provided
+        match_conditions_dict = {}
+        condition_script_value = None
+
+        if condition_script and condition_script.strip():
+            # Using condition script
+            condition_script_value = condition_script.strip()
+            # Set match_conditions to empty dict when using condition script
+            match_conditions_dict = {}
+        else:
+            # Using JSON match conditions
+            try:
+                match_conditions_dict = json.loads(match_conditions)
+                # Empty match conditions are allowed - they match all events from source
+            except json.JSONDecodeError as e:
+                raise HTTPException(
+                    status_code=400, detail="Invalid match conditions JSON"
+                ) from e
 
         # Convert checkbox values to booleans
         enabled_bool = enabled is not None
@@ -570,6 +595,7 @@ async def create_listener(
                 action_type=action_type,
                 action_config=action_config,
                 description=description or None,
+                condition_script=condition_script_value,
                 one_time=one_time_bool,
                 enabled=enabled_bool,
             )
