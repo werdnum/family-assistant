@@ -19,12 +19,16 @@ export default defineConfig(({ mode }) => ({
       name: 'html-fallback',
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
-          // Rewrite /chat to /chat.html (and potentially other routes in the future)
+          // Rewrite specific routes to their appropriate HTML files
           // Handle query parameters properly
           const url = new URL(req.url, 'http://localhost');
-          if (url.pathname === '/chat') {
-            req.url = '/chat.html' + url.search;
-          } else if (url.pathname === '/tools') {
+
+          // React Router routes - use router.html
+          if (url.pathname === '/chat' || url.pathname === '/context') {
+            req.url = '/router.html' + url.search;
+          }
+          // Individual app routes - use specific HTML files
+          else if (url.pathname === '/tools') {
             req.url = '/tools.html' + url.search;
           } else if (url.pathname === '/tool-test-bench') {
             req.url = '/tool-test-bench.html' + url.search;
@@ -48,6 +52,7 @@ export default defineConfig(({ mode }) => ({
       input: {
         main: path.resolve(__dirname, 'index.html'),
         chat: path.resolve(__dirname, 'chat.html'),
+        router: path.resolve(__dirname, 'router.html'),
         tools: path.resolve(__dirname, 'tools.html'),
         'tool-test-bench': path.resolve(__dirname, 'tool-test-bench.html'),
         errors: path.resolve(__dirname, 'errors.html'),
@@ -68,7 +73,7 @@ export default defineConfig(({ mode }) => ({
     // Proxy all non-asset requests to our FastAPI backend
     proxy: {
       // Proxy everything except Vite's own paths, static assets, and HTML entry points
-      '^(?!/@vite|/@react-refresh|/src|/node_modules|/__vite_ping|/index\.html|/chat\.html|/chat$|/tools\.html|/tools$|/tool-test-bench\.html|/tool-test-bench$|/errors\.html|/errors$|/errors/).*':
+      '^(?!/@vite|/@react-refresh|/src|/node_modules|/__vite_ping|/index\.html|/chat\.html|/chat$|/router\.html|/context$|/tools\.html|/tools$|/tool-test-bench\.html|/tool-test-bench$|/errors\.html|/errors$|/errors/).*':
         {
           target: `http://127.0.0.1:${process.env.VITE_API_PORT || 8000}`,
           changeOrigin: true,

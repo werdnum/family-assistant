@@ -55,8 +55,14 @@ def _serve_vite_html_file(request: Request, html_filename: str) -> Response:
 
 @vite_pages_router.get("/chat", name="chat_ui")
 async def chat_ui(request: Request) -> Response:
-    """Serve the React chat interface."""
-    return _serve_vite_html_file(request, "chat.html")
+    """Serve the React chat interface via router."""
+    return _serve_vite_html_file(request, "router.html")
+
+
+@vite_pages_router.get("/context", name="context_ui")
+async def context_ui(request: Request) -> Response:
+    """Serve the React context page via router."""
+    return _serve_vite_html_file(request, "router.html")
 
 
 @vite_pages_router.get("/tools", name="tools_ui")

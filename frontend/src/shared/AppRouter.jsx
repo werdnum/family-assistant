@@ -1,0 +1,75 @@
+import React, { useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import Layout from './Layout';
+import ChatPage from '../chat/ChatPage';
+import ToolsApp from '../tools/ToolsApp';
+import ErrorsApp from '../errors/ErrorsApp';
+import ContextPage from './ContextPage';
+
+const FallbackRedirect = () => {
+  useEffect(() => {
+    window.location.href = window.location.pathname;
+  }, []);
+
+  return (
+    <div>
+      <p>Page not yet converted to React. Redirecting...</p>
+    </div>
+  );
+};
+
+const AppRouter = () => {
+  return (
+    <BrowserRouter>
+      <Routes>
+        {/* Chat routes */}
+        <Route
+          path="/chat"
+          element={
+            <Layout>
+              <ChatPage />
+            </Layout>
+          }
+        />
+
+        {/* Tools routes */}
+        <Route
+          path="/tools"
+          element={
+            <Layout>
+              <ToolsApp />
+            </Layout>
+          }
+        />
+
+        {/* Errors routes */}
+        <Route
+          path="/errors/*"
+          element={
+            <Layout>
+              <ErrorsApp />
+            </Layout>
+          }
+        />
+
+        {/* Context page (test conversion) */}
+        <Route
+          path="/context"
+          element={
+            <Layout>
+              <ContextPage />
+            </Layout>
+          }
+        />
+
+        {/* Default redirect to chat */}
+        <Route path="/" element={<Navigate to="/chat" replace />} />
+
+        {/* Catch-all for unmatched routes - redirect to external pages for now */}
+        <Route path="*" element={<FallbackRedirect />} />
+      </Routes>
+    </BrowserRouter>
+  );
+};
+
+export default AppRouter;
