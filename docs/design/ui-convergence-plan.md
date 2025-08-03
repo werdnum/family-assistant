@@ -32,7 +32,7 @@ Convert all 27 Jinja2 pages to React components served by Vite, eliminating the 
 
 - Redirects, docs, auth pages, settings → Minimal API needs
 
-## Session Plan (1-2 hours each)
+## Session Plan
 
 ### Session 1: Foundation Setup
 
@@ -194,7 +194,7 @@ The goal is convergence, not enhancement. Features can be added after we have a 
 
 **Can Be Deleted (Obsolete):**
 
-- [x] `/tools` (Jinja2 version) → Delete `tools_ui.py`, already have React version
+- [ ] `/tools` (Jinja2 version) → Delete `tools_ui.py`, already have React version
 
 **Need New APIs:**
 
