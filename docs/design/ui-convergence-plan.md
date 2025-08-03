@@ -21,12 +21,14 @@ Convert all 27 Jinja2 pages to React components served by Vite, eliminating the 
 
 ### Need New APIs - 12 pages
 
-- `/notes` + `/notes/add` + `/notes/edit` → Need notes CRUD API
-- `/tasks` → Need tasks list + retry API
-- `/history` → Need conversation history API
-- `/vector-search` + document detail → Need search APIs
-- `/events` + `/events/{id}` → Need events read API
-- `/documents/` list → Need documents list API
+All backend API endpoints are now implemented:
+
+- `/notes` + `/notes/add` + `/notes/edit` → **Notes CRUD API implemented**
+- `/tasks` → **Tasks list and retry API implemented**
+- `/history` → **Conversation history API implemented**
+- `/vector-search` + document detail → **Search APIs implemented**
+- `/events` + `/events/{id}` → **Events read API implemented**
+- `/documents/` list → **Documents list API implemented**
 
 ### Simple/Static - 10 pages
 
@@ -198,12 +200,12 @@ The goal is convergence, not enhancement. Features can be added after we have a 
 
 **Need New APIs:**
 
-- [ ] `/notes` + `/notes/add` + `/notes/edit` → React + notes API
-- [ ] `/tasks` → React + tasks API
-- [ ] `/history` → React + history API
-- [ ] `/vector-search` + document detail → React + search APIs
-- [ ] `/events` + `/events/{id}` → React + events API
-- [ ] `/documents/` list → React + documents list API
+- [x] `/notes` + `/notes/add` + `/notes/edit` → Notes API complete
+- [x] `/tasks` → Tasks API complete
+- [x] `/history` → History API complete
+- [x] `/vector-search` + document detail → Search APIs complete
+- [x] `/events` + `/events/{id}` → Events API complete
+- [x] `/documents/` list → Documents list API complete
 
 **Simple/Static:**
 

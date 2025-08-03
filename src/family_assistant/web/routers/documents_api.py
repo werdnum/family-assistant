@@ -14,14 +14,91 @@ from fastapi import (
     UploadFile,
     status,
 )
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.sql import functions as func
 
 from family_assistant.indexing.ingestion import process_document_ingestion_request
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.vector import DocumentRecord, get_document_by_id
 from family_assistant.web.dependencies import get_db
 from family_assistant.web.models import DocumentUploadResponse
 
 logger = logging.getLogger(__name__)
 documents_api_router = APIRouter()
+
+
+class DocumentModel(BaseModel):
+    """Basic document information."""
+
+    id: int
+    source_type: str
+    source_id: str
+    title: str | None = None
+    source_uri: str | None = None
+    created_at: datetime | None = None
+    added_at: datetime
+    doc_metadata: dict | None = None
+
+
+class DocumentListResponse(BaseModel):
+    documents: list[DocumentModel]
+    total: int
+
+
+@documents_api_router.get("/")
+async def list_documents(
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    limit: int = 100,
+    offset: int = 0,
+    source_type: str | None = None,
+) -> DocumentListResponse:
+    """List stored documents."""
+    stmt = (
+        select(
+            DocumentRecord.id,
+            DocumentRecord.source_type,
+            DocumentRecord.source_id,
+            DocumentRecord.title,
+            DocumentRecord.source_uri,
+            DocumentRecord.created_at,
+            DocumentRecord.added_at,
+            DocumentRecord.doc_metadata,
+        )
+        .order_by(DocumentRecord.added_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    if source_type:
+        stmt = stmt.where(DocumentRecord.source_type == source_type)
+    rows = await db_context.fetch_all(stmt)
+    documents = [DocumentModel(**row) for row in rows]
+    total_stmt = select(func.count().label("count")).select_from(DocumentRecord)
+    if source_type:
+        total_stmt = total_stmt.where(DocumentRecord.source_type == source_type)
+    total_row = await db_context.fetch_one(total_stmt)
+    total = total_row["count"] if total_row else 0
+    return DocumentListResponse(documents=documents, total=total)
+
+
+@documents_api_router.get("/{document_id}")
+async def get_document(
+    document_id: int, db_context: Annotated[DatabaseContext, Depends(get_db)]
+) -> DocumentModel:
+    """Get a document by ID."""
+    record = await get_document_by_id(db_context, document_id)
+    if not record:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
+    return DocumentModel(
+        id=record.id,
+        source_type=record.source_type,
+        source_id=record.source_id,
+        title=record.title,
+        source_uri=record.source_uri,
+        created_at=record.created_at,
+        added_at=record.added_at,
+        doc_metadata=record.doc_metadata,
+    )
 
 
 @documents_api_router.post(
