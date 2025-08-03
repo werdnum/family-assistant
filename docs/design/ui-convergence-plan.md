@@ -34,60 +34,106 @@ All backend API endpoints are now implemented:
 
 - Redirects, docs, auth pages, settings → Minimal API needs
 
-## Session Plan
+## Implementation Strategy
 
-### Session 1: Foundation Setup
+### Recommended Infrastructure Sequence
 
-**Goal:** Basic React routing infrastructure
+**Phase 1: Foundation (1 session)**
+
+- React Router setup
+- Shared layout components
+- Test with 1 simple page
+
+**Phase 2: Page Conversions (incremental)**
+
+- Convert page → Update routing → Remove old router
+- Optionally refactor underlying API during conversion
+- Repeat for each page
+
+**Phase 3: Cleanup**
+
+- Remove remaining Jinja2 infrastructure
+
+### Infrastructure Project Analysis
+
+#### 1. React Router Foundation Setup
+
+**What:** Add React Router to existing Vite app, create shared layout components **Advantages:**
+
+- Consistency across all page conversions
+- Shared navigation component
+- Proper browser history and deep linking
+- Layout reuse (header, nav, footer) **Timing:** **DO FIRST** - foundational infrastructure that
+  every conversion depends on
+
+#### 2. Tools-First API Refactoring
+
+**What:** Extract business logic into shared service layer, both tools and APIs call same
+implementation **Advantages:**
+
+- Single source of truth for business logic
+- Consistency between tool and API behavior
+- Better testability
+- Easier maintenance **Timing:** **DURING CONVERSIONS** - refactor each API as you convert its UI
+  (not blocking)
+
+#### 3. Routing Infrastructure Updates
+
+**What:** Update `vite.config.js` and `vite_pages.py` per page conversion **Advantages:**
+
+- Incremental migration with no downtime
+- Old and new systems coexist safely
+- Easy rollback for individual pages **Timing:** **PER PAGE** - done as part of each page conversion
+
+### Updated Session Plan
+
+### Session 1: Foundation Setup ⬅️ **START HERE**
+
+**Goal:** React Router infrastructure foundation
 
 - Add React Router to existing Vite app
-- Create layout components matching current navigation
-- Test routing with one simple conversion
+- Create shared layout components matching current navigation
+- Test routing with one simple conversion (e.g., `/context` page)
+- Establish patterns for all future conversions
 
-### Session 2-3: Easy Wins
+### Session 2-3: First Conversions
 
-**Goal:** Establish API integration patterns
+**Goal:** Validate approach with easy wins
 
-- Convert `/tools` Jinja2 → React (reuse existing API)
-- Convert `/errors` pages → React dashboard
-- Validate approach works
+- Convert `/notes` pages → React components (Notes API ready)
+- Convert `/tasks` → React dashboard (Tasks API ready)
+- Establish page conversion workflow patterns
 
-### Session 4-6: Notes System
+### Session 4-5: Complex Forms
 
-**Goal:** Establish CRUD pattern
+**Goal:** Handle CRUD operations
 
-- Build notes API endpoints (GET, POST, PUT, DELETE)
-- Convert notes pages → React components
-- This becomes template for other CRUD conversions
+- Convert `/event-listeners/*` (5 pages) → React forms (CRUD API exists)
+- Handle JSON schema validation patterns
 
-### Session 7-8: Tasks & Events
-
-**Goal:** Expand CRUD pattern
-
-- Build tasks API, convert `/tasks` → React
-- Build events read API, convert `/events` → React
-
-### Session 9-10: Event Listeners
-
-**Goal:** Handle complex forms
-
-- Convert event listener CRUD → React forms
-- Handle JSON schema validation
-
-### Session 11-12: Search & History
+### Session 6-7: Search & History
 
 **Goal:** Complex UI patterns
 
-- Build search API, convert `/vector-search` → React
-- Build history API, convert `/history` → React
+- Convert `/vector-search` + document detail → React search interface (API ready)
+- Convert `/history` → React component (API ready)
+- Convert `/events` + `/events/{id}` → React components (API ready)
 
-### Session 13: Cleanup
+### Session 8-9: Remaining Pages
 
-**Goal:** Complete convergence
+**Goal:** Complete all conversions
 
-- Convert remaining simple pages
-- Remove Jinja2 routers (`*_ui.py`)
-- Single UI system achieved
+- Convert `/documents/` list → React component (API ready)
+- Convert simple/static pages (docs, auth, settings)
+- Merge `/chat/conversations` into existing chat
+
+### Session 10: Cleanup
+
+**Goal:** Single UI system achieved
+
+- Remove all Jinja2 routers (`*_ui.py`)
+- Clean up routing configurations
+- Verify no functionality regression
 
 ## Technical Approach
 
