@@ -218,39 +218,6 @@ const ChatPage = ({ profileId = 'default_assistant' } = {}) => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Initialize conversation ID from URL params
-  useEffect(() => {
-    // Only fetch conversations once
-    if (!hasInitializedRef.current) {
-      fetchConversations();
-      hasInitializedRef.current = true;
-    }
-
-    const urlConversationId = searchParams.get('conversation_id');
-    const lastConversationId = localStorage.getItem('lastConversationId');
-
-    // Only initialize if we don't have a conversation ID yet, or if URL changed
-    if (!conversationId || (urlConversationId && urlConversationId !== conversationId)) {
-      if (urlConversationId) {
-        setConversationId(urlConversationId);
-        loadConversationMessages(urlConversationId);
-      } else if (lastConversationId && !conversationId) {
-        setConversationId(lastConversationId);
-        loadConversationMessages(lastConversationId);
-        setSearchParams({ conversation_id: lastConversationId });
-      } else if (!conversationId) {
-        handleNewChat();
-      }
-    }
-  }, [
-    searchParams,
-    conversationId,
-    fetchConversations,
-    loadConversationMessages,
-    handleNewChat,
-    setSearchParams,
-  ]);
-
   // Load messages for a conversation
   const loadConversationMessages = useCallback(async (convId) => {
     try {
@@ -351,6 +318,39 @@ const ChatPage = ({ profileId = 'default_assistant' } = {}) => {
       setSidebarOpen(false);
     }
   }, [setSearchParams]);
+
+  // Initialize conversation ID from URL params
+  useEffect(() => {
+    // Only fetch conversations once
+    if (!hasInitializedRef.current) {
+      fetchConversations();
+      hasInitializedRef.current = true;
+    }
+
+    const urlConversationId = searchParams.get('conversation_id');
+    const lastConversationId = localStorage.getItem('lastConversationId');
+
+    // Only initialize if we don't have a conversation ID yet, or if URL changed
+    if (!conversationId || (urlConversationId && urlConversationId !== conversationId)) {
+      if (urlConversationId) {
+        setConversationId(urlConversationId);
+        loadConversationMessages(urlConversationId);
+      } else if (lastConversationId && !conversationId) {
+        setConversationId(lastConversationId);
+        loadConversationMessages(lastConversationId);
+        setSearchParams({ conversation_id: lastConversationId });
+      } else if (!conversationId) {
+        handleNewChat();
+      }
+    }
+  }, [
+    searchParams,
+    conversationId,
+    fetchConversations,
+    loadConversationMessages,
+    handleNewChat,
+    setSearchParams,
+  ]);
 
   // Handle new messages from the user
   const handleNew = useCallback(
