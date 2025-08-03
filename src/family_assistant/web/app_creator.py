@@ -24,7 +24,6 @@ from family_assistant.web.routers.api import api_router
 from family_assistant.web.routers.api_token_management import (
     router as api_token_management_router,
 )
-from family_assistant.web.routers.chat_ui import router as chat_ui_router
 from family_assistant.web.routers.context_viewer import context_viewer_router
 from family_assistant.web.routers.documentation import documentation_router
 from family_assistant.web.routers.documents_ui import (  # New import for document upload UI
@@ -266,7 +265,6 @@ if AUTH_ENABLED:
     logger.info("Authentication routes included.")
 
 app.include_router(notes_router, tags=["Notes UI"])
-app.include_router(chat_ui_router, tags=["Chat UI"])
 app.include_router(vite_pages_router, tags=["Vite Pages"])
 app.include_router(documentation_router, tags=["Documentation UI"])
 app.include_router(webhooks_router, tags=["Webhooks"])

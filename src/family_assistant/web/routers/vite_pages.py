@@ -69,3 +69,10 @@ async def tools_ui(request: Request) -> Response:
 async def tool_test_bench_ui(request: Request) -> Response:
     """Serve the React tool test bench interface."""
     return _serve_vite_html_file(request, "tool-test-bench.html")
+
+
+@vite_pages_router.get("/errors", name="errors_ui")
+@vite_pages_router.get("/errors/{error_id:int}", name="error_detail_ui")
+async def errors_ui(request: Request) -> Response:
+    """Serve the React errors interface."""
+    return _serve_vite_html_file(request, "errors.html")
