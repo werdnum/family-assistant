@@ -107,23 +107,45 @@ async def test_documents_api_list_and_detail(
     assert resp.json()["id"] == doc_id
 
 
-@pytest.mark.asyncio
-@pytest.mark.skip("Vector search requires full vector DB setup")
-async def test_vector_search_api_search(
-    api_client: httpx.AsyncClient, db_engine: AsyncEngine
-) -> None:
+@pytest.fixture
+async def vector_api_client(
+    pg_vector_db_engine: AsyncEngine,
+) -> AsyncGenerator[httpx.AsyncClient, None]:
+    """API client with PostgreSQL vector DB setup."""
+
+    async def override_get_db() -> AsyncGenerator[DatabaseContext, None]:
+        async with DatabaseContext(engine=pg_vector_db_engine) as db:
+            yield db
+
+    # Create embedder with dimensions that match PostgreSQL indexes
     embedder = MockEmbeddingGenerator(
-        model_name="test",
-        dimensions=3,
+        model_name="gemini-exp-03-07",  # Use model name that has index
+        dimensions=1536,  # Match expected dimension
         embedding_map={
-            "query": [0.1, 0.2, 0.3],
-            "content": [0.1, 0.2, 0.3],
+            "query": [0.1] * 1536,  # Create proper dimension vector
+            "content": [0.1] * 1536,  # Create proper dimension vector
         },
     )
+
+    fastapi_app.dependency_overrides[get_db] = override_get_db
     fastapi_app.state.embedding_generator = embedder
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.vector.init_db()
+    transport = httpx.ASGITransport(app=fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        yield client
+    fastapi_app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_vector_search_api_search(
+    vector_api_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
+) -> None:
+    """Test vector search API endpoint."""
+    async with DatabaseContext(engine=pg_vector_db_engine) as db:
+        # Create test document
         doc = SimpleNamespace(
             id=None,
             source_type="note",
@@ -134,16 +156,109 @@ async def test_vector_search_api_search(
             metadata=None,
         )
         doc_id = await db.vector.add_document(doc)
+        # Use correct dimensions and model name
         await db.vector.add_embedding(
             document_id=doc_id,
             chunk_index=0,
             embedding_type="content_chunk",
-            embedding=[0.1, 0.2, 0.3],
-            embedding_model="test",
+            embedding=[0.1] * 1536,  # Match expected dimensions
+            embedding_model="gemini-exp-03-07",  # Match expected model
             content="content",
         )
 
-    resp = await api_client.post("/api/vector-search/", json={"query_text": "query"})
+    # Test basic search
+    resp = await vector_api_client.post(
+        "/api/vector-search/", json={"query_text": "query"}
+    )
     assert resp.status_code == 200
     results = resp.json()
+    assert isinstance(results, list)
     assert any(r["document"]["id"] == doc_id for r in results)
+
+    # Verify result structure matches API schema
+    result = next(r for r in results if r["document"]["id"] == doc_id)
+    assert "score" in result  # API uses "score", not "distance"
+    assert "document" in result
+    assert result["document"]["title"] == "Doc Two"
+    assert result["document"]["source_type"] == "note"
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_vector_search_api_with_limit(
+    vector_api_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
+) -> None:
+    """Test vector search API with limit parameter."""
+    async with DatabaseContext(engine=pg_vector_db_engine) as db:
+        # Create multiple test documents
+        doc_ids = []
+        for i in range(5):
+            doc = SimpleNamespace(
+                id=None,
+                source_type="note",
+                source_id=f"doc{i}",
+                source_uri=None,
+                title=f"Document {i}",
+                created_at=datetime.now(timezone.utc),
+                metadata=None,
+            )
+            doc_id = await db.vector.add_document(doc)
+            doc_ids.append(doc_id)
+            await db.vector.add_embedding(
+                document_id=doc_id,
+                chunk_index=0,
+                embedding_type="content_chunk",
+                embedding=[0.1] * 1536,  # Correct dimensions
+                embedding_model="gemini-exp-03-07",  # Correct model
+                content=f"content {i}",
+            )
+
+    # Test with limit
+    resp = await vector_api_client.post(
+        "/api/vector-search/", json={"query_text": "query", "limit": 3}
+    )
+    assert resp.status_code == 200
+    results = resp.json()
+    assert len(results) <= 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_vector_search_api_document_detail(
+    vector_api_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
+) -> None:
+    """Test vector search document detail API endpoint."""
+    async with DatabaseContext(engine=pg_vector_db_engine) as db:
+        doc = SimpleNamespace(
+            id=None,
+            source_type="pdf",
+            source_id="test_pdf",
+            source_uri="file:///test.pdf",
+            title="Test PDF Document",
+            created_at=datetime.now(timezone.utc),
+            metadata={"author": "Test User", "pages": 10},
+        )
+        doc_id = await db.vector.add_document(doc)
+
+    # Test document detail endpoint
+    resp = await vector_api_client.get(f"/api/vector-search/document/{doc_id}")
+    assert resp.status_code == 200
+    doc_detail = resp.json()
+
+    assert doc_detail["id"] == doc_id
+    assert doc_detail["title"] == "Test PDF Document"
+    assert doc_detail["source_type"] == "pdf"
+    assert doc_detail["source_id"] == "test_pdf"
+    assert doc_detail["source_uri"] == "file:///test.pdf"
+    assert doc_detail["metadata"]["author"] == "Test User"
+    assert doc_detail["metadata"]["pages"] == 10
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_vector_search_api_document_not_found(
+    vector_api_client: httpx.AsyncClient,
+) -> None:
+    """Test vector search document detail API with non-existent document."""
+    resp = await vector_api_client.get("/api/vector-search/document/99999")
+    assert resp.status_code == 404
