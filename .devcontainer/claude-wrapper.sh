@@ -56,6 +56,10 @@ if [ -f "/workspace/.venv/bin/activate" ]; then
     source /workspace/.venv/bin/activate
 fi
 
+export BASH_DEFAULT_TIMEOUT_MS=300000
+export BASH_MAX_TIMEOUT_MS=3600000
+export CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1
+
 # Check if we're running in a TTY context
 if [ -t 0 ]; then
     # TTY is available, use throttle_backspaces wrapper
