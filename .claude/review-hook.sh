@@ -1,7 +1,13 @@
 #!/bin/bash
 
 # This hook runs formatters, linters, and code review before git commits
-# It reads JSON input from stdin
+# It reads JSON input from stdin and implements an improved workflow:
+# 1. Parse and execute git add commands
+# 2. Stash unstaged changes to isolate what's being committed
+# 3. Apply formatters/linters and stage their changes
+# 4. Loop on pre-commit hooks, staging any changes they make
+# 5. Review the final staged changes
+# 6. Commit if approved, or restore stashed changes if not
 
 # Color codes
 RED='\033[0;31m'
@@ -11,6 +17,21 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
+
+# Global state
+STASHED_CHANGES=false
+
+# Cleanup function
+cleanup() {
+    if [[ "$STASHED_CHANGES" == "true" ]]; then
+        echo "" >&2
+        echo "${YELLOW}Restoring stashed changes...${NC}" >&2
+        git stash pop --quiet 2>/dev/null || true
+    fi
+}
+
+# Set trap for cleanup
+trap cleanup EXIT
 
 # Read JSON input from stdin
 JSON_INPUT=$(cat)
@@ -43,66 +64,184 @@ if echo "$COMMAND" | grep -qE "gh\s+pr\s+create"; then
     IS_PR_CREATE=true
 fi
 
-echo "${BLUE}🔍 Running pre-commit review...${NC}" >&2
+echo "${BLUE}🔍 Running improved pre-commit review workflow...${NC}" >&2
 echo "" >&2
 
-# Step 1: Run formatters and linters first
-echo "${CYAN}Running formatters and linters...${NC}" >&2
-
-# Run format and lint
-if [[ -f "$REPO_ROOT/.venv/bin/poe" ]]; then
-    FORMATTER_OUTPUT=$("$REPO_ROOT/.venv/bin/poe" format 2>&1)
-    FORMAT_EXIT=$?
+# Step 1: Parse and execute git add commands from compound commands
+HAS_GIT_ADD=false
+if echo "$COMMAND" | grep -qE "(^|[;&|])\s*git\s+add\s+"; then
+    HAS_GIT_ADD=true
+    echo "${CYAN}Step 1: Parsing and executing git add commands...${NC}" >&2
     
-    if [[ $FORMAT_EXIT -ne 0 ]]; then
-        echo "${RED}❌ Formatter failed${NC}" >&2
-        echo "$FORMATTER_OUTPUT" >&2
-        echo "" >&2
-        echo "Please fix formatting issues before committing." >&2
-        exit 2
-    fi
+    # Extract git add commands - handle multiple patterns
+    # This handles: "git add file1 file2 && git commit" or "git add .; git commit" etc.
+    ADD_COMMANDS=$(echo "$COMMAND" | tr '\n' ' ' | grep -oE "git\s+add\s+[^;&|]*" || true)
     
-    LINTER_OUTPUT=$("$REPO_ROOT/.venv/bin/poe" lint-fast 2>&1)
-    LINT_EXIT=$?
-    
-    if [[ $LINT_EXIT -ne 0 ]]; then
-        echo "${RED}❌ Linter failed${NC}" >&2
-        echo "$LINTER_OUTPUT" >&2
-        echo "" >&2
-        echo "Please fix linting issues before committing." >&2
-        exit 2
-    fi
-    
-    echo "${GREEN}✅ Formatting and linting passed${NC}" >&2
-else
-    echo "${YELLOW}⚠️  poe not found, skipping format/lint${NC}" >&2
-fi
-
-echo "" >&2
-
-# Step 2: Handle git add && git commit case
-# If the command includes both git add and git commit, we need to:
-# 1. Run the git add part first
-# 2. Then review the staged changes
-# 3. Only proceed with commit if review passes
-
-if echo "$COMMAND" | grep -qE "(^|[;&|])\s*git\s+add\s+.*[;&|]\s*git\s+(commit|ci)"; then
-    echo "${CYAN}Detected 'git add && git commit' pattern${NC}" >&2
-    echo "${YELLOW}Note: Reviewing changes that will be staged by the git add command${NC}" >&2
-    
-    # Extract and run just the git add part
-    # Replace newlines with spaces to handle multi-line commit messages
-    ADD_COMMAND=$(echo "$COMMAND" | tr '\n' ' ' | sed -E 's/^(.*git\s+add\s+[^;&|]*).*/\1/')
-    echo "${CYAN}Running: $ADD_COMMAND${NC}" >&2
-    eval "$ADD_COMMAND" 2>&1
-    ADD_EXIT=$?
-    
-    if [[ $ADD_EXIT -ne 0 ]]; then
-        echo "${RED}❌ git add failed${NC}" >&2
-        exit 2
+    if [[ -n "$ADD_COMMANDS" ]]; then
+        while IFS= read -r add_cmd; do
+            if [[ -n "$add_cmd" ]]; then
+                echo "${CYAN}Running: $add_cmd${NC}" >&2
+                if ! eval "$add_cmd" 2>&1; then
+                    echo "${RED}❌ git add failed${NC}" >&2
+                    exit 2
+                fi
+            fi
+        done <<< "$ADD_COMMANDS"
+        echo "${GREEN}✅ Git add commands completed${NC}" >&2
+    else
+        echo "${YELLOW}⚠️  No git add commands found to execute${NC}" >&2
     fi
     echo "" >&2
 fi
+
+# Step 2: Check if we have staged changes to work with
+if ! git diff --cached --quiet; then
+    echo "${CYAN}Step 2: Isolating staged changes with git stash...${NC}" >&2
+    
+    # Stash unstaged changes, keeping only staged changes in working directory
+    if ! git diff --quiet; then
+        echo "${CYAN}Stashing unstaged changes to isolate committed changes...${NC}" >&2
+        git stash push --keep-index --quiet -m "review-hook: unstaged changes $(date +%s)" 2>/dev/null
+        STASHED_CHANGES=true
+        echo "${GREEN}✅ Unstaged changes stashed${NC}" >&2
+    else
+        echo "${GREEN}✅ No unstaged changes to stash${NC}" >&2
+    fi
+    echo "" >&2
+else
+    if [[ "$HAS_GIT_ADD" == "true" ]]; then
+        echo "${YELLOW}⚠️  No changes were staged by git add commands${NC}" >&2
+        echo "" >&2
+        exit 0
+    fi
+fi
+
+# Step 3: Run formatters and linters on staged changes
+echo "${CYAN}Step 3: Running formatters and linters on staged changes...${NC}" >&2
+
+# Run format and lint script if available
+if [[ -f "$REPO_ROOT/scripts/format-and-lint.sh" ]]; then
+    # Get list of staged files for targeted formatting
+    STAGED_FILES=()
+    while IFS= read -r -d '' file; do
+        STAGED_FILES+=("$file")
+    done < <(git diff --cached --name-only -z)
+    
+    if [[ ${#STAGED_FILES[@]} -gt 0 ]]; then
+        echo "${CYAN}Running format-and-lint.sh on staged files...${NC}" >&2
+        
+        # Run the formatting script on staged files
+        if "$REPO_ROOT/scripts/format-and-lint.sh" "${STAGED_FILES[@]}" 2>&1; then
+            echo "${GREEN}✅ Formatting and linting completed${NC}" >&2
+            
+            # Stage any changes made by formatters/linters
+            if ! git diff --quiet; then
+                echo "${CYAN}Staging changes made by formatters/linters...${NC}" >&2
+                git add "${STAGED_FILES[@]}"
+                echo "${GREEN}✅ Format/lint changes staged${NC}" >&2
+            fi
+        else
+            echo "${RED}❌ Formatting/linting failed${NC}" >&2
+            echo "Please fix the issues before committing." >&2
+            exit 2
+        fi
+    else
+        echo "${YELLOW}⚠️  No staged files to format/lint${NC}" >&2
+    fi
+else
+    echo "${YELLOW}⚠️  scripts/format-and-lint.sh not found, trying poe commands...${NC}" >&2
+    
+    # Fallback to poe commands
+    if [[ -f "$REPO_ROOT/.venv/bin/poe" ]]; then
+        FORMATTER_OUTPUT=$("$REPO_ROOT/.venv/bin/poe" format 2>&1)
+        FORMAT_EXIT=$?
+        
+        if [[ $FORMAT_EXIT -ne 0 ]]; then
+            echo "${RED}❌ Formatter failed${NC}" >&2
+            echo "$FORMATTER_OUTPUT" >&2
+            echo "" >&2
+            echo "Please fix formatting issues before committing." >&2
+            exit 2
+        fi
+        
+        LINTER_OUTPUT=$("$REPO_ROOT/.venv/bin/poe" lint-fast 2>&1)
+        LINT_EXIT=$?
+        
+        if [[ $LINT_EXIT -ne 0 ]]; then
+            echo "${RED}❌ Linter failed${NC}" >&2
+            echo "$LINTER_OUTPUT" >&2
+            echo "" >&2
+            echo "Please fix linting issues before committing." >&2
+            exit 2
+        fi
+        
+        # Stage any changes made by formatters
+        if ! git diff --quiet; then
+            echo "${CYAN}Staging changes made by formatters/linters...${NC}" >&2
+            git add -u
+            echo "${GREEN}✅ Format/lint changes staged${NC}" >&2
+        fi
+        
+        echo "${GREEN}✅ Formatting and linting passed${NC}" >&2
+    else
+        echo "${YELLOW}⚠️  No formatting tools found, skipping format/lint${NC}" >&2
+    fi
+fi
+
+echo "" >&2
+
+# Step 4: Run pre-commit hooks in a loop, staging any changes they make
+echo "${CYAN}Step 4: Running pre-commit hooks with change detection...${NC}" >&2
+
+if command -v pre-commit &> /dev/null && [[ -f "$REPO_ROOT/.pre-commit-config.yaml" ]]; then
+    MAX_PRECOMMIT_ITERATIONS=5
+    iteration=0
+    
+    while [[ $iteration -lt $MAX_PRECOMMIT_ITERATIONS ]]; do
+        iteration=$((iteration + 1))
+        echo "${CYAN}Pre-commit iteration $iteration...${NC}" >&2
+        
+        # Run pre-commit on staged files (safe for filenames with spaces)
+        STAGED_FILES_FOR_PRECOMMIT=()
+        while IFS= read -r -d '' file; do
+            STAGED_FILES_FOR_PRECOMMIT+=("$file")
+        done < <(git diff --cached --name-only -z)
+        
+        if [[ ${#STAGED_FILES_FOR_PRECOMMIT[@]} -eq 0 ]]; then
+            echo "${YELLOW}No staged files for pre-commit hooks${NC}" >&2
+            break
+        fi
+        
+        if pre-commit run --files "${STAGED_FILES_FOR_PRECOMMIT[@]}"; then
+            # Pre-commit passed, check if it made any changes
+            if git diff --quiet; then
+                echo "${GREEN}✅ Pre-commit hooks completed (no changes made)${NC}" >&2
+                break
+            else
+                echo "${YELLOW}Pre-commit hooks made changes, staging them...${NC}" >&2
+                git add -u
+                echo "${GREEN}✅ Pre-commit changes staged${NC}" >&2
+                
+                if [[ $iteration -eq $MAX_PRECOMMIT_ITERATIONS ]]; then
+                    echo "${YELLOW}⚠️  Reached maximum pre-commit iterations ($MAX_PRECOMMIT_ITERATIONS)${NC}" >&2
+                    echo "${YELLOW}Proceeding with current staged changes${NC}" >&2
+                    break
+                fi
+            fi
+        else
+            echo "${RED}❌ Pre-commit hooks failed${NC}" >&2
+            echo "Please fix the issues and try again." >&2
+            exit 2
+        fi
+    done
+else
+    echo "${YELLOW}⚠️  Pre-commit not available or not configured, skipping${NC}" >&2
+fi
+
+echo "" >&2
+
+# Step 5: Run code review on final staged changes
+echo "${CYAN}Step 5: Running code review on final staged changes...${NC}" >&2
 
 # Check if review script exists
 REVIEW_SCRIPT="$REPO_ROOT/scripts/review-changes.sh"
@@ -145,35 +284,37 @@ if [[ "$IS_PR_CREATE" == "true" ]]; then
 fi
 
 # Run the review script and capture output
-echo "${CYAN}Running code review...${NC}" >&2
+echo "${CYAN}Analyzing staged changes for issues...${NC}" >&2
 echo "" >&2
 
-# Run the review script
+# Run the review script on staged changes
 REVIEW_OUTPUT=$("$REVIEW_SCRIPT" 2>&1)
 REVIEW_EXIT_CODE=$?
 
 # Echo the captured output to stderr
 echo "$REVIEW_OUTPUT" >&2
 
+# Step 6: Process review results and decide whether to proceed
+echo "" >&2
+
 # If sentinel phrase is present, only fail on exit code 2 (blocking issues)
 if [[ "$HAS_SENTINEL" == "true" ]]; then
     if [[ $REVIEW_EXIT_CODE -eq 2 ]]; then
-        echo "" >&2
         echo "${RED}❌ Code review found blocking issues that cannot be overridden${NC}" >&2
         echo "" >&2
         echo "Even with the review override sentinel, these critical issues must be fixed:" >&2
         echo "• Build-breaking changes" >&2
         echo "• Runtime errors" >&2
         echo "• Security vulnerabilities" >&2
+        echo "" >&2
+        echo "${YELLOW}Staged changes will be restored after fixing issues${NC}" >&2
         exit 2
     elif [[ $REVIEW_EXIT_CODE -eq 1 ]]; then
-        echo "" >&2
         echo "${YELLOW}⚠️  Minor issues found but proceeding with review override${NC}" >&2
-        echo "${GREEN}✅ Commit allowed - you've acknowledged the warnings${NC}" >&2
+        echo "${GREEN}✅ Commit approved - you've acknowledged the warnings${NC}" >&2
         exit 0
     else
-        echo "" >&2
-        echo "${GREEN}✅ No issues found - proceeding${NC}" >&2
+        echo "${GREEN}✅ No issues found - proceeding with commit${NC}" >&2
         exit 0
     fi
 fi
@@ -181,29 +322,35 @@ fi
 # Without sentinel, block on ANY issues (exit code 1 or 2)
 if [[ $REVIEW_EXIT_CODE -eq 0 ]]; then
     # No issues found
-    echo "" >&2
-    echo "${GREEN}✅ All checks passed, proceeding${NC}" >&2
+    echo "${GREEN}✅ All checks passed, ready to commit${NC}" >&2
     exit 0
 else
     # Issues found - provide appropriate guidance based on severity
-    echo "" >&2
     if [[ $REVIEW_EXIT_CODE -eq 1 ]]; then
         # Minor issues - less intimidating message
         echo "${YELLOW}⚠ Code review found minor issues${NC}" >&2
         echo "General advice: if it's easy to fix, just fix it now. There's no time like the present." >&2
         echo "If it's wrong, just proceed." >&2
-        echo "If it's hard and not important enough to fix, track the fix somehwere - with a TODO comment or similar, and acknowledge in the commit message." >&2
+        echo "If it's hard and not important enough to fix, track the fix somewhere - with a TODO comment or similar, and acknowledge in the commit message." >&2
         echo "" >&2
         echo "${BOLD}To proceed anyway, add this to your commit message:${NC}" >&2
         echo "   ${YELLOW}$SENTINEL_PHRASE${NC}" >&2
         echo "" >&2
         echo "This acknowledges you've reviewed the warnings and decided to proceed." >&2
+        echo "" >&2
+        echo "${CYAN}Your staged changes are ready. Fix issues or add the sentinel phrase and retry.${NC}" >&2
     else
         # Major issues - stronger message
         echo "${RED}❌ Code review found blocking issues${NC}" >&2
         echo "" >&2
         echo "${BOLD}These issues must be fixed before committing.${NC}" >&2
         echo "The code appears to have serious problems that could break the build or cause runtime errors." >&2
+        echo "" >&2
+        echo "${CYAN}Your staged changes are ready. Fix the issues and retry.${NC}" >&2
     fi
     exit 2
 fi
+
+# Note: The cleanup function will always restore stashed changes on exit
+# This ensures the user's working directory is returned to its original state
+
