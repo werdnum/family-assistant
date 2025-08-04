@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter
 
 from .chat_api import chat_api_router
+from .context_viewer import context_viewer_router
 from .documents_api import documents_api_router
 from .errors_api import errors_api_router
 from .events_api import events_api_router
@@ -31,3 +32,4 @@ api_router.include_router(events_api_router, prefix="/events", tags=["Events"])
 api_router.include_router(
     vector_search_api_router, prefix="/vector-search", tags=["Vector Search"]
 )
+api_router.include_router(context_viewer_router, tags=["Context API"])

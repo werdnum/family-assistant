@@ -97,13 +97,11 @@ async def view_context_page(
         ) from e
 
 
-@context_viewer_router.get("/api/context")
-async def get_context_api(
-    processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
-    profile_id: str | None = None,
+async def _get_context_data(
+    processing_service: ProcessingService, profile_id: str | None = None
 ) -> dict:
     """
-    API endpoint to get context data in JSON format.
+    Common implementation for context API endpoints.
     """
     try:
         # If profile_id is specified, try to get that specific processing service
@@ -158,3 +156,25 @@ async def get_context_api(
         raise HTTPException(
             status_code=500, detail=f"Error getting context: {str(e)}"
         ) from e
+
+
+@context_viewer_router.get("/api/context")
+async def get_context_api(
+    processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
+    profile_id: str | None = None,
+) -> dict:
+    """
+    API endpoint to get context data in JSON format.
+    """
+    return await _get_context_data(processing_service, profile_id)
+
+
+@context_viewer_router.get("/v1/context")
+async def get_context_api_v1(
+    processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
+    profile_id: str | None = None,
+) -> dict:
+    """
+    API v1 endpoint to get context data in JSON format.
+    """
+    return await _get_context_data(processing_service, profile_id)

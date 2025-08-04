@@ -452,6 +452,26 @@ def console_error_checker(web_test_fixture: WebTestFixture) -> ConsoleErrorColle
     return ConsoleErrorCollector(web_test_fixture.page)
 
 
+@pytest.fixture(scope="session")
+def connect_options() -> dict[str, str] | None:
+    """Configure Playwright browser connection options.
+
+    Supports connecting to remote browser instances via the PLAYWRIGHT_WS_ENDPOINT
+    environment variable. This is useful for containerized environments or CI/CD
+    systems where browsers run in separate containers.
+
+    Example:
+        export PLAYWRIGHT_WS_ENDPOINT="ws://localhost:1234"
+        pytest tests/functional/web/
+    """
+    ws_endpoint = os.getenv("PLAYWRIGHT_WS_ENDPOINT")
+    if ws_endpoint:
+        return {
+            "ws_endpoint": ws_endpoint,
+        }
+    return None
+
+
 # Override the playwright browser fixture to add timeout on close
 @pytest_asyncio.fixture(scope="session")
 async def browser(
