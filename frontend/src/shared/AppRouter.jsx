@@ -76,7 +76,7 @@ const AppRouter = () => {
 
         {/* Tasks routes */}
         <Route
-          path="/tasks"
+          path="/tasks/*"
           element={
             <Layout>
               <TasksApp />

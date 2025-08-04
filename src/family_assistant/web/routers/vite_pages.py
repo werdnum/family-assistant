@@ -100,5 +100,5 @@ async def notes_ui(request: Request) -> Response:
 
 @vite_pages_router.get("/tasks", name="tasks_ui")
 async def tasks_ui(request: Request) -> Response:
-    """Serve the React tasks interface."""
-    return _serve_vite_html_file(request, "tasks.html")
+    """Serve the React tasks interface via router."""
+    return _serve_vite_html_file(request, "router.html")

@@ -62,8 +62,6 @@ export default defineConfig(({ mode }) => ({
         tools: path.resolve(__dirname, 'tools.html'),
         'tool-test-bench': path.resolve(__dirname, 'tool-test-bench.html'),
         errors: path.resolve(__dirname, 'errors.html'),
-        notes: path.resolve(__dirname, 'notes.html'),
-        tasks: path.resolve(__dirname, 'tasks.html'),
       },
     },
   },
