@@ -8,6 +8,7 @@ const NotesForm = ({ isEdit, onSuccess, onCancel }) => {
     content: '',
     include_in_prompt: true,
   });
+  const [originalTitle, setOriginalTitle] = useState(null); // Track original title for edits
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [initialLoading, setInitialLoading] = useState(isEdit);
@@ -31,6 +32,7 @@ const NotesForm = ({ isEdit, onSuccess, onCancel }) => {
         content: note.content,
         include_in_prompt: note.include_in_prompt,
       });
+      setOriginalTitle(note.title); // Remember the original title
     } catch (err) {
       setError(err.message);
     } finally {
@@ -58,12 +60,18 @@ const NotesForm = ({ isEdit, onSuccess, onCancel }) => {
       setLoading(true);
       setError(null);
 
+      // Prepare the request body, including original_title for edits
+      const requestBody = {
+        ...formData,
+        ...(isEdit && originalTitle ? { original_title: originalTitle } : {}),
+      };
+
       const response = await fetch('/api/notes/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
