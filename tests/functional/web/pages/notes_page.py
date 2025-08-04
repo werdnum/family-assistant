@@ -242,4 +242,3 @@ class NotesPage(BasePage):
         }
 
         return note_data
-
