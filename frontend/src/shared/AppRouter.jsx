@@ -5,6 +5,8 @@ import ChatPage from '../chat/ChatPage';
 import ToolsApp from '../tools/ToolsApp';
 import ErrorsApp from '../errors/ErrorsApp';
 import ContextPage from './ContextPage';
+import NotesApp from '../notes/NotesApp';
+import TasksApp from '../tasks/TasksApp';
 
 const FallbackRedirect = () => {
   useEffect(() => {
@@ -58,6 +60,26 @@ const AppRouter = () => {
           element={
             <Layout>
               <ContextPage />
+            </Layout>
+          }
+        />
+
+        {/* Notes routes */}
+        <Route
+          path="/notes/*"
+          element={
+            <Layout>
+              <NotesApp />
+            </Layout>
+          }
+        />
+
+        {/* Tasks routes */}
+        <Route
+          path="/tasks"
+          element={
+            <Layout>
+              <TasksApp />
             </Layout>
           }
         />

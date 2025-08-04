@@ -10,10 +10,16 @@ import os
 import pathlib
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, RedirectResponse, Response
 
 logger = logging.getLogger(__name__)
 vite_pages_router = APIRouter()
+
+
+@vite_pages_router.get("/", name="ui_root_redirect")
+async def root_redirect(request: Request) -> RedirectResponse:
+    """Redirects the root path to the chat interface."""
+    return RedirectResponse(url="/chat", status_code=302)
 
 
 def _get_dev_mode_from_request(request: Request) -> bool:
@@ -82,3 +88,17 @@ async def tool_test_bench_ui(request: Request) -> Response:
 async def errors_ui(request: Request) -> Response:
     """Serve the React errors interface."""
     return _serve_vite_html_file(request, "errors.html")
+
+
+@vite_pages_router.get("/notes", name="notes_ui")
+@vite_pages_router.get("/notes/add", name="notes_add_ui")
+@vite_pages_router.get("/notes/edit/{title:str}", name="notes_edit_ui")
+async def notes_ui(request: Request) -> Response:
+    """Serve the React notes interface."""
+    return _serve_vite_html_file(request, "notes.html")
+
+
+@vite_pages_router.get("/tasks", name="tasks_ui")
+async def tasks_ui(request: Request) -> Response:
+    """Serve the React tasks interface."""
+    return _serve_vite_html_file(request, "tasks.html")

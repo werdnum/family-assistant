@@ -20,6 +20,8 @@ class TaskModel(BaseModel):
     scheduled_at: datetime | None = None
     retry_count: int
     max_retries: int
+    recurrence_rule: str | None = None
+    error_message: str | None = None
 
 
 class TaskListResponse(BaseModel):

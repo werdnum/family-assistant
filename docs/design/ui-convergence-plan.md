@@ -100,15 +100,19 @@ implementation **Advantages:**
 - ✅ Add missing `/api/v1/context` endpoint for React frontend
 - ✅ Handle empty query validation in vector search API
 
-### Session 2-3: First Conversions ⬅️ **NEXT UP**
+### ✅ Session 2-3: First Conversions (COMPLETED)
 
 **Goal:** Validate approach with easy wins
 
-- Convert `/notes` pages → React components (Notes API ready)
-- Convert `/tasks` → React dashboard (Tasks API ready)
-- Establish page conversion workflow patterns
+- ✅ Convert `/notes` pages → React components (Notes API ready)
+- ✅ Convert `/tasks` → React dashboard (Tasks API ready)
+- ✅ Establish page conversion workflow patterns
+- ✅ Integrate React pages into main React Router
+- ✅ Remove old Jinja2 routers (notes.py, tasks_ui.py)
+- ✅ Fix tasks page JSON editor performance issue
+- ✅ Comprehensive Playwright testing for notes implementation
 
-### Session 4-5: Complex Forms
+### Session 4-5: Complex Forms ⬅️ **NEXT UP**
 
 **Goal:** Handle CRUD operations
 
@@ -287,8 +291,8 @@ All APIs are now implemented! The following pages are ready for React conversion
 
 ### Jinja2 Routers to Remove
 
-- [ ] `notes.py`
-- [ ] `tasks_ui.py`
+- [x] `notes.py` ✅ (deleted - moved redirect to vite_pages.py)
+- [x] `tasks_ui.py` ✅ (deleted)
 - [ ] `history.py`
 - [ ] `vector_search.py`
 - [ ] `events_ui.py`

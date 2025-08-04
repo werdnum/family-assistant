@@ -1,31 +1,41 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { JSONEditor } from 'vanilla-jsoneditor';
 
 const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
   const containerRef = useRef(null);
   const editorRef = useRef(null);
   const [copyStatus, setCopyStatus] = useState('');
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [useEditor, setUseEditor] = useState(false);
 
   useEffect(() => {
-    if (!containerRef.current) {
+    if (!containerRef.current || !isExpanded || !useEditor) {
       return;
     }
 
-    // Initialize the JSON editor
-    editorRef.current = new JSONEditor({
-      target: containerRef.current,
-      props: {
-        content: { json: data },
-        readOnly: true,
-        mode: 'text', // Start in text mode for better viewing
-        mainMenuBar: false,
-        navigationBar: false,
-        statusBar: false,
-        askToFormat: false,
-        escapeControlCharacters: false,
-        flattenColumns: true,
-      },
-    });
+    // Dynamically import and initialize the JSON editor
+    const initEditor = async () => {
+      try {
+        const { JSONEditor } = await import('vanilla-jsoneditor');
+        editorRef.current = new JSONEditor({
+          target: containerRef.current,
+          props: {
+            content: { json: data },
+            readOnly: true,
+            mode: 'text',
+            mainMenuBar: false,
+            navigationBar: false,
+            statusBar: false,
+            askToFormat: false,
+            escapeControlCharacters: false,
+            flattenColumns: true,
+          },
+        });
+      } catch (error) {
+        console.error('Failed to load JSON editor:', error);
+      }
+    };
+
+    initEditor();
 
     // Cleanup function
     return () => {
@@ -34,7 +44,7 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
         editorRef.current = null;
       }
     };
-  }, [data]);
+  }, [data, isExpanded, useEditor]);
 
   // Handle copy to clipboard
   const handleCopy = async () => {
@@ -50,18 +60,14 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
     }
   };
 
-  // Toggle between text and tree view modes
-  const toggleMode = () => {
-    if (editorRef.current) {
-      const currentContent = editorRef.current.get();
-      const currentMode = editorRef.current.mode;
-      const newMode = currentMode === 'text' ? 'tree' : 'text';
+  // Handle expanding the JSON viewer
+  const handleToggleExpand = () => {
+    setIsExpanded(!isExpanded);
+  };
 
-      editorRef.current.updateProps({
-        mode: newMode,
-        content: currentContent,
-      });
-    }
+  // Handle switching to rich editor
+  const handleUseEditor = () => {
+    setUseEditor(true);
   };
 
   return (
@@ -70,6 +76,7 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
         border: '1px solid #ddd',
         borderRadius: '3px',
         backgroundColor: '#f8f9fa',
+        marginTop: '0.5rem',
       }}
     >
       {/* Control buttons */}
@@ -79,14 +86,14 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
           justifyContent: 'space-between',
           alignItems: 'center',
           padding: '0.5rem',
-          borderBottom: '1px solid #ddd',
+          borderBottom: isExpanded ? '1px solid #ddd' : 'none',
           backgroundColor: '#e9ecef',
         }}
       >
         <div style={{ fontSize: '0.9rem', fontWeight: 'bold' }}>Task Payload</div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <button
-            onClick={toggleMode}
+            onClick={handleToggleExpand}
             style={{
               padding: '0.25rem 0.5rem',
               fontSize: '0.8rem',
@@ -96,9 +103,9 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
               borderRadius: '3px',
               cursor: 'pointer',
             }}
-            title="Toggle between text and tree view"
+            title="Toggle JSON view"
           >
-            Toggle View
+            {isExpanded ? 'Hide' : 'Show'}
           </button>
           <button
             onClick={handleCopy}
@@ -118,37 +125,60 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
         </div>
       </div>
 
-      {/* JSON Editor container */}
-      <div
-        ref={containerRef}
-        style={{
-          minHeight: '200px',
-          maxHeight: '400px',
-          overflow: 'auto',
-        }}
-      />
-
-      {/* Fallback raw JSON display if editor fails */}
-      <details style={{ padding: '0.5rem', backgroundColor: '#f8f9fa' }}>
-        <summary style={{ cursor: 'pointer', fontSize: '0.9rem', marginBottom: '0.5rem' }}>
-          Raw JSON (fallback)
-        </summary>
-        <pre
-          style={{
-            fontSize: '0.8rem',
-            fontFamily: 'monospace',
-            backgroundColor: '#fff',
-            padding: '0.5rem',
-            border: '1px solid #ddd',
-            borderRadius: '3px',
-            overflow: 'auto',
-            maxHeight: '300px',
-            margin: 0,
-          }}
-        >
-          {JSON.stringify(data, null, 2)}
-        </pre>
-      </details>
+      {/* JSON content - only render when expanded */}
+      {isExpanded && (
+        <div style={{ padding: '0.5rem' }}>
+          {!useEditor ? (
+            // Simple text view by default
+            <div>
+              <div style={{ marginBottom: '0.5rem' }}>
+                <button
+                  onClick={handleUseEditor}
+                  style={{
+                    padding: '0.25rem 0.5rem',
+                    fontSize: '0.8rem',
+                    backgroundColor: '#28a745',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: 'pointer',
+                  }}
+                  title="Load rich editor"
+                >
+                  Load Rich Editor
+                </button>
+              </div>
+              <pre
+                style={{
+                  fontSize: '0.8rem',
+                  fontFamily: 'monospace',
+                  backgroundColor: '#fff',
+                  padding: '0.5rem',
+                  border: '1px solid #ddd',
+                  borderRadius: '3px',
+                  overflow: 'auto',
+                  maxHeight: '300px',
+                  margin: 0,
+                }}
+              >
+                {JSON.stringify(data, null, 2)}
+              </pre>
+            </div>
+          ) : (
+            // Rich editor container
+            <div
+              ref={containerRef}
+              style={{
+                minHeight: '200px',
+                maxHeight: '400px',
+                overflow: 'auto',
+                border: '1px solid #ddd',
+                borderRadius: '3px',
+              }}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 };

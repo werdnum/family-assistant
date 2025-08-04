@@ -24,7 +24,13 @@ export default defineConfig(({ mode }) => ({
           const url = new URL(req.url, 'http://localhost');
 
           // React Router routes - use router.html
-          if (url.pathname === '/chat' || url.pathname === '/context') {
+          if (
+            url.pathname === '/chat' ||
+            url.pathname === '/context' ||
+            url.pathname === '/notes' ||
+            url.pathname.startsWith('/notes/') ||
+            url.pathname === '/tasks'
+          ) {
             req.url = '/router.html' + url.search;
           }
           // Individual app routes - use specific HTML files
@@ -56,6 +62,8 @@ export default defineConfig(({ mode }) => ({
         tools: path.resolve(__dirname, 'tools.html'),
         'tool-test-bench': path.resolve(__dirname, 'tool-test-bench.html'),
         errors: path.resolve(__dirname, 'errors.html'),
+        notes: path.resolve(__dirname, 'notes.html'),
+        tasks: path.resolve(__dirname, 'tasks.html'),
       },
     },
   },
@@ -73,7 +81,7 @@ export default defineConfig(({ mode }) => ({
     // Proxy all non-asset requests to our FastAPI backend
     proxy: {
       // Proxy everything except Vite's own paths, static assets, and HTML entry points
-      '^(?!/@vite|/@react-refresh|/src|/node_modules|/__vite_ping|/index\.html|/chat\.html|/chat$|/router\.html|/context$|/tools\.html|/tools$|/tool-test-bench\.html|/tool-test-bench$|/errors\.html|/errors$|/errors/).*':
+      '^(?!/@vite|/@react-refresh|/src|/node_modules|/__vite_ping|/index\.html|/chat\.html|/chat$|/router\.html|/context$|/tools\.html|/tools$|/tool-test-bench\.html|/tool-test-bench$|/errors\.html|/errors$|/errors/|/notes\.html|/notes$|/notes/|/tasks\.html|/tasks$).*':
         {
           target: `http://127.0.0.1:${process.env.VITE_API_PORT || 8000}`,
           changeOrigin: true,
