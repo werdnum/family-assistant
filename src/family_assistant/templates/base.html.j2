@@ -22,7 +22,7 @@
             <!-- Assistant Data -->
             <div class="nav-group">
                 <span class="nav-label">Data</span>
-                <a href="{{ request.app.url_path_for('ui_list_notes') }}">Notes</a>
+                <a href="{{ request.app.url_path_for('notes_ui') }}">Notes</a>
                 <a href="{{ request.app.url_path_for('view_context_page') }}">Context</a>
             </div>
             <span class="nav-separator">|</span>
@@ -53,7 +53,7 @@
             <div class="nav-group">
                 <span class="nav-label">Internal</span>
                 <a href="{{ request.app.url_path_for('tools_ui') }}">Tools</a>
-                <a href="{{ request.app.url_path_for('ui_list_tasks') }}">Task Queue</a>
+                <a href="{{ request.app.url_path_for('tasks_ui') }}">Task Queue</a>
                 <a href="{{ request.app.url_path_for('error_list') }}">Error Logs</a>
             </div>
             <span class="nav-separator">|</span>
