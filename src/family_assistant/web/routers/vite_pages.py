@@ -94,8 +94,8 @@ async def errors_ui(request: Request) -> Response:
 @vite_pages_router.get("/notes/add", name="notes_add_ui")
 @vite_pages_router.get("/notes/edit/{title:str}", name="notes_edit_ui")
 async def notes_ui(request: Request) -> Response:
-    """Serve the React notes interface."""
-    return _serve_vite_html_file(request, "notes.html")
+    """Serve the React notes interface via router."""
+    return _serve_vite_html_file(request, "router.html")
 
 
 @vite_pages_router.get("/tasks", name="tasks_ui")
