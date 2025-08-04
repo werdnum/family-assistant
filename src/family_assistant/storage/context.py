@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from sqlalchemy import TextClause, event  # Result removed
 from sqlalchemy.engine import CursorResult  # CursorResult added
-from sqlalchemy.exc import DBAPIError, ProgrammingError
+from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.sql import Delete, Insert, Select, Update
 
@@ -147,16 +147,29 @@ class DatabaseContext:
                     return await self.conn.execute(query)
             except DBAPIError as e:
                 # Check if the error is a ProgrammingError (syntax error, undefined object, etc.)
-                # These should not be retried.
-                if isinstance(e.orig, ProgrammingError) or isinstance(
-                    e, ProgrammingError
+                # or IntegrityError (constraint violations). These should not be retried.
+                if isinstance(e.orig, (ProgrammingError, IntegrityError)) or isinstance(
+                    e, (ProgrammingError, IntegrityError)
                 ):  # Check original and wrapper
+                    is_prog_error = isinstance(e.orig, ProgrammingError) or isinstance(
+                        e, ProgrammingError
+                    )
+                    is_integ_error = isinstance(e.orig, IntegrityError) or isinstance(
+                        e, IntegrityError
+                    )
+
+                    if is_prog_error:
+                        error_type = "ProgrammingError"
+                    elif is_integ_error:
+                        error_type = "IntegrityError"
+                    else:
+                        error_type = "UnknownError"  # Should not happen given the outer condition
+
                     logger.error(
-                        f"Non-retryable ProgrammingError encountered: {e}",
+                        f"Non-retryable {error_type} encountered: {e}",
                         exc_info=True,
                     )
                     raise  # Re-raise immediately, do not retry
-
                 # Check if this is a PostgreSQL transaction abort error
                 if InFailedSQLTransactionError and isinstance(
                     e.orig, InFailedSQLTransactionError
