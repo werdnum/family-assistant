@@ -61,6 +61,10 @@ async def search_documents_api(
     ],
 ) -> list[SearchResult]:
     """Search indexed documents."""
+    # Handle empty query by returning empty results
+    if not payload.query_text or not payload.query_text.strip():
+        return []
+
     # Use default filters if none provided
     filters = payload.filters or SearchFilters()
 
