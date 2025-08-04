@@ -129,7 +129,8 @@ class NotesPage(BasePage):
             delete_button = await note_row.query_selector("button:has-text('Delete')")
             if delete_button:
                 await delete_button.click()
-                await self.wait_for_load()
+                # Wait for the network request to complete and UI to update
+                await self.wait_for_load(wait_for_network=True)
 
     async def search_notes(self, query: str) -> None:
         """Search for notes using the search input.
@@ -241,3 +242,4 @@ class NotesPage(BasePage):
         }
 
         return note_data
+
