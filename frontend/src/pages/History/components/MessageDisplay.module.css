@@ -1,0 +1,247 @@
+/* Message container */
+.message {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  background-color: var(--bg);
+  overflow: hidden;
+}
+
+/* Role-specific styling */
+.message--user {
+  border-left: 4px solid #007bff;
+}
+
+.message--assistant {
+  border-left: 4px solid #28a745;
+}
+
+.message--tool {
+  border-left: 4px solid #fd7e14;
+}
+
+.message--system {
+  border-left: 4px solid #6c757d;
+}
+
+/* Message header */
+.messageHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.messageRole {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 500;
+}
+
+.roleIcon {
+  font-size: 1.2em;
+}
+
+.roleLabel {
+  font-size: 0.9em;
+  color: var(--text);
+}
+
+.toolCallId {
+  font-size: 0.8em;
+  color: var(--text-light);
+  font-style: italic;
+}
+
+.messageTimestamp {
+  font-size: 0.8em;
+  color: var(--text-light);
+  white-space: nowrap;
+}
+
+/* Message content */
+.messageContent {
+  padding: 1rem;
+}
+
+.messageText {
+  margin-bottom: 1rem;
+}
+
+.contentPre {
+  font-family: inherit;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  margin: 0;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+/* Tool calls */
+.toolCalls {
+  margin-top: 1rem;
+  padding: 1rem;
+  background-color: var(--bg-secondary);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.toolCallsHeader {
+  margin: 0 0 1rem 0;
+  font-size: 1em;
+  color: var(--text);
+}
+
+.toolCall {
+  margin-bottom: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background-color: var(--bg);
+}
+
+.toolCall:last-child {
+  margin-bottom: 0;
+}
+
+.toolCallHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.toolCallName {
+  font-weight: 500;
+  font-family: 'Courier New', monospace;
+  color: var(--text);
+}
+
+.expandButton {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.8em;
+  padding: 0.25rem 0.5rem;
+  border-radius: 3px;
+  transition: background-color 0.2s ease;
+}
+
+.expandButton:hover {
+  background-color: var(--accent-bg);
+}
+
+.toolCallDetails {
+  padding: 0.75rem;
+}
+
+.toolCallField {
+  margin-bottom: 0.75rem;
+}
+
+.toolCallField:last-child {
+  margin-bottom: 0;
+}
+
+.toolCallField strong {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.9em;
+  color: var(--text);
+}
+
+.jsonPre {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.5rem;
+  margin: 0.25rem 0 0 0;
+  font-family: 'Courier New', monospace;
+  font-size: 0.8em;
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--text);
+}
+
+/* Error section */
+.errorSection {
+  margin-top: 1rem;
+  border: 1px solid #dc3545;
+  border-radius: 6px;
+  background-color: #ffe6e6;
+  overflow: hidden;
+}
+
+.errorHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background-color: #f8d7da;
+  border-bottom: 1px solid #dc3545;
+  color: #721c24;
+  font-weight: 500;
+}
+
+.errorIcon {
+  font-size: 1.1em;
+}
+
+.errorTraceback {
+  padding: 0.75rem;
+}
+
+.tracebackPre {
+  background-color: #fff5f5;
+  border: 1px solid #dc3545;
+  border-radius: 3px;
+  padding: 0.5rem;
+  margin: 0;
+  font-family: 'Courier New', monospace;
+  font-size: 0.8em;
+  white-space: pre;
+  overflow-x: auto;
+  color: #721c24;
+}
+
+/* Message footer */
+.messageFooter {
+  padding: 0.5rem 1rem;
+  border-top: 1px solid var(--border);
+  background-color: var(--bg-secondary);
+  text-align: right;
+}
+
+.messageId {
+  font-size: 0.75em;
+  color: var(--text-light);
+  font-family: 'Courier New', monospace;
+}
+
+/* Mobile adjustments */
+@media (max-width: 767px) {
+  .messageHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  
+  .messageTimestamp {
+    align-self: flex-end;
+  }
+  
+  .toolCallHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  
+  .expandButton {
+    align-self: flex-end;
+  }
+}

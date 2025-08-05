@@ -36,15 +36,14 @@ jobs:
             TAG=$(date +%Y%m%d_%H%M%S)
           fi
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
-          
+
           # Always push since we only run on main or workflow dispatch
           echo "should-push=true" >> $GITHUB_OUTPUT
           echo "platforms=linux/amd64,linux/arm64" >> $GITHUB_OUTPUT  # Multi-arch builds
-
   build-devcontainer:
     needs: prepare
     runs-on: ubuntu-latest
-    timeout-minutes: 120  # 2 hours for build
+    timeout-minutes: 120 # 2 hours for build
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -73,11 +72,10 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:main
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
   build-main:
     needs: prepare
     runs-on: ubuntu-latest
-    timeout-minutes: 120  # 2 hours for build
+    timeout-minutes: 120 # 2 hours for build
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

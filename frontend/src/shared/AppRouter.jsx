@@ -8,6 +8,7 @@ import ContextPage from './ContextPage';
 import NotesApp from '../notes/NotesApp';
 import TasksApp from '../tasks/TasksApp';
 import EventListenersApp from '../pages/EventListeners/EventListenersApp';
+import HistoryApp from '../pages/History/HistoryApp';
 
 const FallbackRedirect = () => {
   useEffect(() => {
@@ -91,6 +92,16 @@ const AppRouter = () => {
           element={
             <Layout>
               <EventListenersApp />
+            </Layout>
+          }
+        />
+
+        {/* History routes */}
+        <Route
+          path="/history/*"
+          element={
+            <Layout>
+              <HistoryApp />
             </Layout>
           }
         />

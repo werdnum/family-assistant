@@ -113,5 +113,12 @@ async def tasks_ui(request: Request) -> Response:
     "/event-listeners/{listener_id:int}/edit", name="event_listener_edit_ui"
 )
 async def event_listeners_ui(request: Request) -> Response:
-    """Serve the React event listeners interface."""
-    return _serve_vite_html_file(request, "event-listeners.html")
+    """Serve the React event listeners interface via router."""
+    return _serve_vite_html_file(request, "router.html")
+
+
+@vite_pages_router.get("/history", name="history_ui")
+@vite_pages_router.get("/history/{conversation_id:str}", name="history_detail_ui")
+async def history_ui(request: Request) -> Response:
+    """Serve the React history interface via router."""
+    return _serve_vite_html_file(request, "router.html")

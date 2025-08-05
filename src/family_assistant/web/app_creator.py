@@ -32,7 +32,6 @@ from family_assistant.web.routers.documents_ui import (  # New import for docume
 from family_assistant.web.routers.errors import router as errors_router
 from family_assistant.web.routers.events_ui import router as events_ui_router
 from family_assistant.web.routers.health import health_router
-from family_assistant.web.routers.history import history_router
 from family_assistant.web.routers.ui_token_management import (  # New import
     router as ui_token_management_router,
 )
@@ -264,7 +263,6 @@ if AUTH_ENABLED:
 app.include_router(vite_pages_router, tags=["Vite Pages"])
 app.include_router(documentation_router, tags=["Documentation UI"])
 app.include_router(webhooks_router, tags=["Webhooks"])
-app.include_router(history_router, tags=["History UI"])
 app.include_router(vector_search_router, tags=["Vector Search UI"])
 app.include_router(context_viewer_router, tags=["Context Viewer UI"])
 app.include_router(

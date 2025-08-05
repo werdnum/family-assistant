@@ -1,58 +1,44 @@
 interactions:
-- request:
-    body: '{"contents": [{"parts": [{"text": "What''s the weather in Paris, France?
-      Also calculate 42 * 17."}], "role": "user"}], "tools": [{"functionDeclarations":
-      [{"description": "Get current weather for a location", "name": "get_weather",
-      "parameters": {"properties": {"location": {"description": "The city and country",
-      "type": "STRING"}, "unit": {"description": "Temperature unit", "type": "STRING"}},
-      "required": ["location"], "type": "OBJECT"}}, {"description": "Perform mathematical
-      calculations", "name": "calculate", "parameters": {"properties": {"expression":
-      {"description": "Mathematical expression to evaluate", "type": "STRING"}}, "required":
-      ["expression"], "type": "OBJECT"}}]}], "generationConfig": {}}'
-    headers:
-      Content-Type:
-      - application/json
-      user-agent:
-      - google-genai-sdk/1.22.0 gl-python/3.12.3
-      x-goog-api-client:
-      - google-genai-sdk/1.22.0 gl-python/3.12.3
-    method: post
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:streamGenerateContent?alt=sse
-  response:
-    body:
-      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"functionCall\":
-        {\"name\": \"get_weather\",\"args\": {\"location\": \"Paris, France\"}}},{\"functionCall\":
-        {\"name\": \"calculate\",\"args\": {\"expression\": \"42 * 17\"}}}],\"role\":
-        \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
-        114,\"candidatesTokenCount\": 35,\"totalTokenCount\": 149,\"promptTokensDetails\":
-        [{\"modality\": \"TEXT\",\"tokenCount\": 114}]},\"modelVersion\": \"gemini-2.5-flash-lite-preview-06-17\",\"responseId\":
-        \"pdmGaJ74C8vQz7IPuMvNqAo\"}\r\n\r\n"
-    headers:
-      Alt-Svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      Content-Disposition:
-      - attachment
-      Content-Type:
-      - text/event-stream
-      Date:
-      - Mon, 28 Jul 2025 02:00:05 GMT
-      Server:
-      - scaffolding on HTTPServer2
-      Server-Timing:
-      - gfet4t7; dur=428
-      Transfer-Encoding:
-      - chunked
-      Vary:
-      - Origin
-      - X-Origin
-      - Referer
-      X-Content-Type-Options:
-      - nosniff
-      X-Frame-Options:
-      - SAMEORIGIN
-      X-XSS-Protection:
-      - '0'
-    status:
-      code: 200
-      message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": "What''s the weather in Paris, France? Also calculate 42 * 17."}], "role": "user"}], "tools": [{"functionDeclarations": [{"description": "Get current weather for a location", "name": "get_weather", "parameters": {"properties": {"location": {"description": "The city and country", "type": "STRING"}, "unit": {"description": "Temperature unit", "type": "STRING"}}, "required": ["location"], "type": "OBJECT"}}, {"description": "Perform mathematical calculations", "name": "calculate", "parameters": {"properties": {"expression": {"description": "Mathematical expression to evaluate", "type": "STRING"}}, "required": ["expression"], "type": "OBJECT"}}]}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.22.0 gl-python/3.12.3
+        x-goog-api-client:
+          - google-genai-sdk/1.22.0 gl-python/3.12.3
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:streamGenerateContent?alt=sse
+    response:
+      body:
+        string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"functionCall\": {\"name\": \"get_weather\",\"args\": {\"location\": \"Paris, France\"}}},{\"functionCall\": {\"name\": \"calculate\",\"args\": {\"expression\": \"42 * 17\"}}}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 114,\"candidatesTokenCount\": 35,\"totalTokenCount\": 149,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 114}]},\"modelVersion\": \"gemini-2.5-flash-lite-preview-06-17\",\"responseId\": \"pdmGaJ74C8vQz7IPuMvNqAo\"}\r\n\r\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Disposition:
+          - attachment
+        Content-Type:
+          - text/event-stream
+        Date:
+          - Mon, 28 Jul 2025 02:00:05 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=428
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
 version: 1

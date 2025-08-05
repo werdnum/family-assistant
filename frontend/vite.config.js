@@ -31,7 +31,9 @@ export default defineConfig(({ mode }) => ({
             url.pathname.startsWith('/notes/') ||
             url.pathname === '/tasks' ||
             url.pathname === '/event-listeners' ||
-            url.pathname.startsWith('/event-listeners/')
+            url.pathname.startsWith('/event-listeners/') ||
+            url.pathname === '/history' ||
+            url.pathname.startsWith('/history/')
           ) {
             req.url = '/router.html' + url.search;
           }
