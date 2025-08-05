@@ -122,3 +122,10 @@ async def event_listeners_ui(request: Request) -> Response:
 async def history_ui(request: Request) -> Response:
     """Serve the React history interface via router."""
     return _serve_vite_html_file(request, "router.html")
+
+
+@vite_pages_router.get("/events", name="events_ui")
+@vite_pages_router.get("/events/{event_id:str}", name="events_detail_ui")
+async def events_ui(request: Request) -> Response:
+    """Serve the React events interface via router."""
+    return _serve_vite_html_file(request, "router.html")

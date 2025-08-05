@@ -1,0 +1,263 @@
+/* Event detail container */
+.eventDetail {
+  padding: 1rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* Header */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.backButton {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--accent);
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: all 0.2s ease;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.backButton:hover {
+  background-color: var(--bg-secondary);
+  border-color: var(--accent);
+}
+
+.header h1 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.5em;
+}
+
+/* Event card */
+.eventCard {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background-color: var(--bg);
+  overflow: hidden;
+}
+
+/* Event header */
+.eventHeader {
+  padding: 1.5rem;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.eventId {
+  flex: 1;
+}
+
+.eventId h2 {
+  margin: 0;
+  font-family: 'Courier New', monospace;
+  font-size: 1.1em;
+  color: var(--text);
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.sourceBadge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  background-color: var(--accent-bg);
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+  border: 1px solid var(--accent);
+}
+
+.sourceIcon {
+  font-size: 1.2em;
+}
+
+.sourceLabel {
+  font-size: 0.9em;
+  font-weight: 500;
+  color: var(--accent);
+}
+
+/* Event info grid */
+.eventInfo {
+  padding: 1.5rem;
+}
+
+.infoGrid {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: 1fr;
+}
+
+.infoItem {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.infoLabel {
+  font-weight: 600;
+  color: var(--text-light);
+  font-size: 0.9em;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.infoValue {
+  color: var(--text);
+  font-size: 1em;
+  line-height: 1.5;
+}
+
+.eventIdCode {
+  font-family: 'Courier New', monospace;
+  background-color: var(--bg-secondary);
+  padding: 0.5rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  display: inline-block;
+  font-size: 0.9em;
+  word-break: break-all;
+}
+
+.listenerIds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.listenerId {
+  background-color: var(--accent-bg);
+  color: var(--accent);
+  padding: 0.25rem 0.5rem;
+  border-radius: 12px;
+  font-size: 0.8em;
+  font-weight: 500;
+  font-family: 'Courier New', monospace;
+}
+
+/* Event data section */
+.eventDataSection,
+.noListenersSection {
+  border-top: 1px solid var(--border);
+  padding: 1.5rem;
+}
+
+.sectionTitle {
+  margin: 0 0 1rem 0;
+  font-size: 1.1em;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.eventDataContainer {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background-color: var(--bg-secondary);
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.eventDataJson {
+  margin: 0;
+  padding: 1.5rem;
+  font-family: 'Courier New', monospace;
+  font-size: 0.85em;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.eventDataJson code {
+  color: var(--text);
+  background: none;
+}
+
+.noListenersText {
+  margin: 0;
+  color: var(--text-light);
+  font-style: italic;
+}
+
+/* Loading and error states */
+.loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 3rem 1rem;
+  color: var(--text-light);
+  font-size: 1.1em;
+}
+
+.error {
+  color: var(--error, #d73502);
+  padding: 1rem;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  margin: 1rem 0;
+  background-color: var(--bg-secondary);
+}
+
+/* Tablet layout */
+@media (min-width: 768px) {
+  .infoGrid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 2rem;
+  }
+}
+
+/* Desktop layout */
+@media (min-width: 1024px) {
+  .infoGrid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* Mobile adjustments */
+@media (max-width: 767px) {
+  .eventDetail {
+    padding: 0.5rem;
+  }
+  
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+  
+  .eventHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1rem;
+  }
+  
+  .sourceBadge {
+    align-self: flex-end;
+  }
+  
+  .eventInfo {
+    padding: 1rem;
+  }
+  
+  .eventDataSection,
+  .noListenersSection {
+    padding: 1rem;
+  }
+}

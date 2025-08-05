@@ -1,0 +1,149 @@
+/* Filters form */
+.filtersForm {
+  margin-bottom: 2rem;
+}
+
+.filtersDetails {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background-color: var(--bg);
+}
+
+.filtersDetails[open] {
+  background-color: var(--bg-secondary);
+}
+
+.filtersSummary {
+  padding: 1rem;
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--text);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+  border-radius: 8px;
+  transition: background-color 0.2s ease;
+}
+
+.filtersSummary:hover {
+  background-color: var(--bg-secondary);
+}
+
+.filtersDetails[open] .filtersSummary {
+  border-bottom: 1px solid var(--border);
+  border-radius: 8px 8px 0 0;
+}
+
+.activeFiltersIndicator {
+  background-color: var(--accent);
+  color: white;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.8em;
+  font-weight: 500;
+}
+
+.filtersGrid {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+  grid-template-columns: 1fr;
+}
+
+.filterGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.filterGroup label {
+  font-weight: 500;
+  color: var(--text);
+  font-size: 0.9em;
+}
+
+.filterGroup select,
+.filterGroup input[type="text"],
+.filterGroup input[type="date"] {
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background-color: var(--bg);
+  color: var(--text);
+  font-size: 0.9em;
+  transition: border-color 0.2s ease;
+}
+
+.filterGroup select:focus,
+.filterGroup input[type="text"]:focus,
+.filterGroup input[type="date"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.filterGroup select:disabled,
+.filterGroup input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-weight: normal !important;
+}
+
+.checkboxLabel input[type="checkbox"] {
+  margin: 0;
+}
+
+.checkboxText {
+  font-size: 0.9em;
+  color: var(--text);
+}
+
+.filtersActions {
+  padding: 0 1rem 1rem;
+  display: flex;
+  gap: 1rem;
+  justify-content: flex-end;
+}
+
+.clearButton {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border);
+  background-color: var(--bg);
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: all 0.2s ease;
+}
+
+.clearButton:hover:not(:disabled) {
+  background-color: var(--bg-secondary);
+  border-color: var(--accent);
+}
+
+.clearButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Tablet layout */
+@media (min-width: 768px) {
+  .filtersGrid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+  }
+}
+
+/* Desktop layout */
+@media (min-width: 1024px) {
+  .filtersGrid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}

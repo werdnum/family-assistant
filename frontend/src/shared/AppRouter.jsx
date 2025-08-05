@@ -8,6 +8,7 @@ import ContextPage from './ContextPage';
 import NotesApp from '../notes/NotesApp';
 import TasksApp from '../tasks/TasksApp';
 import EventListenersApp from '../pages/EventListeners/EventListenersApp';
+import EventsApp from '../pages/Events/EventsApp';
 import HistoryApp from '../pages/History/HistoryApp';
 
 const FallbackRedirect = () => {
@@ -92,6 +93,16 @@ const AppRouter = () => {
           element={
             <Layout>
               <EventListenersApp />
+            </Layout>
+          }
+        />
+
+        {/* Events routes */}
+        <Route
+          path="/events/*"
+          element={
+            <Layout>
+              <EventsApp />
             </Layout>
           }
         />
