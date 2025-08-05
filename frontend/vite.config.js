@@ -29,7 +29,9 @@ export default defineConfig(({ mode }) => ({
             url.pathname === '/context' ||
             url.pathname === '/notes' ||
             url.pathname.startsWith('/notes/') ||
-            url.pathname === '/tasks'
+            url.pathname === '/tasks' ||
+            url.pathname === '/event-listeners' ||
+            url.pathname.startsWith('/event-listeners/')
           ) {
             req.url = '/router.html' + url.search;
           }

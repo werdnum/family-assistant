@@ -1,4 +1,4 @@
-```text
+````text
 ---
 
 # Hidden Headline
@@ -58,8 +58,10 @@ You can install or upgrade `python-telegram-bot` via
 ```text
 $ pip install python-telegram-bot --upgrade
 
-```
-To install a pre-release, use the `--pre` flag (https://pip.pypa.io/en/stable/cli/pip_install/#cmdoption-pre) in addition.
+````
+
+To install a pre-release, use the `--pre` flag
+(https://pip.pypa.io/en/stable/cli/pip_install/#cmdoption-pre) in addition.
 
 You can also install `python-telegram-bot` from source, though this is usually not necessary.
 
@@ -71,162 +73,211 @@ $ pip install build
 $ python -m build
 
 ```
----
+
+______________________________________________________________________
 
 ### Verifying Releases
 
-To enable you to verify that a release file that you downloaded was indeed provided by the `python-telegram-bot` team, we have taken the following measures.
+To enable you to verify that a release file that you downloaded was indeed provided by the
+`python-telegram-bot` team, we have taken the following measures.
 
-Starting with v21.4, all releases are signed via sigstore (https://www.sigstore.dev/).
-The corresponding signature files are uploaded to the GitHub releases page (https://github.com/python-telegram-bot/python-telegram-bot/releases).
-To verify the signature, please install the sigstore Python client (https://pypi.org/project/sigstore/) and follow the instructions for verifying signatures from GitHub Actions (https://github.com/sigstore/sigstore-python?tab=readme-ov-file). As input for the `--repository` parameter, please use the value `python-telegram-bot/python-telegram-bot`.
+Starting with v21.4, all releases are signed via sigstore (https://www.sigstore.dev/). The
+corresponding signature files are uploaded to the GitHub releases page
+(https://github.com/python-telegram-bot/python-telegram-bot/releases). To verify the signature,
+please install the sigstore Python client (https://pypi.org/project/sigstore/) and follow the
+instructions for verifying signatures from GitHub Actions
+(https://github.com/sigstore/sigstore-python?tab=readme-ov-file). As input for the `--repository`
+parameter, please use the value `python-telegram-bot/python-telegram-bot`.
 
-Earlier releases are signed with a GPG key.
-The signatures are uploaded to both the GitHub releases page (https://github.com/python-telegram-bot/python-telegram-bot/releases) and the PyPI project (https://pypi.org/project/python-telegram-bot/) and end with a suffix `.asc`.
-Please find the public keys here (https://github.com/python-telegram-bot/python-telegram-bot/tree/master/public_keys).
-The keys are named in the format `<first_version>-<last_version>.gpg`.
+Earlier releases are signed with a GPG key. The signatures are uploaded to both the GitHub releases
+page (https://github.com/python-telegram-bot/python-telegram-bot/releases) and the PyPI project
+(https://pypi.org/project/python-telegram-bot/) and end with a suffix `.asc`. Please find the public
+keys here (https://github.com/python-telegram-bot/python-telegram-bot/tree/master/public_keys). The
+keys are named in the format `<first_version>-<last_version>.gpg`.
 
-In addition, the GitHub release page also contains the sha1 hashes of the release files in the files with the suffix `.sha1`.
+In addition, the GitHub release page also contains the sha1 hashes of the release files in the files
+with the suffix `.sha1`.
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 ### Dependencies & Their Versions
 
-`python-telegram-bot` tries to use as few 3rd party dependencies as possible.
-However, for some features using a 3rd party library is more sane than implementing the functionality again.
-As these features are *optional*, the corresponding 3rd party dependencies are not installed by default.
-Instead, they are listed as optional dependencies.
-This allows to avoid unnecessary dependency conflicts for users who don’t need the optional features.
+`python-telegram-bot` tries to use as few 3rd party dependencies as possible. However, for some
+features using a 3rd party library is more sane than implementing the functionality again. As these
+features are *optional*, the corresponding 3rd party dependencies are not installed by default.
+Instead, they are listed as optional dependencies. This allows to avoid unnecessary dependency
+conflicts for users who don’t need the optional features.
 
-The only required dependency is httpx ~= 0.27 (https://www.python-httpx.org/) for `telegram.request.HTTPXRequest` , the default networking backend.
+The only required dependency is httpx ~= 0.27 (https://www.python-httpx.org/) for
+`telegram.request.HTTPXRequest` , the default networking backend.
 
-`python-telegram-bot` is most useful when used along with additional libraries.
-To minimize dependency conflicts, we try to be liberal in terms of version requirements on the (optional) dependencies.
-On the other hand, we have to ensure stability of `python-telegram-bot` , which is why we do apply version bounds.
-If you encounter dependency conflicts due to these bounds, feel free to reach out.
+`python-telegram-bot` is most useful when used along with additional libraries. To minimize
+dependency conflicts, we try to be liberal in terms of version requirements on the (optional)
+dependencies. On the other hand, we have to ensure stability of `python-telegram-bot` , which is why
+we do apply version bounds. If you encounter dependency conflicts due to these bounds, feel free to
+reach out.
 
----
+______________________________________________________________________
 
 #### Optional Dependencies
 
 PTB can be installed with optional dependencies:
 
-- `pip install "python-telegram-bot[passport]"` installs the cryptography>=39.0.1 (https://cryptography.io/en/stable) library. Use this, if you want to use Telegram Passport related functionality.
-- `pip install "python-telegram-bot[socks]"` installs httpx[socks] (https://www.python-httpx.org/#dependencies). Use this, if you want to work behind a Socks5 server.
-- `pip install "python-telegram-bot[http2]"` installs httpx[http2] (https://www.python-httpx.org/#dependencies). Use this, if you want to use HTTP/2.
-- `pip install "python-telegram-bot[rate-limiter]"` installs aiolimiter~=1.1,<1.3 (https://aiolimiter.readthedocs.io/en/stable/). Use this, if you want to use `telegram.ext.AIORateLimiter`.
-- `pip install "python-telegram-bot[webhooks]"` installs the tornado~=6.4 (https://www.tornadoweb.org/en/stable/) library. Use this, if you want to use `telegram.ext.Updater.start_webhook` / `telegram.ext.Application.run_webhook`.
-- `pip install "python-telegram-bot[callback-data]"` installs the cachetools>=5.3.3,<5.6.0 (https://cachetools.readthedocs.io/en/latest/) library. Use this, if you want to use arbitrary callback_data (https://github.com/python-telegram-bot/python-telegram-bot/wiki/Arbitrary-callback_data).
-- `pip install "python-telegram-bot[job-queue]"` installs the APScheduler>=3.10.4,<3.12.0 (https://apscheduler.readthedocs.io/en/3.x/) library. Use this, if you want to use the `telegram.ext.JobQueue`.
+- `pip install "python-telegram-bot[passport]"` installs the cryptography>=39.0.1
+  (https://cryptography.io/en/stable) library. Use this, if you want to use Telegram Passport
+  related functionality.
+- `pip install "python-telegram-bot[socks]"` installs httpx[socks]
+  (https://www.python-httpx.org/#dependencies). Use this, if you want to work behind a Socks5
+  server.
+- `pip install "python-telegram-bot[http2]"` installs httpx[http2]
+  (https://www.python-httpx.org/#dependencies). Use this, if you want to use HTTP/2.
+- `pip install "python-telegram-bot[rate-limiter]"` installs aiolimiter~=1.1,\<1.3
+  (https://aiolimiter.readthedocs.io/en/stable/). Use this, if you want to use
+  `telegram.ext.AIORateLimiter`.
+- `pip install "python-telegram-bot[webhooks]"` installs the tornado~=6.4
+  (https://www.tornadoweb.org/en/stable/) library. Use this, if you want to use
+  `telegram.ext.Updater.start_webhook` / `telegram.ext.Application.run_webhook`.
+- `pip install "python-telegram-bot[callback-data]"` installs the cachetools>=5.3.3,\<5.6.0
+  (https://cachetools.readthedocs.io/en/latest/) library. Use this, if you want to use arbitrary
+  callback_data
+  (https://github.com/python-telegram-bot/python-telegram-bot/wiki/Arbitrary-callback_data).
+- `pip install "python-telegram-bot[job-queue]"` installs the APScheduler>=3.10.4,\<3.12.0
+  (https://apscheduler.readthedocs.io/en/3.x/) library. Use this, if you want to use the
+  `telegram.ext.JobQueue`.
 
-To install multiple optional dependencies, separate them by commas, e.g. `pip install "python-telegram-bot[socks,webhooks]"`.
+To install multiple optional dependencies, separate them by commas, e.g.
+`pip install "python-telegram-bot[socks,webhooks]"`.
 
 Additionally, two shortcuts are provided:
 
 - `pip install "python-telegram-bot[all]"` installs all optional dependencies.
-- `pip install "python-telegram-bot[ext]"` installs all optional dependencies that are related to `telegram.ext` , i.e. `[rate-limiter, webhooks, callback-data, job-queue]`.
+- `pip install "python-telegram-bot[ext]"` installs all optional dependencies that are related to
+  `telegram.ext` , i.e. `[rate-limiter, webhooks, callback-data, job-queue]`.
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 ## Working with PTB
 
 Once you have installed the library, you can begin working with it - so let’s get started!
 
----
+______________________________________________________________________
 
 ### Quick Start
 
-Our Wiki contains an Introduction to the API (https://github.com/python-telegram-bot/python-telegram-bot/wiki/Introduction-to-the-API) explaining how the pure Bot API can be accessed via `python-telegram-bot`.
-Moreover, the Tutorial: Your first Bot (https://github.com/python-telegram-bot/python-telegram-bot/wiki/Extensions---Your-first-Bot) gives an introduction on how chatbots can be easily programmed with the help of the `telegram.ext` module.
+Our Wiki contains an Introduction to the API
+(https://github.com/python-telegram-bot/python-telegram-bot/wiki/Introduction-to-the-API) explaining
+how the pure Bot API can be accessed via `python-telegram-bot`. Moreover, the Tutorial: Your first
+Bot (https://github.com/python-telegram-bot/python-telegram-bot/wiki/Extensions---Your-first-Bot)
+gives an introduction on how chatbots can be easily programmed with the help of the `telegram.ext`
+module.
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 ### Resources
 
-- The package documentation (https://docs.python-telegram-bot.org/) is the technical reference for `python-telegram-bot`.
-It contains descriptions of all available classes, modules, methods and arguments as well as the changelog (https://docs.python-telegram-bot.org/changelog.html).
+- The package documentation (https://docs.python-telegram-bot.org/) is the technical reference for
+  `python-telegram-bot`. It contains descriptions of all available classes, modules, methods and
+  arguments as well as the changelog (https://docs.python-telegram-bot.org/changelog.html).
 
-- The wiki (https://github.com/python-telegram-bot/python-telegram-bot/wiki/) is home to number of more elaborate introductions of the different features of `python-telegram-bot` and other useful resources that go beyond the technical documentation.
-- Our examples section (https://docs.python-telegram-bot.org/examples.html) contains several examples that showcase the different features of both the Bot API and `python-telegram-bot`.
-Even if it is not your approach for learning, please take a look at `echobot.py`. It is the de facto base for most of the bots out there.
-The code for these examples is released to the public domain, so you can start by grabbing the code and building on top of it.
+- The wiki (https://github.com/python-telegram-bot/python-telegram-bot/wiki/) is home to number of
+  more elaborate introductions of the different features of `python-telegram-bot` and other useful
+  resources that go beyond the technical documentation.
 
-- The official Telegram Bot API documentation (https://core.telegram.org/bots/api) is of course always worth a read.
+- Our examples section (https://docs.python-telegram-bot.org/examples.html) contains several
+  examples that showcase the different features of both the Bot API and `python-telegram-bot`. Even
+  if it is not your approach for learning, please take a look at `echobot.py`. It is the de facto
+  base for most of the bots out there. The code for these examples is released to the public domain,
+  so you can start by grabbing the code and building on top of it.
 
----
+- The official Telegram Bot API documentation (https://core.telegram.org/bots/api) is of course
+  always worth a read.
 
----
+______________________________________________________________________
+
+______________________________________________________________________
 
 ### Getting help
 
-If the resources mentioned above don’t answer your questions or simply overwhelm you, there are several ways of getting help.
+If the resources mentioned above don’t answer your questions or simply overwhelm you, there are
+several ways of getting help.
 
-1. We have a vibrant community of developers helping each other in our Telegram group (https://telegram.me/pythontelegrambotgroup). Join us! Asking a question here is often the quickest way to get a pointer in the right direction.
-2. Ask questions by opening a discussion (https://github.com/python-telegram-bot/python-telegram-bot/discussions/new).
-3. You can even ask for help on Stack Overflow (https://stackoverflow.com/questions/tagged/python-telegram-bot) using the python-telegram-bot tag (https://stackoverflow.com/questions/tagged/python-telegram-bot).
+1. We have a vibrant community of developers helping each other in our Telegram group
+   (https://telegram.me/pythontelegrambotgroup). Join us! Asking a question here is often the
+   quickest way to get a pointer in the right direction.
+2. Ask questions by opening a discussion
+   (https://github.com/python-telegram-bot/python-telegram-bot/discussions/new).
+3. You can even ask for help on Stack Overflow
+   (https://stackoverflow.com/questions/tagged/python-telegram-bot) using the python-telegram-bot
+   tag (https://stackoverflow.com/questions/tagged/python-telegram-bot).
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 ### Concurrency
 
-Since v20.0, `python-telegram-bot` is built on top of Pythons `asyncio` module.
-Because `asyncio` is in general single-threaded, `python-telegram-bot` does currently not aim to be thread-safe.
-Noteworthy parts of `python-telegram-bots` API that are likely to cause issues (e.g. race conditions) when used in a multi-threaded setting include:
+Since v20.0, `python-telegram-bot` is built on top of Pythons `asyncio` module. Because `asyncio` is
+in general single-threaded, `python-telegram-bot` does currently not aim to be thread-safe.
+Noteworthy parts of `python-telegram-bots` API that are likely to cause issues (e.g. race
+conditions) when used in a multi-threaded setting include:
 
 - `telegram.ext.Application/Updater.update_queue`
 - `telegram.ext.ConversationHandler.check/handle_update`
 - `telegram.ext.CallbackDataCache`
 - `telegram.ext.BasePersistence`
-- all classes in the `telegram.ext.filters` module that allow to add/remove allowed users/chats at runtime
+- all classes in the `telegram.ext.filters` module that allow to add/remove allowed users/chats at
+  runtime
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 ## Contributing
 
-Contributions of all sizes are welcome.
-Please review our contribution guidelines (https://github.com/python-telegram-bot/python-telegram-bot/blob/master/.github/CONTRIBUTING.rst) to get started.
-You can also help by reporting bugs or feature requests (https://github.com/python-telegram-bot/python-telegram-bot/issues/new/choose).
+Contributions of all sizes are welcome. Please review our contribution guidelines
+(https://github.com/python-telegram-bot/python-telegram-bot/blob/master/.github/CONTRIBUTING.rst) to
+get started. You can also help by reporting bugs or feature requests
+(https://github.com/python-telegram-bot/python-telegram-bot/issues/new/choose).
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 ## Donating
 
-Occasionally we are asked if we accept donations to support the development.
-While we appreciate the thought, maintaining PTB is our hobby, and we have almost no running costs for it. We therefore have nothing set up to accept donations.
-If you still want to donate, we kindly ask you to donate to another open source project/initiative of your choice instead.
+Occasionally we are asked if we accept donations to support the development. While we appreciate the
+thought, maintaining PTB is our hobby, and we have almost no running costs for it. We therefore have
+nothing set up to accept donations. If you still want to donate, we kindly ask you to donate to
+another open source project/initiative of your choice instead.
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 ## License
 
-You may copy, distribute and modify the software provided that modifications are described and licensed for free under LGPL-3 (https://www.gnu.org/licenses/lgpl-3.0.html).
-Derivative works (including modifications or anything statically linked to the library) can only be redistributed under LGPL-3, but applications that use the library don’t have to be.
+You may copy, distribute and modify the software provided that modifications are described and
+licensed for free under LGPL-3 (https://www.gnu.org/licenses/lgpl-3.0.html). Derivative works
+(including modifications or anything statically linked to the library) can only be redistributed
+under LGPL-3, but applications that use the library don’t have to be.
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # arbitrarycallbackdatabot.py
 
@@ -347,9 +398,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # chatmemberbot.py
 
@@ -531,9 +582,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # contexttypesbot.py
 
@@ -678,9 +729,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # conversationbot2.py
 
@@ -835,15 +886,15 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
 ## State Diagram
 
 (State Diagram describing the conversation flow follows)
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # conversationbot.py
 
@@ -1009,32 +1060,35 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
 ## State Diagram
 
 (State Diagram describing the conversation flow follows)
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # customwebhookbot.py
 
-This example is available for different web frameworks.
-You can select your preferred framework by opening one of the tabs above the code example.
+This example is available for different web frameworks. You can select your preferred framework by
+opening one of the tabs above the code example.
 
 Hint
 
-The following examples show how different Python web frameworks can be used alongside PTB.
-This can be useful for two use cases:
+The following examples show how different Python web frameworks can be used alongside PTB. This can
+be useful for two use cases:
 
 1. For extending the functionality of your existing bot to handling updates of external services
-2. For extending the functionality of your exisiting web application to also include chat bot functionality
+2. For extending the functionality of your exisiting web application to also include chat bot
+   functionality
 
-How the PTB and web framework components of the examples below are viewed surely depends on which use case one has in mind.
-We are fully aware that a combination of PTB with web frameworks will always mean finding a tradeoff between usability and best practices for both PTB and the web framework and these examples are certainly far from optimal solutions.
-Please understand them as starting points and use your expertise of the web framework of your choosing to build up on them.
+How the PTB and web framework components of the examples below are viewed surely depends on which
+use case one has in mind. We are fully aware that a combination of PTB with web frameworks will
+always mean finding a tradeoff between usability and best practices for both PTB and the web
+framework and these examples are certainly far from optimal solutions. Please understand them as
+starting points and use your expertise of the web framework of your choosing to build up on them.
 You are of course also very welcome to help improve these examples!
 
 starlette
@@ -1215,6 +1269,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 
 ```
+
 flask
 
 ```python
@@ -1386,6 +1441,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 
 ```
+
 quart
 
 ```python
@@ -1558,6 +1614,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 
 ```
+
 Django
 
 ```python
@@ -1736,9 +1793,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # deeplinking.py
 
@@ -1887,9 +1944,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # echobot.py
 
@@ -1965,9 +2022,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # errorhandlerbot.py
 
@@ -2059,9 +2116,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # inlinebot.py
 
@@ -2162,9 +2219,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # inlinekeyboard2.py
 
@@ -2367,9 +2424,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # inlinekeyboard.py
 
@@ -2443,9 +2500,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # nestedconversationbot.py
 
@@ -2832,32 +2889,35 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
 ## State Diagram
 
 (State Diagram describing the conversation flow follows)
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # passportbot.py
 
-This example is available for different web frameworks.
-You can select your preferred framework by opening one of the tabs above the code example.
+This example is available for different web frameworks. You can select your preferred framework by
+opening one of the tabs above the code example.
 
 Hint
 
-The following examples show how different Python web frameworks can be used alongside PTB.
-This can be useful for two use cases:
+The following examples show how different Python web frameworks can be used alongside PTB. This can
+be useful for two use cases:
 
 1. For extending the functionality of your existing bot to handling updates of external services
-2. For extending the functionality of your exisiting web application to also include chat bot functionality
+2. For extending the functionality of your exisiting web application to also include chat bot
+   functionality
 
-How the PTB and web framework components of the examples below are viewed surely depends on which use case one has in mind.
-We are fully aware that a combination of PTB with web frameworks will always mean finding a tradeoff between usability and best practices for both PTB and the web framework and these examples are certainly far from optimal solutions.
-Please understand them as starting points and use your expertise of the web framework of your choosing to build up on them.
+How the PTB and web framework components of the examples below are viewed surely depends on which
+use case one has in mind. We are fully aware that a combination of PTB with web frameworks will
+always mean finding a tradeoff between usability and best practices for both PTB and the web
+framework and these examples are certainly far from optimal solutions. Please understand them as
+starting points and use your expertise of the web framework of your choosing to build up on them.
 You are of course also very welcome to help improve these examples!
 
 starlette
@@ -3038,6 +3098,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 
 ```
+
 flask
 
 ```python
@@ -3209,6 +3270,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 
 ```
+
 quart
 
 ```python
@@ -3381,6 +3443,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 
 ```
+
 Django
 
 ```python
@@ -3559,9 +3622,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # deeplinking.py
 
@@ -3710,9 +3773,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # echobot.py
 
@@ -3788,9 +3851,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # errorhandlerbot.py
 
@@ -3882,9 +3945,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # inlinebot.py
 
@@ -3985,9 +4048,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # inlinekeyboard2.py
 
@@ -4174,9 +4237,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # inlinekeyboard.py
 
@@ -4250,9 +4313,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # nestedconversationbot.py
 
@@ -4639,15 +4702,15 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
 ## State Diagram
 
 (State Diagram describing the conversation flow follows)
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # passportbot.py
 
@@ -4779,7 +4842,7 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
 ## HTML Page
 
@@ -4822,9 +4885,9 @@ Telegram.Passport.createAuthButton('telegram_passport_auth', {
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # paymentbot.py
 
@@ -4993,365 +5056,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
-
-# persistentconversationbot.py
-
-```python
-#!/usr/bin/env python
-
-# pylint: disable=unused-argument
-# This program is dedicated to the public domain under the CC0 license.
-
-"""
-First, a few callback functions are defined. Then, those functions are passed to
-the Application and registered at their respective places.
-Then, the bot is started and runs until we press Ctrl-C on the command line.
-
-Usage:
-Example of a bot-user conversation using ConversationHandler.
-Send /start to initiate the conversation.
-Press Ctrl-C on the command line or send a signal to the process to stop the
-bot.
-"""
-
-import logging
-
-from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-    ConversationHandler,
-    MessageHandler,
-    PicklePersistence,
-    filters,
-)
-
-# Enable logging
-logging.basicConfig(
-    format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
-)
-
-# set higher logging level for httpx to avoid all GET and POST requests being logged
-logging.getLogger("httpx").setLevel(logging.WARNING)
-
-logger = logging.getLogger(__name__)
-
-CHOOSING, TYPING_REPLY, TYPING_CHOICE = range(3)
-
-reply_keyboard = [
-    ["Age", "Favourite colour"],
-    ["Number of siblings", "Something else..."],
-    ["Done"],
-]
-markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
-
-def facts_to_str(user_data: dict[str, str]) -> str:
-    """Helper function for formatting the gathered user info."""
-    facts = [f" {key} - {value} " for key, value in user_data.items()]
-    return " \n ".join(facts).join([" \n ", " \n "])
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Start the conversation, display any stored data and ask user for input."""
-    reply_text = "Hi! My name is Doctor Botter."
-    if context.user_data:
-        reply_text += (
-            f" You already told me your {', '.join(context.user_data.keys())}. Why don't you "
-            "tell me something more about yourself? Or change anything I already know."
-        )
-    else:
-        reply_text += (
-            " I will hold a more complex conversation with you. Why don't you tell me "
-            "something about yourself?"
-        )
-    await update.message.reply_text(reply_text, reply_markup=markup)
-
-    return CHOOSING
-
-async def regular_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Ask the user for info about the selected predefined choice."""
-    text = update.message.text.lower()
-    context.user_data["choice"] = text
-    if context.user_data.get(text):
-        reply_text = (
-            f"Your {text}? I already know the following about that: {context.user_data[text]} "
-        )
-    else:
-        reply_text = f"Your {text}? Yes, I would love to hear about that!"
-    await update.message.reply_text(reply_text)
-
-    return TYPING_REPLY
-
-async def custom_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Ask the user for a description of a custom category."""
-    await update.message.reply_text(
-        'Alright, please send me the category first, for example "Most impressive skill"'
-    )
-
-    return TYPING_CHOICE
-
-async def received_information(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Store info provided by user and ask for the next category."""
-    text = update.message.text
-    category = context.user_data["choice"]
-    context.user_data[category] = text.lower()
-    del context.user_data["choice"]
-
-    await update.message.reply_text(
-        "Neat! Just so you know, this is what you already told me:"
-        f" {facts_to_str(context.user_data)} "
-        "You can tell me more, or change your opinion on something.",
-        reply_markup=markup,
-    )
-
-    return CHOOSING
-
-async def show_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Display the gathered info."""
-    await update.message.reply_text(
-        f"This is what you already told me: {facts_to_str(context.user_data)} "
-    )
-
-async def done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Display the gathered info and end the conversation."""
-    if "choice" in context.user_data:
-        del context.user_data["choice"]
-
-    await update.message.reply_text(
-        f"I learned these facts about you: {facts_to_str(context.user_data)} Until next time!",
-        reply_markup=ReplyKeyboardRemove(),
-    )
-    return ConversationHandler.END
-
-def main() -> None:
-    """Run the bot."""
-    # Create the Application and pass it your bot's token.
-    persistence = PicklePersistence(filepath="conversationbot")
-    application = Application.builder().token("TOKEN").persistence(persistence).build()
-
-    # Add conversation handler with the states CHOOSING, TYPING_CHOICE and TYPING_REPLY
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            CHOOSING: [
-                MessageHandler(
-                    filters.Regex("^(Age|Favourite colour|Number of siblings)$"), regular_choice
-                ),
-                MessageHandler(filters.Regex("^Something else...$"), custom_choice),
-            ],
-            TYPING_CHOICE: [
-                MessageHandler(
-                    filters.TEXT & ~(filters.COMMAND | filters.Regex("^Done$")), regular_choice
-                )
-            ],
-            TYPING_REPLY: [
-                MessageHandler(
-                    filters.TEXT & ~(filters.COMMAND | filters.Regex("^Done$")),
-                    received_information,
-                )
-            ],
-        },
-        fallbacks=[MessageHandler(filters.Regex("^Done$"), done)],
-        name="my_conversation",
-        persistent=True,
-    )
-
-    application.add_handler(conv_handler)
-
-    show_data_handler = CommandHandler("show_data", show_data)
-    application.add_handler(show_data_handler)
-
-    # Run the bot until the user presses Ctrl-C
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == "__main__":
-    main()
-
-```
-
----
-
----
-
-# pollbot.py
-
-```python
-#!/usr/bin/env python
-
-# pylint: disable=unused-argument
-# This program is dedicated to the public domain under the CC0 license.
-
-"""
-Basic example for a bot that works with polls. Only 3 people are allowed to interact with each
-poll/quiz the bot generates. The preview command generates a closed poll/quiz, exactly like the
-one the user sends the bot
-"""
-import logging
-
-from telegram import (
-    KeyboardButton,
-    KeyboardButtonPollType,
-    Poll,
-    ReplyKeyboardMarkup,
-    ReplyKeyboardRemove,
-    Update,
-)
-from telegram.constants import ParseMode
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    PollAnswerHandler,
-    PollHandler,
-    filters,
-)
-
-# Enable logging
-logging.basicConfig(
-    format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
-)
-
-# set higher logging level for httpx to avoid all GET and POST requests being logged
-logging.getLogger("httpx").setLevel(logging.WARNING)
-
-logger = logging.getLogger(__name__)
-
-TOTAL_VOTER_COUNT = 3
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Inform user about what this bot can do"""
-    await update.message.reply_text(
-        "Please select /poll to get a Poll, /quiz to get a Quiz or /preview"
-        " to generate a preview for your poll"
-    )
-
-async def poll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Sends a predefined poll"""
-    questions = ["Good", "Really good", "Fantastic", "Great"]
-    message = await context.bot.send_poll(
-        update.effective_chat.id,
-        "How are you?",
-        questions,
-        is_anonymous=False,
-        allows_multiple_answers=True,
-    )
-    # Save some info about the poll the bot_data for later use in receive_poll_answer
-    payload = {
-        message.poll.id: {
-            "questions": questions,
-            "message_id": message.message_id,
-            "chat_id": update.effective_chat.id,
-            "answers": 0,
-        }
-    }
-    context.bot_data.update(payload)
-
-async def receive_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Summarize a users poll vote"""
-    answer = update.poll_answer
-    answered_poll = context.bot_data[answer.poll_id]
-    try:
-        questions = answered_poll["questions"]
-        # this means this poll answer update is from an old poll, we can't do our answering then
-    except KeyError:
-        return
-    selected_options = answer.option_ids
-    answer_string = ""
-    for question_id in selected_options:
-        if question_id != selected_options[-1]:
-            answer_string += questions[question_id] + " and "
-        else:
-            answer_string += questions[question_id]
-    await context.bot.send_message(
-        answered_poll["chat_id"],
-        f" {update.effective_user.mention_html()} feels {answer_string} !",
-        parse_mode=ParseMode.HTML,
-    )
-    answered_poll["answers"] += 1
-    # Close poll after three participants voted
-    if answered_poll["answers"] == TOTAL_VOTER_COUNT:
-        await context.bot.stop_poll(answered_poll["chat_id"], answered_poll["message_id"])
-
-async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send a predefined poll"""
-    questions = ["1", "2", "4", "20"]
-    message = await update.effective_message.reply_poll(
-        "How many eggs do you need for a cake?", questions, type=Poll.QUIZ, correct_option_id=2
-    )
-    # Save some info about the poll the bot_data for later use in receive_quiz_answer
-    payload = {
-        message.poll.id: {"chat_id": update.effective_chat.id, "message_id": message.message_id}
-    }
-    context.bot_data.update(payload)
-
-async def receive_quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Close quiz after three participants took it"""
-    # the bot can receive closed poll updates we don't care about
-    if update.poll.is_closed:
-        return
-    if update.poll.total_voter_count == TOTAL_VOTER_COUNT:
-        try:
-            quiz_data = context.bot_data[update.poll.id]
-            # this means this poll answer update is from an old poll, we can't stop it then
-        except KeyError:
-            return
-        await context.bot.stop_poll(quiz_data["chat_id"], quiz_data["message_id"])
-
-async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Ask user to create a poll and display a preview of it"""
-    # using this without a type lets the user chooses what he wants (quiz or poll)
-    button = [[KeyboardButton("Press me!", request_poll=KeyboardButtonPollType())]]
-    message = "Press the button to let the bot generate a preview for your poll"
-    # using one_time_keyboard to hide the keyboard
-    await update.effective_message.reply_text(
-        message, reply_markup=ReplyKeyboardMarkup(button, one_time_keyboard=True)
-    )
-
-async def receive_poll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """On receiving polls, reply to it by a closed poll copying the received poll"""
-    actual_poll = update.effective_message.poll
-    # Only need to set the question and options, since all other parameters don't matter for
-    # a closed poll
-    await update.effective_message.reply_poll(
-        question=actual_poll.question,
-        options=[o.text for o in actual_poll.options],
-        # with is_closed true, the poll/quiz is immediately closed
-        is_closed=True,
-        reply_markup=ReplyKeyboardRemove(),
-    )
-
-async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Display a help message"""
-    await update.message.reply_text("Use /quiz, /poll or /preview to test this bot.")
-
-def main() -> None:
-    """Run bot."""
-    # Create the Application and pass it your bot's token.
-    application = Application.builder().token("TOKEN").build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("poll", poll))
-    application.add_handler(CommandHandler("quiz", quiz))
-    application.add_handler(CommandHandler("preview", preview))
-    application.add_handler(CommandHandler("help", help_handler))
-    application.add_handler(MessageHandler(filters.POLL, receive_poll))
-    application.add_handler(PollAnswerHandler(receive_poll_answer))
-    application.add_handler(PollHandler(receive_quiz_answer))
-
-    # Run the bot until the user presses Ctrl-C
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == "__main__":
-    main()
-
-```
-
----
-
----
+______________________________________________________________________
 
 # persistentconversationbot.py
 
@@ -5528,9 +5235,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # pollbot.py
 
@@ -5705,9 +5412,365 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
+
+# persistentconversationbot.py
+
+```python
+#!/usr/bin/env python
+
+# pylint: disable=unused-argument
+# This program is dedicated to the public domain under the CC0 license.
+
+"""
+First, a few callback functions are defined. Then, those functions are passed to
+the Application and registered at their respective places.
+Then, the bot is started and runs until we press Ctrl-C on the command line.
+
+Usage:
+Example of a bot-user conversation using ConversationHandler.
+Send /start to initiate the conversation.
+Press Ctrl-C on the command line or send a signal to the process to stop the
+bot.
+"""
+
+import logging
+
+from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    PicklePersistence,
+    filters,
+)
+
+# Enable logging
+logging.basicConfig(
+    format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
+)
+
+# set higher logging level for httpx to avoid all GET and POST requests being logged
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+logger = logging.getLogger(__name__)
+
+CHOOSING, TYPING_REPLY, TYPING_CHOICE = range(3)
+
+reply_keyboard = [
+    ["Age", "Favourite colour"],
+    ["Number of siblings", "Something else..."],
+    ["Done"],
+]
+markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+
+def facts_to_str(user_data: dict[str, str]) -> str:
+    """Helper function for formatting the gathered user info."""
+    facts = [f" {key} - {value} " for key, value in user_data.items()]
+    return " \n ".join(facts).join([" \n ", " \n "])
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start the conversation, display any stored data and ask user for input."""
+    reply_text = "Hi! My name is Doctor Botter."
+    if context.user_data:
+        reply_text += (
+            f" You already told me your {', '.join(context.user_data.keys())}. Why don't you "
+            "tell me something more about yourself? Or change anything I already know."
+        )
+    else:
+        reply_text += (
+            " I will hold a more complex conversation with you. Why don't you tell me "
+            "something about yourself?"
+        )
+    await update.message.reply_text(reply_text, reply_markup=markup)
+
+    return CHOOSING
+
+async def regular_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Ask the user for info about the selected predefined choice."""
+    text = update.message.text.lower()
+    context.user_data["choice"] = text
+    if context.user_data.get(text):
+        reply_text = (
+            f"Your {text}? I already know the following about that: {context.user_data[text]} "
+        )
+    else:
+        reply_text = f"Your {text}? Yes, I would love to hear about that!"
+    await update.message.reply_text(reply_text)
+
+    return TYPING_REPLY
+
+async def custom_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Ask the user for a description of a custom category."""
+    await update.message.reply_text(
+        'Alright, please send me the category first, for example "Most impressive skill"'
+    )
+
+    return TYPING_CHOICE
+
+async def received_information(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Store info provided by user and ask for the next category."""
+    text = update.message.text
+    category = context.user_data["choice"]
+    context.user_data[category] = text.lower()
+    del context.user_data["choice"]
+
+    await update.message.reply_text(
+        "Neat! Just so you know, this is what you already told me:"
+        f" {facts_to_str(context.user_data)} "
+        "You can tell me more, or change your opinion on something.",
+        reply_markup=markup,
+    )
+
+    return CHOOSING
+
+async def show_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Display the gathered info."""
+    await update.message.reply_text(
+        f"This is what you already told me: {facts_to_str(context.user_data)} "
+    )
+
+async def done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Display the gathered info and end the conversation."""
+    if "choice" in context.user_data:
+        del context.user_data["choice"]
+
+    await update.message.reply_text(
+        f"I learned these facts about you: {facts_to_str(context.user_data)} Until next time!",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    return ConversationHandler.END
+
+def main() -> None:
+    """Run the bot."""
+    # Create the Application and pass it your bot's token.
+    persistence = PicklePersistence(filepath="conversationbot")
+    application = Application.builder().token("TOKEN").persistence(persistence).build()
+
+    # Add conversation handler with the states CHOOSING, TYPING_CHOICE and TYPING_REPLY
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            CHOOSING: [
+                MessageHandler(
+                    filters.Regex("^(Age|Favourite colour|Number of siblings)$"), regular_choice
+                ),
+                MessageHandler(filters.Regex("^Something else...$"), custom_choice),
+            ],
+            TYPING_CHOICE: [
+                MessageHandler(
+                    filters.TEXT & ~(filters.COMMAND | filters.Regex("^Done$")), regular_choice
+                )
+            ],
+            TYPING_REPLY: [
+                MessageHandler(
+                    filters.TEXT & ~(filters.COMMAND | filters.Regex("^Done$")),
+                    received_information,
+                )
+            ],
+        },
+        fallbacks=[MessageHandler(filters.Regex("^Done$"), done)],
+        name="my_conversation",
+        persistent=True,
+    )
+
+    application.add_handler(conv_handler)
+
+    show_data_handler = CommandHandler("show_data", show_data)
+    application.add_handler(show_data_handler)
+
+    # Run the bot until the user presses Ctrl-C
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == "__main__":
+    main()
+
+```
+
+______________________________________________________________________
+
+______________________________________________________________________
+
+# pollbot.py
+
+```python
+#!/usr/bin/env python
+
+# pylint: disable=unused-argument
+# This program is dedicated to the public domain under the CC0 license.
+
+"""
+Basic example for a bot that works with polls. Only 3 people are allowed to interact with each
+poll/quiz the bot generates. The preview command generates a closed poll/quiz, exactly like the
+one the user sends the bot
+"""
+import logging
+
+from telegram import (
+    KeyboardButton,
+    KeyboardButtonPollType,
+    Poll,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    Update,
+)
+from telegram.constants import ParseMode
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    PollAnswerHandler,
+    PollHandler,
+    filters,
+)
+
+# Enable logging
+logging.basicConfig(
+    format=" %(asctime)s - %(name)s - %(levelname)s - %(message)s ", level=logging.INFO
+)
+
+# set higher logging level for httpx to avoid all GET and POST requests being logged
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+logger = logging.getLogger(__name__)
+
+TOTAL_VOTER_COUNT = 3
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Inform user about what this bot can do"""
+    await update.message.reply_text(
+        "Please select /poll to get a Poll, /quiz to get a Quiz or /preview"
+        " to generate a preview for your poll"
+    )
+
+async def poll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Sends a predefined poll"""
+    questions = ["Good", "Really good", "Fantastic", "Great"]
+    message = await context.bot.send_poll(
+        update.effective_chat.id,
+        "How are you?",
+        questions,
+        is_anonymous=False,
+        allows_multiple_answers=True,
+    )
+    # Save some info about the poll the bot_data for later use in receive_poll_answer
+    payload = {
+        message.poll.id: {
+            "questions": questions,
+            "message_id": message.message_id,
+            "chat_id": update.effective_chat.id,
+            "answers": 0,
+        }
+    }
+    context.bot_data.update(payload)
+
+async def receive_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Summarize a users poll vote"""
+    answer = update.poll_answer
+    answered_poll = context.bot_data[answer.poll_id]
+    try:
+        questions = answered_poll["questions"]
+        # this means this poll answer update is from an old poll, we can't do our answering then
+    except KeyError:
+        return
+    selected_options = answer.option_ids
+    answer_string = ""
+    for question_id in selected_options:
+        if question_id != selected_options[-1]:
+            answer_string += questions[question_id] + " and "
+        else:
+            answer_string += questions[question_id]
+    await context.bot.send_message(
+        answered_poll["chat_id"],
+        f" {update.effective_user.mention_html()} feels {answer_string} !",
+        parse_mode=ParseMode.HTML,
+    )
+    answered_poll["answers"] += 1
+    # Close poll after three participants voted
+    if answered_poll["answers"] == TOTAL_VOTER_COUNT:
+        await context.bot.stop_poll(answered_poll["chat_id"], answered_poll["message_id"])
+
+async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send a predefined poll"""
+    questions = ["1", "2", "4", "20"]
+    message = await update.effective_message.reply_poll(
+        "How many eggs do you need for a cake?", questions, type=Poll.QUIZ, correct_option_id=2
+    )
+    # Save some info about the poll the bot_data for later use in receive_quiz_answer
+    payload = {
+        message.poll.id: {"chat_id": update.effective_chat.id, "message_id": message.message_id}
+    }
+    context.bot_data.update(payload)
+
+async def receive_quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Close quiz after three participants took it"""
+    # the bot can receive closed poll updates we don't care about
+    if update.poll.is_closed:
+        return
+    if update.poll.total_voter_count == TOTAL_VOTER_COUNT:
+        try:
+            quiz_data = context.bot_data[update.poll.id]
+            # this means this poll answer update is from an old poll, we can't stop it then
+        except KeyError:
+            return
+        await context.bot.stop_poll(quiz_data["chat_id"], quiz_data["message_id"])
+
+async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Ask user to create a poll and display a preview of it"""
+    # using this without a type lets the user chooses what he wants (quiz or poll)
+    button = [[KeyboardButton("Press me!", request_poll=KeyboardButtonPollType())]]
+    message = "Press the button to let the bot generate a preview for your poll"
+    # using one_time_keyboard to hide the keyboard
+    await update.effective_message.reply_text(
+        message, reply_markup=ReplyKeyboardMarkup(button, one_time_keyboard=True)
+    )
+
+async def receive_poll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """On receiving polls, reply to it by a closed poll copying the received poll"""
+    actual_poll = update.effective_message.poll
+    # Only need to set the question and options, since all other parameters don't matter for
+    # a closed poll
+    await update.effective_message.reply_poll(
+        question=actual_poll.question,
+        options=[o.text for o in actual_poll.options],
+        # with is_closed true, the poll/quiz is immediately closed
+        is_closed=True,
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Display a help message"""
+    await update.message.reply_text("Use /quiz, /poll or /preview to test this bot.")
+
+def main() -> None:
+    """Run bot."""
+    # Create the Application and pass it your bot's token.
+    application = Application.builder().token("TOKEN").build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("poll", poll))
+    application.add_handler(CommandHandler("quiz", quiz))
+    application.add_handler(CommandHandler("preview", preview))
+    application.add_handler(CommandHandler("help", help_handler))
+    application.add_handler(MessageHandler(filters.POLL, receive_poll))
+    application.add_handler(PollAnswerHandler(receive_poll_answer))
+    application.add_handler(PollHandler(receive_quiz_answer))
+
+    # Run the bot until the user presses Ctrl-C
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == "__main__":
+    main()
+
+```
+
+______________________________________________________________________
+
+______________________________________________________________________
 
 # rawapibot.py
 
@@ -5782,9 +5845,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # timerbot.py
 
@@ -5894,9 +5957,9 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # webappbot.py
 
@@ -5971,7 +6034,7 @@ if __name__ == "__main__":
 
 ```
 
----
+______________________________________________________________________
 
 ## HTML Page
 
@@ -6018,14 +6081,16 @@ Simple static Telegram WebApp. Does not verify the WebAppInitData, as a bot toke
 
 ```
 
----
+______________________________________________________________________
 
----
+______________________________________________________________________
 
 # Bot
 
-class telegram. Bot ( token, base_url = 'https://api.telegram.org/bot', base_file_url = 'https://api.telegram.org/file/bot', request = None, get_updates_request = None, private_key = None, private_key_password = None, local_mode = False )
-Bases: telegram.TelegramObject, contextlib.AbstractAsyncContextManager
+class telegram. Bot ( token, base_url = 'https://api.telegram.org/bot', base_file_url =
+'https://api.telegram.org/file/bot', request = None, get_updates_request = None, private_key = None,
+private_key_password = None, local_mode = False ) Bases: telegram.TelegramObject,
+contextlib.AbstractAsyncContextManager
 
 This object represents a Telegram Bot.
 
@@ -6041,14 +6106,13 @@ __aenter__() and __aexit__().
 
 Note
 
-- Most bot methods have the argument `api_kwargs` which allows passing arbitrary keywords
-to the Telegram API. This can be used to access new features of the API before they are
-incorporated into PTB. The limitations to this argument are the same as the ones
-described in do_api_request().
+- Most bot methods have the argument `api_kwargs` which allows passing arbitrary keywords to the
+  Telegram API. This can be used to access new features of the API before they are incorporated into
+  PTB. The limitations to this argument are the same as the ones described in do_api_request().
 
-- Bots should not be serialized since if you for e.g. change the bots token, then your
-serialized instance will not reflect that change. Trying to pickle a bot instance will
-raise pickle.PicklingError. Trying to deepcopy a bot instance will raise TypeError.
+- Bots should not be serialized since if you for e.g. change the bots token, then your serialized
+  instance will not reflect that change. Trying to pickle a bot instance will raise
+  pickle.PicklingError. Trying to deepcopy a bot instance will raise TypeError.
 
 Examples
 
@@ -6068,60 +6132,69 @@ Available In
 - telegram.ext.CallbackContext.bot
 - telegram.ext.Updater.bot
 
-Added in version 13.2: Objects of this class are comparable in terms of equality. Two objects of this class are
-considered equal, if their bot is equal.
+Added in version 13.2: Objects of this class are comparable in terms of equality. Two objects of
+this class are considered equal, if their bot is equal.
 
 Changed in version 20.0:
 
-- Removed the deprecated methods `kick_chat_member`, `kickChatMember`, `get_chat_members_count` and `getChatMembersCount`.
+- Removed the deprecated methods `kick_chat_member`, `kickChatMember`, `get_chat_members_count` and
+  `getChatMembersCount`.
+
 - Removed the deprecated property `commands`.
-- Removed the deprecated `defaults` parameter. If you want to use telegram.ext.Defaults, please use the subclass telegram.ext.ExtBot instead.
+
+- Removed the deprecated `defaults` parameter. If you want to use telegram.ext.Defaults, please use
+  the subclass telegram.ext.ExtBot instead.
+
 - Attempting to pickle a bot instance will now raise pickle.PicklingError.
+
 - Attempting to deepcopy a bot instance will now raise TypeError.
-- The following are now keyword-only arguments in Bot methods: `location`, `filename`, `venue`, `contact`, `{read, write, connect, pool}_timeout`, `api_kwargs`. Use a named argument for those,
-and notice that some positional arguments changed position as a result.
 
-- For uploading files, file paths are now always accepted. If local_mode is False, the file contents will be read in binary mode and uploaded. Otherwise,
-the file path will be passed in the file URI scheme.
+- The following are now keyword-only arguments in Bot methods: `location`, `filename`, `venue`,
+  `contact`, `{read, write, connect, pool}_timeout`, `api_kwargs`. Use a named argument for those,
+  and notice that some positional arguments changed position as a result.
 
-Changed in version 20.5: Removed deprecated methods `set_sticker_set_thumb` and `setStickerSetThumb`.
-Use set_sticker_set_thumbnail() and setStickerSetThumbnail() instead.
+- For uploading files, file paths are now always accepted. If local_mode is False, the file contents
+  will be read in binary mode and uploaded. Otherwise, the file path will be passed in the file URI
+  scheme.
+
+Changed in version 20.5: Removed deprecated methods `set_sticker_set_thumb` and
+`setStickerSetThumb`. Use set_sticker_set_thumbnail() and setStickerSetThumbnail() instead.
 
 Parameters:
 
 - token (str) - Bot’s unique authentication token.
-- base_url (str | Callable[[str], str], optional) -
-  Telegram Bot API
-service URL. If the string contains `{token}`, it will be replaced with the bot’s
-token. If a callable is passed, it will be called with the bot’s token as the only
-argument and must return the base URL. Otherwise, the token will be appended to the
-string. Defaults to `"https://api.telegram.org/bot"`.
-  Tip
-  Customizing the base URL can be used to run a bot against Local Bot API Server or using Telegrams test environment.
-  Example: `"https://api.telegram.org/bot{token}/test"`
-  Changed in version 21.11: Supports callable input and string formatting.
 
-- base_file_url (str, optional) -
-  Telegram Bot API file URL.
-If the string contains `{token}`, it will be replaced with the bot’s
-token. If a callable is passed, it will be called with the bot’s token as the only
-argument and must return the base URL. Otherwise, the token will be appended to the
-string. Defaults to `"https://api.telegram.org/bot"`.
-  Tip
-  Customizing the base URL can be used to run a bot against Local Bot API Server or using Telegrams test environment.
-  Example: `"https://api.telegram.org/file/bot{token}/test"`
-  Changed in version 21.11: Supports callable input and string formatting.
+- base_url (str | Callable\[[str], str\], optional) - Telegram Bot API service URL. If the string
+  contains `{token}`, it will be replaced with the bot’s token. If a callable is passed, it will be
+  called with the bot’s token as the only argument and must return the base URL. Otherwise, the
+  token will be appended to the string. Defaults to `"https://api.telegram.org/bot"`. Tip
+  Customizing the base URL can be used to run a bot against Local Bot API Server or using Telegrams
+  test environment. Example: `"https://api.telegram.org/bot{token}/test"` Changed in version 21.11:
+  Supports callable input and string formatting.
 
-- request (telegram.request.BaseRequest, optional) - Pre initialized telegram.request.BaseRequest instances. Will be used for all bot methods *except*for get_updates(). If not passed, an instance of telegram.request.HTTPXRequest will be used.
-- get_updates_request (telegram.request.BaseRequest, optional) - Pre initialized telegram.request.BaseRequest instances. Will be used exclusively for get_updates(). If not passed, an instance of telegram.request.HTTPXRequest will be used.
+- base_file_url (str, optional) - Telegram Bot API file URL. If the string contains `{token}`, it
+  will be replaced with the bot’s token. If a callable is passed, it will be called with the bot’s
+  token as the only argument and must return the base URL. Otherwise, the token will be appended to
+  the string. Defaults to `"https://api.telegram.org/bot"`. Tip Customizing the base URL can be used
+  to run a bot against Local Bot API Server or using Telegrams test environment. Example:
+  `"https://api.telegram.org/file/bot{token}/test"` Changed in version 21.11: Supports callable
+  input and string formatting.
+
+- request (telegram.request.BaseRequest, optional) - Pre initialized telegram.request.BaseRequest
+  instances. Will be used for all bot methods *except*for get_updates(). If not passed, an instance
+  of telegram.request.HTTPXRequest will be used.
+
+- get_updates_request (telegram.request.BaseRequest, optional) - Pre initialized
+  telegram.request.BaseRequest instances. Will be used exclusively for get_updates(). If not passed,
+  an instance of telegram.request.HTTPXRequest will be used.
+
 - private_key (bytes, optional) - Private key for decryption of telegram passport data.
+
 - private_key_password (bytes, optional) - Password for above private key.
-- local_mode (bool, optional) -
-  Set to True, if the base_url is
-the URI of a Local Bot API Server that runs with the `--local` flag. Currently, the only effect of
-this is that files are uploaded using their local path in the file URI scheme.
-Defaults to False.
-  Added in version 20.0..
+
+- local_mode (bool, optional) - Set to True, if the base_url is the URI of a Local Bot API Server
+  that runs with the `--local` flag. Currently, the only effect of this is that files are uploaded
+  using their local path in the file URI scheme. Defaults to False. Added in version 20.0..
 
 Since this class has a large number of methods and attributes, below you can find a quick overview.
 
@@ -6214,10 +6287,14 @@ Bot settings
 - set_my_commands() - Used for setting the list of commands
 - delete_my_commands() - Used for deleting the list of commands
 - get_my_commands() - Used for obtaining the list of commands
-- get_my_default_administrator_rights() - Used for obtaining the default administrator rights for the bot
-- set_my_default_administrator_rights() - Used for setting the default administrator rights for the bot
-- get_chat_menu_button() - Used for obtaining the menu button of a private chat or the default menu button
-- set_chat_menu_button() - Used for setting the menu button of a private chat or the default menu button
+- get_my_default_administrator_rights() - Used for obtaining the default administrator rights for
+  the bot
+- set_my_default_administrator_rights() - Used for setting the default administrator rights for the
+  bot
+- get_chat_menu_button() - Used for obtaining the menu button of a private chat or the default menu
+  button
+- set_chat_menu_button() - Used for setting the menu button of a private chat or the default menu
+  button
 - set_my_description() - Used for setting the description of the bot
 - get_my_description() - Used for obtaining the description of the bot
 - set_my_short_description() - Used for setting the short description of the bot
@@ -6240,7 +6317,8 @@ Stickerset management
 - set_sticker_keywords() - Used for setting the keywords of a sticker
 - set_sticker_mask_position() - Used for setting the mask position of a mask sticker
 - set_sticker_set_thumbnail() - Used for setting the thumbnail of a sticker set
-- set_custom_emoji_sticker_set_thumbnail() - Used for setting the thumbnail of a custom emoji sticker set
+- set_custom_emoji_sticker_set_thumbnail() - Used for setting the thumbnail of a custom emoji
+  sticker set
 - get_sticker_set() - Used for getting a sticker set
 - upload_sticker_file() - Used for uploading a sticker file
 - get_custom_emoji_stickers() - Used for getting custom emoji files based on their IDs
@@ -6307,82 +6385,83 @@ Properties
 - supports_inline_queries - Whether the bot supports inline queries
 - token - Bot’s unique authentication token
 
-async __aenter__ ( )
-Asynchronous context manager which initializes the Bot.
+async __aenter__ ( ) Asynchronous context manager which initializes the Bot.
 
 Returns: The initialized Bot instance.
 
-Raises: Exception – If an exception is raised during initialization, shutdown() is called in this case.
+Raises: Exception – If an exception is raised during initialization, shutdown() is called in this
+case.
 
-async __aexit__ ( exc_type, exc_val, exc_tb )
-Asynchronous context manager which shuts down the Bot.
+async __aexit__ ( exc_type, exc_val, exc_tb ) Asynchronous context manager which shuts down the Bot.
 
-__deepcopy__ ( memodict )
-Customizes how copy.deepcopy() processes objects of this type. Bots can not
-be deepcopied and this method will always raise an exception.
+__deepcopy__ ( memodict ) Customizes how copy.deepcopy() processes objects of this type. Bots can
+not be deepcopied and this method will always raise an exception.
 
 Added in version 20.0.
 
 Raises: TypeError –
 
-__eq__ ( other )
-Defines equality condition for the telegram.Bot object.
-Two objects of this class are considered to be equal if their attributes bot are equal.
+__eq__ ( other ) Defines equality condition for the telegram.Bot object. Two objects of this class
+are considered to be equal if their attributes bot are equal.
 
 Returns: True if both attributes bot are equal. False otherwise.
 
-__hash__ ( )
-See telegram.TelegramObject.__hash__()
+__hash__ ( ) See telegram.TelegramObject.__hash__()
 
-__reduce__ ( )
-Customizes how copy.deepcopy() processes objects of this type. Bots can not
-be pickled and this method will always raise an exception.
+__reduce__ ( ) Customizes how copy.deepcopy() processes objects of this type. Bots can not be
+pickled and this method will always raise an exception.
 
 Added in version 20.0.
 
 Raises: pickle.PicklingError –
 
-__repr__ ( )
-Give a string representation of the bot in the form `Bot[token=...]`.
+__repr__ ( ) Give a string representation of the bot in the form `Bot[token=...]`.
 
-As this class doesn’t implement object.__str__(), the default implementation
-will be used, which is equivalent to __repr__().
+As this class doesn’t implement object.__str__(), the default implementation will be used, which is
+equivalent to __repr__().
 
 Returns: str
 
-async addStickerToSet ( user_id, name, sticker, *, read_timeout = None, write_timeout = None, connect_timeout = None, pool_timeout = None, api_kwargs = None )
-Alias for add_sticker_to_set()
+async addStickerToSet ( user_id, name, sticker, \*, read_timeout = None, write_timeout = None,
+connect_timeout = None, pool_timeout = None, api_kwargs = None ) Alias for add_sticker_to_set()
 
-async add_sticker_to_set ( user_id, name, sticker, *, read_timeout = None, write_timeout = None, connect_timeout = None, pool_timeout = None, api_kwargs = None )
-Use this method to add a new sticker to a set created by the bot. The format of the added
-sticker must match the format of the other stickers in the set. Emoji sticker sets can have
-up to 200 stickers. Other
-sticker sets can have up to 120 stickers.
+async add_sticker_to_set ( user_id, name, sticker, \*, read_timeout = None, write_timeout = None,
+connect_timeout = None, pool_timeout = None, api_kwargs = None ) Use this method to add a new
+sticker to a set created by the bot. The format of the added sticker must match the format of the
+other stickers in the set. Emoji sticker sets can have up to 200 stickers. Other sticker sets can
+have up to 120 stickers.
 
-Changed in version 20.2: Since Bot API 6.6, the parameter sticker replace the parameters `png_sticker`, `tgs_sticker`, `webm_sticker`, `emojis`, and `mask_position`.
+Changed in version 20.2: Since Bot API 6.6, the parameter sticker replace the parameters
+`png_sticker`, `tgs_sticker`, `webm_sticker`, `emojis`, and `mask_position`.
 
-Changed in version 20.5: Removed deprecated parameters `png_sticker`, `tgs_sticker`, `webm_sticker`, `emojis`, and `mask_position`.
+Changed in version 20.5: Removed deprecated parameters `png_sticker`, `tgs_sticker`, `webm_sticker`,
+`emojis`, and `mask_position`.
 
 Parameters:
 
 - user_id (int) - User identifier of created sticker set owner.
 - name (str) - Sticker set name.
-- sticker (telegram.InputSticker) -
-  An object with information about the added
-sticker. If exactly the same sticker had already been added to the set, then the
-set isn’t changed.
-  Added in version 20.2.
+- sticker (telegram.InputSticker) - An object with information about the added sticker. If exactly
+  the same sticker had already been added to the set, then the set isn’t changed. Added in version
+  20.2.
 
 Keyword Arguments:
 
-- read_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.read_timeout. Defaults to DEFAULT_NONE.
-- write_timeout (float | None, optional) -
-  Value to pass to telegram.request.BaseRequest.post.write_timeout. By default, `20` seconds are used as write timeout.
-  Changed in version 22.0: The default value changed to DEFAULT_NONE.
+- read_timeout (float | None, optional) - Value to pass to
+  telegram.request.BaseRequest.post.read_timeout. Defaults to DEFAULT_NONE.
 
-- connect_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.connect_timeout. Defaults to DEFAULT_NONE.
-- pool_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.pool_timeout. Defaults to DEFAULT_NONE.
-- api_kwargs (dict, optional) - Arbitrary keyword arguments to be passed to the Telegram API. See do_api_request() for limitations.
+- write_timeout (float | None, optional) - Value to pass to
+  telegram.request.BaseRequest.post.write_timeout. By default, `20` seconds are used as write
+  timeout. Changed in version 22.0: The default value changed to DEFAULT_NONE.
+
+- connect_timeout (float | None, optional) - Value to pass to
+  telegram.request.BaseRequest.post.connect_timeout. Defaults to DEFAULT_NONE.
+
+- pool_timeout (float | None, optional) - Value to pass to
+  telegram.request.BaseRequest.post.pool_timeout. Defaults to DEFAULT_NONE.
+
+- api_kwargs (dict, optional) - Arbitrary keyword arguments to be passed to the Telegram API. See
+  do_api_request() for limitations.
 
 Returns: On success, True is returned.
 
@@ -6390,28 +6469,33 @@ Return type: bool
 
 Raises: telegram.error.TelegramError –
 
-async answerCallbackQuery ( callback_query_id, text = None, show_alert = None, url = None, cache_time = None, *, read_timeout = None, write_timeout = None, connect_timeout = None, pool_timeout = None, api_kwargs = None )
-Alias for answer_callback_query()
+async answerCallbackQuery ( callback_query_id, text = None, show_alert = None, url = None,
+cache_time = None, \*, read_timeout = None, write_timeout = None, connect_timeout = None,
+pool_timeout = None, api_kwargs = None ) Alias for answer_callback_query()
 
-async answerInlineQuery ( inline_query_id, results, cache_time = None, is_personal = None, next_offset = None, button = None, *, current_offset = None, read_timeout = None, write_timeout = None, connect_timeout = None, pool_timeout = None, api_kwargs = None )
-Alias for answer_inline_query()
+async answerInlineQuery ( inline_query_id, results, cache_time = None, is_personal = None,
+next_offset = None, button = None, \*, current_offset = None, read_timeout = None, write_timeout =
+None, connect_timeout = None, pool_timeout = None, api_kwargs = None ) Alias for
+answer_inline_query()
 
-async answerPreCheckoutQuery ( pre_checkout_query_id, ok, error_message = None, *, read_timeout = None, write_timeout = None, connect_timeout = None, pool_timeout = None, api_kwargs = None )
-Alias for answer_pre_checkout_query()
+async answerPreCheckoutQuery ( pre_checkout_query_id, ok, error_message = None, \*, read_timeout =
+None, write_timeout = None, connect_timeout = None, pool_timeout = None, api_kwargs = None ) Alias
+for answer_pre_checkout_query()
 
-async answerShippingQuery ( shipping_query_id, ok, shipping_options = None, error_message = None, *, read_timeout = None, write_timeout = None, connect_timeout = None, pool_timeout = None, api_kwargs = None )
-Alias for answer_shipping_query()
+async answerShippingQuery ( shipping_query_id, ok, shipping_options = None, error_message = None,
+\*, read_timeout = None, write_timeout = None, connect_timeout = None, pool_timeout = None,
+api_kwargs = None ) Alias for answer_shipping_query()
 
-async answerWebAppQuery ( web_app_query_id, result, *, read_timeout = None, write_timeout = None, connect_timeout = None, pool_timeout = None, api_kwargs = None )
-Alias for answer_web_app_query()
+async answerWebAppQuery ( web_app_query_id, result, \*, read_timeout = None, write_timeout = None,
+connect_timeout = None, pool_timeout = None, api_kwargs = None ) Alias for answer_web_app_query()
 
-async answer_callback_query ( callback_query_id, text = None, show_alert = None, url = None, cache_time = None, *, read_timeout = None, write_timeout = None, connect_timeout = None, pool_timeout = None, api_kwargs = None )
-Use this method to send answers to callback queries sent from inline keyboards. The answer
-will be displayed to the user as a notification at the top of the chat screen or as an
-alert.
-Alternatively, the user can be redirected to the specified Game URL. For this option to
-work, you must first create a game for your bot via @BotFather and accept the terms. Otherwise, you may use links like t.me/your_bot?start=XXXX that open
-your bot with a parameter.
+async answer_callback_query ( callback_query_id, text = None, show_alert = None, url = None,
+cache_time = None, \*, read_timeout = None, write_timeout = None, connect_timeout = None,
+pool_timeout = None, api_kwargs = None ) Use this method to send answers to callback queries sent
+from inline keyboards. The answer will be displayed to the user as a notification at the top of the
+chat screen or as an alert. Alternatively, the user can be redirected to the specified Game URL. For
+this option to work, you must first create a game for your bot via @BotFather and accept the terms.
+Otherwise, you may use links like t.me/your_bot?start=XXXX that open your bot with a parameter.
 
 Shortcuts
 
@@ -6420,32 +6504,34 @@ telegram.CallbackQuery.answer()
 Parameters:
 
 - callback_query_id (str) - Unique identifier for the query to be answered.
-- text (str, optional) - Text of the notification. If not specified, nothing will
-be shown to the user, 0-200 characters.
 
-- show_alert (bool, optional) - If True, an alert will be shown by the
-client instead of a notification at the top of the chat screen. Defaults to False.
+- text (str, optional) - Text of the notification. If not specified, nothing will be shown to the
+  user, 0-200 characters.
 
-- url (str, optional) -
-  URL that will be opened by the user’s client. If you have
-created a Game and accepted the conditions via @BotFather, specify the URL that
-opens your game - note that this will only work if the query comes from a callback
-game button. Otherwise, you may use links like t.me/your_bot?start=XXXX that open
-your bot with a parameter.
+- show_alert (bool, optional) - If True, an alert will be shown by the client instead of a
+  notification at the top of the chat screen. Defaults to False.
 
-- cache_time (int | datetime.timedelta, optional) -
-  The maximum amount of
-time in seconds that the
-result of the callback query may be cached client-side. Defaults to 0.
-  Changed in version 21.11: datetime.timedelta objects are accepted in addition to plain int values.
+- url (str, optional) - URL that will be opened by the user’s client. If you have created a Game and
+  accepted the conditions via @BotFather, specify the URL that opens your game - note that this will
+  only work if the query comes from a callback game button. Otherwise, you may use links like
+  t.me/your_bot?start=XXXX that open your bot with a parameter.
+
+- cache_time (int | datetime.timedelta, optional) - The maximum amount of time in seconds that the
+  result of the callback query may be cached client-side. Defaults to 0. Changed in version 21.11:
+  datetime.timedelta objects are accepted in addition to plain int values.
 
 Keyword Arguments:
 
-- read_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.read_timeout. Defaults to DEFAULT_NONE.
-- write_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.write_timeout. Defaults to DEFAULT_NONE.
-- connect_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.connect_timeout. Defaults to DEFAULT_NONE.
-- pool_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.pool_timeout. Defaults to DEFAULT_NONE.
-- api_kwargs (dict, optional) - Arbitrary keyword arguments to be passed to the Telegram API. See do_api_request() for limitations.
+- read_timeout (float | None, optional) - Value to pass to
+  telegram.request.BaseRequest.post.read_timeout. Defaults to DEFAULT_NONE.
+- write_timeout (float | None, optional) - Value to pass to
+  telegram.request.BaseRequest.post.write_timeout. Defaults to DEFAULT_NONE.
+- connect_timeout (float | None, optional) - Value to pass to
+  telegram.request.BaseRequest.post.connect_timeout. Defaults to DEFAULT_NONE.
+- pool_timeout (float | None, optional) - Value to pass to
+  telegram.request.BaseRequest.post.pool_timeout. Defaults to DEFAULT_NONE.
+- api_kwargs (dict, optional) - Arbitrary keyword arguments to be passed to the Telegram API. See
+  do_api_request() for limitations.
 
 Returns: bool On success, True is returned.
 
@@ -6453,14 +6539,17 @@ Return type: bool
 
 Raises: telegram.error.TelegramError –
 
-async answer_inline_query ( inline_query_id, results, cache_time = None, is_personal = None, next_offset = None, button = None, *, current_offset = None, read_timeout = None, write_timeout = None, connect_timeout = None, pool_timeout = None, api_kwargs = None )
-Use this method to send answers to an inline query. No more than 50 results per query are allowed.
+async answer_inline_query ( inline_query_id, results, cache_time = None, is_personal = None,
+next_offset = None, button = None, \*, current_offset = None, read_timeout = None, write_timeout =
+None, connect_timeout = None, pool_timeout = None, api_kwargs = None ) Use this method to send
+answers to an inline query. No more than 50 results per query are allowed.
 
 Warning
 
-In most use cases current_offset should not be passed manually. Instead of
-calling this method directly, use the shortcut telegram.InlineQuery.answer() with telegram.InlineQuery.answer.auto_pagination set to True, which will
-take care of passing the correct value.
+In most use cases current_offset should not be passed manually. Instead of calling this method
+directly, use the shortcut telegram.InlineQuery.answer() with
+telegram.InlineQuery.answer.auto_pagination set to True, which will take care of passing the correct
+value.
 
 See also
 
@@ -6475,44 +6564,47 @@ Changed in version 20.5: Removed deprecated arguments `switch_pm_text` and `swit
 Parameters:
 
 - inline_query_id (str) - Unique identifier for the answered query.
-- results (list[telegram.InlineQueryResult] | Callable) - A list of results for
-the inline query. In case current_offset is passed, results may also be
-a callable that accepts the current page index starting from 0. It must return
-either a list of telegram.InlineQueryResult instances or None if
-there are no more results.
 
-- cache_time (int | datetime.timedelta, optional) -
-  The maximum amount of
-time in seconds that the
-result of the inline query may be cached on the server. Defaults to `300`.
-  Changed in version 21.11: datetime.timedelta objects are accepted in addition to plain int values.
+- results (list[telegram.InlineQueryResult] | Callable) - A list of results for the inline query. In
+  case current_offset is passed, results may also be a callable that accepts the current page index
+  starting from 0. It must return either a list of telegram.InlineQueryResult instances or None if
+  there are no more results.
 
-- is_personal (bool, optional) - Pass True, if results may be cached on
-the server side only for the user that sent the query. By default,
-results may be returned to any user who sends the same query.
+- cache_time (int | datetime.timedelta, optional) - The maximum amount of time in seconds that the
+  result of the inline query may be cached on the server. Defaults to `300`. Changed in version
+  21.11: datetime.timedelta objects are accepted in addition to plain int values.
 
-- next_offset (str, optional) - Pass the offset that a client should send in the
-next query with the same text to receive more results. Pass an empty string if
-there are no more results or if you don’t support pagination. Offset length can’t
-exceed 64 bytes.
+- is_personal (bool, optional) - Pass True, if results may be cached on the server side only for the
+  user that sent the query. By default, results may be returned to any user who sends the same
+  query.
 
-- button (telegram.inlinequeryresultsbutton.InlineQueryResultsButton, optional) -
-  A button to be shown
-above the inline query results.
-  Added in version 20.3.
+- next_offset (str, optional) - Pass the offset that a client should send in the next query with the
+  same text to receive more results. Pass an empty string if there are no more results or if you
+  don’t support pagination. Offset length can’t exceed 64 bytes.
+
+- button (telegram.inlinequeryresultsbutton.InlineQueryResultsButton, optional) - A button to be
+  shown above the inline query results. Added in version 20.3.
 
 Keyword Arguments:
 
-- current_offset (str, optional) - The telegram.InlineQuery.offset of
-the inline query to answer. If passed, PTB will automatically take care of
-the pagination for you, i.e. pass the correct next_offset and truncate
-the results list/get the results from the callable you passed.
+- current_offset (str, optional) - The telegram.InlineQuery.offset of the inline query to answer. If
+  passed, PTB will automatically take care of the pagination for you, i.e. pass the correct
+  next_offset and truncate the results list/get the results from the callable you passed.
 
-- read_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.read_timeout. Defaults to DEFAULT_NONE.
-- write_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.write_timeout. Defaults to DEFAULT_NONE.
-- connect_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.connect_timeout. Defaults to DEFAULT_NONE.
-- pool_timeout (float | None, optional) - Value to pass to telegram.request.BaseRequest.post.pool_timeout. Defaults to DEFAULT_NONE.
-- api_kwargs (dict, optional) - Arbitrary keyword arguments to be passed to the Telegram API. See do_api_request() for limitations.
+- read_timeout (float | None, optional) - Value to pass to
+  telegram.request.BaseRequest.post.read_timeout. Defaults to DEFAULT_NONE.
+
+- write_timeout (float | None, optional) - Value to pass to
+  telegram.request.BaseRequest.post.write_timeout. Defaults to DEFAULT_NONE.
+
+- connect_timeout (float | None, optional) - Value to pass to
+  telegram.request.BaseRequest.post.connect_timeout. Defaults to DEFAULT_NONE.
+
+- pool_timeout (float | None, optional) - Value to pass to
+  telegram.request.BaseRequest.post.pool_timeout. Defaults to DEFAULT_NONE.
+
+- api_kwargs (dict, optional) - Arbitrary keyword arguments to be passed to the Telegram API. See
+  do_api_request() for limitations.
 
 Returns: On success, True is returned.
 
@@ -6520,15 +6612,15 @@ Return type: bool
 
 Raises: telegram.error.TelegramError –
 
-async answer_pre_checkout_query ( pre_checkout_query_id, ok, error_message = None, *, read_timeout = None, write_timeout = None, connect_timeout = None, pool_timeout = None, api_kwargs = None )
-Once the user has confirmed their payment and shipping details, the Bot API sends the final
-confirmation in the form of an telegram.Update with the field telegram.Update.pre_checkout_query. Use this method to respond to such pre-checkout
-queries.
+async answer_pre_checkout_query ( pre_checkout_query_id, ok, error_message = None, \*, read_timeout
+= None, write_timeout = None, connect_timeout = None, pool_timeout = None, api_kwargs = None ) Once
+the user has confirmed their payment and shipping details, the Bot API sends the final confirmation
+in the form of an telegram.Update with the field telegram.Update.pre_checkout_query. Use this method
+to respond to such pre-checkout queries.
 
 Note
 
-The Bot API must receive an answer within 10 seconds after the pre-checkout
-query was sent.
+The Bot API must receive an answer within 10 seconds after the pre-checkout query was sent.
 
 Shortcuts
 
@@ -6537,8 +6629,8 @@ telegram.precheckoutquery.PreCheckoutQuery.answer()
 Parameters:
 
 - pre_checkout_query_id (str) - Unique identifier for the query to be answered.
-- ok (bool) - Specify True if everything is alright
-(goods are available, etc.) and the bot is ready to proceed with the order. Use False if there are any problems.
 
-- error_message (str, optional) - Required if ok is False. Error
-message in human readable form
+- ok (bool) - Specify True if everything is alright (goods are available, etc.) and the bot is ready
+  to proceed with the order. Use False if there are any problems.
+
+- error_message (str, optional) - Required if ok is False. Error message in human readable form

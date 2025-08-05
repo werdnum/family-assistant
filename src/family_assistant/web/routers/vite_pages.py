@@ -102,3 +102,16 @@ async def notes_ui(request: Request) -> Response:
 async def tasks_ui(request: Request) -> Response:
     """Serve the React tasks interface via router."""
     return _serve_vite_html_file(request, "router.html")
+
+
+@vite_pages_router.get("/event-listeners", name="event_listeners_ui")
+@vite_pages_router.get("/event-listeners/new", name="event_listeners_new_ui")
+@vite_pages_router.get(
+    "/event-listeners/{listener_id:int}", name="event_listener_detail_ui"
+)
+@vite_pages_router.get(
+    "/event-listeners/{listener_id:int}/edit", name="event_listener_edit_ui"
+)
+async def event_listeners_ui(request: Request) -> Response:
+    """Serve the React event listeners interface."""
+    return _serve_vite_html_file(request, "event-listeners.html")

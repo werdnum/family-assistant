@@ -7,6 +7,7 @@ import ErrorsApp from '../errors/ErrorsApp';
 import ContextPage from './ContextPage';
 import NotesApp from '../notes/NotesApp';
 import TasksApp from '../tasks/TasksApp';
+import EventListenersApp from '../pages/EventListeners/EventListenersApp';
 
 const FallbackRedirect = () => {
   useEffect(() => {
@@ -80,6 +81,16 @@ const AppRouter = () => {
           element={
             <Layout>
               <TasksApp />
+            </Layout>
+          }
+        />
+
+        {/* Event Listeners routes */}
+        <Route
+          path="/event-listeners/*"
+          element={
+            <Layout>
+              <EventListenersApp />
             </Layout>
           }
         />

@@ -22,7 +22,9 @@ api_router.include_router(
     documents_api_router, prefix="/documents", tags=["Document Ingestion"]
 )
 api_router.include_router(errors_api_router, prefix="/errors", tags=["Error Logs"])
-api_router.include_router(listeners_api_router, tags=["Event Listeners"])
+api_router.include_router(
+    listeners_api_router, prefix="/event-listeners", tags=["Event Listeners"]
+)
 api_router.include_router(
     chat_api_router, tags=["Chat API"]
 )  # No prefix for /v1/chat/send_message
