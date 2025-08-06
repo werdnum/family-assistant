@@ -1,8 +1,8 @@
-import { defineConfig } from 'vite';
 import legacy from '@vitejs/plugin-legacy';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { defineConfig } from 'vite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -19,32 +19,45 @@ export default defineConfig(({ mode }) => ({
       name: 'html-fallback',
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
-          // Rewrite specific routes to their appropriate HTML files
           // Handle query parameters properly
           const url = new URL(req.url, 'http://localhost');
 
-          // React Router routes - use router.html
+          // Skip API routes and specific backend pages - let them proxy through
           if (
-            url.pathname === '/chat' ||
-            url.pathname === '/context' ||
-            url.pathname === '/notes' ||
-            url.pathname.startsWith('/notes/') ||
-            url.pathname === '/tasks' ||
-            url.pathname === '/event-listeners' ||
-            url.pathname.startsWith('/event-listeners/') ||
-            url.pathname === '/history' ||
-            url.pathname.startsWith('/history/')
+            url.pathname.startsWith('/api/') ||
+            url.pathname.startsWith('/webhook/') ||
+            url.pathname === '/auth/login' ||
+            url.pathname === '/auth/logout' ||
+            url.pathname === '/auth/callback' ||
+            url.pathname === '/documents' ||
+            url.pathname === '/vector-search' ||
+            url.pathname.startsWith('/static/') ||
+            url.pathname === '/favicon.ico'
           ) {
-            req.url = '/router.html' + url.search;
+            // Let these pass through to the proxy
+            next();
+            return;
           }
-          // Individual app routes - use specific HTML files
-          else if (url.pathname === '/tools') {
+
+          // Special standalone React apps (not using React Router)
+          if (url.pathname === '/tools') {
             req.url = '/tools.html' + url.search;
           } else if (url.pathname === '/tool-test-bench') {
             req.url = '/tool-test-bench.html' + url.search;
           } else if (url.pathname === '/errors' || url.pathname.startsWith('/errors/')) {
             req.url = '/errors.html' + url.search;
           }
+          // Everything else goes to React Router
+          else if (
+            !url.pathname.startsWith('/@vite') &&
+            !url.pathname.startsWith('/@react-refresh') &&
+            !url.pathname.startsWith('/src') &&
+            !url.pathname.startsWith('/node_modules') &&
+            !url.pathname.includes('.html')
+          ) {
+            req.url = '/router.html' + url.search;
+          }
+
           next();
         });
       },
@@ -74,20 +87,44 @@ export default defineConfig(({ mode }) => ({
     port: 5173,
     // Listen on all interfaces for remote access
     host: true,
-    // Allow specific hosts for development access
-    allowedHosts: [
-      'localhost',
-      'grotten.home.andrewandteija.com',
-      'family-assistant-dev.andrewgarrett.dev',
-    ],
-    // Proxy all non-asset requests to our FastAPI backend
+    // Allow all hosts (set to array of specific hosts to restrict access)
+    allowedHosts: true,
+    // Proxy API and backend-only routes to FastAPI
     proxy: {
-      // Proxy everything except Vite's own paths, static assets, and HTML entry points
-      '^(?!/@vite|/@react-refresh|/src|/node_modules|/__vite_ping|/index\.html|/chat\.html|/chat$|/router\.html|/context$|/tools\.html|/tools$|/tool-test-bench\.html|/tool-test-bench$|/errors\.html|/errors$|/errors/|/notes\.html|/notes$|/notes/|/tasks\.html|/tasks$).*':
-        {
-          target: `http://127.0.0.1:${process.env.VITE_API_PORT || 8000}`,
-          changeOrigin: true,
-        },
+      // API endpoints
+      '/api': {
+        target: `http://127.0.0.1:${process.env.VITE_API_PORT || 8000}`,
+        changeOrigin: true,
+      },
+      // Webhooks
+      '/webhook': {
+        target: `http://127.0.0.1:${process.env.VITE_API_PORT || 8000}`,
+        changeOrigin: true,
+      },
+      // Auth endpoints
+      '/auth': {
+        target: `http://127.0.0.1:${process.env.VITE_API_PORT || 8000}`,
+        changeOrigin: true,
+      },
+      // Remaining Jinja2 pages
+      '/documents': {
+        target: `http://127.0.0.1:${process.env.VITE_API_PORT || 8000}`,
+        changeOrigin: true,
+      },
+      '/vector-search': {
+        target: `http://127.0.0.1:${process.env.VITE_API_PORT || 8000}`,
+        changeOrigin: true,
+      },
+      // Static files from backend
+      '/static': {
+        target: `http://127.0.0.1:${process.env.VITE_API_PORT || 8000}`,
+        changeOrigin: true,
+      },
+      // Favicon
+      '/favicon.ico': {
+        target: `http://127.0.0.1:${process.env.VITE_API_PORT || 8000}`,
+        changeOrigin: true,
+      },
     },
   },
 }));

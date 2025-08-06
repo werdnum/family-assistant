@@ -129,3 +129,16 @@ async def history_ui(request: Request) -> Response:
 async def events_ui(request: Request) -> Response:
     """Serve the React events interface via router."""
     return _serve_vite_html_file(request, "router.html")
+
+
+@vite_pages_router.get("/docs", name="docs_ui")
+@vite_pages_router.get("/docs/{filename:path}", name="docs_detail_ui")
+async def docs_ui(request: Request) -> Response:
+    """Serve the React documentation interface via router."""
+    return _serve_vite_html_file(request, "router.html")
+
+
+@vite_pages_router.get("/settings/tokens", name="settings_tokens_ui")
+async def settings_tokens_ui(request: Request) -> Response:
+    """Serve the React settings/tokens interface via router."""
+    return _serve_vite_html_file(request, "router.html")

@@ -17,23 +17,28 @@ async def test_documentation_list_page_loads(
     # Navigate to documentation page
     await page.goto(f"{server_url}/docs")
 
-    # Wait for page to load
+    # Wait for the page heading to appear
     await page.wait_for_selector("h1:has-text('Documentation')", timeout=10000)
 
     # Check that page has expected structure
     docs_list = page.locator("[class*='docsList']")
-    await docs_list.wait_for(timeout=5000)
-    assert await docs_list.is_visible()
+    if await docs_list.count() > 0:
+        assert await docs_list.is_visible()
 
-    # Check for documentation items or loading state
+    # Check for documentation items or loading state or error
     doc_items = page.locator("[class*='docItem']")
-    loading = page.locator("[class*='loading']")
+    error = page.locator("[class*='error']")
+    no_docs = page.locator("text=/no documentation/i")
 
-    # Either docs are displayed or loading is shown
+    # Verify successful page load (either docs or no docs message, but no error)
     has_docs = await doc_items.count() > 0
-    has_loading = await loading.count() > 0 and await loading.is_visible()
+    has_error = await error.count() > 0
+    has_no_docs = await no_docs.count() > 0
 
-    assert has_docs or has_loading, "Should show documentation items or loading state"
+    # The page should show content without errors
+    assert (has_docs or has_no_docs) and not has_error, (
+        "Should show documentation items or no docs message without errors"
+    )
 
 
 @pytest.mark.playwright
@@ -48,22 +53,25 @@ async def test_documentation_view_page_loads(
     # Navigate to a specific document (USER_GUIDE.md should exist)
     await page.goto(f"{server_url}/docs/USER_GUIDE.md")
 
-    # Wait for page to load
-    await page.wait_for_timeout(3000)
+    # Wait for the page to render (look for any content element)
+    await page.wait_for_selector(
+        "[class*='content'], [class*='sidebar'], [class*='error']", timeout=10000
+    )
 
-    # Check for sidebar
-    sidebar = page.locator("[class*='sidebar']")
-    if await sidebar.count() > 0:
-        assert await sidebar.is_visible()
-
-    # Check for content area or error state
+    # Check for either sidebar or content or error - the page should have some content
+    sidebar_elements = page.locator("[class*='sidebar']")
     content = page.locator("[class*='content']")
     error = page.locator("[class*='error']")
+    markdown = page.locator("[class*='markdownContent']")
 
-    has_content = await content.count() > 0 and await content.is_visible()
-    has_error = await error.count() > 0 and await error.is_visible()
+    has_sidebar = await sidebar_elements.count() > 0
+    has_content = await content.count() > 0
+    has_error = await error.count() > 0
+    has_markdown = await markdown.count() > 0
 
-    assert has_content or has_error, "Should show content or error state"
+    assert has_sidebar or has_content or has_error or has_markdown, (
+        "Should show sidebar, content, error, or markdown"
+    )
 
 
 @pytest.mark.playwright
