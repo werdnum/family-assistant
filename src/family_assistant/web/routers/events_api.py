@@ -24,6 +24,7 @@ class EventsListResponse(BaseModel):
 
 
 @events_api_router.get("/")
+@events_api_router.get("")
 async def list_events(
     db_context: Annotated[DatabaseContext, Depends(get_db)],
     source_id: str | None = None,

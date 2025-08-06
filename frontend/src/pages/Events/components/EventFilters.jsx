@@ -38,7 +38,7 @@ const EventFilters = ({ filters, onFiltersChange, onClearFilters, loading = fals
               disabled={loading}
             >
               <option value="">All Sources</option>
-              <option value="homeassistant">Home Assistant</option>
+              <option value="home_assistant">Home Assistant</option>
               <option value="indexing">Indexing</option>
               <option value="webhook">Webhook</option>
             </select>
