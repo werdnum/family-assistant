@@ -10,6 +10,8 @@ import TasksApp from '../tasks/TasksApp';
 import EventListenersApp from '../pages/EventListeners/EventListenersApp';
 import EventsApp from '../pages/Events/EventsApp';
 import HistoryApp from '../pages/History/HistoryApp';
+import DocumentationApp from '../pages/Documentation/DocumentationApp';
+import TokenManagement from '../pages/Settings/TokenManagement';
 
 const FallbackRedirect = () => {
   useEffect(() => {
@@ -113,6 +115,26 @@ const AppRouter = () => {
           element={
             <Layout>
               <HistoryApp />
+            </Layout>
+          }
+        />
+
+        {/* Documentation routes */}
+        <Route
+          path="/docs/*"
+          element={
+            <Layout>
+              <DocumentationApp />
+            </Layout>
+          }
+        />
+
+        {/* Settings routes */}
+        <Route
+          path="/settings/tokens"
+          element={
+            <Layout>
+              <TokenManagement />
             </Layout>
           }
         />

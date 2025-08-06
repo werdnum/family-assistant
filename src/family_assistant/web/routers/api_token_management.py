@@ -114,3 +114,112 @@ async def create_api_token(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not create API token.",
         ) from e
+
+
+@router.get(
+    "",  # Path will be relative to the router's prefix
+    summary="List all API tokens for the authenticated user",
+)
+async def list_api_tokens(
+    current_user: Annotated[dict, Depends(get_current_active_user)],
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
+) -> list[dict]:
+    """
+    Lists all API tokens for the currently authenticated user.
+    The hashed_token field is excluded for security.
+    """
+    user_identifier = current_user.get("sub")
+    if not user_identifier:
+        logger.error(
+            "User 'sub' (identifier) not found in session for token listing. User data: %s",
+            current_user,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="User identifier not found in session.",
+        )
+
+    try:
+        tokens = await api_tokens_storage.get_api_tokens_for_user(
+            db_context, user_identifier
+        )
+        logger.debug(
+            "Retrieved %d tokens for user %s",
+            len(tokens),
+            user_identifier,
+        )
+        return tokens
+
+    except Exception as e:
+        logger.error(
+            "Failed to retrieve API tokens for user %s: %s",
+            user_identifier,
+            e,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not retrieve API tokens.",
+        ) from e
+
+
+@router.delete(
+    "/{token_id}",  # Path will be relative to the router's prefix
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Revoke a specific API token",
+)
+async def revoke_api_token(
+    token_id: int,
+    current_user: Annotated[dict, Depends(get_current_active_user)],
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
+) -> None:
+    """
+    Revokes a specific API token for the currently authenticated user.
+    """
+    user_identifier = current_user.get("sub")
+    if not user_identifier:
+        logger.error(
+            "User 'sub' (identifier) not found in session for token revocation. User data: %s",
+            current_user,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="User identifier not found in session.",
+        )
+
+    try:
+        success = await api_tokens_storage.revoke_api_token(
+            db_context, token_id, user_identifier
+        )
+        if success:
+            logger.info(
+                "Token ID %s successfully revoked by user %s via API.",
+                token_id,
+                user_identifier,
+            )
+        else:
+            logger.warning(
+                "Failed to revoke token ID %s by user %s via API (not found or not owned).",
+                token_id,
+                user_identifier,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Token not found or not owned by user.",
+            )
+
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        logger.error(
+            "Error revoking token ID %s for user %s via API: %s",
+            token_id,
+            user_identifier,
+            e,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not revoke API token.",
+        ) from e
