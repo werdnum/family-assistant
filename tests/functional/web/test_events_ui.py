@@ -773,10 +773,10 @@ async def test_events_json_formatting_in_detail_view(
         if await event_data_section.count() > 0:
             assert await event_data_section.is_visible()
 
-            # Check for JSON formatting
-            json_pre = page.locator("pre[class*='eventDataJson'], pre code")
+            # Check for JSON formatting - be more specific to avoid multiple matches
+            json_pre = page.locator("pre").filter(has_text="entity_id")
             if await json_pre.count() > 0:
-                json_content = await json_pre.text_content()
+                json_content = await json_pre.first.text_content()
                 assert json_content is not None
                 # Should contain formatted JSON with the test data
                 assert "entity_id" in json_content
@@ -938,10 +938,10 @@ async def test_events_metadata_display(
             # Should have info items
             assert await info_items.first.is_visible()
 
-            # Check for event ID display
-            event_id_code = page.locator("code[class*='eventIdCode'], code")
+            # Check for event ID display - be more specific to avoid matching JSON code blocks
+            event_id_code = page.locator("code").filter(has_text="home_assistant:")
             if await event_id_code.count() > 0:
-                id_text = await event_id_code.text_content()
+                id_text = await event_id_code.first.text_content()
                 assert id_text is not None
                 assert test_event_id in id_text
 

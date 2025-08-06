@@ -176,20 +176,36 @@ async def test_history_filters_interface(
 
     # Test conversation ID filter (should be a text input)
     conv_input = page.locator("input[name='conversation_id']")
-    await conv_input.wait_for(timeout=5000)
-    await conv_input.fill("web_conv_123", force=True)
+    await conv_input.wait_for(state="visible", timeout=5000)
+    # Wait for input to be enabled (not loading)
+    await page.wait_for_function(
+        "document.querySelector('input[name=\"conversation_id\"]').disabled === false",
+        timeout=5000,
+    )
+    await conv_input.fill("web_conv_123")
     conv_value = await conv_input.input_value()
     assert conv_value == "web_conv_123"
 
     # Test date filters
     date_from_input = page.locator("input[name='date_from']")
-    await date_from_input.wait_for(timeout=5000)
-    await date_from_input.fill("2024-01-01", force=True)
+    await date_from_input.wait_for(state="visible", timeout=5000)
+    # Wait for input to be enabled
+    await page.wait_for_function(
+        "document.querySelector('input[name=\"date_from\"]').disabled === false",
+        timeout=5000,
+    )
+    await date_from_input.fill("2024-01-01")
     from_value = await date_from_input.input_value()
     assert from_value == "2024-01-01"
 
     date_to_input = page.locator("input[name='date_to']")
-    await date_to_input.fill("2024-12-31", force=True)
+    await date_to_input.wait_for(state="visible", timeout=5000)
+    # Wait for input to be enabled
+    await page.wait_for_function(
+        "document.querySelector('input[name=\"date_to\"]').disabled === false",
+        timeout=5000,
+    )
+    await date_to_input.fill("2024-12-31")
     to_value = await date_to_input.input_value()
     assert to_value == "2024-12-31"
 
