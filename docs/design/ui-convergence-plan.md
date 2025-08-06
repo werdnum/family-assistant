@@ -115,28 +115,29 @@ implementation **Advantages:**
 - ✅ Complete React Router integration with unified routing approach
 - ✅ Remove standalone HTML files and consolidate build configuration
 
-### Session 4-5: Complex Forms ⬅️ **NEXT UP**
+### ✅ Session 4-5: Complex Forms (COMPLETED)
 
 **Goal:** Handle CRUD operations
 
-- Convert `/event-listeners/*` (5 pages) → React forms (CRUD API exists)
-- Handle JSON schema validation patterns
+- ✅ Convert `/event-listeners/*` (5 pages) → React forms (CRUD API exists)
+- ✅ Handle JSON schema validation patterns
+- ✅ Convert `/events` + `/events/{id}` → React components (Events API ready)
+- ✅ Convert `/history` → React component (History API ready)
 
-### Session 6-7: Search & History
+### Session 6-7: Search & Documents ⬅️ **NEXT UP**
 
 **Goal:** Complex UI patterns
 
 - Convert `/vector-search` + document detail → React search interface (API ready)
-- Convert `/history` → React component (API ready)
-- Convert `/events` + `/events/{id}` → React components (API ready)
+- Convert `/documents/` list → React component (API ready)
 
 ### Session 8-9: Remaining Pages
 
 **Goal:** Complete all conversions
 
-- Convert `/documents/` list → React component (API ready)
 - Convert simple/static pages (docs, auth, settings)
 - Merge `/chat/conversations` into existing chat
+- Clean up any remaining Jinja2 routers
 
 ### Session 10: Cleanup
 
@@ -241,6 +242,11 @@ The goal is convergence, not enhancement. Features can be added after we have a 
 - `/tools` (React version) - React (existing)
 - `/tool-test-bench` - React (existing)
 - `/errors/` + `/errors/{id}` - React dashboard (converted)
+- `/notes` + `/notes/add` + `/notes/edit` - React components (converted)
+- `/tasks` - React dashboard (converted)
+- `/event-listeners/*` (5 pages) - React forms with full CRUD (converted)
+- `/history` + `/history/{id}` - React components with filters, pagination (converted)
+- `/events` + `/events/{id}` - React components with filters, smart summaries (converted)
 
 **Infrastructure:**
 
