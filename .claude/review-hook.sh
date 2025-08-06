@@ -20,13 +20,36 @@ NC='\033[0m' # No Color
 
 # Global state
 STASHED_CHANGES=false
+STASH_REF=""
+REPO_ROOT=""
 
 # Cleanup function
 cleanup() {
-    if [[ "$STASHED_CHANGES" == "true" ]]; then
+    if [[ "$STASHED_CHANGES" == "true" ]] && [[ -n "$STASH_REF" ]]; then
         echo "" >&2
         echo "${YELLOW}Restoring stashed changes...${NC}" >&2
-        git stash pop --quiet 2>/dev/null || true
+        
+        # Try to restore stashed changes using the specific stash reference
+        if git stash apply --quiet "$STASH_REF" 2>/dev/null; then
+            # Successfully applied, now drop the stash
+            git stash drop --quiet "$STASH_REF" 2>/dev/null || true
+            echo "${GREEN}✅ Stashed changes restored successfully${NC}" >&2
+        else
+            # If stash pop fails due to conflicts, force restore the stashed changes
+            echo "${YELLOW}Stash conflict detected - force-restoring pre-hook state...${NC}" >&2
+            echo "${YELLOW}(Working directory changes may be overwritten for conflicting files)${NC}" >&2
+            
+            # Get the stash content and apply it using the specific reference
+            if git checkout "$STASH_REF" -- . 2>/dev/null; then
+                echo "${GREEN}✅ Working changes restored from stash${NC}" >&2
+                echo "${YELLOW}Note: Stash preserved at $STASH_REF for safety${NC}" >&2
+                echo "${YELLOW}You can manually drop it with: git stash drop${NC}" >&2
+            else
+                echo "${RED}❌ Failed to restore stashed changes${NC}" >&2
+                echo "${YELLOW}Your changes are still safe in the stash${NC}" >&2
+                echo "${YELLOW}Manual intervention required: try 'git stash pop' after resolving conflicts${NC}" >&2
+            fi
+        fi
     fi
 }
 
@@ -51,7 +74,7 @@ if ! echo "$COMMAND" | grep -qE "(^|[;&|])\s*(git\s+(commit|ci)|gh\s+pr\s+create
     exit 0
 fi
 
-# Get the repository root
+# Get the repository root (already declared as global)
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 if [[ -z "$REPO_ROOT" ]]; then
     # Not in a git repo, allow the command
@@ -101,9 +124,18 @@ if ! git diff --cached --quiet; then
     # Stash unstaged changes, keeping only staged changes in working directory
     if ! git diff --quiet; then
         echo "${CYAN}Stashing unstaged changes to isolate committed changes...${NC}" >&2
-        git stash push --keep-index --quiet -m "review-hook: unstaged changes $(date +%s)" 2>/dev/null
-        STASHED_CHANGES=true
-        echo "${GREEN}✅ Unstaged changes stashed${NC}" >&2
+        # Create a stash and get its unique reference
+        STASH_REF=$(git stash create "review-hook: unstaged changes $(date +%s)")
+        if [[ -n "$STASH_REF" ]]; then
+            # Save the stash with the reference we got
+            git stash store -m "review-hook: unstaged changes $(date +%s)" "$STASH_REF"
+            # Reset to match the index (keeps staged changes, removes unstaged)
+            git checkout-index -a -f
+            STASHED_CHANGES=true
+            echo "${GREEN}✅ Unstaged changes stashed (ref: ${STASH_REF:0:8})${NC}" >&2
+        else
+            echo "${YELLOW}⚠️  Failed to create stash, proceeding anyway${NC}" >&2
+        fi
     else
         echo "${GREEN}✅ No unstaged changes to stash${NC}" >&2
     fi
