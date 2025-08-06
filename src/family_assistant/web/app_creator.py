@@ -21,19 +21,18 @@ from family_assistant.web.auth import (
     auth_router,
 )
 from family_assistant.web.routers.api import api_router
+from family_assistant.web.routers.api_documentation import (
+    router as api_documentation_router,
+)
 from family_assistant.web.routers.api_token_management import (
     router as api_token_management_router,
 )
 from family_assistant.web.routers.context_viewer import context_viewer_router
-from family_assistant.web.routers.documentation import documentation_router
 from family_assistant.web.routers.documents_ui import (  # New import for document upload UI
     router as documents_ui_router,
 )
 from family_assistant.web.routers.errors import router as errors_router
 from family_assistant.web.routers.health import health_router
-from family_assistant.web.routers.ui_token_management import (  # New import
-    router as ui_token_management_router,
-)
 from family_assistant.web.routers.vector_search import vector_search_router
 from family_assistant.web.routers.vite_pages import vite_pages_router
 from family_assistant.web.routers.webhooks import webhooks_router
@@ -260,7 +259,8 @@ if AUTH_ENABLED:
     logger.info("Authentication routes included.")
 
 app.include_router(vite_pages_router, tags=["Vite Pages"])
-app.include_router(documentation_router, tags=["Documentation UI"])
+# Removed documentation_router - using React instead
+# Removed api_docs_router - not needed
 app.include_router(webhooks_router, tags=["Webhooks"])
 app.include_router(vector_search_router, tags=["Vector Search UI"])
 app.include_router(context_viewer_router, tags=["Context Viewer UI"])
@@ -276,17 +276,17 @@ app.include_router(api_router, prefix="/api", tags=["General API"])
 # API Token Management endpoints (like /api/me/tokens)
 # This is nested under /api as well, so the full path would be /api/me/tokens
 app.include_router(
+    api_documentation_router,
+    prefix="/api/documentation",
+    tags=["Documentation"],
+)
+app.include_router(
     api_token_management_router,
     prefix="/api/me/tokens",  # Suggesting a "me" scope for user-specific tokens
     tags=["API Token Management"],
 )
 
-# UI for API Token Management
-app.include_router(
-    ui_token_management_router,
-    prefix="/settings/tokens",  # UI page for managing tokens
-    tags=["Settings UI"],
-)
+# Removed ui_token_management_router - using React instead
 
 
 # --- Serve Vite-built HTML files in production ---
