@@ -710,21 +710,26 @@ async def test_events_loading_states(
     # Navigate to events page
     await page.goto(f"{server_url}/events")
 
-    # Should show loading state initially
-    loading_text = page.locator("text=Loading events")
-    if await loading_text.count() > 0:
-        # If loading text is present, it should be visible
-        assert await loading_text.is_visible()
-
-    # Wait for page to fully load
+    # Wait for page to fully load - either loading disappears or filters appear
+    # The filters only appear after loading is complete
     await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
-    await page.wait_for_timeout(2000)
 
-    # Loading should be gone after page loads
-    loading_count = await page.locator("text=Loading events").count()
-    if loading_count > 0:
-        # If still present, should not be visible
-        assert not await page.locator("text=Loading events").is_visible()
+    # Wait for either the loading to disappear or the filters to appear
+    # (filters only show after loading completes)
+    await page.wait_for_function(
+        """() => {
+            const loading = document.querySelector('.loading');
+            const filters = document.querySelector('details');
+            return !loading || filters;
+        }""",
+        timeout=10000,
+    )
+
+    # Now verify loading is not visible
+    loading_text = page.locator("div.loading", has_text="Loading events...")
+    assert await loading_text.count() == 0, (
+        "Loading indicator should not be present after page loads"
+    )
 
 
 @pytest.mark.playwright
