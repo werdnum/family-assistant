@@ -1,24 +1,23 @@
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import NavHeader from '../chat/NavHeader';
+import React, { useEffect } from 'react';
+import { Routes, Route } from 'react-router-dom';
 import ErrorsList from './components/ErrorsList';
 import ErrorDetail from './components/ErrorDetail';
 
 const ErrorsApp = () => {
+  // Set the page title
+  useEffect(() => {
+    document.title = 'Error Logs - Family Assistant';
+  }, []);
+
   return (
-    <Router>
-      <div className="errors-app">
-        <NavHeader currentPage="errors" />
-        <main className="container">
-          <Routes>
-            <Route path="/errors" element={<ErrorsList />} />
-            <Route path="/errors/:errorId" element={<ErrorDetail />} />
-            {/* Redirect root to errors list */}
-            <Route path="/" element={<Navigate to="/errors" replace />} />
-          </Routes>
-        </main>
-      </div>
-    </Router>
+    <div className="errors-app">
+      <main className="container">
+        <Routes>
+          <Route path="/" element={<ErrorsList />} />
+          <Route path="/:errorId" element={<ErrorDetail />} />
+        </Routes>
+      </main>
+    </div>
   );
 };
 

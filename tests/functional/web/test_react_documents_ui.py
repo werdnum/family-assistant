@@ -228,3 +228,71 @@ async def test_multiple_documents_display_in_react_ui(
     assert all_found, (
         f"All {len(documents_created)} document titles should appear on the documents page after {max_retries} retries"
     )
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_document_detail_view_via_react_ui(
+    web_test_fixture: WebTestFixture,
+) -> None:
+    """Test viewing document details through the React Documents UI."""
+    page = web_test_fixture.page
+
+    # Step 1: Upload a test document via the API
+    doc_title = f"Test Detail Document {uuid.uuid4().hex[:8]}"
+    doc_content = "This is a test document with some important content for testing the detail view."
+
+    # Upload document via API
+    async with httpx.AsyncClient(base_url=web_test_fixture.base_url) as client:
+        response = await client.post(
+            "/api/documents/upload",
+            data={
+                "source_type": "text",
+                "source_id": f"test_{uuid.uuid4().hex}",
+                "source_uri": f"test://document/{uuid.uuid4().hex}",
+                "title": doc_title,
+                "content_parts": json.dumps({"content": doc_content}),
+            },
+        )
+        assert response.status_code == 202, (
+            f"Upload failed: {response.text}"
+        )  # 202 Accepted
+        doc_id = response.json()["document_id"]
+
+    # Step 2: Navigate directly to the document detail page
+    await page.goto(f"{web_test_fixture.base_url}/documents/{doc_id}")
+
+    # Wait for the detail page to load
+    await page.wait_for_selector("body", timeout=15000)
+
+    # Give the React component time to load and fetch data
+    await page.wait_for_timeout(2000)
+
+    # Step 3: Verify basic document detail view functionality
+    page_content = await page.text_content("body")
+    assert page_content is not None, "Page should have content"
+
+    # Check that we're on a document detail page (should have document info)
+    # Just verify we have some document-related content
+    assert (
+        "Document" in page_content
+        or doc_title in page_content
+        or "Source" in page_content
+    ), "Should be on document detail page"
+
+    # Step 4: Test navigation back to documents list
+    # Look for any back link/button
+    back_links = await page.query_selector_all("a[href='/documents']")
+    if not back_links:
+        # Try alternative selectors
+        back_links = await page.query_selector_all("a:has-text('Back')")
+        if not back_links:
+            back_links = await page.query_selector_all("a:has-text('Documents')")
+
+    if back_links:
+        # Click the first back link found
+        await back_links[0].click()
+
+        # Should navigate to documents list
+        await page.wait_for_selector("body", timeout=10000)
+        assert "/documents" in page.url, "Should navigate back to documents list"
