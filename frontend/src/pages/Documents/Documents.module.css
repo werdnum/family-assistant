@@ -1,0 +1,372 @@
+.container {
+  padding: 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 2rem;
+  color: var(--nc-tx-1);
+}
+
+.uploadButton, .backButton {
+  padding: 0.5rem 1rem;
+  background-color: var(--nc-lk-1);
+  color: white;
+  text-decoration: none;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.uploadButton:hover, .backButton:hover {
+  background-color: var(--nc-lk-2);
+}
+
+.loading {
+  text-align: center;
+  padding: 2rem;
+  font-size: 1.1rem;
+  color: var(--nc-tx-2);
+}
+
+.error {
+  background-color: #fee;
+  color: #c00;
+  padding: 1rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+}
+
+.success {
+  background-color: #efe;
+  color: #060;
+  padding: 1rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+}
+
+.stats {
+  margin-bottom: 1rem;
+  font-size: 1.1rem;
+  color: var(--nc-tx-2);
+}
+
+.empty {
+  text-align: center;
+  padding: 3rem;
+  font-size: 1.1rem;
+  color: var(--nc-tx-2);
+  background-color: var(--nc-bg-2);
+  border-radius: 4px;
+}
+
+/* Documents Table */
+.documentsTable {
+  background-color: var(--nc-bg-1);
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.tableHeader {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1.5fr 1.5fr 1.5fr 1fr;
+  padding: 1rem;
+  background-color: var(--nc-bg-2);
+  font-weight: bold;
+  border-bottom: 2px solid var(--nc-bg-3);
+}
+
+.headerCell {
+  padding: 0 0.5rem;
+}
+
+.tableRow {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1.5fr 1.5fr 1.5fr 1fr;
+  padding: 1rem;
+  border-bottom: 1px solid var(--nc-bg-3);
+  transition: background-color 0.2s;
+}
+
+.tableRow:hover {
+  background-color: var(--nc-bg-2);
+}
+
+.cell {
+  padding: 0 0.5rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.documentLink {
+  color: var(--nc-lk-1);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.documentLink:hover {
+  text-decoration: underline;
+}
+
+.sourceUri {
+  margin-top: 0.25rem;
+  color: var(--nc-tx-2);
+  word-break: break-all;
+}
+
+.sourceId {
+  font-family: monospace;
+  font-size: 0.9rem;
+  background-color: var(--nc-bg-2);
+  padding: 0.25rem 0.5rem;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.reindexButton {
+  padding: 0.25rem 0.75rem;
+  background-color: var(--nc-lk-1);
+  color: white;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background-color 0.2s;
+}
+
+.reindexButton:hover:not(:disabled) {
+  background-color: var(--nc-lk-2);
+}
+
+.reindexButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Pagination */
+.pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 2rem;
+  padding: 1rem;
+}
+
+.pageButton {
+  padding: 0.5rem 1rem;
+  background-color: var(--nc-lk-1);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.pageButton:hover:not(:disabled) {
+  background-color: var(--nc-lk-2);
+}
+
+.pageButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background-color: var(--nc-bg-3);
+}
+
+.pageInfo {
+  font-size: 1rem;
+  color: var(--nc-tx-2);
+}
+
+/* Upload Form */
+.uploadForm {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.formSection {
+  background-color: var(--nc-bg-1);
+  border-radius: 4px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.formSection h2 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+  font-size: 1.3rem;
+  color: var(--nc-tx-1);
+}
+
+.uploadTypeButtons {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.typeButton {
+  flex: 1;
+  padding: 0.75rem;
+  background-color: var(--nc-bg-2);
+  border: 2px solid var(--nc-bg-3);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 1rem;
+}
+
+.typeButton:hover {
+  background-color: var(--nc-bg-3);
+}
+
+.typeButton.active {
+  background-color: var(--nc-lk-1);
+  color: white;
+  border-color: var(--nc-lk-1);
+}
+
+.formGroup {
+  margin-bottom: 1.5rem;
+}
+
+.formGroup label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+  color: var(--nc-tx-1);
+}
+
+.formGroup input[type="text"],
+.formGroup input[type="url"],
+.formGroup input[type="datetime-local"],
+.formGroup select,
+.formGroup textarea {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--nc-bg-3);
+  border-radius: 4px;
+  font-size: 1rem;
+  background-color: var(--nc-bg-1);
+  color: var(--nc-tx-1);
+}
+
+.formGroup input[type="file"] {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--nc-bg-3);
+  border-radius: 4px;
+  background-color: var(--nc-bg-1);
+}
+
+.formGroup textarea {
+  font-family: monospace;
+  resize: vertical;
+}
+
+.formGroup small {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--nc-tx-2);
+  font-size: 0.9rem;
+}
+
+.formActions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 2rem;
+}
+
+.submitButton {
+  padding: 0.75rem 2rem;
+  background-color: var(--nc-lk-1);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1.1rem;
+  transition: background-color 0.2s;
+}
+
+.submitButton:hover:not(:disabled) {
+  background-color: var(--nc-lk-2);
+}
+
+.submitButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cancelButton {
+  padding: 0.75rem 2rem;
+  background-color: var(--nc-bg-3);
+  color: var(--nc-tx-1);
+  text-decoration: none;
+  border-radius: 4px;
+  font-size: 1.1rem;
+  transition: background-color 0.2s;
+  display: inline-block;
+}
+
+.cancelButton:hover {
+  background-color: var(--nc-bg-2);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .container {
+    padding: 1rem;
+  }
+
+  .header {
+    flex-direction: column;
+    gap: 1rem;
+    align-items: stretch;
+  }
+
+  .uploadButton, .backButton {
+    text-align: center;
+  }
+
+  .tableHeader,
+  .tableRow {
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+
+  .headerCell {
+    display: none;
+  }
+
+  .cell::before {
+    content: attr(data-label);
+    font-weight: bold;
+    display: inline-block;
+    margin-right: 0.5rem;
+  }
+
+  .uploadTypeButtons {
+    flex-direction: column;
+  }
+
+  .formActions {
+    flex-direction: column;
+  }
+
+  .submitButton,
+  .cancelButton {
+    width: 100%;
+    text-align: center;
+  }
+}

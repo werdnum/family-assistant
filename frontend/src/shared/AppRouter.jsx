@@ -12,6 +12,7 @@ import EventsApp from '../pages/Events/EventsApp';
 import HistoryApp from '../pages/History/HistoryApp';
 import DocumentationApp from '../pages/Documentation/DocumentationApp';
 import TokenManagement from '../pages/Settings/TokenManagement';
+import DocumentsPage from '../pages/Documents/DocumentsPage';
 
 const FallbackRedirect = () => {
   useEffect(() => {
@@ -135,6 +136,16 @@ const AppRouter = () => {
           element={
             <Layout>
               <TokenManagement />
+            </Layout>
+          }
+        />
+
+        {/* Documents routes */}
+        <Route
+          path="/documents/*"
+          element={
+            <Layout>
+              <DocumentsPage />
             </Layout>
           }
         />

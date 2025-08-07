@@ -28,9 +28,8 @@ from family_assistant.web.routers.api_token_management import (
     router as api_token_management_router,
 )
 from family_assistant.web.routers.context_viewer import context_viewer_router
-from family_assistant.web.routers.documents_ui import (  # New import for document upload UI
-    router as documents_ui_router,
-)
+
+# documents_ui router removed - replaced with React
 from family_assistant.web.routers.errors import router as errors_router
 from family_assistant.web.routers.health import health_router
 from family_assistant.web.routers.vector_search import vector_search_router
@@ -264,9 +263,7 @@ app.include_router(vite_pages_router, tags=["Vite Pages"])
 app.include_router(webhooks_router, tags=["Webhooks"])
 app.include_router(vector_search_router, tags=["Vector Search UI"])
 app.include_router(context_viewer_router, tags=["Context Viewer UI"])
-app.include_router(
-    documents_ui_router, prefix="/documents", tags=["Documents UI"]
-)  # New router
+# documents_ui_router removed - replaced with React
 app.include_router(errors_router, tags=["Error Logs UI"])
 app.include_router(health_router, tags=["Health Check"])
 

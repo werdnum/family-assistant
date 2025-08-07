@@ -4,11 +4,11 @@
 
 Convert all Jinja2 pages to React components served by Vite, eliminating the dual UI system.
 
-## Current State ✅ MAJOR PROGRESS MADE
+## Current State ✅ NEARLY COMPLETE!
 
-- **10 React pages completed** (up from initial 4) ✅
+- **12 React pages completed** (up from initial 4) ✅
 - **React Router foundation infrastructure** fully implemented ✅
-- **Only 4 Jinja2 pages** remaining to migrate (down from 26) ✅
+- **Only 2 Jinja2 pages** remaining to migrate (down from 26) ✅
 - **All backend APIs** implemented and ready ✅
 
 ### Completed React Pages ✅
@@ -23,13 +23,13 @@ Convert all Jinja2 pages to React components served by Vite, eliminating the dua
 08. **`/events/*`** - React components with filters and smart summaries (converted)
 09. **`/history/*`** - React components with filters and pagination (converted)
 10. **`/context`** - React page (basic conversion completed)
+11. **`/docs/*`** - React documentation viewer (converted)
+12. **`/settings/tokens`** - React token management (converted)
 
-### Remaining Jinja2 Pages (Only 4 left!)
+### Remaining Jinja2 Pages (Only 2 left!)
 
-1. **`/vector-search`** + document detail pages - Uses `vector_search.py`
-2. **`/documents/*`** (list, upload, reindex) - Uses `documents_ui.py`
-3. **`/docs/*`** - Documentation pages - Uses `documentation.py`
-4. **`/settings/tokens`** - Token management - Uses `ui_token_management.py`
+1. **`/documents/*`** (list, upload, reindex) - Uses `documents_ui.py`
+2. **`/vector-search`** + document detail pages - Uses `vector_search.py`
 
 ## Implementation Strategy
 
@@ -47,33 +47,38 @@ Convert all Jinja2 pages to React components served by Vite, eliminating the dua
 - ✅ Comprehensive test coverage maintained
 - ✅ React Router integration with unified routing approach
 
-### Session 6: Search & Documents ⬅️ **NEXT UP**
+### Session 6: Final Pages ⬅️ **CURRENT**
 
-**Goal:** Convert the 2 most complex remaining pages
+**Goal:** Complete the final 2 page conversions
 
-**Tasks:**
+**Current Focus: Documents UI**
+
+- Convert `/documents/*` list/upload/reindex → React component (Documents API already complete)
+- Remove `documents_ui.py` router
+- Add routes to `vite_pages.py` and React router
+
+**Next: Vector Search UI**
 
 - Convert `/vector-search` + document detail → React search interface (Vector Search API already
   complete)
-- Convert `/documents/*` list/upload/reindex → React component (Documents API already complete)
-- Remove `vector_search.py` and `documents_ui.py` routers
+- Remove `vector_search.py` router
 - Add routes to `vite_pages.py` and React router
 
 **APIs Available:**
 
-- ✅ Vector search APIs complete with comprehensive filtering and schema validation
 - ✅ Documents list, upload, and reindex APIs complete
+- ✅ Vector search APIs complete with comprehensive filtering and schema validation
 
-### Session 7: Final Pages & Cleanup
+### Session 7: Final Cleanup
 
-**Goal:** Complete the migration
+**Goal:** Remove all remaining Jinja2 infrastructure
 
 **Tasks:**
 
-- Convert `/docs/*` → React or keep as simple Jinja2 (low priority)
-- Convert `/settings/tokens` → React component
-- Remove `documentation.py` and `ui_token_management.py` routers
-- Final cleanup of any remaining Jinja2 infrastructure
+- Remove any remaining Jinja2 routers
+- Clean up Jinja2 templates directory
+- Update documentation
+- Final testing and verification
 
 ## Technical Implementation
 
@@ -151,14 +156,17 @@ All required APIs are implemented and tested:
 - [x] `tools_ui.py` ✅ (deleted)
 - [x] Non-existent routers: `history.py`, `events_ui.py`, `listeners_ui.py`, `chat_ui.py`
 
-### Remaining Work (Only 4 pages!)
+### Remaining Work (Only 2 pages!)
 
 **Active Jinja2 Routers to Convert:**
 
-- [ ] `vector_search.py` - `/vector-search` + document detail pages
 - [ ] `documents_ui.py` - `/documents/*` (list, upload, reindex)
-- [ ] `documentation.py` - `/docs/*` (documentation viewer)
-- [ ] `ui_token_management.py` - `/settings/tokens` (token management)
+- [ ] `vector_search.py` - `/vector-search` + document detail pages
+
+**Recently Completed:**
+
+- [x] `documentation.py` - `/docs/*` ✅ (converted to React)
+- [x] `ui_token_management.py` - `/settings/tokens` ✅ (converted to React)
 
 **Context Router Status:**
 
@@ -168,9 +176,9 @@ All required APIs are implemented and tested:
 
 ## Success Criteria
 
-- [x] **90%+ pages converted** - ✅ 10/14 major pages complete
-- [ ] All Jinja2 UI routes converted to React (4 remaining)
-- [ ] All `*_ui.py` routers removed or API-only (4 remaining)
+- [x] **90%+ pages converted** - ✅ 12/14 major pages complete (86%)
+- [ ] All Jinja2 UI routes converted to React (2 remaining)
+- [ ] All `*_ui.py` routers removed or API-only (2 remaining)
 - [x] **Single UI system** - ✅ React Router foundation established
 - [x] **No functionality regression** - ✅ All tests passing
 - [x] **Consistent styling/UX** - ✅ Unified Layout component
@@ -179,17 +187,16 @@ All required APIs are implemented and tested:
 
 **Major Progress Made:**
 
-- ✅ **10 out of 14 major pages** converted to React
-- ✅ **Only 4 Jinja2 pages remaining** (down from 26+ initially)
+- ✅ **12 out of 14 major pages** converted to React
+- ✅ **Only 2 Jinja2 pages remaining** (down from 26+ initially)
 - ✅ **Complete React Router infrastructure** established
 - ✅ **All backend APIs** implemented and tested
 - ✅ **Unified routing system** working smoothly
 
-**Next Steps:**
+**Current Focus:**
 
-1. **Session 6:** Convert vector search and documents pages (2 complex pages)
-2. **Session 7:** Convert documentation and settings pages (2 simple pages)
-3. **Cleanup:** Remove remaining Jinja2 infrastructure
+1. **Documents UI:** Converting list/upload/reindex functionality to React
+2. **Vector Search UI:** Converting search interface to React
 
-**The migration is nearly complete!** The foundation work and major page conversions are done. Only
-4 pages remain, with all necessary APIs already implemented.
+**The migration is 86% complete!** The foundation work and major page conversions are done. Only 2
+pages remain, with all necessary APIs already implemented.

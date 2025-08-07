@@ -142,3 +142,10 @@ async def docs_ui(request: Request) -> Response:
 async def settings_tokens_ui(request: Request) -> Response:
     """Serve the React settings/tokens interface via router."""
     return _serve_vite_html_file(request, "router.html")
+
+
+@vite_pages_router.get("/documents", name="documents_ui")
+@vite_pages_router.get("/documents/upload", name="documents_upload_ui")
+async def documents_ui(request: Request) -> Response:
+    """Serve the React documents interface via router."""
+    return _serve_vite_html_file(request, "router.html")
