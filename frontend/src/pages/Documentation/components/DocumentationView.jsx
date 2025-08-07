@@ -31,7 +31,7 @@ const DocumentationView = ({ onBackToList }) => {
         setDocTitle(contentData.filename);
 
         // Fetch available documents for sidebar
-        const docsResponse = await fetch('/api/documentation');
+        const docsResponse = await fetch('/api/documentation/');
         if (docsResponse.ok) {
           const docsData = await docsResponse.json();
           setAvailableDocs(docsData);

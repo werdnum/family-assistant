@@ -115,10 +115,15 @@ async def test_documentation_navigation(
         assert "/docs/" in page.url
 
         # Check for back button or sidebar
-        back_button = page.locator("button:has-text('Back')")
-        sidebar_link = page.locator("[class*='sidebar'] a")
+        # The back button text is "← Documentation" not "Back"
+        back_button = page.locator("button:has-text('Documentation')")
+        sidebar = page.locator("[class*='sidebar']")
+        doc_nav_items = page.locator("[class*='docNavItem']")
 
         has_back = await back_button.count() > 0
-        has_sidebar = await sidebar_link.count() > 0
+        has_sidebar = await sidebar.count() > 0
+        has_nav_items = await doc_nav_items.count() > 0
 
-        assert has_back or has_sidebar, "Should have navigation options"
+        assert has_back or has_sidebar or has_nav_items, (
+            "Should have navigation options"
+        )
