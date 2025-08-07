@@ -5,6 +5,7 @@ import ConversationSidebar from './ConversationSidebar';
 import { useStreamingResponse } from './useStreamingResponse';
 import { LOADING_MARKER } from './constants';
 import { useSearchParams } from 'react-router-dom';
+import { generateUUID } from '../utils/uuid';
 
 // Helper function to parse tool arguments
 const parseToolArguments = (args) => {
@@ -308,7 +309,7 @@ const ChatPage = ({ profileId = 'default_assistant' } = {}) => {
 
   // Handle new chat creation
   const handleNewChat = useCallback(() => {
-    const newConvId = `web_conv_${crypto.randomUUID()}`;
+    const newConvId = `web_conv_${generateUUID()}`;
     setConversationId(newConvId);
     setMessages([]);
     localStorage.setItem('lastConversationId', newConvId);
@@ -356,13 +357,13 @@ const ChatPage = ({ profileId = 'default_assistant' } = {}) => {
   const handleNew = useCallback(
     async (message) => {
       const userMessage = {
-        id: `msg_${crypto.randomUUID()}`,
+        id: `msg_${generateUUID()}`,
         role: 'user',
         content: [{ type: 'text', text: message.content[0].text }],
         createdAt: new Date(),
       };
 
-      const assistantMessageId = `msg_${crypto.randomUUID()}_assistant`;
+      const assistantMessageId = `msg_${generateUUID()}_assistant`;
       // Add both user message and a loading assistant message
       const loadingAssistantMessage = {
         id: assistantMessageId,
@@ -378,7 +379,7 @@ const ChatPage = ({ profileId = 'default_assistant' } = {}) => {
 
       await sendStreamingMessage({
         prompt: message.content[0].text,
-        conversationId: conversationId || `web_conv_${crypto.randomUUID()}`,
+        conversationId: conversationId || `web_conv_${generateUUID()}`,
         profileId: profileId,
         interfaceType: 'web',
       });

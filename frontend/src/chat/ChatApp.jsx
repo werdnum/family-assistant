@@ -5,6 +5,7 @@ import NavHeader from './NavHeader';
 import ConversationSidebar from './ConversationSidebar';
 import { useStreamingResponse } from './useStreamingResponse';
 import { LOADING_MARKER } from './constants';
+import { generateUUID } from '../utils/uuid';
 import './chat.css';
 import './thread.css';
 
@@ -326,7 +327,7 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
 
   // Handle new chat creation
   const handleNewChat = () => {
-    const newConvId = `web_conv_${crypto.randomUUID()}`;
+    const newConvId = `web_conv_${generateUUID()}`;
     setConversationId(newConvId);
     setMessages([]);
     localStorage.setItem('lastConversationId', newConvId);
@@ -363,7 +364,7 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
 
       await sendStreamingMessage({
         prompt: message.content[0].text,
-        conversationId: conversationId || `web_conv_${crypto.randomUUID()}`,
+        conversationId: conversationId || `web_conv_${generateUUID()}`,
         profileId: profileId,
         interfaceType: 'web',
       });
