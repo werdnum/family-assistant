@@ -149,3 +149,9 @@ async def settings_tokens_ui(request: Request) -> Response:
 async def documents_ui(request: Request) -> Response:
     """Serve the React documents interface via router."""
     return _serve_vite_html_file(request, "router.html")
+
+
+@vite_pages_router.get("/vector-search", name="vector_search_ui")
+async def vector_search_ui(request: Request) -> Response:
+    """Serve the React vector search interface via router."""
+    return _serve_vite_html_file(request, "router.html")

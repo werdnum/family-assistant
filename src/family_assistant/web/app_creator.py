@@ -29,10 +29,9 @@ from family_assistant.web.routers.api_token_management import (
 )
 from family_assistant.web.routers.context_viewer import context_viewer_router
 
-# documents_ui router removed - replaced with React
+# documents_ui and vector_search routers removed - replaced with React
 from family_assistant.web.routers.errors import router as errors_router
 from family_assistant.web.routers.health import health_router
-from family_assistant.web.routers.vector_search import vector_search_router
 from family_assistant.web.routers.vite_pages import vite_pages_router
 from family_assistant.web.routers.webhooks import webhooks_router
 from family_assistant.web.template_utils import get_static_asset
@@ -261,7 +260,7 @@ app.include_router(vite_pages_router, tags=["Vite Pages"])
 # Removed documentation_router - using React instead
 # Removed api_docs_router - not needed
 app.include_router(webhooks_router, tags=["Webhooks"])
-app.include_router(vector_search_router, tags=["Vector Search UI"])
+# vector_search_router removed - replaced with React
 app.include_router(context_viewer_router, tags=["Context Viewer UI"])
 # documents_ui_router removed - replaced with React
 app.include_router(errors_router, tags=["Error Logs UI"])

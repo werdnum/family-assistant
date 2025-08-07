@@ -13,6 +13,7 @@ import HistoryApp from '../pages/History/HistoryApp';
 import DocumentationApp from '../pages/Documentation/DocumentationApp';
 import TokenManagement from '../pages/Settings/TokenManagement';
 import DocumentsPage from '../pages/Documents/DocumentsPage';
+import VectorSearchPage from '../pages/VectorSearch/VectorSearchPage';
 
 const FallbackRedirect = () => {
   useEffect(() => {
@@ -146,6 +147,16 @@ const AppRouter = () => {
           element={
             <Layout>
               <DocumentsPage />
+            </Layout>
+          }
+        />
+
+        {/* Vector Search routes */}
+        <Route
+          path="/vector-search/*"
+          element={
+            <Layout>
+              <VectorSearchPage />
             </Layout>
           }
         />
