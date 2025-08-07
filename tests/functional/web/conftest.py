@@ -84,7 +84,7 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def vite_and_api_ports() -> tuple[int, int]:
     """Get random free ports for both Vite and API servers."""
     # For the simplified approach, we only need the API port
@@ -335,18 +335,10 @@ async def web_test_fixture(
     # Set up request/response logging for debugging
     # Always log API requests to help debug
     def log_request(req: Any) -> None:
-        if "/api/" in req.url:
-            print(f"[API Request] {req.method} {req.url}")
-            if req.method == "POST":
-                print(f"  Body: {req.post_data}")
-        elif req.url.endswith(".js") or req.url.endswith(".css"):
-            print(f"[Asset Request] {req.method} {req.url}")
+        print(f"[Request] {req.method} {req.url}")
 
     def log_response(res: Any) -> None:
-        if "/api/" in res.url:
-            print(f"[API Response] {res.status} {res.url}")
-        elif res.url.endswith(".js") or res.url.endswith(".css"):
-            print(f"[Asset Response] {res.status} {res.url}")
+        print(f"[Response] {res.status} {res.url}")
 
     page.on("request", log_request)
     page.on("response", log_response)

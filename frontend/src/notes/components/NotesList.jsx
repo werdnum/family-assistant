@@ -1,26 +1,52 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 
 const NotesList = () => {
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const abortControllerRef = useRef(null);
 
   useEffect(() => {
-    fetchNotes();
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    fetchNotes(abortController.signal);
+
+    return () => {
+      abortController.abort();
+    };
   }, []);
 
-  const fetchNotes = async () => {
+  const fetchNotes = async (signal) => {
     try {
       setLoading(true);
-      const response = await fetch('/api/notes/');
+      setError(null);
+      const response = await fetch('/api/notes/', { signal });
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        let errorText = `HTTP error! status: ${response.status}`;
+        try {
+          const errorData = await response.json();
+          errorText = errorData.detail || errorText;
+        } catch (_e) {
+          // Ignore if response is not json
+        }
+        throw new Error(errorText);
       }
       const data = await response.json();
       setNotes(data);
     } catch (err) {
-      setError(err.message);
+      // Don't log errors for aborted requests (happens during navigation)
+      if (err.name !== 'AbortError' && !err.message?.includes('aborted')) {
+        const message =
+          err instanceof TypeError && err.message.includes('Failed to fetch')
+            ? 'Could not connect to the API server. Please check your network connection and if the server is running.'
+            : err.message;
+        setError(message);
+        // Only log real errors, not navigation-related aborts
+        if (!err.message?.includes('Failed to fetch')) {
+          console.error('Error fetching notes:', message);
+        }
+      }
     } finally {
       setLoading(false);
     }
@@ -42,10 +68,11 @@ const NotesList = () => {
       }
 
       // Refresh the notes list
-      await fetchNotes();
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
+      await fetchNotes(abortController.signal);
     } catch (err) {
-      // eslint-disable-next-line no-alert
-      window.alert(`Error deleting note: ${err.message}`);
+      setError(`Error deleting note: ${err.message}`);
     }
   };
 

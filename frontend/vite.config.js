@@ -40,9 +40,7 @@ export default defineConfig(({ mode }) => ({
           }
 
           // Special standalone React apps (not using React Router)
-          if (url.pathname === '/tools') {
-            req.url = '/tools.html' + url.search;
-          } else if (url.pathname === '/tool-test-bench') {
+          if (url.pathname === '/tool-test-bench') {
             req.url = '/tool-test-bench.html' + url.search;
           } else if (url.pathname === '/errors' || url.pathname.startsWith('/errors/')) {
             req.url = '/errors.html' + url.search;
@@ -76,7 +74,6 @@ export default defineConfig(({ mode }) => ({
         main: path.resolve(__dirname, 'index.html'),
         chat: path.resolve(__dirname, 'chat.html'),
         router: path.resolve(__dirname, 'router.html'),
-        tools: path.resolve(__dirname, 'tools.html'),
         'tool-test-bench': path.resolve(__dirname, 'tool-test-bench.html'),
         errors: path.resolve(__dirname, 'errors.html'),
       },

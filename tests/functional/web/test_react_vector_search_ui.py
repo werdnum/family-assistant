@@ -53,6 +53,7 @@ async def test_react_vector_search_page_loads(web_test_fixture: WebTestFixture) 
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
+@pytest.mark.postgres  # Vector search requires PostgreSQL with pgvector
 async def test_search_documents_via_react_ui(
     web_test_fixture: WebTestFixture,
 ) -> None:
@@ -138,6 +139,7 @@ async def test_search_documents_via_react_ui(
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
+@pytest.mark.postgres  # Vector search requires PostgreSQL with pgvector
 async def test_vector_search_with_filters(
     web_test_fixture: WebTestFixture,
 ) -> None:

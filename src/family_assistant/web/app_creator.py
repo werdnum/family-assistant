@@ -257,12 +257,20 @@ if AUTH_ENABLED:
     logger.info("Authentication routes included.")
 
 app.include_router(vite_pages_router, tags=["Vite Pages"])
-# Removed documentation_router - using React instead
-# Removed api_docs_router - not needed
+# NOTE: The following routers have been removed as their Jinja2 templates
+# have been migrated to React components served via vite_pages_router:
+#   * documentation_router - docs now via React
+#   * api_docs_router - not needed
+#   * vector_search_router - replaced with React at /vector-search
+#   * documents_ui_router - replaced with React at /documents
+#   * notes_ui_router - replaced with React at /notes
+#   * tasks_ui_router - replaced with React at /tasks
+#   * message_history_router - replaced with React at /history
+#   * error_list_router - replaced with React at /errors
+# All these routes are now handled by vite_pages_router above
+
 app.include_router(webhooks_router, tags=["Webhooks"])
-# vector_search_router removed - replaced with React
 app.include_router(context_viewer_router, tags=["Context Viewer UI"])
-# documents_ui_router removed - replaced with React
 app.include_router(errors_router, tags=["Error Logs UI"])
 app.include_router(health_router, tags=["Health Check"])
 

@@ -30,7 +30,7 @@ async def test_tools_page_loads(web_test_fixture: WebTestFixture) -> None:
 
     # Check that Tools link is highlighted as current page
     current_tools_link = await page.wait_for_selector(
-        "nav a[href='/tools'].current-page", state="visible", timeout=5000
+        "nav a.current-page:has-text('Tools')", state="visible", timeout=5000
     )
     assert current_tools_link is not None, (
         "Tools link should be highlighted as current page"

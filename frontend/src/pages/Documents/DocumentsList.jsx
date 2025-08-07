@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import styles from './Documents.module.css';
 
@@ -12,13 +12,16 @@ const DocumentsList = () => {
   const [total, setTotal] = useState(0);
   const [reindexing, setReindexing] = useState({});
   const limit = 20;
+  const abortControllerRef = useRef(null);
 
-  const fetchDocuments = useCallback(async (page = 1) => {
+  const fetchDocuments = useCallback(async (page = 1, abortSignal) => {
     try {
       setLoading(true);
       setError(null);
       const offset = (page - 1) * limit;
-      const response = await fetch(`/api/documents/?limit=${limit}&offset=${offset}`);
+      const response = await fetch(`/api/documents/?limit=${limit}&offset=${offset}`, {
+        signal: abortSignal,
+      });
 
       if (!response.ok) {
         throw new Error(`Failed to fetch documents: ${response.statusText}`);
@@ -30,15 +33,27 @@ const DocumentsList = () => {
       setTotalPages(Math.ceil(data.total / limit));
       setCurrentPage(page);
     } catch (err) {
-      console.error('Error fetching documents:', err);
-      setError(err.message);
+      // Don't log errors for aborted requests (happens during navigation)
+      if (err.name !== 'AbortError' && !err.message?.includes('aborted')) {
+        // Only log real errors, not navigation-related aborts
+        if (!err.message?.includes('Failed to fetch')) {
+          console.error('Error fetching documents:', err);
+        }
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchDocuments(1);
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    fetchDocuments(1, abortController.signal);
+
+    return () => {
+      abortController.abort();
+    };
   }, [fetchDocuments]);
 
   const handleReindex = async (documentId) => {
@@ -78,7 +93,15 @@ const DocumentsList = () => {
 
   const handlePageChange = (newPage) => {
     if (newPage >= 1 && newPage <= totalPages) {
-      fetchDocuments(newPage);
+      // Abort any previous request
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+
+      // Create new abort controller for this page change
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
+      fetchDocuments(newPage, abortController.signal);
     }
   };
 

@@ -148,7 +148,7 @@ async def get_document(
                 "embedding_model": embedding.embedding_model,
                 "content": embedding.content,
                 "chunk_index": embedding.chunk_index,
-                "metadata": embedding.metadata,
+                "metadata": embedding.embedding_metadata,  # Fixed: use embedding_metadata not metadata
             })
 
     return {

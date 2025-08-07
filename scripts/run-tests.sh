@@ -143,6 +143,10 @@ else
     echo ""
 fi
 
+# Force a rebuild of the frontend
+echo "${BLUE}  ▸ Building frontend...${NC}"
+(cd frontend && npm run build)
+
 # Phase 2: Parallel execution of tests and analysis
 if [ $SKIP_LINT -eq 0 ]; then
     # Start basedpyright
