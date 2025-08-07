@@ -131,7 +131,7 @@ const DocumentsList = () => {
             {documents.map((doc) => (
               <div key={doc.id} className={styles.tableRow}>
                 <div className={styles.cell}>
-                  <Link to={`/vector-search?document_id=${doc.id}`} className={styles.documentLink}>
+                  <Link to={`/documents/${doc.id}`} className={styles.documentLink}>
                     {doc.title || 'Untitled'}
                   </Link>
                   {doc.source_uri && (

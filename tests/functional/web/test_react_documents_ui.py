@@ -116,9 +116,8 @@ async def test_create_document_via_api_and_view_in_react_ui(
         f"Document title '{TEST_DOC_TITLE}' should appear on the documents page after {max_retries} retries"
     )
 
-    # Step 3: Verify the document has a clickable link
-    # The React UI currently links documents to /vector-search?document_id=X
-    # We'll just verify the link exists without clicking it to avoid navigation issues
+    # Step 3: Verify the document links to the detail view
+    # The React UI now links documents to /documents/{id}
 
     # Find the document title link
     title_link = page.locator(f"a:has-text('{TEST_DOC_TITLE}')")
@@ -130,19 +129,34 @@ async def test_create_document_via_api_and_view_in_react_ui(
     # Verify the link has the correct href attribute
     href = await title_link.get_attribute("href")
     assert href is not None, "Document link should have an href attribute"
-    assert "/vector-search" in href, (
-        f"Document link should point to vector-search, got: {href}"
+    assert f"/documents/{document_db_id}" in href, (
+        f"Document link should point to detail view, got: {href}"
     )
-    assert f"document_id={document_db_id}" in href, "Document ID should be in link URL"
 
-    # Step 4: Verify document metadata is displayed
-    # Check that other document fields are visible in the table
-    page_content = await page.text_content("body")
-    assert page_content is not None, "Page content should not be None"
+    # Step 4: Click the link and verify document detail view loads
+    await title_link.click()
+    await page.wait_for_load_state("domcontentloaded")
 
-    # Verify document source type is displayed
-    assert TEST_DOC_SOURCE_TYPE in page_content, (
-        "Document source type should be visible"
+    # Verify we're on the detail page
+    current_url = page.url
+    assert f"/documents/{document_db_id}" in current_url, (
+        f"Should navigate to document detail view, got: {current_url}"
+    )
+
+    # Wait for the detail view to load - look for any indication of the detail page
+    # The page might show "Document Details", "Loading...", or the document title
+    await page.wait_for_timeout(2000)  # Give React time to render
+
+    # Verify document content is displayed
+    detail_content = await page.text_content("body")
+    assert detail_content is not None, "Detail page content should not be None"
+
+    # Basic check that we're on a detail page (not empty, not error page)
+    assert len(detail_content) > 100, "Detail page should have content"
+
+    # The document title should appear somewhere on the page
+    assert TEST_DOC_TITLE in detail_content, (
+        "Document title should be visible in detail view"
     )
 
 

@@ -84,21 +84,87 @@ async def list_documents(
 @documents_api_router.get("/{document_id}")
 async def get_document(
     document_id: int, db_context: Annotated[DatabaseContext, Depends(get_db)]
-) -> DocumentModel:
-    """Get a document by ID."""
+) -> dict:
+    """Get a document by ID with detailed information including embeddings."""
     record = await get_document_by_id(db_context, document_id)
     if not record:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
-    return DocumentModel(
-        id=record.id,
-        source_type=record.source_type,
-        source_id=record.source_id,
-        title=record.title,
-        source_uri=record.source_uri,
-        created_at=record.created_at,
-        added_at=record.added_at,
-        doc_metadata=record.doc_metadata,
-    )
+
+    # Prepare embeddings data
+    embeddings_data = []
+    full_text = None
+    full_text_type = None
+    full_text_warning = None
+
+    if record.embeddings:
+        # Look for raw content types first (these should contain full text)
+        raw_types = [
+            "raw_note_text",
+            "raw_body_text",
+            "raw_file_text",
+            "extracted_markdown_content",  # Full PDF text
+            "fetched_content_markdown",  # Full web page content
+            "original_document_file",  # Might have text content
+        ]
+
+        # First try to find raw content
+        for embedding in record.embeddings:
+            if embedding.embedding_type in raw_types and embedding.content:
+                full_text = embedding.content
+                full_text_type = embedding.embedding_type
+                # Check if this was stored without embedding due to size
+                if embedding.embedding_model in [
+                    "text_only_too_long",
+                    "text_only_error",
+                ]:
+                    full_text_warning = (
+                        f"Note: This content was too large to embed "
+                        f"(reason: {embedding.embedding_model})"
+                    )
+                break
+
+        # If no raw content found, fall back to chunk reconstruction
+        if not full_text:
+            chunks = [
+                e
+                for e in record.embeddings
+                if e.embedding_type == "content_chunk" and e.content
+            ]
+            if chunks:
+                # Sort by chunk index
+                chunks.sort(key=lambda x: x.chunk_index or 0)
+                full_text = "".join(c.content for c in chunks if c.content)
+                full_text_type = "reconstructed_from_chunks"
+                full_text_warning = (
+                    "Note: This text was reconstructed from overlapping chunks. "
+                    "There may be duplicate content at chunk boundaries."
+                )
+
+        # Prepare all embeddings for display
+        for embedding in record.embeddings:
+            embeddings_data.append({
+                "id": embedding.id,
+                "embedding_type": embedding.embedding_type,
+                "embedding_model": embedding.embedding_model,
+                "content": embedding.content,
+                "chunk_index": embedding.chunk_index,
+                "metadata": embedding.metadata,
+            })
+
+    return {
+        "id": record.id,
+        "source_type": record.source_type,
+        "source_id": record.source_id,
+        "title": record.title,
+        "source_uri": record.source_uri,
+        "created_at": record.created_at,
+        "added_at": record.added_at,
+        "doc_metadata": record.doc_metadata,
+        "embeddings": embeddings_data,
+        "full_text": full_text,
+        "full_text_type": full_text_type,
+        "full_text_warning": full_text_warning,
+    }
 
 
 @documents_api_router.post(
