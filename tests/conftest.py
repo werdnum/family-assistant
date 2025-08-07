@@ -1208,6 +1208,12 @@ def setup_fastapi_test_config() -> Generator[None, None, None]:
         # Set the test config
         fastapi_app.state.config = test_config
 
+        # Also ensure docs_user_dir is properly set for documentation API tests
+        docs_user_dir = pathlib.Path(__file__).parent.parent / "docs" / "user"
+        if docs_user_dir.exists():
+            fastapi_app.state.docs_user_dir = docs_user_dir
+            logger.info(f"Set docs_user_dir for tests: {docs_user_dir}")
+
         logger.info(f"Set up global test config for FastAPI app: {test_config}")
 
         yield

@@ -122,21 +122,43 @@ def build_frontend_assets() -> None:
         if result.returncode != 0:
             pytest.fail("npm install failed")
 
-    # Check if we need to rebuild (simple timestamp check)
+    # Check if we need to rebuild (comprehensive timestamp check)
     need_rebuild = True
     if dist_dir.exists() and any(dist_dir.iterdir()):
         # Check if source files are newer than build
+        # Include all relevant file types that could affect the build
         src_files = (
             list(frontend_dir.glob("src/**/*.js"))
             + list(frontend_dir.glob("src/**/*.jsx"))
+            + list(frontend_dir.glob("src/**/*.ts"))
+            + list(frontend_dir.glob("src/**/*.tsx"))
             + list(frontend_dir.glob("src/**/*.css"))
+            + list(frontend_dir.glob("*.json"))  # package.json, tsconfig.json, etc.
+            + list(frontend_dir.glob("*.config.js"))  # vite.config.js, etc.
+            + list(frontend_dir.glob("*.html"))  # HTML entry points
         )
+        # Also check the vite_pages.py file since route changes affect the build
+        vite_pages_file = (
+            Path(__file__).parent.parent.parent.parent
+            / "src"
+            / "family_assistant"
+            / "web"
+            / "routers"
+            / "vite_pages.py"
+        )
+        if vite_pages_file.exists():
+            src_files.append(vite_pages_file)
+
         if src_files:
-            newest_src = max(f.stat().st_mtime for f in src_files)
+            newest_src = max(f.stat().st_mtime for f in src_files if f.exists())
             oldest_dist = min(f.stat().st_mtime for f in dist_dir.iterdir())
             if oldest_dist > newest_src:
                 print("Frontend assets are up to date, skipping build")
                 need_rebuild = False
+            else:
+                print("Source files have been modified, rebuilding assets")
+                print(f"  Newest source: {newest_src}")
+                print(f"  Oldest dist: {oldest_dist}")
 
     if need_rebuild:
         print("Building frontend assets...")

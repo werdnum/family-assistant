@@ -13,7 +13,7 @@ const DocumentationList = () => {
         setLoading(true);
         setError(null);
 
-        const response = await fetch('/api/documentation');
+        const response = await fetch('/api/documentation/');
         if (!response.ok) {
           throw new Error(`Failed to fetch documentation list: ${response.statusText}`);
         }

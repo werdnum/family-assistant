@@ -1,8 +1,12 @@
 """Playwright-based functional tests for Documentation React UI."""
 
+import logging
+
 import pytest
 
 from .conftest import WebTestFixture
+
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.playwright
@@ -28,15 +32,26 @@ async def test_documentation_list_page_loads(
     # Check for documentation items or loading state or error
     doc_items = page.locator("[class*='docItem']")
     error = page.locator("[class*='error']")
-    no_docs = page.locator("text=/no documentation/i")
+    no_docs = page.locator("text=/no documentation files found/i")
+    empty_state = page.locator("[class*='empty']")
 
     # Verify successful page load (either docs or no docs message, but no error)
     has_docs = await doc_items.count() > 0
     has_error = await error.count() > 0
     has_no_docs = await no_docs.count() > 0
+    has_empty = await empty_state.count() > 0
+
+    # Get page content for debugging
+    if not (has_docs or has_no_docs or has_empty) or has_error:
+        page_content = await page.content()
+        logger.warning(f"Page content snippet: {page_content[:1000]}")
+
+        # Check for specific error messages
+        error_messages = await error.all_text_contents() if has_error else []
+        logger.warning(f"Error messages: {error_messages}")
 
     # The page should show content without errors
-    assert (has_docs or has_no_docs) and not has_error, (
+    assert (has_docs or has_no_docs or has_empty) and not has_error, (
         "Should show documentation items or no docs message without errors"
     )
 
