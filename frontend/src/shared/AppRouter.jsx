@@ -1,19 +1,37 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './Layout';
-import ChatPage from '../chat/ChatPage';
-import ToolsApp from '../tools/ToolsApp';
-import ErrorsApp from '../errors/ErrorsApp';
-import ContextPage from './ContextPage';
-import NotesApp from '../notes/NotesApp';
-import TasksApp from '../tasks/TasksApp';
-import EventListenersApp from '../pages/EventListeners/EventListenersApp';
-import EventsApp from '../pages/Events/EventsApp';
-import HistoryApp from '../pages/History/HistoryApp';
-import DocumentationApp from '../pages/Documentation/DocumentationApp';
-import TokenManagement from '../pages/Settings/TokenManagement';
-import DocumentsPage from '../pages/Documents/DocumentsPage';
-import VectorSearchPage from '../pages/VectorSearch/VectorSearchPage';
+
+// Lazy load all route components for code splitting
+const ChatPage = lazy(() => import('../chat/ChatPage'));
+const ToolsApp = lazy(() => import('../tools/ToolsApp'));
+const ErrorsApp = lazy(() => import('../errors/ErrorsApp'));
+const ContextPage = lazy(() => import('./ContextPage'));
+const NotesApp = lazy(() => import('../notes/NotesApp'));
+const TasksApp = lazy(() => import('../tasks/TasksApp'));
+const EventListenersApp = lazy(() => import('../pages/EventListeners/EventListenersApp'));
+const EventsApp = lazy(() => import('../pages/Events/EventsApp'));
+const HistoryApp = lazy(() => import('../pages/History/HistoryApp'));
+const DocumentationApp = lazy(() => import('../pages/Documentation/DocumentationApp'));
+const TokenManagement = lazy(() => import('../pages/Settings/TokenManagement'));
+const DocumentsPage = lazy(() => import('../pages/Documents/DocumentsPage'));
+const VectorSearchPage = lazy(() => import('../pages/VectorSearch/VectorSearchPage'));
+
+// Loading component for Suspense fallback
+const LoadingSpinner = () => (
+  <div
+    style={{
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      minHeight: '200px',
+      fontSize: '1.2rem',
+      color: '#666',
+    }}
+  >
+    Loading...
+  </div>
+);
 
 const FallbackRedirect = () => {
   useEffect(() => {
@@ -36,7 +54,9 @@ const AppRouter = () => {
           path="/chat"
           element={
             <Layout>
-              <ChatPage />
+              <Suspense fallback={<LoadingSpinner />}>
+                <ChatPage />
+              </Suspense>
             </Layout>
           }
         />
@@ -46,7 +66,9 @@ const AppRouter = () => {
           path="/tools"
           element={
             <Layout>
-              <ToolsApp />
+              <Suspense fallback={<LoadingSpinner />}>
+                <ToolsApp />
+              </Suspense>
             </Layout>
           }
         />
@@ -56,7 +78,9 @@ const AppRouter = () => {
           path="/errors/*"
           element={
             <Layout>
-              <ErrorsApp />
+              <Suspense fallback={<LoadingSpinner />}>
+                <ErrorsApp />
+              </Suspense>
             </Layout>
           }
         />
@@ -66,7 +90,9 @@ const AppRouter = () => {
           path="/context"
           element={
             <Layout>
-              <ContextPage />
+              <Suspense fallback={<LoadingSpinner />}>
+                <ContextPage />
+              </Suspense>
             </Layout>
           }
         />
@@ -76,7 +102,9 @@ const AppRouter = () => {
           path="/notes/*"
           element={
             <Layout>
-              <NotesApp />
+              <Suspense fallback={<LoadingSpinner />}>
+                <NotesApp />
+              </Suspense>
             </Layout>
           }
         />
@@ -86,7 +114,9 @@ const AppRouter = () => {
           path="/tasks/*"
           element={
             <Layout>
-              <TasksApp />
+              <Suspense fallback={<LoadingSpinner />}>
+                <TasksApp />
+              </Suspense>
             </Layout>
           }
         />
@@ -96,7 +126,9 @@ const AppRouter = () => {
           path="/event-listeners/*"
           element={
             <Layout>
-              <EventListenersApp />
+              <Suspense fallback={<LoadingSpinner />}>
+                <EventListenersApp />
+              </Suspense>
             </Layout>
           }
         />
@@ -106,7 +138,9 @@ const AppRouter = () => {
           path="/events/*"
           element={
             <Layout>
-              <EventsApp />
+              <Suspense fallback={<LoadingSpinner />}>
+                <EventsApp />
+              </Suspense>
             </Layout>
           }
         />
@@ -116,7 +150,9 @@ const AppRouter = () => {
           path="/history/*"
           element={
             <Layout>
-              <HistoryApp />
+              <Suspense fallback={<LoadingSpinner />}>
+                <HistoryApp />
+              </Suspense>
             </Layout>
           }
         />
@@ -126,7 +162,9 @@ const AppRouter = () => {
           path="/docs/*"
           element={
             <Layout>
-              <DocumentationApp />
+              <Suspense fallback={<LoadingSpinner />}>
+                <DocumentationApp />
+              </Suspense>
             </Layout>
           }
         />
@@ -136,7 +174,9 @@ const AppRouter = () => {
           path="/settings/tokens"
           element={
             <Layout>
-              <TokenManagement />
+              <Suspense fallback={<LoadingSpinner />}>
+                <TokenManagement />
+              </Suspense>
             </Layout>
           }
         />
@@ -146,7 +186,9 @@ const AppRouter = () => {
           path="/documents/*"
           element={
             <Layout>
-              <DocumentsPage />
+              <Suspense fallback={<LoadingSpinner />}>
+                <DocumentsPage />
+              </Suspense>
             </Layout>
           }
         />
@@ -156,7 +198,9 @@ const AppRouter = () => {
           path="/vector-search/*"
           element={
             <Layout>
-              <VectorSearchPage />
+              <Suspense fallback={<LoadingSpinner />}>
+                <VectorSearchPage />
+              </Suspense>
             </Layout>
           }
         />

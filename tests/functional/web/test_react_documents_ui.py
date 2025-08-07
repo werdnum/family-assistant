@@ -40,8 +40,16 @@ async def test_react_documents_page_loads(web_test_fixture: WebTestFixture) -> N
     # Verify we're on the documents page
     await expect(page).to_have_url(f"{web_test_fixture.base_url}/documents")
 
-    # Verify page has loaded by checking for key elements
-    await page.wait_for_selector("body", timeout=10000)
+    # Wait for React app to mount - look for the app-root or a specific element
+    # The React app lazy loads, so we need to wait for content to appear
+    await page.wait_for_selector("#app-root", state="attached", timeout=10000)
+
+    # Wait for React content to render - look for something specific to the Documents page
+    # This could be a heading, nav element, or other UI component
+    await page.wait_for_function(
+        "() => document.body.textContent && document.body.textContent.trim().length > 0",
+        timeout=10000,
+    )
 
     # The React app should render some content
     content = await page.text_content("body")
@@ -294,5 +302,8 @@ async def test_document_detail_view_via_react_ui(
         await back_links[0].click()
 
         # Should navigate to documents list
-        await page.wait_for_selector("body", timeout=10000)
+        await page.wait_for_function(
+            "() => document.body.textContent && document.body.textContent.trim().length > 0",
+            timeout=10000,
+        )
         assert "/documents" in page.url, "Should navigate back to documents list"

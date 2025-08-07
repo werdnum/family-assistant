@@ -1,4 +1,3 @@
-import legacy from '@vitejs/plugin-legacy';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -11,9 +10,6 @@ export default defineConfig(({ mode }) => ({
   base: mode === 'development' ? '/' : '/static/dist/',
   plugins: [
     react(),
-    legacy({
-      targets: ['defaults', 'not IE 11'],
-    }),
     // Custom plugin to handle clean URLs (e.g., /chat -> /chat.html)
     {
       name: 'html-fallback',
@@ -66,6 +62,8 @@ export default defineConfig(({ mode }) => ({
     outDir: path.resolve(__dirname, '../src/family_assistant/static/dist'),
     // Empty the output directory on each build
     emptyOutDir: true,
+    // Increase chunk size warning limit since we're code splitting
+    chunkSizeWarningLimit: 600,
     rollupOptions: {
       // Define entry points including HTML files
       input: {
@@ -73,6 +71,44 @@ export default defineConfig(({ mode }) => ({
         chat: path.resolve(__dirname, 'chat.html'),
         router: path.resolve(__dirname, 'router.html'),
         'tool-test-bench': path.resolve(__dirname, 'tool-test-bench.html'),
+      },
+      output: {
+        // Manual chunks configuration to split vendor libraries
+        manualChunks: (id) => {
+          // Split node_modules into vendor chunks
+          if (id.includes('node_modules')) {
+            // React core libraries
+            if (id.includes('react') || id.includes('react-dom') || id.includes('react-router')) {
+              return 'react-vendor';
+            }
+            // Markdown and editor libraries (large dependencies)
+            if (
+              id.includes('react-markdown') ||
+              id.includes('remark') ||
+              id.includes('rehype') ||
+              id.includes('unified') ||
+              id.includes('micromark') ||
+              id.includes('mdast')
+            ) {
+              return 'markdown';
+            }
+            // JSON editor libraries
+            if (id.includes('json-editor') || id.includes('vanilla-jsoneditor')) {
+              return 'json-editor';
+            }
+            // Assistant UI (chat components)
+            if (id.includes('@assistant-ui')) {
+              return 'assistant-ui';
+            }
+            // Icon libraries
+            if (id.includes('lucide-react')) {
+              return 'icons';
+            }
+            // All other vendor libraries
+            return 'vendor';
+          }
+          // Keep app code in the default chunks
+        },
       },
     },
   },
