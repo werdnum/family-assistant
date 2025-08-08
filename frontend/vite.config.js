@@ -8,6 +8,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig(({ mode }) => ({
   // Set base URL - root for dev, /static/dist/ for production
   base: mode === 'development' ? '/' : '/static/dist/',
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
   optimizeDeps: {
     // Force Vite to pre-bundle these CommonJS dependencies for ESM compatibility
     include: ['vanilla-jsoneditor'],

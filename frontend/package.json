@@ -23,8 +23,11 @@
   "dependencies": {
     "@assistant-ui/react": "^0.5.0",
     "@json-editor/json-editor": "^2.15.2",
+    "@radix-ui/react-slot": "^1.2.3",
     "@vitejs/plugin-react": "^4.3.4",
+    "class-variance-authority": "^0.7.1",
     "classnames": "^2.5.1",
+    "clsx": "^2.1.1",
     "lucide-react": "^0.526.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -33,6 +36,7 @@
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
     "simpledotcss": "^2.3.7",
+    "tailwind-merge": "^3.3.1",
     "vanilla-jsoneditor": "^3.8.0",
     "vite": "^7.0.0"
   },
@@ -42,6 +46,7 @@
     "@testing-library/jest-dom": "^6.6.4",
     "@testing-library/react": "^16.3.0",
     "@types/eslint__js": "^8.42.3",
+    "@types/node": "^24.2.0",
     "@types/react": "^18.3.17",
     "@types/react-dom": "^18.3.5",
     "@vitest/ui": "^3.2.4",
@@ -50,6 +55,7 @@
     "jsdom": "^26.1.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
+    "typescript": "^5.8.3",
     "typescript-eslint": "^8.38.0",
     "vitest": "^3.2.4"
   }
