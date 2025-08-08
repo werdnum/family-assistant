@@ -2,9 +2,8 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import AppRouter from './AppRouter';
 
-// Import Simple.css and custom styles for consistency
-import 'simpledotcss/simple.css';
-import '../custom.css';
+// Import Tailwind CSS and custom styles
+import '../styles/globals.css';
 import '../chat/chat.css';
 import '../chat/thread.css';
 import '../tools/tools.css';

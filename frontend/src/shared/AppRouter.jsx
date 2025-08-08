@@ -1,6 +1,6 @@
 import React, { useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import Layout from './Layout';
+import Layout from './Layout.tsx';
 
 // Lazy load all route components for code splitting
 const ChatPage = lazy(() => import('../chat/ChatPage'));
