@@ -5,8 +5,6 @@ import ChatApp from './ChatApp';
 // Import Simple.css and custom styles for consistency
 import 'simpledotcss/simple.css';
 import '../custom.css';
-import './chat.css';
-import './thread.css';
 
 // Ensure the DOM is ready before mounting
 function mountChatApp() {

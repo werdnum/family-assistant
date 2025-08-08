@@ -22,9 +22,13 @@
   "description": "Frontend assets for Family Assistant",
   "dependencies": {
     "@assistant-ui/react": "^0.5.0",
+    "@hookform/resolvers": "^5.2.1",
     "@json-editor/json-editor": "^2.15.2",
+    "@radix-ui/react-avatar": "^1.1.10",
     "@radix-ui/react-dialog": "^1.1.14",
+    "@radix-ui/react-label": "^2.1.7",
     "@radix-ui/react-navigation-menu": "^1.2.13",
+    "@radix-ui/react-scroll-area": "^1.2.9",
     "@radix-ui/react-separator": "^1.1.7",
     "@radix-ui/react-slot": "^1.2.3",
     "@tanstack/react-table": "^8.21.3",
@@ -35,6 +39,7 @@
     "lucide-react": "^0.526.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-hook-form": "^7.62.0",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.7.1",
     "rehype-sanitize": "^6.0.0",
@@ -42,7 +47,8 @@
     "simpledotcss": "^2.3.7",
     "tailwind-merge": "^3.3.1",
     "vanilla-jsoneditor": "^3.8.0",
-    "vite": "^7.0.0"
+    "vite": "^7.0.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.1.2",

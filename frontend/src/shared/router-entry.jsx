@@ -4,8 +4,6 @@ import AppRouter from './AppRouter';
 
 // Import Tailwind CSS and custom styles
 import '../styles/globals.css';
-import '../chat/chat.css';
-import '../chat/thread.css';
 import '../tools/tools.css';
 import '../errors/errors.css';
 

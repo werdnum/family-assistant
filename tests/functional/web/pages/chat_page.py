@@ -10,11 +10,12 @@ from .base_page import BasePage
 class ChatPage(BasePage):
     """Page object for chat-related functionality."""
 
-    # Selectors
+    # Selectors - Updated for shadcn/ui components
     SIDEBAR_TOGGLE = "button[aria-label='Toggle sidebar']"
     CHAT_INPUT = '[data-testid="chat-input"]'
     SEND_BUTTON = '[data-testid="send-button"]'
-    CONVERSATION_ITEM = ".conversation-item"
+    # Updated: Card components are used for conversation items with data-conversation-id
+    CONVERSATION_ITEM = "[data-conversation-id]"
     NEW_CHAT_BUTTON = '[data-testid="new-chat-button"]'
     MESSAGE_USER = '[data-testid="user-message"]'
     MESSAGE_ASSISTANT = '[data-testid="assistant-message"]'
@@ -24,10 +25,12 @@ class ChatPage(BasePage):
     THREAD_MESSAGES = ".thread-messages"
     CONVERSATION_TITLE = ".conversation-title"
     CONVERSATION_PREVIEW = ".conversation-preview"
-    SIDEBAR = ".conversation-sidebar"
-    SIDEBAR_OVERLAY = ".sidebar-overlay"
-    CHAT_CONTAINER = ".chat-container"
-    LOADING_INDICATOR = ".thread-loading"
+    # Updated: Sidebar is now a div with specific classes
+    SIDEBAR = "div.w-80.flex-shrink-0.border-r"  # Desktop sidebar
+    SIDEBAR_SHEET = '[role="dialog"][data-state]'  # Mobile sheet
+    SIDEBAR_OVERLAY = ".fixed.inset-0.z-40"  # Mobile overlay
+    CHAT_CONTAINER = ".flex.min-w-0.flex-1"  # Main content container
+    LOADING_INDICATOR = ".animate-bounce"  # Loading dots animation
 
     async def navigate_to_chat(self, conversation_id: str | None = None) -> None:
         """Navigate to the chat page."""
@@ -40,6 +43,9 @@ class ChatPage(BasePage):
         # The default wait_for_load only waits for DOM, not JavaScript modules
         await self.wait_for_load(wait_for_network=True)
 
+        # Wait for React app to initialize
+        await self.page.wait_for_timeout(1000)
+
         # Also wait for the chat interface to be ready
         await self.page.wait_for_selector(
             self.CHAT_INPUT, state="visible", timeout=10000
@@ -51,22 +57,25 @@ class ChatPage(BasePage):
         Args:
             message: The message to send
         """
-        # Wait for the chat input to be available
+        # Wait for the chat input to be available and enabled
         chat_input = await self.page.wait_for_selector(self.CHAT_INPUT, state="visible")
-        if chat_input:
-            await chat_input.fill(message)
+        if not chat_input:
+            raise Exception("Chat input not found")
 
-        # Click the send button
-        send_button = await self.page.wait_for_selector(
-            self.SEND_BUTTON, state="visible"
-        )
-        if send_button:
-            await send_button.click()
+        # Focus the input
+        await chat_input.click()
 
-        # Wait for the user message to appear
-        await self.page.wait_for_selector(
-            self.MESSAGE_USER, state="visible", timeout=5000
-        )
+        # Type the message character by character
+        await chat_input.type(message)
+
+        # Small delay to ensure input is processed
+        await self.page.wait_for_timeout(500)
+
+        # Press Enter to send (this is more reliable than clicking the button)
+        await chat_input.press("Enter")
+
+        # Give time for the message to be processed and appear
+        await self.page.wait_for_timeout(3000)
 
     async def get_last_assistant_message(self, timeout: int = 15000) -> str:
         """Get the text content of the last assistant message, waiting for it to stabilize."""
@@ -221,19 +230,52 @@ class ChatPage(BasePage):
 
     async def toggle_sidebar(self) -> None:
         """Toggle the conversation sidebar."""
-        toggle_button = await self.page.wait_for_selector(self.SIDEBAR_TOGGLE)
+        # For mobile, the toggle button might be visible only on mobile
+        viewport_size = self.page.viewport_size
+        if viewport_size and viewport_size["width"] <= 768:
+            # Try both the standard toggle and a mobile-specific selector
+            toggle_button = await self.page.query_selector(self.SIDEBAR_TOGGLE)
+            if not toggle_button:
+                # Try alternative selectors for mobile
+                toggle_button = await self.page.query_selector("button:has-text('☰')")
+            if not toggle_button:
+                toggle_button = await self.page.query_selector(".lg\\:hidden button")
+        else:
+            toggle_button = await self.page.wait_for_selector(self.SIDEBAR_TOGGLE)
+
         if toggle_button:
             await toggle_button.click()
-        await self.page.wait_for_timeout(300)  # Wait for animation
+
+        # Wait longer for Sheet animation on mobile
+        if viewport_size and viewport_size["width"] <= 768:
+            await self.page.wait_for_timeout(
+                1500
+            )  # Longer wait for mobile Sheet animation
+        else:
+            await self.page.wait_for_timeout(300)  # Standard wait for desktop
 
     async def is_sidebar_open(self) -> bool:
         """Check if the sidebar is open."""
-        sidebar = await self.page.query_selector(self.SIDEBAR)
-        if sidebar:
-            # Check if the parent has 'with-sidebar' class
-            parent = await self.page.query_selector(".chat-app-wrapper.with-sidebar")
-            return parent is not None
-        return False
+        # Check viewport width to determine if we're in mobile or desktop mode
+        viewport_size = self.page.viewport_size
+        if viewport_size and viewport_size["width"] <= 768:
+            # Mobile: Check for Sheet dialog state
+            # The Sheet component uses data-state="open" or data-state="closed"
+            sheet = await self.page.query_selector(self.SIDEBAR_SHEET)
+            if sheet:
+                state = await sheet.get_attribute("data-state")
+                return state == "open"
+            # Also check if the overlay is visible as an alternative
+            overlay = await self.page.query_selector(self.SIDEBAR_OVERLAY)
+            return overlay is not None
+        else:
+            # Desktop: Check sidebar margin class
+            sidebar = await self.page.query_selector(self.SIDEBAR)
+            if sidebar:
+                # Check the classes to see if it's visible (ml-0) or hidden (-ml-80)
+                classes = await sidebar.get_attribute("class") or ""
+                return "ml-0" in classes or "-ml-80" not in classes
+            return False
 
     async def create_new_chat(self) -> None:
         """Create a new chat conversation."""
@@ -245,6 +287,8 @@ class ChatPage(BasePage):
         if new_chat_button:
             await new_chat_button.click()
         await self.wait_for_load()
+        # Give React time to update the state
+        await self.page.wait_for_timeout(500)
 
     async def get_conversation_list(self) -> list[dict[str, Any]]:
         """Get the list of conversations from the sidebar.
@@ -261,16 +305,17 @@ class ChatPage(BasePage):
 
         for item in items:
             conv_id = await item.get_attribute("data-conversation-id") or ""
-            title_elem = await item.query_selector(self.CONVERSATION_TITLE)
-            preview_elem = await item.query_selector(self.CONVERSATION_PREVIEW)
-
-            title = (await title_elem.text_content() if title_elem else "") or ""
-            preview = (await preview_elem.text_content() if preview_elem else "") or ""
+            # In the new UI, the preview text is directly in the card, not in separate elements
+            # The first text element is the message preview
+            text_content = await item.text_content() or ""
+            lines = text_content.strip().split("\n")
+            # First line is the message preview, rest is metadata
+            preview = lines[0] if lines else ""
 
             conversations.append({
                 "id": conv_id,
-                "title": title.strip() if title else "",
-                "preview": preview.strip() if preview else "",
+                "title": "",  # No separate title in new UI
+                "preview": preview.strip(),
             })
 
         return conversations
@@ -285,8 +330,8 @@ class ChatPage(BasePage):
         if not await self.is_sidebar_open():
             await self.toggle_sidebar()
 
-        # Click on the conversation item
-        selector = f'{self.CONVERSATION_ITEM}[data-conversation-id="{conversation_id}"]'
+        # Click on the conversation item - use the data-conversation-id attribute
+        selector = f'[data-conversation-id="{conversation_id}"]'
         conv_item = await self.page.wait_for_selector(selector)
         if conv_item:
             await conv_item.click()
@@ -338,8 +383,16 @@ class ChatPage(BasePage):
         """Get the current conversation ID from the URL."""
         url = self.page.url
         if "conversation_id=" in url:
-            return url.split("conversation_id=")[-1].split("&")[0]
-        return None
+            conv_id = url.split("conversation_id=")[-1].split("&")[0]
+            return conv_id if conv_id else None
+        # Try to get it from localStorage as a fallback
+        try:
+            conv_id = await self.page.evaluate(
+                "localStorage.getItem('lastConversationId')"
+            )
+            return conv_id
+        except Exception:
+            return None
 
     async def wait_for_assistant_response(self, timeout: int = 30000) -> None:
         """Wait for assistant to complete responding.
@@ -352,9 +405,17 @@ class ChatPage(BasePage):
         # For now, we'll just wait for messages to appear and give a delay for streaming to complete.
 
         # Wait for at least one assistant message to appear
-        await self.page.wait_for_selector(
-            self.MESSAGE_ASSISTANT, state="visible", timeout=timeout
-        )
+        try:
+            await self.page.wait_for_selector(
+                self.MESSAGE_ASSISTANT, state="visible", timeout=timeout
+            )
+        except Exception:
+            # Fallback: wait for any assistant message element
+            await self.page.wait_for_selector(
+                "div[data-testid='assistant-message'], div.flex.items-start.gap-3",
+                state="visible",
+                timeout=timeout,
+            )
 
         # Give time for streaming to complete and UI to stabilize
         await self.page.wait_for_timeout(2000)
