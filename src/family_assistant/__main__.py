@@ -503,6 +503,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
                 "web_max_history_messages",
                 "web_history_max_age_hours",
                 "delegation_security_level",  # Add delegation_security_level here
+                "retry_config",  # Add retry_config for LLM provider retry/fallback configuration
             ]:
                 if scalar_key in profile_def["processing_config"]:
                     resolved_profile_config["processing_config"][scalar_key] = (
