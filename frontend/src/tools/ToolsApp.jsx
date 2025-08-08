@@ -70,7 +70,10 @@ const ToolsApp = () => {
     try {
       // Dynamically import JSONEditor if not already loaded
       if (!JSONEditorRef.current) {
-        const module = await import('@json-editor/json-editor');
+        if (!jsonEditorImportPromise) {
+          jsonEditorImportPromise = import('@json-editor/json-editor');
+        }
+        const module = await jsonEditorImportPromise;
         JSONEditorRef.current = module.JSONEditor;
       }
       const JSONEditor = JSONEditorRef.current;
