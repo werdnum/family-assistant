@@ -7,8 +7,11 @@ services:
       POSTGRES_USER: test
       POSTGRES_PASSWORD: test
       POSTGRES_DB: test
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U test"]
       interval: 5s
@@ -16,40 +19,86 @@ services:
       retries: 5
     networks:
       - devnet
-  # Claude Code interactive container
+  # Backend service container (runs both backend and frontend dev servers)
+  backend:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    working_dir: /workspace
+    user: "1001:1001"
+    command: ["/bin/bash", "-c", "cd /workspace && source .venv/bin/activate && echo 'Waiting for PostgreSQL...' && for i in {1..30}; do if pg_isready -h postgres -U test; then echo 'PostgreSQL is ready!'; break; fi; sleep 1; done && mkdir -p /var/log/family-assistant && exec poe dev 2>&1 | tee /var/log/family-assistant/dev-server.log"]
+    ports:
+      - "8000:8000" # Backend API
+      - "5173:5173" # Frontend dev server
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
+      - TEST_DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
+      - DEV_MODE=true
+      - HOME=/home/claude
+      # Pass through any additional environment variables
+      - CLAUDE_PROJECT_REPO=${CLAUDE_PROJECT_REPO:-https://github.com/werdnum/family-assistant.git}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    volumes:
+      # Mount workspace - you can change this to your desired host directory
+      - ${WORKSPACE_DIR:-./workspace}:/workspace
+      - dev-logs:/var/log/family-assistant
+    networks:
+      - devnet
+  # Claude Code container (runs claude-code-webui)
   claude:
     build: .
     depends_on:
       postgres:
         condition: service_healthy
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    user: "1001:1001"
+    command: ["/bin/bash", "-c", "cd /workspace && source .venv/bin/activate && export NPM_CONFIG_PREFIX=/home/claude/.npm-global && echo 'Claude Code environment ready!' && echo 'Starting claude-code-webui on port 8080...' && (cd /opt/claude-code-webui && env PORT=8080 npm run server)"]
+    ports:
+      - "8080:8080" # Claude Code WebUI
     environment:
-      # Repository cloning - defaults to the family-assistant repo
-      - CLAUDE_PROJECT_REPO=${CLAUDE_PROJECT_REPO:-https://github.com/werdnum/family-assistant.git}
-      # GitHub token for private repo access
-      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-      # Database connection
       - DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
       - TEST_DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
-      # MCP server API keys
+      - DEV_MODE=true
+      - HOME=/home/claude
+      - PYTEST_PARALLELISM=auto
+      # MCP server API keys - passed through from host environment
       - BRAVE_API_KEY=${BRAVE_API_KEY:-}
       - HOMEASSISTANT_API_KEY=${HOMEASSISTANT_API_KEY:-}
       - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY:-}
-      # Development mode
-      - DEV_MODE=true
+      # Additional environment variables for family-assistant
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
     volumes:
-      # Create isolated workspace for each container
-      - workspace-claude:/workspace
-      # Mount Claude configuration (read-only)
-      - ${HOME}/.claude:/root/.claude:ro
-    stdin_open: true
-    tty: true
-    entrypoint: ["/usr/local/bin/setup-workspace.sh"]
-    command: ["claude"]
+      # Mount workspace - same as backend container
+      - ${WORKSPACE_DIR:-./workspace}:/workspace
+      # Mount Claude home directory - you can change this to your desired host directory
+      - ${CLAUDE_HOME_DIR:-./claude-home}:/home/claude
+      # Mount logs as read-only
+      - dev-logs:/var/log/family-assistant:ro
+    networks:
+      - devnet
+  # Optional: Initialize workspace (run once to set up the repository)
+  # Use: docker-compose run --rm init-workspace
+  init-workspace:
+    build: .
+    profiles: ["init"]
+    command: ["/usr/local/bin/setup-workspace.sh"]
+    environment:
+      - CLAUDE_PROJECT_REPO=${CLAUDE_PROJECT_REPO:-https://github.com/werdnum/family-assistant.git}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+    volumes:
+      - ${WORKSPACE_DIR:-./workspace}:/workspace
+      - ${CLAUDE_HOME_DIR:-./claude-home}:/home/claude
+      - postgres-data:/var/lib/postgresql/data
     networks:
       - devnet
 volumes:
   postgres-data:
-  workspace-claude:
+  dev-logs:
 networks:
   devnet:
     driver: bridge
+
