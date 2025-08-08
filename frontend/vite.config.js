@@ -8,6 +8,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig(({ mode }) => ({
   // Set base URL - root for dev, /static/dist/ for production
   base: mode === 'development' ? '/' : '/static/dist/',
+  optimizeDeps: {
+    // Force Vite to pre-bundle these CommonJS dependencies for ESM compatibility
+    include: ['vanilla-jsoneditor'],
+  },
   plugins: [
     react(),
     // Custom plugin to handle clean URLs (e.g., /chat -> /chat.html)
@@ -77,17 +81,23 @@ export default defineConfig(({ mode }) => ({
         manualChunks: (id) => {
           // Split node_modules into vendor chunks
           if (id.includes('node_modules')) {
-            // React core libraries and anything React-related
-            // IMPORTANT: Include scheduler and any React internals
+            // DON'T manually chunk React - let it be included in the entry bundle
+            // This ensures React is always available when the app starts
             if (
               id.includes('react') ||
               id.includes('react-dom') ||
               id.includes('react-router') ||
-              id.includes('scheduler') // React's scheduler must be with React
+              id.includes('scheduler') ||
+              id.includes('@restart/hooks') || // React hooks utilities
+              id.includes('use-') // Common React hook libraries
             ) {
-              return 'react-vendor';
+              // Return undefined to include in entry chunk
+              return undefined;
             }
-            // Markdown and editor libraries (large dependencies)
+
+            // Only split out truly optional/page-specific dependencies:
+
+            // Markdown libraries (only needed for markdown rendering)
             if (
               id.includes('react-markdown') ||
               id.includes('remark') ||
@@ -98,19 +108,20 @@ export default defineConfig(({ mode }) => ({
             ) {
               return 'markdown';
             }
-            // JSON editor libraries
+
+            // JSON editor - DON'T split it out, let it be bundled where it's used
+            // This avoids CommonJS/ESM issues with vanilla-jsoneditor
             if (id.includes('json-editor') || id.includes('vanilla-jsoneditor')) {
-              return 'json-editor';
+              // Return undefined to keep it with the importing module
+              return undefined;
             }
-            // Assistant UI (chat components) - uses React hooks
+
+            // Chat-specific UI components
             if (id.includes('@assistant-ui')) {
               return 'assistant-ui';
             }
-            // Icon libraries - lucide-react uses React
-            if (id.includes('lucide-react')) {
-              return 'icons';
-            }
-            // All other vendor libraries that don't depend on React
+
+            // All other vendor libraries
             return 'vendor';
           }
           // Keep app code in the default chunks
