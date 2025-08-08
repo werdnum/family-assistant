@@ -30,6 +30,7 @@ interface DataTableProps<TData, TValue> {
   searchColumnId?: string;
   searchPlaceholder?: string;
   pageSize?: number;
+  emptyStateMessage?: string;
 }
 
 export function DataTable<TData, TValue>({
@@ -39,6 +40,7 @@ export function DataTable<TData, TValue>({
   searchColumnId = 'title',
   searchPlaceholder = 'Search...',
   pageSize = 10,
+  emptyStateMessage = 'No results.',
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
@@ -109,7 +111,7 @@ export function DataTable<TData, TValue>({
             ) : (
               <TableRow>
                 <TableCell colSpan={columns.length} className="h-24 text-center">
-                  No results.
+                  {emptyStateMessage}
                 </TableCell>
               </TableRow>
             )}

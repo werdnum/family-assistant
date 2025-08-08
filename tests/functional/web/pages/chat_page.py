@@ -11,7 +11,7 @@ class ChatPage(BasePage):
     """Page object for chat-related functionality."""
 
     # Selectors
-    SIDEBAR_TOGGLE = ".sidebar-toggle"
+    SIDEBAR_TOGGLE = "button[aria-label='Toggle sidebar']"
     CHAT_INPUT = '[data-testid="chat-input"]'
     SEND_BUTTON = '[data-testid="send-button"]'
     CONVERSATION_ITEM = ".conversation-item"

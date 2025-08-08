@@ -163,12 +163,20 @@ async def test_history_filters_interface(
     # Wait for page to load
     await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
 
-    # Wait for filters to be available
-    await page.wait_for_timeout(1000)
+    # Wait for filters section to be visible
+    filters_section = page.locator("details summary:has-text('Filters')")
+    await filters_section.wait_for(state="visible", timeout=5000)
 
-    # The details element should be open by default, but let's make sure filters are visible
-    # Wait for the interface select to be visible directly
+    # Check if details is already open by checking if select is visible
     interface_select = page.locator("select[name='interface_type']")
+    is_visible = await interface_select.is_visible()
+
+    if not is_visible:
+        # Click the summary to open the filters
+        await filters_section.click()
+        await page.wait_for_timeout(500)
+
+    # Wait for the interface select to be visible
     await interface_select.wait_for(state="visible", timeout=5000)
     await interface_select.select_option("web", force=True)
     selected_value = await interface_select.input_value()
@@ -209,9 +217,22 @@ async def test_history_filters_interface(
     to_value = await date_to_input.input_value()
     assert to_value == "2024-12-31"
 
-    # Test Clear Filters button - it's inside the details element
-    clear_button = page.locator("details button:has-text('Clear Filters')")
-    await clear_button.wait_for(state="visible", timeout=5000)
+    # Test Clear Filters button
+    # First check if any button exists in the filters actions area
+    all_buttons = await page.query_selector_all(
+        ".filtersActions button, details button"
+    )
+    assert len(all_buttons) > 0, "No buttons found in filters section"
+
+    # Find Clear Filters button
+    clear_button = None
+    for btn in all_buttons:
+        text = await btn.text_content()
+        if text and "Clear" in text and "Filters" in text:
+            clear_button = btn
+            break
+
+    assert clear_button is not None, "Clear Filters button not found"
     await clear_button.click()
 
     # Verify filters are cleared
@@ -582,9 +603,11 @@ async def test_history_filter_state_management(
 
     date_from_input = page.locator("input[name='date_from']")
     await date_from_input.fill("2024-06-01", force=True)
+    # Trigger change event explicitly by pressing Tab to blur the field
+    await date_from_input.press("Tab")
 
-    # Wait for filter changes to be processed
-    await page.wait_for_timeout(1000)
+    # Wait for filter changes to be processed and URL to update
+    await page.wait_for_url("**/history?*interface_type=telegram*", timeout=5000)
 
     # Check that URL reflects filter state
     current_url = page.url

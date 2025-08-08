@@ -168,6 +168,7 @@ const NotesListWithDataTable = () => {
         searchColumnId="title"
         searchPlaceholder="Search notes by title..."
         pageSize={10}
+        emptyStateMessage="No notes found"
       />
     </div>
   );

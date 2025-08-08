@@ -66,6 +66,10 @@
   {
     "regexp": "localhost:5173",
     "explanation": "Use devcontainer-backend-1:5173 instead of localhost:5173. The app is running in a container."
+  },
+  {
+    "regexp": "ss\\s+-tuln.*5173",
+    "explanation": "The frontend dev server is running on http://devcontainer-backend-1:5173, not localhost. Use that address for testing."
   }
 ]
 
