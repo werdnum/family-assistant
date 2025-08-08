@@ -59,11 +59,6 @@ RUN uv tool install mcp-server-fetch
 RUN deno install --global -A --name playwright-mcp npm:@playwright/mcp@latest && \
     deno install --global -A --name brave-search-mcp-server npm:@modelcontextprotocol/server-brave-search
 
-# Install Playwright Chromium browser and its dependencies using Deno
-# Using --with-deps is crucial for installing necessary OS libraries
-# Running this after installing @playwright/mcp
-RUN deno run -A npm:playwright install --with-deps chromium
-
 # --- Configure Environment ---
 # Set environment variables
 # - PYTHONDONTWRITEBYTECODE: Prevents Python from writing .pyc files
@@ -86,10 +81,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Update PATH separately
 ENV PATH="${UV_TOOL_BIN_DIR}:/root/.deno/bin:/usr/local/bin:${PATH}"
 
-# --- Install Python dependencies for contrib/scrape_mcp.py ---
+# --- Install Python dependencies for contrib/scrape_mcp.py and Playwright browsers ---
+# Install playwright and markitdown packages first
 RUN --mount=type=cache,target=${UV_CACHE_DIR} \
-    uv pip install "playwright>=1.0" "markitdown[html]>=0.1.0" && \
-    playwright install --with-deps chromium
+    uv pip install "playwright>=1.0" "markitdown[html]>=0.1.0"
+
+# Install Playwright browsers with system dependencies
+# This must be done after the playwright package is installed
+# The PLAYWRIGHT_BROWSERS_PATH env var ensures browsers go to /opt/playwright-browsers
+RUN playwright install --with-deps chromium && \
+    # Verify the browser was installed correctly - build should fail if this fails
+    ls -la ${PLAYWRIGHT_BROWSERS_PATH}/
 
 # Copy only pyproject.toml first to leverage Docker layer caching for dependencies
 COPY pyproject.toml ./
