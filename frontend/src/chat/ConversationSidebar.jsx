@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Button } from '@/components/ui/button';
 import './ConversationSidebar.css';
 
 const ConversationSidebar = ({
@@ -45,14 +46,9 @@ const ConversationSidebar = ({
     <div className={`conversation-sidebar ${isOpen ? 'open' : ''}`}>
       <div className="sidebar-header">
         <h2>Conversations</h2>
-        <button
-          className="new-chat-btn"
-          onClick={onNewChat}
-          aria-label="Start new chat"
-          data-testid="new-chat-button"
-        >
+        <Button onClick={onNewChat} aria-label="Start new chat" data-testid="new-chat-button">
           <span className="plus-icon">+</span> New Chat
-        </button>
+        </Button>
       </div>
 
       <div className="sidebar-search">

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 
 const NotesList = () => {
   const [notes, setNotes] = useState([]);
@@ -89,7 +90,7 @@ const NotesList = () => {
       <header>
         <h1>Notes</h1>
         <Link to="/notes/add">
-          <button>Add New Note</button>
+          <Button>Add New Note</Button>
         </Link>
       </header>
 
@@ -123,11 +124,11 @@ const NotesList = () => {
                 </td>
                 <td className="note-actions">
                   <Link to={`/notes/edit/${encodeURIComponent(note.title)}`}>
-                    <button>Edit</button>
+                    <Button size="sm">Edit</Button>
                   </Link>
-                  <button onClick={() => handleDelete(note.title)} style={{ marginLeft: '0.5rem' }}>
+                  <Button onClick={() => handleDelete(note.title)} variant="destructive" size="sm">
                     Delete
-                  </button>
+                  </Button>
                 </td>
               </tr>
             ))}

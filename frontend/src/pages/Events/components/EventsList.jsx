@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 import EventFilters from './EventFilters';
 import EventCard from './EventCard';
 import EventsPagination from './EventsPagination';
@@ -162,9 +163,9 @@ const EventsList = () => {
         <div className={styles.emptyState}>
           <p>No events found matching your criteria.</p>
           {hasActiveFilters() && (
-            <button onClick={handleClearFilters} className={styles.clearFiltersButton}>
+            <Button onClick={handleClearFilters} variant="secondary">
               Clear Filters
-            </button>
+            </Button>
           )}
         </div>
       ) : null}

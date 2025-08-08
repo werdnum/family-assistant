@@ -19,6 +19,7 @@ import {
   UserIcon,
   BotIcon,
 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import classNames from 'classnames';
 // import { formatRelativeTime } from './utils';
 import { MarkdownText } from './MarkdownText';
@@ -219,10 +220,12 @@ const EditComposer = () => {
       <ComposerPrimitive.Input className="edit-composer-input" autoFocus />
       <div className="edit-composer-actions">
         <ComposerPrimitive.Cancel asChild>
-          <button className="edit-cancel-btn">Cancel</button>
+          <Button variant="secondary" size="sm">
+            Cancel
+          </Button>
         </ComposerPrimitive.Cancel>
         <ComposerPrimitive.Send asChild>
-          <button className="edit-send-btn">Save</button>
+          <Button size="sm">Save</Button>
         </ComposerPrimitive.Send>
       </div>
     </ComposerPrimitive.Root>

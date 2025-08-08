@@ -1,5 +1,5 @@
 import React, { useState, useId } from 'react';
-import classNames from 'classnames';
+import { Button } from '@/components/ui/button';
 
 export const TooltipIconButton = React.forwardRef(
   ({ tooltip, variant = 'ghost', size = 'md', className, children, ...props }, ref) => {
@@ -8,14 +8,11 @@ export const TooltipIconButton = React.forwardRef(
 
     return (
       <div className="tooltip-wrapper">
-        <button
+        <Button
           ref={ref}
-          className={classNames(
-            'icon-button',
-            `icon-button-${variant}`,
-            `icon-button-${size}`,
-            className
-          )}
+          variant={variant}
+          size={size}
+          className={className}
           onMouseEnter={() => setShowTooltip(true)}
           onMouseLeave={() => setShowTooltip(false)}
           onFocus={() => setShowTooltip(true)}
@@ -24,7 +21,7 @@ export const TooltipIconButton = React.forwardRef(
           {...props}
         >
           {children}
-        </button>
+        </Button>
         {showTooltip && tooltip && (
           <div id={tooltipId} role="tooltip" className="tooltip">
             {tooltip}

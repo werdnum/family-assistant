@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
+import { Button } from '@/components/ui/button';
 import { Thread } from './Thread';
 import NavHeader from './NavHeader';
 import ConversationSidebar from './ConversationSidebar';
@@ -388,13 +389,14 @@ const ChatApp = ({ profileId = 'default_assistant' } = {}) => {
       <NavHeader />
       <div className={`chat-app-wrapper ${sidebarOpen ? 'with-sidebar' : ''}`}>
         <div className="chat-app-header">
-          <button
-            className="sidebar-toggle"
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => setSidebarOpen(!sidebarOpen)}
             aria-label="Toggle sidebar"
           >
             ☰
-          </button>
+          </Button>
           <h1>Chat</h1>
         </div>
         <div className="chat-app-body">

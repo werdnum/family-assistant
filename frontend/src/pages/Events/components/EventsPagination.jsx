@@ -1,4 +1,5 @@
 import React from 'react';
+import { Button } from '@/components/ui/button';
 import styles from './EventsPagination.module.css';
 
 const EventsPagination = ({
@@ -33,27 +34,29 @@ const EventsPagination = ({
       </div>
 
       <div className={styles.paginationControls}>
-        <button
+        <Button
           onClick={handlePrevious}
           disabled={currentPage <= 1 || loading}
-          className={styles.paginationButton}
+          variant="outline"
+          size="sm"
           aria-label="Previous page"
         >
           ← Previous
-        </button>
+        </Button>
 
         <span className={styles.pageIndicator}>
           Page {currentPage} of {totalPages}
         </span>
 
-        <button
+        <Button
           onClick={handleNext}
           disabled={currentPage >= totalPages || loading}
-          className={styles.paginationButton}
+          variant="outline"
+          size="sm"
           aria-label="Next page"
         >
           Next →
-        </button>
+        </Button>
       </div>
     </nav>
   );

@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
+import { Button } from '@/components/ui/button';
 import { Thread } from './Thread';
 import ConversationSidebar from './ConversationSidebar';
 import { useStreamingResponse } from './useStreamingResponse';
@@ -401,13 +402,14 @@ const ChatPage = ({ profileId = 'default_assistant' } = {}) => {
   return (
     <div className={`chat-app-wrapper ${sidebarOpen ? 'with-sidebar' : ''}`}>
       <div className="chat-app-header">
-        <button
-          className="sidebar-toggle"
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={() => setSidebarOpen(!sidebarOpen)}
           aria-label="Toggle sidebar"
         >
           ☰
-        </button>
+        </Button>
         <h1>Chat</h1>
       </div>
       <div className="chat-app-body">

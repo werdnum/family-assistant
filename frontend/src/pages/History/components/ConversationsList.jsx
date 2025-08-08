@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 import HistoryFilters from './HistoryFilters';
 import HistoryPagination from './HistoryPagination';
 import styles from './ConversationsList.module.css';
@@ -267,9 +268,9 @@ const ConversationsList = () => {
         <div className={styles.emptyState}>
           <p>No conversations found matching your criteria.</p>
           {Object.values(filters).some((v) => v) && (
-            <button onClick={handleClearFilters} className={styles.clearFiltersButton}>
+            <Button onClick={handleClearFilters} variant="secondary">
               Clear Filters
-            </button>
+            </Button>
           )}
         </div>
       ) : null}

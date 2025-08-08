@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 import TasksFilter from './TasksFilter';
 import TaskCard from './TaskCard';
 
@@ -143,9 +144,9 @@ const TasksList = () => {
     return (
       <div style={{ textAlign: 'center', padding: '2rem', color: 'red' }}>
         <div>Error loading tasks: {error}</div>
-        <button onClick={fetchTasks} style={{ marginTop: '1rem' }}>
+        <Button onClick={fetchTasks} variant="secondary">
           Retry
-        </button>
+        </Button>
       </div>
     );
   }
@@ -177,20 +178,9 @@ const TasksList = () => {
               <span>
                 {' '}
                 (filtered)
-                <button
-                  onClick={clearFilters}
-                  style={{
-                    marginLeft: '0.5rem',
-                    fontSize: '0.9rem',
-                    padding: '0.2rem 0.5rem',
-                    border: '1px solid #ddd',
-                    borderRadius: '3px',
-                    background: '#f5f5f5',
-                    cursor: 'pointer',
-                  }}
-                >
+                <Button onClick={clearFilters} variant="ghost" size="sm">
                   Clear filters
-                </button>
+                </Button>
               </span>
             )}
           </div>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 import styles from './EventListenersList.module.css';
 import './EventListenersList.css';
 
@@ -219,15 +220,10 @@ const EventListenersList = () => {
           </div>
 
           <div style={{ marginTop: '1rem' }}>
-            <button type="submit">Apply Filters</button>
-            <button
-              type="button"
-              className="button"
-              style={{ marginLeft: '0.5rem' }}
-              onClick={clearFilters}
-            >
+            <Button type="submit">Apply Filters</Button>
+            <Button type="button" variant="secondary" onClick={clearFilters}>
               Clear Filters
-            </button>
+            </Button>
           </div>
         </details>
       </form>
@@ -316,7 +312,13 @@ const EventListenersList = () => {
           {totalPages > 1 && (
             <nav style={{ marginTop: '2rem', textAlign: 'center' }}>
               {currentPage > 1 && (
-                <button onClick={() => handlePageChange(currentPage - 1)}>← Previous</button>
+                <Button
+                  onClick={() => handlePageChange(currentPage - 1)}
+                  variant="outline"
+                  size="sm"
+                >
+                  ← Previous
+                </Button>
               )}
 
               <span style={{ margin: '0 1rem' }}>
@@ -324,7 +326,13 @@ const EventListenersList = () => {
               </span>
 
               {currentPage < totalPages && (
-                <button onClick={() => handlePageChange(currentPage + 1)}>Next →</button>
+                <Button
+                  onClick={() => handlePageChange(currentPage + 1)}
+                  variant="outline"
+                  size="sm"
+                >
+                  Next →
+                </Button>
               )}
             </nav>
           )}

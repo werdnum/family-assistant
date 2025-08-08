@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 
 const NotesForm = ({ isEdit, onSuccess, onCancel }) => {
   const { title: urlTitle } = useParams();
@@ -142,17 +143,12 @@ const NotesForm = ({ isEdit, onSuccess, onCancel }) => {
         </div>
 
         <div>
-          <button type="submit" disabled={loading}>
+          <Button type="submit" disabled={loading}>
             {loading ? 'Saving...' : 'Save'}
-          </button>
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={loading}
-            style={{ marginLeft: '0.5rem' }}
-          >
+          </Button>
+          <Button type="button" variant="secondary" onClick={onCancel} disabled={loading}>
             Cancel
-          </button>
+          </Button>
         </div>
       </form>
     </div>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 import styles from './EventDetail.module.css';
 
 const EventDetail = ({ onBackToList }) => {
@@ -86,9 +87,9 @@ const EventDetail = ({ onBackToList }) => {
     return (
       <div className={styles.eventDetail}>
         <div className={styles.header}>
-          <button onClick={onBackToList} className={styles.backButton}>
+          <Button onClick={onBackToList} variant="outline">
             ← Back to Events
-          </button>
+          </Button>
         </div>
         <div className={styles.error}>Error: {error}</div>
       </div>
@@ -99,9 +100,9 @@ const EventDetail = ({ onBackToList }) => {
     return (
       <div className={styles.eventDetail}>
         <div className={styles.header}>
-          <button onClick={onBackToList} className={styles.backButton}>
+          <Button onClick={onBackToList} variant="outline">
             ← Back to Events
-          </button>
+          </Button>
         </div>
         <div className={styles.error}>Event not found</div>
       </div>
@@ -111,9 +112,9 @@ const EventDetail = ({ onBackToList }) => {
   return (
     <div className={styles.eventDetail}>
       <div className={styles.header}>
-        <button onClick={onBackToList} className={styles.backButton}>
+        <Button onClick={onBackToList} variant="outline">
           ← Back to Events
-        </button>
+        </Button>
         <h1>Event Details</h1>
       </div>
 

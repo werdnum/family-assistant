@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 import styles from './EventCard.module.css';
 
 const EventCard = ({ event }) => {
@@ -116,14 +117,15 @@ const EventCard = ({ event }) => {
 
       {event.event_data && (
         <div className={styles.eventDataSection}>
-          <button
+          <Button
             type="button"
-            className={styles.toggleButton}
+            variant="ghost"
+            size="sm"
             onClick={() => setIsExpanded(!isExpanded)}
             aria-expanded={isExpanded}
           >
             {isExpanded ? '▼' : '▶'} Event Data
-          </button>
+          </Button>
 
           {isExpanded && (
             <div className={styles.eventDataContainer}>
