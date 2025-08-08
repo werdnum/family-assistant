@@ -4,7 +4,7 @@ This file documents specific information for Claude when running in the devconta
 
 ## Development Server Setup
 
-The devcontainer runs a Kubernetes StatefulSet with three containers:
+The devcontainer runs using Docker Compose with three containers:
 
 ### Container Architecture
 
@@ -12,7 +12,7 @@ The devcontainer runs a Kubernetes StatefulSet with three containers:
 
    - Port: 5432
    - Credentials: user=test, password=test, database=test
-   - Data stored in ephemeral volume (lost on pod restart)
+   - Data stored in ephemeral volume (lost on container restart)
 
 2. **backend** - Application server
 
@@ -29,14 +29,14 @@ The devcontainer runs a Kubernetes StatefulSet with three containers:
 
 ### Access Points
 
-- **Main Application**: http://localhost:5173 (frontend dev server with HMR)
+- **Main Application**: http://devcontainer-backend-1:5173 (frontend dev server with HMR)
 - **Backend API**: http://localhost:8000 (FastAPI with auto-reload)
 - **Claude Code Web UI**: http://localhost:8080
 - **Health Check**: http://localhost:8000/health
 
 ## Development Server Logs
 
-When running in the Kubernetes devcontainer pod, the development server logs from the backend
+When running in the Docker Compose devcontainer, the development server logs from the backend
 container are available to the claude container at:
 
 ```
@@ -79,13 +79,14 @@ The log file includes:
 - Database connection messages
 - WebSocket connection logs
 
-Note: The logs are stored in an emptyDir volume, so they will be lost when the pod is restarted.
+Note: The logs are stored in a temporary volume, so they will be lost when the containers are
+restarted.
 
 ## Container Details
 
 ### Volume Mounts
 
-- **workspace**: `/workspace` (20Gi persistent volume) - Project code and build artifacts
+- **workspace**: `/workspace` (persistent volume) - Project code and build artifacts
 - **claude-home**: `/home/claude` (persistent host path) - Claude settings and cache
 - **postgres-data**: `/var/lib/postgresql/data` (ephemeral) - Database files, lost on restart
 - **dev-logs**: `/var/log/family-assistant` (ephemeral) - Shared log directory
@@ -108,8 +109,8 @@ Backend container:
 
 ### Testing with Playwright MCP Server
 
-The Playwright MCP server can test the running application at `http://localhost:5173`. This is
-useful for:
+The Playwright MCP server can test the running application at `http://devcontainer-backend-1:5173`.
+This is useful for:
 
 - Verifying redirects (e.g., root path redirects to `/chat`)
 - Testing UI functionality and forms
@@ -118,8 +119,8 @@ useful for:
 
 Example:
 
-```python
+```
 # Test the redirect implemented in this branch
-await mcp__playwright__browser_navigate("http://localhost:5173/")
+mcp__playwright__browser_navigate("http://devcontainer-backend-1:5173/")
 # Should see redirect to /chat interface
 ```

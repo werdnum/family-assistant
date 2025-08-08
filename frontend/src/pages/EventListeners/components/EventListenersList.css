@@ -1,0 +1,17 @@
+/* Override any default details styling */
+details[open] > *:not(summary) {
+  display: block !important;
+  visibility: visible !important;
+}
+
+/* Ensure form elements inside details are visible */
+details form {
+  display: block !important;
+}
+
+details select,
+details input,
+details button {
+  display: inline-block !important;
+  visibility: visible !important;
+}

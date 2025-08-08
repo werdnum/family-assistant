@@ -8,6 +8,7 @@ Create Date: 2025-04-30 15:32:39.422829+10:00
 
 from collections.abc import Sequence
 
+import pgvector.sqlalchemy
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 

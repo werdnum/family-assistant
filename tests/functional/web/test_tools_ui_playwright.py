@@ -18,6 +18,15 @@ async def test_tools_page_loads(web_test_fixture: WebTestFixture) -> None:
     # Wait for the page to be fully loaded
     await page.wait_for_load_state("networkidle")
 
+    # Wait for React app to mount first
+    await page.wait_for_function(
+        """() => {
+            const root = document.getElementById('app-root');
+            return root && root.getAttribute('data-react-mounted') === 'true';
+        }""",
+        timeout=15000,
+    )
+
     # Verify page has the correct title
     title = await page.title()
     assert "Tools" in title, f"Page title should contain 'Tools', got: {title}"
@@ -30,7 +39,7 @@ async def test_tools_page_loads(web_test_fixture: WebTestFixture) -> None:
 
     # Check that Tools link is highlighted as current page
     current_tools_link = await page.wait_for_selector(
-        "nav a[href='/tools'].current-page", state="visible", timeout=5000
+        "nav a.current-page:has-text('Tools')", state="visible", timeout=5000
     )
     assert current_tools_link is not None, (
         "Tools link should be highlighted as current page"
@@ -42,11 +51,11 @@ async def test_tools_page_loads(web_test_fixture: WebTestFixture) -> None:
     )
     assert tools_container is not None, "Tools container should be visible"
 
-    # Check for the tools header
+    # Check for the tools header - updated to match actual text
     header = await page.wait_for_selector(
-        "h1:has-text('Tools')", state="visible", timeout=5000
+        "h1:has-text('Tool Explorer')", state="visible", timeout=5000
     )
-    assert header is not None, "Tools header should be visible"
+    assert header is not None, "Tool Explorer header should be visible"
 
 
 @pytest.mark.playwright
@@ -60,24 +69,33 @@ async def test_tools_list_loads(web_test_fixture: WebTestFixture) -> None:
     await page.goto(f"{base_url}/tools")
     await page.wait_for_load_state("networkidle")
 
+    # Wait for React app to mount first
+    await page.wait_for_function(
+        """() => {
+            const root = document.getElementById('app-root');
+            return root && root.getAttribute('data-react-mounted') === 'true';
+        }""",
+        timeout=15000,
+    )
+
     # Wait for tools to load (either showing tools or an error)
-    # We'll wait for either the tools section or an error message
-    await page.wait_for_selector(".tools-section, .error", timeout=10000)
+    # Updated to match actual component classes
+    await page.wait_for_selector(".tools-sidebar, .tools-error", timeout=10000)
 
     # Check if tools loaded successfully
-    tools_section = await page.query_selector(".tools-section")
-    if tools_section:
+    tools_sidebar = await page.query_selector(".tools-sidebar")
+    if tools_sidebar:
         # Tools loaded successfully
-        tools_heading = await page.text_content(".tools-section h2")
+        tools_heading = await page.text_content(".tools-sidebar h2")
         assert tools_heading and "Available Tools" in tools_heading, (
             "Should show available tools heading"
         )
 
-        # Check if there are any tool buttons
-        await page.query_selector_all(".tool-button")
+        # Check if there are any tool items (buttons)
+        await page.query_selector_all(".tool-item")
     else:
         # Check for error message if tools failed to load
-        error_element = await page.query_selector(".error")
+        error_element = await page.query_selector(".tools-error")
         assert error_element is not None, "Should show either tools or error message"
 
 
@@ -92,22 +110,31 @@ async def test_tool_execution_interface(web_test_fixture: WebTestFixture) -> Non
     await page.goto(f"{base_url}/tools")
     await page.wait_for_load_state("networkidle")
 
+    # Wait for React app to mount first
+    await page.wait_for_function(
+        """() => {
+            const root = document.getElementById('app-root');
+            return root && root.getAttribute('data-react-mounted') === 'true';
+        }""",
+        timeout=15000,
+    )
+
     # Wait for tools to load
-    await page.wait_for_selector(".tools-section", timeout=10000)
+    await page.wait_for_selector(".tools-sidebar", timeout=10000)
 
     # Check if there are any tools available
-    tool_buttons = await page.query_selector_all(".tool-button")
+    tool_items = await page.query_selector_all(".tool-item")
 
-    if len(tool_buttons) > 0:
+    if len(tool_items) > 0:
         # Click on the first tool
-        await tool_buttons[0].click()
+        await tool_items[0].click()
 
-        # Wait for the execution section to appear
-        execution_section = await page.wait_for_selector(
-            ".tool-execution-section", state="visible", timeout=5000
+        # Wait for the tool details section to appear
+        tool_details = await page.wait_for_selector(
+            ".tool-details", state="visible", timeout=5000
         )
-        assert execution_section is not None, (
-            "Tool execution section should appear after clicking a tool"
+        assert tool_details is not None, (
+            "Tool details section should appear after clicking a tool"
         )
 
         # Check for the JSON editor container
@@ -118,7 +145,7 @@ async def test_tool_execution_interface(web_test_fixture: WebTestFixture) -> Non
 
         # Check for the execute button
         execute_button = await page.wait_for_selector(
-            ".execute-button", state="visible", timeout=5000
+            ".btn-execute", state="visible", timeout=5000
         )
         assert execute_button is not None, "Execute button should be visible"
     else:
@@ -140,17 +167,26 @@ async def test_responsive_design(web_test_fixture: WebTestFixture) -> None:
     await page.goto(f"{base_url}/tools")
     await page.wait_for_load_state("networkidle")
 
+    # Wait for React app to mount first
+    await page.wait_for_function(
+        """() => {
+            const root = document.getElementById('app-root');
+            return root && root.getAttribute('data-react-mounted') === 'true';
+        }""",
+        timeout=15000,
+    )
+
     # Check that main content is still visible on mobile
     tools_container = await page.wait_for_selector(
         ".tools-container", state="visible", timeout=5000
     )
     assert tools_container is not None, "Tools container should be visible on mobile"
 
-    # Check that the header is still visible
+    # Check that the header is still visible - updated to match actual text
     header = await page.wait_for_selector(
-        "h1:has-text('Tools')", state="visible", timeout=5000
+        "h1:has-text('Tool Explorer')", state="visible", timeout=5000
     )
-    assert header is not None, "Tools header should be visible on mobile"
+    assert header is not None, "Tool Explorer header should be visible on mobile"
 
     # Reset viewport
     await page.set_viewport_size({"width": 1280, "height": 720})
@@ -173,6 +209,15 @@ async def test_no_javascript_errors(web_test_fixture: WebTestFixture) -> None:
     # Navigate to tools page
     await page.goto(f"{base_url}/tools")
     await page.wait_for_load_state("networkidle")
+
+    # Wait for React app to mount first
+    await page.wait_for_function(
+        """() => {
+            const root = document.getElementById('app-root');
+            return root && root.getAttribute('data-react-mounted') === 'true';
+        }""",
+        timeout=15000,
+    )
 
     # Give time for any errors to be logged
     await page.wait_for_timeout(1000)

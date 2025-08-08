@@ -1,100 +1,95 @@
 interactions:
-- request:
-    body: '{"messages":[{"content":"This message is missing the role field"}],"model":"gpt-4.1-nano","stream":true}'
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '104'
-      content-type:
-      - application/json
-      host:
-      - api.openai.com
-      user-agent:
-      - AsyncOpenAI/Python 1.92.2
-      x-stainless-arch:
-      - arm64
-      x-stainless-async:
-      - async:asyncio
-      x-stainless-lang:
-      - python
-      x-stainless-os:
-      - Linux
-      x-stainless-package-version:
-      - 1.92.2
-      x-stainless-read-timeout:
-      - '600'
-      x-stainless-retry-count:
-      - '0'
-      x-stainless-runtime:
-      - CPython
-      x-stainless-runtime-version:
-      - 3.12.3
-    method: POST
-    uri: https://api.openai.com/v1/chat/completions
-  response:
-    body:
-      string: "{\n  \"error\": {\n    \"message\": \"Missing required parameter: 'messages[0].role'.\",\n
-        \   \"type\": \"invalid_request_error\",\n    \"param\": \"messages[0].role\",\n
-        \   \"code\": \"missing_required_parameter\"\n  }\n}"
-    headers:
-      CF-RAY:
-      - 9660ec89cd4aa96d-SYD
-      Connection:
-      - keep-alive
-      Content-Length:
-      - '197'
-      Content-Type:
-      - application/json
-      Date:
-      - Mon, 28 Jul 2025 02:25:05 GMT
-      Server:
-      - cloudflare
-      Set-Cookie:
-      - __cf_bm=FeT8pNrwZwBkswyxK.uXUIMMusWd4grwNWFBV_MGl8M-1753669505-1.0.1.1-xfBG6JkPpyLcU_D4bxurFu2KmoTut4EE_nPPy4VlGnyZhII62PwAT66SkyHfqY4O1LM9aGq9poN_5tQYyFatFUq5DvfGfBYReDVwTkdyQEs;
-        path=/; expires=Mon, 28-Jul-25 02:55:05 GMT; domain=.api.openai.com; HttpOnly;
-        Secure; SameSite=None
-      - _cfuvid=OExx_ehxsWsgAotqUGrGqVTFyJPwXUohJzKxqRzJCZM-1753669505789-0.0.1.1-604800000;
-        path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
-      X-Content-Type-Options:
-      - nosniff
-      access-control-expose-headers:
-      - X-Request-ID
-      alt-svc:
-      - h3=":443"; ma=86400
-      cf-cache-status:
-      - DYNAMIC
-      openai-organization:
-      - REDACTED
-      openai-processing-ms:
-      - '12'
-      openai-project:
-      - proj_wvaoRBrBR9ayhT5aPMqWgDtI
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      x-envoy-upstream-service-time:
-      - '19'
-      x-ratelimit-limit-requests:
-      - '500'
-      x-ratelimit-limit-tokens:
-      - '200000'
-      x-ratelimit-remaining-requests:
-      - '499'
-      x-ratelimit-remaining-tokens:
-      - '199987'
-      x-ratelimit-reset-requests:
-      - 120ms
-      x-ratelimit-reset-tokens:
-      - 3ms
-      x-request-id:
-      - req_8c1f969a001f4cd2ca3fbe7804fdae6f
-    status:
-      code: 400
-      message: Bad Request
+  - request:
+      body: '{"messages":[{"content":"This message is missing the role field"}],"model":"gpt-4.1-nano","stream":true}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '104'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.2
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.2
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.12.3
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: "{\n  \"error\": {\n    \"message\": \"Missing required parameter: 'messages[0].role'.\",\n    \"type\": \"invalid_request_error\",\n    \"param\": \"messages[0].role\",\n    \"code\": \"missing_required_parameter\"\n  }\n}"
+      headers:
+        CF-RAY:
+          - 9660ec89cd4aa96d-SYD
+        Connection:
+          - keep-alive
+        Content-Length:
+          - '197'
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 28 Jul 2025 02:25:05 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=FeT8pNrwZwBkswyxK.uXUIMMusWd4grwNWFBV_MGl8M-1753669505-1.0.1.1-xfBG6JkPpyLcU_D4bxurFu2KmoTut4EE_nPPy4VlGnyZhII62PwAT66SkyHfqY4O1LM9aGq9poN_5tQYyFatFUq5DvfGfBYReDVwTkdyQEs; path=/; expires=Mon, 28-Jul-25 02:55:05 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=OExx_ehxsWsgAotqUGrGqVTFyJPwXUohJzKxqRzJCZM-1753669505789-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '12'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        x-envoy-upstream-service-time:
+          - '19'
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199987'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 3ms
+        x-request-id:
+          - req_8c1f969a001f4cd2ca3fbe7804fdae6f
+      status:
+        code: 400
+        message: Bad Request
 version: 1

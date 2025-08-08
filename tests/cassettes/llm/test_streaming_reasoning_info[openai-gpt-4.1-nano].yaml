@@ -1,114 +1,110 @@
 interactions:
-- request:
-    body: '{"messages":[{"role":"user","content":"Say ''hello world''"}],"model":"gpt-4.1-nano","stream":true}'
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '97'
-      content-type:
-      - application/json
-      host:
-      - api.openai.com
-      user-agent:
-      - AsyncOpenAI/Python 1.92.2
-      x-stainless-arch:
-      - arm64
-      x-stainless-async:
-      - async:asyncio
-      x-stainless-lang:
-      - python
-      x-stainless-os:
-      - Linux
-      x-stainless-package-version:
-      - 1.92.2
-      x-stainless-read-timeout:
-      - '600'
-      x-stainless-retry-count:
-      - '0'
-      x-stainless-runtime:
-      - CPython
-      x-stainless-runtime-version:
-      - 3.12.3
-    method: POST
-    uri: https://api.openai.com/v1/chat/completions
-  response:
-    body:
-      string: 'data: {"id":"chatcmpl-By7pyBKFRxTMF5M5t2nFifUoXxHdk","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":null,"finish_reason":null}]}
+  - request:
+      body: '{"messages":[{"role":"user","content":"Say ''hello world''"}],"model":"gpt-4.1-nano","stream":true}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '97'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.2
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.2
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.12.3
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: 'data: {"id":"chatcmpl-By7pyBKFRxTMF5M5t2nFifUoXxHdk","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":null,"finish_reason":null}]}
 
 
-        data: {"id":"chatcmpl-By7pyBKFRxTMF5M5t2nFifUoXxHdk","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{"content":"hello"},"logprobs":null,"finish_reason":null}]}
+          data: {"id":"chatcmpl-By7pyBKFRxTMF5M5t2nFifUoXxHdk","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{"content":"hello"},"logprobs":null,"finish_reason":null}]}
 
 
-        data: {"id":"chatcmpl-By7pyBKFRxTMF5M5t2nFifUoXxHdk","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{"content":"
-        world"},"logprobs":null,"finish_reason":null}]}
+          data: {"id":"chatcmpl-By7pyBKFRxTMF5M5t2nFifUoXxHdk","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{"content":" world"},"logprobs":null,"finish_reason":null}]}
 
 
-        data: {"id":"chatcmpl-By7pyBKFRxTMF5M5t2nFifUoXxHdk","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}]}
+          data: {"id":"chatcmpl-By7pyBKFRxTMF5M5t2nFifUoXxHdk","object":"chat.completion.chunk","created":1753669506,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_38343a2f8f","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}]}
 
 
-        data: [DONE]
+          data: [DONE]
 
 
-        '
-    headers:
-      CF-RAY:
-      - 9660ec8dff9baad2-SYD
-      Connection:
-      - keep-alive
-      Content-Type:
-      - text/event-stream; charset=utf-8
-      Date:
-      - Mon, 28 Jul 2025 02:25:07 GMT
-      Server:
-      - cloudflare
-      Set-Cookie:
-      - __cf_bm=V0KQUDFlAv6L9PriV5O2Y1Qt5XaHpIFLB1Sf2qlljtk-1753669507-1.0.1.1-D_nYd_L6txISJ4gVG1uAXoCFaI1ZqO0nkYGrnQMkngkWUrhteO6U5UfzeJ7UB774b1MAg1ZhPjTBGEK7sM5W8XTHElS5WmYi6HIF3Ehj.Uk;
-        path=/; expires=Mon, 28-Jul-25 02:55:07 GMT; domain=.api.openai.com; HttpOnly;
-        Secure; SameSite=None
-      - _cfuvid=j6G5INc3djicUXp3QblhzUVWUmKRv924i6eM9azwHz8-1753669507237-0.0.1.1-604800000;
-        path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
-      Transfer-Encoding:
-      - chunked
-      X-Content-Type-Options:
-      - nosniff
-      access-control-expose-headers:
-      - X-Request-ID
-      alt-svc:
-      - h3=":443"; ma=86400
-      cf-cache-status:
-      - DYNAMIC
-      openai-organization:
-      - REDACTED
-      openai-processing-ms:
-      - '202'
-      openai-project:
-      - proj_wvaoRBrBR9ayhT5aPMqWgDtI
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      x-envoy-upstream-service-time:
-      - '213'
-      x-ratelimit-limit-requests:
-      - '500'
-      x-ratelimit-limit-tokens:
-      - '200000'
-      x-ratelimit-remaining-requests:
-      - '499'
-      x-ratelimit-remaining-tokens:
-      - '199992'
-      x-ratelimit-reset-requests:
-      - 120ms
-      x-ratelimit-reset-tokens:
-      - 2ms
-      x-request-id:
-      - req_81b45c62ec2aebca7c2bb7b5a800f3b6
-    status:
-      code: 200
-      message: OK
+'
+      headers:
+        CF-RAY:
+          - 9660ec8dff9baad2-SYD
+        Connection:
+          - keep-alive
+        Content-Type:
+          - text/event-stream; charset=utf-8
+        Date:
+          - Mon, 28 Jul 2025 02:25:07 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=V0KQUDFlAv6L9PriV5O2Y1Qt5XaHpIFLB1Sf2qlljtk-1753669507-1.0.1.1-D_nYd_L6txISJ4gVG1uAXoCFaI1ZqO0nkYGrnQMkngkWUrhteO6U5UfzeJ7UB774b1MAg1ZhPjTBGEK7sM5W8XTHElS5WmYi6HIF3Ehj.Uk; path=/; expires=Mon, 28-Jul-25 02:55:07 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=j6G5INc3djicUXp3QblhzUVWUmKRv924i6eM9azwHz8-1753669507237-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '202'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        x-envoy-upstream-service-time:
+          - '213'
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199992'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 2ms
+        x-request-id:
+          - req_81b45c62ec2aebca7c2bb7b5a800f3b6
+      status:
+        code: 200
+        message: OK
 version: 1

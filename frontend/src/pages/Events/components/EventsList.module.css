@@ -1,0 +1,100 @@
+/* Events list container */
+.eventsList {
+  padding: 1rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.eventsList h1 {
+  margin-bottom: 1.5rem;
+  color: var(--text);
+}
+
+/* Results info */
+.resultsInfo {
+  margin-bottom: 1.5rem;
+}
+
+.resultsInfo p {
+  margin: 0;
+  color: var(--text-light);
+  font-size: 0.9em;
+}
+
+/* Events container */
+.eventsContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+/* Loading and error states */
+.loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 3rem 1rem;
+  color: var(--text-light);
+  font-size: 1.1em;
+}
+
+.error {
+  color: var(--error, #d73502);
+  padding: 1rem;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  margin: 1rem 0;
+  background-color: var(--bg-secondary);
+}
+
+/* Empty state */
+.emptyState {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--text-light);
+}
+
+.emptyState p {
+  font-size: 1.1em;
+  margin: 0 0 1rem 0;
+}
+
+.clearFiltersButton {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border);
+  background-color: var(--bg);
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: all 0.2s ease;
+}
+
+.clearFiltersButton:hover {
+  background-color: var(--bg-secondary);
+  border-color: var(--accent);
+}
+
+/* Desktop layout - grid for events */
+@media (min-width: 1024px) {
+  .eventsContainer {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
+    gap: 1.5rem;
+  }
+}
+
+/* Wide screens - more columns */
+@media (min-width: 1600px) {
+  .eventsContainer {
+    grid-template-columns: repeat(auto-fill, minmax(450px, 1fr));
+  }
+}
+
+/* Mobile adjustments */
+@media (max-width: 767px) {
+  .eventsList {
+    padding: 0.5rem;
+  }
+}

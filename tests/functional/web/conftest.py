@@ -84,7 +84,7 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def vite_and_api_ports() -> tuple[int, int]:
     """Get random free ports for both Vite and API servers."""
     # For the simplified approach, we only need the API port
@@ -122,21 +122,43 @@ def build_frontend_assets() -> None:
         if result.returncode != 0:
             pytest.fail("npm install failed")
 
-    # Check if we need to rebuild (simple timestamp check)
+    # Check if we need to rebuild (comprehensive timestamp check)
     need_rebuild = True
     if dist_dir.exists() and any(dist_dir.iterdir()):
         # Check if source files are newer than build
+        # Include all relevant file types that could affect the build
         src_files = (
             list(frontend_dir.glob("src/**/*.js"))
             + list(frontend_dir.glob("src/**/*.jsx"))
+            + list(frontend_dir.glob("src/**/*.ts"))
+            + list(frontend_dir.glob("src/**/*.tsx"))
             + list(frontend_dir.glob("src/**/*.css"))
+            + list(frontend_dir.glob("*.json"))  # package.json, tsconfig.json, etc.
+            + list(frontend_dir.glob("*.config.js"))  # vite.config.js, etc.
+            + list(frontend_dir.glob("*.html"))  # HTML entry points
         )
+        # Also check the vite_pages.py file since route changes affect the build
+        vite_pages_file = (
+            Path(__file__).parent.parent.parent.parent
+            / "src"
+            / "family_assistant"
+            / "web"
+            / "routers"
+            / "vite_pages.py"
+        )
+        if vite_pages_file.exists():
+            src_files.append(vite_pages_file)
+
         if src_files:
-            newest_src = max(f.stat().st_mtime for f in src_files)
+            newest_src = max(f.stat().st_mtime for f in src_files if f.exists())
             oldest_dist = min(f.stat().st_mtime for f in dist_dir.iterdir())
             if oldest_dist > newest_src:
                 print("Frontend assets are up to date, skipping build")
                 need_rebuild = False
+            else:
+                print("Source files have been modified, rebuilding assets")
+                print(f"  Newest source: {newest_src}")
+                print(f"  Oldest dist: {oldest_dist}")
 
     if need_rebuild:
         print("Building frontend assets...")
@@ -313,18 +335,10 @@ async def web_test_fixture(
     # Set up request/response logging for debugging
     # Always log API requests to help debug
     def log_request(req: Any) -> None:
-        if "/api/" in req.url:
-            print(f"[API Request] {req.method} {req.url}")
-            if req.method == "POST":
-                print(f"  Body: {req.post_data}")
-        elif req.url.endswith(".js") or req.url.endswith(".css"):
-            print(f"[Asset Request] {req.method} {req.url}")
+        print(f"[Request] {req.method} {req.url}")
 
     def log_response(res: Any) -> None:
-        if "/api/" in res.url:
-            print(f"[API Response] {res.status} {res.url}")
-        elif res.url.endswith(".js") or res.url.endswith(".css"):
-            print(f"[Asset Response] {res.status} {res.url}")
+        print(f"[Response] {res.status} {res.url}")
 
     page.on("request", log_request)
     page.on("response", log_response)
@@ -450,6 +464,26 @@ class ConsoleErrorCollector:
 def console_error_checker(web_test_fixture: WebTestFixture) -> ConsoleErrorCollector:
     """Fixture that collects and checks console errors."""
     return ConsoleErrorCollector(web_test_fixture.page)
+
+
+@pytest.fixture(scope="session")
+def connect_options() -> dict[str, str] | None:
+    """Configure Playwright browser connection options.
+
+    Supports connecting to remote browser instances via the PLAYWRIGHT_WS_ENDPOINT
+    environment variable. This is useful for containerized environments or CI/CD
+    systems where browsers run in separate containers.
+
+    Example:
+        export PLAYWRIGHT_WS_ENDPOINT="ws://localhost:1234"
+        pytest tests/functional/web/
+    """
+    ws_endpoint = os.getenv("PLAYWRIGHT_WS_ENDPOINT")
+    if ws_endpoint:
+        return {
+            "ws_endpoint": ws_endpoint,
+        }
+    return None
 
 
 # Override the playwright browser fixture to add timeout on close

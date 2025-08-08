@@ -76,6 +76,29 @@ class VectorSearchQuery:
 # --- Query Function ---
 
 
+def _build_in_clause_for_sqlite(
+    params: dict[str, Any],
+    where_clauses: list[str],
+    column_name: str,
+    values: list[str],
+    param_prefix: str,
+) -> None:
+    """
+    Helper function to build IN clause for SQLite compatibility.
+
+    Args:
+        params: Dictionary to add parameters to
+        where_clauses: List to append the WHERE clause to
+        column_name: The column to filter on (e.g., "d.source_type")
+        values: List of values for the IN clause
+        param_prefix: Prefix for parameter names (e.g., "doc_source_type")
+    """
+    placeholders = ", ".join(f":{param_prefix}_{i}" for i in range(len(values)))
+    for i, value in enumerate(values):
+        params[f"{param_prefix}_{i}"] = value
+    where_clauses.append(f"{column_name} IN ({placeholders})")
+
+
 async def query_vector_store(
     db_context: DatabaseContext,
     query: VectorSearchQuery,
@@ -99,15 +122,43 @@ async def query_vector_store(
             "query_embedding is required for semantic/hybrid search execution."
         )
 
+    # --- Check database compatibility ---
+    is_sqlite = db_context.engine.dialect.name == "sqlite"
+
+    # Vector search and full-text search require PostgreSQL-specific features
+    if is_sqlite and query.search_type in ["semantic", "keyword", "hybrid"]:
+        # For SQLite, we can only support basic title filtering
+        # Return empty results for semantic/keyword/hybrid search
+        logger.warning(
+            "Vector and full-text search are not supported with SQLite. "
+            "Use PostgreSQL for these features."
+        )
+        return []
+
     # --- Parameter Mapping and Query Construction (using raw SQL example) ---
     params: dict[str, Any] = {"limit": query.limit, "rrf_k": query.rrf_k}
     doc_where_clauses = ["1=1"]
     embed_where_clauses = ["1=1"]
 
+    # Check database dialect for case-insensitive LIKE
+    like_operator = "LIKE" if is_sqlite else "ILIKE"
+
     # Document Filters
     if query.source_types:
-        params["doc_source_types_array"] = query.source_types  # Pass as list for ANY
-        doc_where_clauses.append("d.source_type = ANY(:doc_source_types_array)")
+        if is_sqlite:
+            # SQLite doesn't support ANY, use IN instead
+            _build_in_clause_for_sqlite(
+                params,
+                doc_where_clauses,
+                "d.source_type",
+                query.source_types,
+                "doc_source_type",
+            )
+        else:
+            params["doc_source_types_array"] = (
+                query.source_types
+            )  # Pass as list for ANY
+            doc_where_clauses.append("d.source_type = ANY(:doc_source_types_array)")
     if query.created_after:
         params["doc_created_gte"] = query.created_after
         doc_where_clauses.append("d.created_at >= :doc_created_gte")
@@ -116,7 +167,7 @@ async def query_vector_store(
         doc_where_clauses.append("d.created_at <= :doc_created_lte")
     if query.title_like:
         params["doc_title_ilike"] = f"%{query.title_like}%"  # Add wildcards here
-        doc_where_clauses.append("d.title ILIKE :doc_title_ilike")
+        doc_where_clauses.append(f"d.title {like_operator} :doc_title_ilike")
     # Handle multiple metadata filters
     for i, meta_filter in enumerate(query.metadata_filters):
         meta_key = meta_filter.key
@@ -141,8 +192,18 @@ async def query_vector_store(
 
     # Embedding Filters
     if query.embedding_types:
-        params["embed_types_array"] = query.embedding_types  # Pass as list for ANY
-        embed_where_clauses.append("de.embedding_type = ANY(:embed_types_array)")
+        if is_sqlite:
+            # SQLite doesn't support ANY, use IN instead
+            _build_in_clause_for_sqlite(
+                params,
+                embed_where_clauses,
+                "de.embedding_type",
+                query.embedding_types,
+                "embed_type",
+            )
+        else:
+            params["embed_types_array"] = query.embedding_types  # Pass as list for ANY
+            embed_where_clauses.append("de.embedding_type = ANY(:embed_types_array)")
     # Model filter is applied within CTEs where needed
 
     embed_where_sql = " AND ".join(embed_where_clauses)

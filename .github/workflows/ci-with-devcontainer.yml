@@ -26,7 +26,6 @@ jobs:
           TAG="ci-${{ github.run_id }}-${{ github.run_attempt }}"
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:${TAG}" >> $GITHUB_OUTPUT
-
   build-devcontainer:
     needs: prepare
     runs-on: ubuntu-latest
@@ -49,7 +48,7 @@ jobs:
         with:
           context: .
           file: .devcontainer/Dockerfile.ci
-          platforms: linux/amd64  # Single arch for CI speed
+          platforms: linux/amd64 # Single arch for CI speed
           push: true
           tags: ${{ needs.prepare.outputs.image-name }}
           cache-from: type=gha
@@ -57,7 +56,6 @@ jobs:
           build-args: |
             BASE_IMAGE=ghcr.io/${{ env.IMAGE_PREFIX }}-devcontainer:latest
           load: false
-
   lint:
     needs: [prepare, build-devcontainer]
     runs-on: ubuntu-latest
@@ -86,7 +84,6 @@ jobs:
                 ln -s /opt/frontend/node_modules frontend/node_modules; \
               fi && \
               scripts/format-and-lint.sh'
-
   test-sqlite:
     needs: [prepare, build-devcontainer]
     runs-on: ubuntu-latest
@@ -118,7 +115,6 @@ jobs:
                 [ -d "/opt/frontend-dist/.vite" ] && cp -r /opt/frontend-dist/.vite /workspace/src/family_assistant/static/dist/.vite; \
               fi && \
               .venv/bin/pytest -q --timeout=300 --db sqlite -m "not postgres"'
-
   test-postgres:
     needs: [prepare, build-devcontainer]
     runs-on: ubuntu-latest
@@ -163,7 +159,6 @@ jobs:
                 [ -d "/opt/frontend-dist/.vite" ] && cp -r /opt/frontend-dist/.vite /workspace/src/family_assistant/static/dist/.vite; \
               fi && \
               .venv/bin/pytest --postgres -q --timeout=300'
-
   # Require all test jobs to pass
   all-tests:
     needs: [lint, test-sqlite, test-postgres]

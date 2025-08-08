@@ -24,9 +24,9 @@ BASE_UI_ENDPOINTS = [
     ("/tools", "Available Tools Page"),
     ("/tasks", "Tasks List Page"),
     ("/vector-search", "Vector Search Page"),
+    ("/documents", "Documents List Page"),  # New endpoint
     ("/documents/upload", "Document Upload Page"),  # New endpoint
     ("/chat", "Chat Interface Page"),
-    ("/chat/conversations", "Chat Conversations List Page"),
     ("/settings/tokens", "Manage API Tokens UI Page"),
     ("/events", "Events List Page"),
     ("/events/non_existent_event", "Event Detail Page"),
