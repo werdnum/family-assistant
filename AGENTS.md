@@ -43,8 +43,8 @@ poe dev
 ```
 
 This command starts both the FastAPI backend and the Vite frontend development server. The frontend
-is served on `http://localhost:5173`, and all API requests are proxied to the backend running on
-port 8000.
+is served on `http://localhost:5173` (or `http://devcontainer-backend-1:5173` in the dev container),
+and all API requests are proxied to the backend running on port 8000.
 
 ### Building for Production
 
@@ -389,7 +389,7 @@ The project includes `tests/mocks/mock_llm.py` with:
 ```bash
 # Development mode with hot-reloading (recommended)
 poe dev
-# Access the app at http://localhost:5173
+# Access the app at http://localhost:5173 (or http://devcontainer-backend-1:5173 in dev container)
 
 # Main application entry point (production mode)
 python -m family_assistant
@@ -937,11 +937,11 @@ When adding new web UI endpoints that serve HTML pages:
 
 ## DevContainer
 
-The development environment runs in Kubernetes using a StatefulSet with persistent volumes for:
+The development environment runs using Docker Compose with persistent volumes for:
 
-- `/workspace` - The project code (20Gi)
-- `/home/claude` - Claude's home directory with settings and cache (5Gi)
-- PostgreSQL data (5Gi)
+- `/workspace` - The project code
+- `/home/claude` - Claude's home directory with settings and cache
+- PostgreSQL data
 
 ### Building and Deploying
 
@@ -949,8 +949,7 @@ The development environment runs in Kubernetes using a StatefulSet with persiste
 - If no tag is provided, it defaults to timestamp format: `YYYYMMDD_HHMMSS`
 - Example: `.devcontainer/build-and-push.sh` (uses timestamp tag)
 - Example: `.devcontainer/build-and-push.sh v1.2.3` (uses custom tag)
-- This script builds the container with podman, pushes to the registry, and updates the Kubernetes
-  StatefulSet
+- This script builds the container with podman and pushes to the registry
 
 ### Automatic Git Synchronization
 
@@ -963,7 +962,7 @@ The dev container automatically pulls the latest changes from git when Claude is
 
 ### Container Architecture
 
-The StatefulSet runs three containers:
+The Docker Compose setup runs three containers:
 
 1. **postgres** - PostgreSQL with pgvector extension for local development
 2. **backend** - Runs the backend server and frontend dev server via `poe dev`
