@@ -29,8 +29,6 @@ export default defineConfig(({ mode }) => ({
             url.pathname === '/auth/login' ||
             url.pathname === '/auth/logout' ||
             url.pathname === '/auth/callback' ||
-            url.pathname === '/documents' ||
-            url.pathname === '/vector-search' ||
             url.pathname.startsWith('/static/') ||
             url.pathname === '/favicon.ico'
           ) {
@@ -150,15 +148,6 @@ export default defineConfig(({ mode }) => ({
       },
       // Auth endpoints
       '/auth': {
-        target: `http://127.0.0.1:${process.env.VITE_API_PORT || 8000}`,
-        changeOrigin: true,
-      },
-      // Remaining Jinja2 pages
-      '/documents': {
-        target: `http://127.0.0.1:${process.env.VITE_API_PORT || 8000}`,
-        changeOrigin: true,
-      },
-      '/vector-search': {
         target: `http://127.0.0.1:${process.env.VITE_API_PORT || 8000}`,
         changeOrigin: true,
       },

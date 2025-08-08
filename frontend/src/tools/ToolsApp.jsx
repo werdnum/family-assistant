@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+// Global variable to cache the dynamic import promise
+let jsonEditorImportPromise = null;
+
 const ToolsApp = () => {
   const [tools, setTools] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -71,7 +74,11 @@ const ToolsApp = () => {
       // Dynamically import JSONEditor if not already loaded
       if (!JSONEditorRef.current) {
         if (!jsonEditorImportPromise) {
-          jsonEditorImportPromise = import('@json-editor/json-editor');
+          jsonEditorImportPromise = import('@json-editor/json-editor').catch((error) => {
+            // Reset the promise cache on failure to allow retry
+            jsonEditorImportPromise = null;
+            throw error;
+          });
         }
         const module = await jsonEditorImportPromise;
         JSONEditorRef.current = module.JSONEditor;
