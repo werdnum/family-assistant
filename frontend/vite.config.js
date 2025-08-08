@@ -77,8 +77,14 @@ export default defineConfig(({ mode }) => ({
         manualChunks: (id) => {
           // Split node_modules into vendor chunks
           if (id.includes('node_modules')) {
-            // React core libraries
-            if (id.includes('react') || id.includes('react-dom') || id.includes('react-router')) {
+            // React core libraries and anything React-related
+            // IMPORTANT: Include scheduler and any React internals
+            if (
+              id.includes('react') ||
+              id.includes('react-dom') ||
+              id.includes('react-router') ||
+              id.includes('scheduler') // React's scheduler must be with React
+            ) {
               return 'react-vendor';
             }
             // Markdown and editor libraries (large dependencies)
@@ -96,15 +102,15 @@ export default defineConfig(({ mode }) => ({
             if (id.includes('json-editor') || id.includes('vanilla-jsoneditor')) {
               return 'json-editor';
             }
-            // Assistant UI (chat components)
+            // Assistant UI (chat components) - uses React hooks
             if (id.includes('@assistant-ui')) {
               return 'assistant-ui';
             }
-            // Icon libraries
+            // Icon libraries - lucide-react uses React
             if (id.includes('lucide-react')) {
               return 'icons';
             }
-            // All other vendor libraries
+            // All other vendor libraries that don't depend on React
             return 'vendor';
           }
           // Keep app code in the default chunks

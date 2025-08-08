@@ -40,14 +40,36 @@ async def test_react_documents_page_loads(web_test_fixture: WebTestFixture) -> N
     # Verify we're on the documents page
     await expect(page).to_have_url(f"{web_test_fixture.base_url}/documents")
 
-    # Wait for React app to mount - look for the app-root or a specific element
-    # The React app lazy loads, so we need to wait for content to appear
-    await page.wait_for_selector("#app-root", state="attached", timeout=10000)
+    # Wait for React app to mount - check for our custom attribute
+    try:
+        await page.wait_for_function(
+            """() => {
+                const root = document.getElementById('app-root');
+                return root && (root.getAttribute('data-react-mounted') === 'true' || 
+                               root.getAttribute('data-react-error'));
+            }""",
+            timeout=15000,
+        )
+    except Exception as e:
+        # Check what's actually in the HTML
+        html_content = await page.content()
+        print("\n=== HTML HEAD (first 1000 chars) ===")
+        print(html_content[:1000])
+        raise Exception(f"React app failed to mount: {e}") from e
 
-    # Wait for React content to render - look for something specific to the Documents page
-    # This could be a heading, nav element, or other UI component
+    # Check if there was an error mounting React
+    react_error = await page.evaluate(
+        "() => document.getElementById('app-root')?.getAttribute('data-react-error')"
+    )
+    if react_error:
+        raise Exception(f"React app failed to mount with error: {react_error}")
+
+    # Wait for actual content to render (not just React mounting)
     await page.wait_for_function(
-        "() => document.body.textContent && document.body.textContent.trim().length > 0",
+        """() => {
+            const body = document.body;
+            return body && body.textContent && body.textContent.trim().length > 20;
+        }""",
         timeout=10000,
     )
 
@@ -66,106 +88,57 @@ async def test_create_document_via_api_and_view_in_react_ui(
     """Test creating a document via API and viewing it in the React UI."""
     page = web_test_fixture.page
 
-    # Step 1: Create a document via the API
-    # Generate unique source ID to avoid conflicts
-    test_doc_source_id = f"test-react-ui-{uuid.uuid4()}"
-
-    # Create HTTP client using the same base URL as the web test
-    async with httpx.AsyncClient(base_url=web_test_fixture.base_url) as client:
-        api_form_data = {
-            "source_type": TEST_DOC_SOURCE_TYPE,
-            "source_id": test_doc_source_id,
-            "title": TEST_DOC_TITLE,
-            "metadata": TEST_DOC_METADATA_JSON,
-            "content_parts": TEST_DOC_CONTENT_PARTS_JSON,
-            "source_uri": "",
-        }
-
-        response = await client.post("/api/documents/upload", data=api_form_data)
-
-        # Verify the document was created successfully
-        assert response.status_code == 202, (
-            f"API call failed: {response.status_code} - {response.text}"
+    # Create a document via API
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{web_test_fixture.base_url}/api/documents/",
+            json={
+                "id": str(uuid.uuid4()),
+                "source_type": TEST_DOC_SOURCE_TYPE,
+                "content_parts": TEST_DOC_CONTENT_PARTS,
+                "metadata": TEST_DOC_METADATA,
+            },
         )
-        response_data = response.json()
-        assert "document_id" in response_data
-        assert response_data.get("task_enqueued") is True
-        document_db_id = response_data["document_id"]
+        assert response.status_code == 200, (
+            f"Failed to create document: {response.text}"
+        )
+        doc_data = response.json()
+        doc_id = doc_data["id"]
 
-    # Step 2: Navigate to the React Documents UI and verify the document appears
+    # Navigate to the React documents page
     await page.goto(f"{web_test_fixture.base_url}/documents")
 
-    # Wait for the page to load
-    await page.wait_for_selector("body", timeout=10000)
-
-    # Wait for the React component to load and fetch data
-    # Look for the "Total documents:" text which indicates the API call has completed
-    await page.wait_for_selector("text=Total documents:", timeout=15000)
-
-    # Give additional time for documents to appear (background indexing might be needed)
-    max_retries = 10
-    document_found = False
-
-    for _attempt in range(max_retries):
-        page_content = await page.text_content("body")
-        assert page_content is not None, "Page content should not be None"
-
-        if TEST_DOC_TITLE in page_content:
-            document_found = True
-            break
-
-        # Wait before retrying
-        await page.wait_for_timeout(1000)
-        # Refresh the page to reload documents
-        await page.reload()
-        await page.wait_for_selector("text=Total documents:", timeout=10000)
-
-    assert document_found, (
-        f"Document title '{TEST_DOC_TITLE}' should appear on the documents page after {max_retries} retries"
+    # Wait for the React app to load
+    await page.wait_for_function(
+        """() => {
+            const root = document.getElementById('app-root');
+            return root && root.getAttribute('data-react-mounted') === 'true';
+        }""",
+        timeout=15000,
     )
 
-    # Step 3: Verify the document links to the detail view
-    # The React UI now links documents to /documents/{id}
-
-    # Find the document title link
-    title_link = page.locator(f"a:has-text('{TEST_DOC_TITLE}')")
-
-    assert await title_link.count() > 0, (
-        f"Could not find link for document '{TEST_DOC_TITLE}'"
+    # Wait for content
+    await page.wait_for_function(
+        """() => {
+            const body = document.body;
+            return body && body.textContent && body.textContent.trim().length > 20;
+        }""",
+        timeout=10000,
     )
 
-    # Verify the link has the correct href attribute
-    href = await title_link.get_attribute("href")
-    assert href is not None, "Document link should have an href attribute"
-    assert f"/documents/{document_db_id}" in href, (
-        f"Document link should point to detail view, got: {href}"
-    )
+    # Look for the document title in the list
+    doc_link = page.locator(f"text={TEST_DOC_TITLE}")
+    await expect(doc_link).to_be_visible(timeout=10000)
 
-    # Step 4: Click the link and verify document detail view loads
-    await title_link.click()
-    await page.wait_for_load_state("domcontentloaded")
+    # Click on the document to view details
+    await doc_link.click()
 
-    # Verify we're on the detail page
-    current_url = page.url
-    assert f"/documents/{document_db_id}" in current_url, (
-        f"Should navigate to document detail view, got: {current_url}"
-    )
+    # Should navigate to document detail page
+    await expect(page).to_have_url(f"{web_test_fixture.base_url}/documents/{doc_id}")
 
-    # Wait for the detail view to load - look for any indication of the detail page
-    # The page might show "Document Details", "Loading...", or the document title
-    await page.wait_for_timeout(2000)  # Give React time to render
-
-    # Verify document content is displayed
-    detail_content = await page.text_content("body")
-    assert detail_content is not None, "Detail page content should not be None"
-
-    # Basic check that we're on a detail page (not empty, not error page)
-    assert len(detail_content) > 100, "Detail page should have content"
-
-    # The document title should appear somewhere on the page
-    assert TEST_DOC_TITLE in detail_content, (
-        "Document title should be visible in detail view"
-    )
+    # Check that document content is displayed
+    await expect(page.locator(f"text={TEST_DOC_CHUNK_0}")).to_be_visible(timeout=10000)
+    await expect(page.locator(f"text={TEST_DOC_CHUNK_1}")).to_be_visible(timeout=10000)
 
 
 @pytest.mark.playwright
@@ -173,137 +146,191 @@ async def test_create_document_via_api_and_view_in_react_ui(
 async def test_multiple_documents_display_in_react_ui(
     web_test_fixture: WebTestFixture,
 ) -> None:
-    """Test that multiple documents are displayed properly in the React UI."""
+    """Test that multiple documents are displayed correctly in the React UI."""
     page = web_test_fixture.page
 
-    # Create two test documents via API
-    documents_created = []
+    # Create multiple documents via API
+    doc_ids = []
+    for i in range(3):
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{web_test_fixture.base_url}/api/documents/",
+                json={
+                    "id": str(uuid.uuid4()),
+                    "source_type": TEST_DOC_SOURCE_TYPE,
+                    "content_parts": {
+                        "title": f"Test Document {i + 1}",
+                        "content": f"This is test document number {i + 1}",
+                    },
+                    "metadata": {"index": i},
+                },
+            )
+            assert response.status_code == 200
+            doc_ids.append(response.json()["id"])
 
-    async with httpx.AsyncClient(base_url=web_test_fixture.base_url) as client:
-        for i in range(2):
-            test_doc_source_id = f"test-react-multi-{i}-{uuid.uuid4()}"
-            title = f"Test Document {i + 1}"
-
-            api_form_data = {
-                "source_type": TEST_DOC_SOURCE_TYPE,
-                "source_id": test_doc_source_id,
-                "title": title,
-                "metadata": json.dumps({"test_index": i}),
-                "content_parts": json.dumps({
-                    "title": title,
-                    "content": f"This is test document number {i + 1} content.",
-                }),
-                "source_uri": "",
-            }
-
-            response = await client.post("/api/documents/upload", data=api_form_data)
-            assert response.status_code == 202
-            response_data = response.json()
-            documents_created.append({
-                "id": response_data["document_id"],
-                "title": title,
-            })
-
-    # Navigate to documents page and verify both documents appear
+    # Navigate to the React documents page
     await page.goto(f"{web_test_fixture.base_url}/documents")
-    await page.wait_for_selector("body", timeout=10000)
 
-    # Wait for the React component to load and fetch data
-    await page.wait_for_selector("text=Total documents:", timeout=15000)
-
-    # Verify both document titles appear on the page with retry logic
-    max_retries = 10
-    all_found = False
-
-    for _attempt in range(max_retries):
-        page_content = await page.text_content("body")
-        assert page_content is not None, "Page content should not be None"
-
-        found_count = sum(
-            1 for doc in documents_created if doc["title"] in page_content
-        )
-        if found_count == len(documents_created):
-            all_found = True
-            break
-
-        # Wait before retrying
-        await page.wait_for_timeout(1000)
-        # Refresh the page to reload documents
-        await page.reload()
-        await page.wait_for_selector("text=Total documents:", timeout=10000)
-
-    # Final verification
-    assert all_found, (
-        f"All {len(documents_created)} document titles should appear on the documents page after {max_retries} retries"
+    # Wait for the React app to load
+    await page.wait_for_function(
+        """() => {
+            const root = document.getElementById('app-root');
+            return root && root.getAttribute('data-react-mounted') === 'true';
+        }""",
+        timeout=15000,
     )
+
+    # Wait for content
+    await page.wait_for_function(
+        """() => {
+            const body = document.body;
+            return body && body.textContent && body.textContent.trim().length > 20;
+        }""",
+        timeout=10000,
+    )
+
+    # Check that all documents are visible
+    for i in range(3):
+        doc_title = f"Test Document {i + 1}"
+        await expect(page.locator(f"text={doc_title}")).to_be_visible(timeout=10000)
+
+    # Verify we can see multiple document entries
+    doc_links = page.locator("a[href^='/documents/']")
+    count = await doc_links.count()
+    assert count >= 3, f"Should have at least 3 document links, found {count}"
 
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_document_detail_view_via_react_ui(
-    web_test_fixture: WebTestFixture,
-) -> None:
-    """Test viewing document details through the React Documents UI."""
+async def test_document_search_in_react_ui(web_test_fixture: WebTestFixture) -> None:
+    """Test searching for documents in the React UI."""
     page = web_test_fixture.page
 
-    # Step 1: Upload a test document via the API
-    doc_title = f"Test Detail Document {uuid.uuid4().hex[:8]}"
-    doc_content = "This is a test document with some important content for testing the detail view."
+    # Create documents with different titles
+    doc_titles = ["Python Tutorial", "JavaScript Guide", "Python Reference"]
+    for title in doc_titles:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{web_test_fixture.base_url}/api/documents/",
+                json={
+                    "id": str(uuid.uuid4()),
+                    "source_type": TEST_DOC_SOURCE_TYPE,
+                    "content_parts": {
+                        "title": title,
+                        "content": f"Content for {title}",
+                    },
+                    "metadata": {},
+                },
+            )
 
-    # Upload document via API
-    async with httpx.AsyncClient(base_url=web_test_fixture.base_url) as client:
+    # Navigate to the React documents page
+    await page.goto(f"{web_test_fixture.base_url}/documents")
+
+    # Wait for the React app to load
+    await page.wait_for_function(
+        """() => {
+            const root = document.getElementById('app-root');
+            return root && root.getAttribute('data-react-mounted') === 'true';
+        }""",
+        timeout=15000,
+    )
+
+    # Wait for content
+    await page.wait_for_function(
+        """() => {
+            const body = document.body;
+            return body && body.textContent && body.textContent.trim().length > 20;
+        }""",
+        timeout=10000,
+    )
+
+    # Look for search input
+    search_input = page.locator("input[type='text'], input[type='search']").first
+    if await search_input.is_visible():
+        # Type search query
+        await search_input.fill("Python")
+
+        # Wait for filtered results
+        await page.wait_for_timeout(500)  # Brief wait for filtering
+
+        # Check that Python documents are visible
+        await expect(page.locator("text=Python Tutorial")).to_be_visible()
+        await expect(page.locator("text=Python Reference")).to_be_visible()
+
+        # JavaScript Guide should be hidden or not present
+        js_guide = page.locator("text=JavaScript Guide")
+        is_visible = await js_guide.is_visible()
+        assert not is_visible, (
+            "JavaScript Guide should not be visible when searching for Python"
+        )
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_document_detail_navigation_in_react_ui(
+    web_test_fixture: WebTestFixture,
+) -> None:
+    """Test navigating to document details and back in the React UI."""
+    page = web_test_fixture.page
+
+    # Create a document
+    async with httpx.AsyncClient() as client:
         response = await client.post(
-            "/api/documents/upload",
-            data={
-                "source_type": "text",
-                "source_id": f"test_{uuid.uuid4().hex}",
-                "source_uri": f"test://document/{uuid.uuid4().hex}",
-                "title": doc_title,
-                "content_parts": json.dumps({"content": doc_content}),
+            f"{web_test_fixture.base_url}/api/documents/",
+            json={
+                "id": str(uuid.uuid4()),
+                "source_type": TEST_DOC_SOURCE_TYPE,
+                "content_parts": TEST_DOC_CONTENT_PARTS,
+                "metadata": TEST_DOC_METADATA,
             },
         )
-        assert response.status_code == 202, (
-            f"Upload failed: {response.text}"
-        )  # 202 Accepted
-        doc_id = response.json()["document_id"]
+        doc_id = response.json()["id"]
 
-    # Step 2: Navigate directly to the document detail page
-    await page.goto(f"{web_test_fixture.base_url}/documents/{doc_id}")
+    # Navigate to documents list
+    await page.goto(f"{web_test_fixture.base_url}/documents")
 
-    # Wait for the detail page to load
-    await page.wait_for_selector("body", timeout=15000)
+    # Wait for the React app to load
+    await page.wait_for_function(
+        """() => {
+            const root = document.getElementById('app-root');
+            return root && root.getAttribute('data-react-mounted') === 'true';
+        }""",
+        timeout=15000,
+    )
 
-    # Give the React component time to load and fetch data
-    await page.wait_for_timeout(2000)
+    # Wait for content
+    await page.wait_for_function(
+        """() => {
+            const body = document.body;
+            return body && body.textContent && body.textContent.trim().length > 20;
+        }""",
+        timeout=10000,
+    )
 
-    # Step 3: Verify basic document detail view functionality
-    page_content = await page.text_content("body")
-    assert page_content is not None, "Page should have content"
+    # Click on the document
+    await page.locator(f"text={TEST_DOC_TITLE}").click()
 
-    # Check that we're on a document detail page (should have document info)
-    # Just verify we have some document-related content
-    assert (
-        "Document" in page_content
-        or doc_title in page_content
-        or "Source" in page_content
-    ), "Should be on document detail page"
+    # Should navigate to detail page
+    await expect(page).to_have_url(f"{web_test_fixture.base_url}/documents/{doc_id}")
 
-    # Step 4: Test navigation back to documents list
-    # Look for any back link/button
-    back_links = await page.query_selector_all("a[href='/documents']")
-    if not back_links:
-        # Try alternative selectors
-        back_links = await page.query_selector_all("a:has-text('Back')")
-        if not back_links:
-            back_links = await page.query_selector_all("a:has-text('Documents')")
+    # Look for back button or link
+    back_buttons = await page.locator("button:has-text('Back')").all()
+    back_links = await page.locator("a:has-text('Back')").all()
 
-    if back_links:
+    if back_buttons:
+        # Click the first back button found
+        await back_buttons[0].click()
+    elif back_links:
         # Click the first back link found
         await back_links[0].click()
 
-        # Should navigate to documents list
+    if back_buttons or back_links:
+        # Should navigate back to documents list
         await page.wait_for_function(
-            "() => document.body.textContent && document.body.textContent.trim().length > 0",
+            """() => {
+                const body = document.body;
+                return body && body.textContent && body.textContent.trim().length > 20;
+            }""",
             timeout=10000,
         )
         assert "/documents" in page.url, "Should navigate back to documents list"
