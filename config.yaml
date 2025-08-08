@@ -195,7 +195,7 @@ service_profiles:
           model: "gemini-2.5-pro"
         fallback:
           provider: "openai"
-          model: "o4-mini"
+          model: "gpt-4o-mini"
           # Alternative: Simple configuration without retry/fallback
           # provider: "google"
           # llm_model: "gemini-2.5-pro"
