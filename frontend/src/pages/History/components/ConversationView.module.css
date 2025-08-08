@@ -1,0 +1,214 @@
+/* Conversation view container */
+.conversationView {
+  padding: 1rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* Header */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.backButton {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border);
+  background-color: var(--bg);
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+  text-decoration: none;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.backButton:hover {
+  background-color: var(--bg-secondary);
+  border-color: var(--accent);
+}
+
+.title {
+  margin: 0;
+  font-size: 1.5em;
+  color: var(--text);
+}
+
+/* Conversation metadata */
+.conversationMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2rem;
+  margin-bottom: 2rem;
+  padding: 1rem;
+  background-color: var(--bg-secondary);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.metaItem {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 200px;
+}
+
+.metaLabel {
+  font-size: 0.85em;
+  color: var(--text-light);
+  font-weight: 500;
+}
+
+.metaValue {
+  font-family: 'Courier New', monospace;
+  font-size: 0.9em;
+  color: var(--text);
+  word-break: break-all;
+}
+
+/* Messages container */
+.messagesContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+/* Message turns */
+.messageTurn {
+  position: relative;
+  padding-left: 3rem;
+}
+
+.turnLabel {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 2.5rem;
+  height: 2.5rem;
+  background-color: var(--accent);
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8em;
+  font-weight: 500;
+  z-index: 1;
+}
+
+.turnMessages {
+  position: relative;
+}
+
+.turnMessages::before {
+  content: '';
+  position: absolute;
+  left: -1.75rem;
+  top: 2.5rem;
+  bottom: 0;
+  width: 2px;
+  background-color: var(--border);
+  z-index: 0;
+}
+
+.messageTurn:last-child .turnMessages::before {
+  display: none;
+}
+
+/* Loading and error states */
+.loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 3rem 1rem;
+  color: var(--text-light);
+  font-size: 1.1em;
+}
+
+.error {
+  color: var(--error, #d73502);
+  padding: 1rem;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  margin: 1rem 0;
+  background-color: var(--bg-secondary);
+}
+
+/* Empty state */
+.emptyState {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--text-light);
+}
+
+.emptyState p {
+  font-size: 1.1em;
+  margin: 0;
+}
+
+/* Mobile adjustments */
+@media (max-width: 767px) {
+  .conversationView {
+    padding: 0.5rem;
+  }
+  
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  
+  .backButton {
+    align-self: flex-start;
+  }
+  
+  .title {
+    font-size: 1.3em;
+  }
+  
+  .conversationMeta {
+    gap: 1rem;
+  }
+  
+  .metaItem {
+    min-width: unset;
+    flex: 1;
+  }
+  
+  .messageTurn {
+    padding-left: 2rem;
+  }
+  
+  .turnLabel {
+    width: 2rem;
+    height: 2rem;
+    font-size: 0.7em;
+  }
+  
+  .turnMessages::before {
+    left: -1.5rem;
+  }
+}
+
+/* Tablet adjustments */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .conversationMeta {
+    gap: 1.5rem;
+  }
+  
+  .metaItem {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 250px;
+  }
+  
+  .metaLabel::after {
+    content: ':';
+  }
+}

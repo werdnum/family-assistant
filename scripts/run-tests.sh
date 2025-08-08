@@ -16,11 +16,16 @@ usage() {
     echo "  -n NUM           Set pytest parallelism (e.g., -n2, -n4, -n auto)"
     echo "  --help           Show this help message"
     echo ""
+    echo "Environment Variables:"
+    echo "  PYTEST_PARALLELISM    Set default pytest parallelism (e.g., 4, auto, 1)"
+    echo "                        Overridden by -n command line option"
+    echo ""
     echo "Examples:"
     echo "  $0                    # Run linting and tests with default parallelism"
     echo "  $0 -n2                # Run with 2 parallel workers"
     echo "  $0 -n1                # Run tests sequentially"
     echo "  $0 --skip-lint -n2    # Skip linting, run tests with 2 workers"
+    echo "  PYTEST_PARALLELISM=4 $0    # Run with 4 workers via env var"
     echo ""
     echo "All other arguments are passed directly to pytest."
     exit 0
@@ -72,6 +77,11 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+# Check for PYTEST_PARALLELISM environment variable if no -n was provided
+if [ -z "$PARALLELISM" ] && [ -n "$PYTEST_PARALLELISM" ]; then
+    PARALLELISM="-n$PYTEST_PARALLELISM"
+fi
 
 # Auto-select SQLite backend when PostgreSQL isn't available
 if ! echo " $PYTEST_ARGS " | grep -Eq ' --db(=| )| --postgres '; then
@@ -132,6 +142,10 @@ else
     echo "${BLUE}🔍 Running tests (linting skipped)...${NC}"
     echo ""
 fi
+
+# Force a rebuild of the frontend
+echo "${BLUE}  ▸ Building frontend...${NC}"
+(cd frontend && npm run build)
 
 # Phase 2: Parallel execution of tests and analysis
 if [ $SKIP_LINT -eq 0 ]; then

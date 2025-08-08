@@ -1,0 +1,122 @@
+/* Filters form */
+.filtersForm {
+  margin-bottom: 2rem;
+}
+
+.filtersDetails {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0;
+  background-color: var(--bg);
+}
+
+.filtersSummary {
+  padding: 1rem;
+  cursor: pointer;
+  background-color: var(--bg-secondary);
+  border-radius: 4px 4px 0 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 500;
+  user-select: none;
+}
+
+.filtersSummary:hover {
+  background-color: var(--accent-bg);
+}
+
+.activeFiltersIndicator {
+  background-color: var(--accent);
+  color: white;
+  padding: 0.2rem 0.5rem;
+  border-radius: 12px;
+  font-size: 0.8em;
+  font-weight: 500;
+}
+
+.filtersGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.filterGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.filterGroup label {
+  font-size: 0.9em;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.filterGroup select,
+.filterGroup input {
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background-color: var(--bg);
+  color: var(--text);
+  font-size: 0.9em;
+}
+
+.filterGroup select:focus,
+.filterGroup input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-bg);
+}
+
+.filterGroup select:disabled,
+.filterGroup input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.loadingText {
+  color: var(--text-light);
+  font-style: italic;
+  font-size: 0.8em;
+}
+
+.filtersActions {
+  padding: 0 1rem 1rem;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.clearButton {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border);
+  background-color: var(--bg);
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: all 0.2s ease;
+}
+
+.clearButton:hover:not(:disabled) {
+  background-color: var(--bg-secondary);
+  border-color: var(--accent);
+}
+
+.clearButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Mobile adjustments */
+@media (max-width: 767px) {
+  .filtersGrid {
+    grid-template-columns: 1fr;
+  }
+  
+  .filtersSummary {
+    font-size: 0.9em;
+  }
+}

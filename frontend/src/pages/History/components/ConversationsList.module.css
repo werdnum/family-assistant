@@ -1,0 +1,249 @@
+/* Conversations list container */
+.conversationsList {
+  padding: 1rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.conversationsList h1 {
+  margin-bottom: 1.5rem;
+  color: var(--text);
+}
+
+/* Results info */
+.resultsInfo {
+  margin-bottom: 1.5rem;
+}
+
+.resultsInfo p {
+  margin: 0;
+  color: var(--text-light);
+  font-size: 0.9em;
+}
+
+/* Conversations container */
+.conversationsContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+/* Conversation cards */
+.conversationCard {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  background-color: var(--bg);
+  transition: box-shadow 0.2s ease;
+}
+
+.conversationCard:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Conversation header */
+.conversationHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+  gap: 1rem;
+}
+
+.conversationTitle {
+  flex: 1;
+}
+
+.conversationTitle h3 {
+  margin: 0;
+  font-size: 1.1em;
+}
+
+.conversationLink {
+  text-decoration: none;
+  color: var(--accent);
+  font-family: 'Courier New', monospace;
+  word-break: break-all;
+}
+
+.conversationLink:hover {
+  text-decoration: underline;
+}
+
+.interfaceIcon {
+  font-size: 1.5em;
+  flex-shrink: 0;
+}
+
+/* Conversation preview */
+.conversationPreview {
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background-color: var(--bg-secondary);
+  border-radius: 4px;
+  border-left: 3px solid var(--accent-bg);
+}
+
+.lastMessage {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.9em;
+  line-height: 1.4;
+  font-style: italic;
+}
+
+/* Conversation metadata */
+.conversationMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  margin-bottom: 1rem;
+  font-size: 0.9em;
+}
+
+.metaItem {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.metaLabel {
+  color: var(--text-light);
+  font-size: 0.85em;
+  font-weight: 500;
+}
+
+.metaValue {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* Conversation footer */
+.conversationFooter {
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  text-align: right;
+}
+
+.viewLink {
+  text-decoration: none;
+  color: var(--accent);
+  font-size: 0.9em;
+  font-weight: 500;
+  transition: color 0.2s ease;
+}
+
+.viewLink:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* Loading and error states */
+.loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 3rem 1rem;
+  color: var(--text-light);
+  font-size: 1.1em;
+}
+
+.error {
+  color: var(--error, #d73502);
+  padding: 1rem;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  margin: 1rem 0;
+  background-color: var(--bg-secondary);
+}
+
+/* Empty state */
+.emptyState {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--text-light);
+}
+
+.emptyState p {
+  font-size: 1.1em;
+  margin: 0 0 1rem 0;
+}
+
+.clearFiltersButton {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border);
+  background-color: var(--bg);
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: all 0.2s ease;
+}
+
+.clearFiltersButton:hover {
+  background-color: var(--bg-secondary);
+  border-color: var(--accent);
+}
+
+/* Tablet layout */
+@media (min-width: 768px) {
+  .conversationMeta {
+    gap: 2rem;
+  }
+
+  .metaItem {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .metaLabel::after {
+    content: ':';
+  }
+}
+
+/* Desktop layout - grid for conversations */
+@media (min-width: 1024px) {
+  .conversationsContainer {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
+    gap: 1.5rem;
+  }
+  
+  .conversationCard {
+    height: fit-content;
+  }
+}
+
+/* Wide screens - more columns */
+@media (min-width: 1600px) {
+  .conversationsContainer {
+    grid-template-columns: repeat(auto-fill, minmax(450px, 1fr));
+  }
+}
+
+/* Mobile adjustments */
+@media (max-width: 767px) {
+  .conversationsList {
+    padding: 0.5rem;
+  }
+  
+  .conversationHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  
+  .interfaceIcon {
+    align-self: flex-end;
+  }
+  
+  .conversationMeta {
+    gap: 1rem;
+  }
+  
+  .conversationFooter {
+    text-align: center;
+  }
+}

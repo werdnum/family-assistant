@@ -52,29 +52,40 @@ async def vector_search_form(
             "SELECT DISTINCT source_type FROM documents ORDER BY source_type;"
         )
         # Query to get distinct top-level keys from the JSONB metadata column
-        # Uses jsonb_each for PostgreSQL compatibility, assuming doc_metadata is a JSONB column.
-        q_meta_keys = text(
-            "SELECT DISTINCT j.key FROM documents d, jsonb_each(d.doc_metadata) j ORDER BY j.key;"
-        )
+        # Only available for PostgreSQL - SQLite doesn't support jsonb_each
+        if db_context.engine.dialect.name == "postgresql":
+            q_meta_keys = text(
+                "SELECT DISTINCT j.key FROM documents d, jsonb_each(d.doc_metadata) j ORDER BY j.key;"
+            )
 
-        (
-            models_result,
-            types_result,
-            source_types_result,
-            meta_keys_result,
-        ) = await asyncio.gather(
-            db_context.fetch_all(q_models),
-            db_context.fetch_all(q_types),
-            db_context.fetch_all(q_source_types),
-            db_context.fetch_all(q_meta_keys),  # Fetch metadata keys
-        )
+            (
+                models_result,
+                types_result,
+                source_types_result,
+                meta_keys_result,
+            ) = await asyncio.gather(
+                db_context.fetch_all(q_models),
+                db_context.fetch_all(q_types),
+                db_context.fetch_all(q_source_types),
+                db_context.fetch_all(q_meta_keys),
+            )
+            distinct_metadata_keys = [row["key"] for row in meta_keys_result]
+        else:
+            # SQLite - skip metadata keys query
+            (
+                models_result,
+                types_result,
+                source_types_result,
+            ) = await asyncio.gather(
+                db_context.fetch_all(q_models),
+                db_context.fetch_all(q_types),
+                db_context.fetch_all(q_source_types),
+            )
+            distinct_metadata_keys = []  # Empty for SQLite
 
         distinct_models = [row["embedding_model"] for row in models_result]
         distinct_types = [row["embedding_type"] for row in types_result]
         distinct_source_types = [row["source_type"] for row in source_types_result]
-        distinct_metadata_keys = [
-            row["key"] for row in meta_keys_result
-        ]  # Populate metadata keys
 
     except Exception as e:
         logger.error(
@@ -439,28 +450,41 @@ async def handle_vector_search(
             "SELECT DISTINCT source_type FROM documents ORDER BY source_type;"
         )
         # Query to get distinct top-level keys from the JSONB metadata column
-        # Uses jsonb_each for PostgreSQL compatibility.
-        q_meta_keys = text(
-            "SELECT DISTINCT j.key FROM documents d, jsonb_each(d.doc_metadata) j ORDER BY j.key;"
-        )
+        # Only available for PostgreSQL - SQLite doesn't support jsonb_each
+        if db_context.engine.dialect.name == "postgresql":
+            q_meta_keys = text(
+                "SELECT DISTINCT j.key FROM documents d, jsonb_each(d.doc_metadata) j ORDER BY j.key;"
+            )
 
-        # Use asyncio.gather for concurrent fetching
-        (
-            models_result,
-            types_result,
-            source_types_result,
-            meta_keys_result,
-        ) = await asyncio.gather(
-            db_context.fetch_all(q_models),
-            db_context.fetch_all(q_types),
-            db_context.fetch_all(q_source_types),
-            db_context.fetch_all(q_meta_keys),
-        )
+            # Use asyncio.gather for concurrent fetching
+            (
+                models_result,
+                types_result,
+                source_types_result,
+                meta_keys_result,
+            ) = await asyncio.gather(
+                db_context.fetch_all(q_models),
+                db_context.fetch_all(q_types),
+                db_context.fetch_all(q_source_types),
+                db_context.fetch_all(q_meta_keys),
+            )
+            distinct_metadata_keys = [row["key"] for row in meta_keys_result]
+        else:
+            # SQLite - skip metadata keys query
+            (
+                models_result,
+                types_result,
+                source_types_result,
+            ) = await asyncio.gather(
+                db_context.fetch_all(q_models),
+                db_context.fetch_all(q_types),
+                db_context.fetch_all(q_source_types),
+            )
+            distinct_metadata_keys = []  # Empty for SQLite
 
         distinct_models = [row["embedding_model"] for row in models_result]
         distinct_types = [row["embedding_type"] for row in types_result]
         distinct_source_types = [row["source_type"] for row in source_types_result]
-        distinct_metadata_keys = [row["key"] for row in meta_keys_result]  # Get keys
 
     except Exception as e:
         logger.error(

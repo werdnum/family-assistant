@@ -43,7 +43,9 @@ const NavHeader = ({ currentPage = 'chat' }) => {
             Tools
           </a>
           <a href="/tasks">Task Queue</a>
-          <a href="/errors/">Error Logs</a>
+          <a href="/errors" className={currentPage === 'errors' ? 'current-page' : ''}>
+            Error Logs
+          </a>
         </div>
         <span className="nav-separator">|</span>
 

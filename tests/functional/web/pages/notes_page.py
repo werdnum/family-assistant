@@ -12,8 +12,8 @@ class NotesPage(BasePage):
     ADD_NOTE_BUTTON = "a:has-text('Add New Note')"
     NOTE_TITLE_INPUT = "#title"
     NOTE_CONTENT_TEXTAREA = "#content"
-    INCLUDE_IN_PROMPT_CHECKBOX = "#include_in_prompt"
-    SAVE_BUTTON = "button[type='submit']:has-text('Save Note')"
+    INCLUDE_IN_PROMPT_CHECKBOX = "input[name='include_in_prompt']"
+    SAVE_BUTTON = "button:has-text('Save')"
     DELETE_BUTTON = "button[type='submit']:has-text('Delete')"
     SEARCH_INPUT = "#search-notes"
     NOTE_ROW = "tbody tr"
@@ -125,14 +125,12 @@ class NotesPage(BasePage):
         # Find the row with the note and click its delete button
         note_row = await self.page.wait_for_selector(f"tr:has(td:text-is('{title}'))")
         if note_row:
-            delete_form = await note_row.query_selector("form[action*='delete']")
-            if delete_form:
-                delete_button = await delete_form.query_selector(
-                    "button[type='submit']"
-                )
-                if delete_button:
-                    await delete_button.click()
-                    await self.wait_for_load()
+            # In React version, delete button is a simple button, not in a form
+            delete_button = await note_row.query_selector("button:has-text('Delete')")
+            if delete_button:
+                await delete_button.click()
+                # Wait for the network request to complete and UI to update
+                await self.wait_for_load(wait_for_network=True)
 
     async def search_notes(self, query: str) -> None:
         """Search for notes using the search input.

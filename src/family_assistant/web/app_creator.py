@@ -21,26 +21,16 @@ from family_assistant.web.auth import (
     auth_router,
 )
 from family_assistant.web.routers.api import api_router
+from family_assistant.web.routers.api_documentation import (
+    router as api_documentation_router,
+)
 from family_assistant.web.routers.api_token_management import (
     router as api_token_management_router,
 )
-from family_assistant.web.routers.chat_ui import router as chat_ui_router
 from family_assistant.web.routers.context_viewer import context_viewer_router
-from family_assistant.web.routers.documentation import documentation_router
-from family_assistant.web.routers.documents_ui import (  # New import for document upload UI
-    router as documents_ui_router,
-)
-from family_assistant.web.routers.errors import router as errors_router
-from family_assistant.web.routers.events_ui import router as events_ui_router
+
+# documents_ui, vector_search, and errors routers removed - replaced with React
 from family_assistant.web.routers.health import health_router
-from family_assistant.web.routers.history import history_router
-from family_assistant.web.routers.listeners_ui import router as listeners_ui_router
-from family_assistant.web.routers.notes import notes_router
-from family_assistant.web.routers.tasks_ui import tasks_ui_router
-from family_assistant.web.routers.ui_token_management import (  # New import
-    router as ui_token_management_router,
-)
-from family_assistant.web.routers.vector_search import vector_search_router
 from family_assistant.web.routers.vite_pages import vite_pages_router
 from family_assistant.web.routers.webhooks import webhooks_router
 from family_assistant.web.template_utils import get_static_asset
@@ -265,21 +255,21 @@ if AUTH_ENABLED:
     app.include_router(auth_router, tags=["Authentication"])
     logger.info("Authentication routes included.")
 
-app.include_router(notes_router, tags=["Notes UI"])
-app.include_router(chat_ui_router, tags=["Chat UI"])
 app.include_router(vite_pages_router, tags=["Vite Pages"])
-app.include_router(documentation_router, tags=["Documentation UI"])
+# NOTE: The following routers have been removed as their Jinja2 templates
+# have been migrated to React components served via vite_pages_router:
+#   * documentation_router - docs now via React
+#   * api_docs_router - not needed
+#   * vector_search_router - replaced with React at /vector-search
+#   * documents_ui_router - replaced with React at /documents
+#   * notes_ui_router - replaced with React at /notes
+#   * tasks_ui_router - replaced with React at /tasks
+#   * message_history_router - replaced with React at /history
+#   * error_list_router - replaced with React at /errors
+# All these routes are now handled by vite_pages_router above
+
 app.include_router(webhooks_router, tags=["Webhooks"])
-app.include_router(history_router, tags=["History UI"])
-app.include_router(tasks_ui_router, tags=["Tasks UI"])
-app.include_router(vector_search_router, tags=["Vector Search UI"])
 app.include_router(context_viewer_router, tags=["Context Viewer UI"])
-app.include_router(
-    documents_ui_router, prefix="/documents", tags=["Documents UI"]
-)  # New router
-app.include_router(errors_router, tags=["Error Logs UI"])
-app.include_router(events_ui_router, tags=["Events UI"])
-app.include_router(listeners_ui_router, tags=["Event Listeners UI"])
 app.include_router(health_router, tags=["Health Check"])
 
 # General API endpoints (like /api/tools/execute, /api/documents/upload)
@@ -288,17 +278,17 @@ app.include_router(api_router, prefix="/api", tags=["General API"])
 # API Token Management endpoints (like /api/me/tokens)
 # This is nested under /api as well, so the full path would be /api/me/tokens
 app.include_router(
+    api_documentation_router,
+    prefix="/api/documentation",
+    tags=["Documentation"],
+)
+app.include_router(
     api_token_management_router,
     prefix="/api/me/tokens",  # Suggesting a "me" scope for user-specific tokens
     tags=["API Token Management"],
 )
 
-# UI for API Token Management
-app.include_router(
-    ui_token_management_router,
-    prefix="/settings/tokens",  # UI page for managing tokens
-    tags=["Settings UI"],
-)
+# Removed ui_token_management_router - using React instead
 
 
 # --- Serve Vite-built HTML files in production ---

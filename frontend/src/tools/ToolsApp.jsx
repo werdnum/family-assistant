@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { JSONEditor } from '@json-editor/json-editor';
-import NavHeader from '../chat/NavHeader';
+
+// Global variable to cache the dynamic import promise
+let jsonEditorImportPromise = null;
 
 const ToolsApp = () => {
   const [tools, setTools] = useState([]);
@@ -12,6 +13,12 @@ const ToolsApp = () => {
   const [executionError, setExecutionError] = useState(null);
   const jsonEditorRef = useRef(null);
   const editorInstanceRef = useRef(null);
+  const JSONEditorRef = useRef(null);
+
+  // Set the page title
+  useEffect(() => {
+    document.title = 'Tools - Family Assistant';
+  }, []);
 
   // Fetch available tools
   useEffect(() => {
@@ -33,7 +40,7 @@ const ToolsApp = () => {
     fetchTools();
   }, []);
 
-  const initializeJSONEditor = () => {
+  const initializeJSONEditor = async () => {
     if (!selectedTool || !jsonEditorRef.current) {
       return;
     }
@@ -64,6 +71,20 @@ const ToolsApp = () => {
 
     // Initialize the JSON Editor
     try {
+      // Dynamically import JSONEditor if not already loaded
+      if (!JSONEditorRef.current) {
+        if (!jsonEditorImportPromise) {
+          jsonEditorImportPromise = import('@json-editor/json-editor').catch((error) => {
+            // Reset the promise cache on failure to allow retry
+            jsonEditorImportPromise = null;
+            throw error;
+          });
+        }
+        const module = await jsonEditorImportPromise;
+        JSONEditorRef.current = module.JSONEditor;
+      }
+      const JSONEditor = JSONEditorRef.current;
+
       editorInstanceRef.current = new JSONEditor(jsonEditorRef.current, {
         schema: schema,
         theme: 'html',
@@ -94,8 +115,13 @@ const ToolsApp = () => {
     };
   }, [selectedTool, tools]);
 
-  // Execute selected tool
-  const executeTool = async () => {
+  const handleToolSelect = (toolName) => {
+    setSelectedTool(toolName);
+    setExecutionResult(null);
+    setExecutionError(null);
+  };
+
+  const handleExecute = async () => {
     if (!selectedTool || !editorInstanceRef.current) {
       return;
     }
@@ -106,22 +132,24 @@ const ToolsApp = () => {
 
     try {
       // Validate the form
-      const validationErrors = editorInstanceRef.current.validate();
-      if (validationErrors.length > 0) {
-        setExecutionError(`Invalid arguments: ${JSON.stringify(validationErrors, null, 2)}`);
-        setExecutionLoading(false);
-        return;
+      const errors = editorInstanceRef.current.validate();
+      if (errors.length > 0) {
+        throw new Error('Please fix validation errors before executing');
       }
 
-      // Get the arguments from the editor
-      const args = editorInstanceRef.current.getValue();
+      // Get the form values
+      const parameters = editorInstanceRef.current.getValue();
 
-      const response = await fetch(`/api/tools/execute/${selectedTool}`, {
+      // Execute the tool
+      const response = await fetch('/api/tools/execute', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ arguments: args }),
+        body: JSON.stringify({
+          tool_name: selectedTool,
+          parameters: parameters,
+        }),
       });
 
       const data = await response.json();
@@ -139,105 +167,120 @@ const ToolsApp = () => {
   };
 
   if (loading) {
-    return (
-      <div className="tools-container">
-        <div className="tools-header">
-          <h1>Tools</h1>
-          <p>Loading available tools...</p>
-        </div>
-      </div>
-    );
+    return <div className="tools-loading">Loading tools...</div>;
   }
 
   if (error) {
-    return (
-      <div className="tools-container">
-        <div className="tools-header">
-          <h1>Tools</h1>
-          <p className="error">Error loading tools: {error}</p>
-        </div>
-      </div>
-    );
+    return <div className="tools-error">Error: {error}</div>;
   }
 
-  const selectedToolDef = selectedTool
-    ? tools.find((tool) => tool.function?.name === selectedTool)
-    : null;
-
   return (
-    <>
-      <NavHeader currentPage="tools" />
+    <div className="tools-app">
+      <div className="tools-header">
+        <h1>Tool Explorer</h1>
+        <p className="tools-description">
+          Explore and test the available tools in the Family Assistant system
+        </p>
+      </div>
+
       <div className="tools-container">
-        <div className="tools-header">
-          <h1>Tools</h1>
-          <p>Execute and test available tools</p>
+        {/* Tool list sidebar */}
+        <div className="tools-sidebar">
+          <h2>Available Tools</h2>
+          <div className="tools-list">
+            {tools.map((tool) => (
+              <button
+                key={tool.function?.name || tool.name}
+                className={`tool-item ${
+                  selectedTool === (tool.function?.name || tool.name) ? 'selected' : ''
+                }`}
+                onClick={() => handleToolSelect(tool.function?.name || tool.name)}
+              >
+                <span className="tool-name">{tool.function?.name || tool.name}</span>
+                {tool.function?.description && (
+                  <span className="tool-description">{tool.function?.description}</span>
+                )}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="tools-content">
-          <div className="tools-section">
-            <h2>Available Tools ({tools.filter((tool) => tool.function?.name).length})</h2>
-            <div className="tools-list">
-              {tools
-                .filter((tool) => tool.function?.name)
-                .map((tool) => {
-                  const toolName = tool.function.name;
-                  return (
-                    <button
-                      key={toolName}
-                      className={`tool-button ${selectedTool === toolName ? 'selected' : ''}`}
-                      onClick={() => {
-                        setSelectedTool(toolName);
-                        setExecutionResult(null);
-                        setExecutionError(null);
-                      }}
-                      title={tool.function?.description || ''}
-                    >
-                      {toolName}
-                    </button>
-                  );
-                })}
-            </div>
-          </div>
+        {/* Tool details and execution */}
+        <div className="tools-main">
+          {selectedTool ? (
+            <>
+              <div className="tool-details">
+                <h2>{selectedTool}</h2>
+                {tools.find((t) => (t.function?.name || t.name) === selectedTool)?.function
+                  ?.description && (
+                  <p className="tool-full-description">
+                    {
+                      tools.find((t) => (t.function?.name || t.name) === selectedTool)?.function
+                        ?.description
+                    }
+                  </p>
+                )}
 
-          {selectedTool && selectedToolDef && (
-            <div className="tool-execution-section">
-              <h2>Execute Tool: {selectedTool}</h2>
+                <div className="tool-parameters">
+                  <h3>Parameters</h3>
+                  <div ref={jsonEditorRef} className="json-editor-container" />
+                </div>
 
-              {selectedToolDef.function?.description && (
-                <p className="tool-description">{selectedToolDef.function.description}</p>
-              )}
-
-              <div className="tool-form">
-                <label>Parameters:</label>
-                <div ref={jsonEditorRef} className="json-editor-container" />
-
-                <button
-                  onClick={executeTool}
-                  disabled={executionLoading}
-                  className="execute-button"
-                >
-                  {executionLoading ? 'Executing...' : 'Execute Tool'}
-                </button>
+                <div className="tool-actions">
+                  <button
+                    onClick={handleExecute}
+                    disabled={executionLoading}
+                    className="btn-execute"
+                  >
+                    {executionLoading ? 'Executing...' : 'Execute Tool'}
+                  </button>
+                </div>
               </div>
 
-              {executionError && (
-                <div className="execution-result error">
-                  <h3>Execution Error</h3>
-                  <pre>{executionError}</pre>
+              {/* Execution results */}
+              {(executionResult || executionError) && (
+                <div className="execution-results">
+                  <h3>Execution Results</h3>
+                  {executionError && (
+                    <div className="execution-error">
+                      <strong>Error:</strong> {executionError}
+                    </div>
+                  )}
+                  {executionResult && (
+                    <div className="execution-success">
+                      {executionResult.success ? (
+                        <>
+                          <div className="result-status success">✓ Success</div>
+                          {executionResult.result && (
+                            <div className="result-content">
+                              <strong>Result:</strong>
+                              <pre>{JSON.stringify(executionResult.result, null, 2)}</pre>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <div className="result-status failure">✗ Failed</div>
+                          {executionResult.error && (
+                            <div className="result-content">
+                              <strong>Error:</strong> {executionResult.error}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
-
-              {executionResult && (
-                <div className="execution-result success">
-                  <h3>Execution Result</h3>
-                  <pre>{JSON.stringify(executionResult, null, 2)}</pre>
-                </div>
-              )}
+            </>
+          ) : (
+            <div className="no-tool-selected">
+              <p>Select a tool from the list to view details and test it</p>
             </div>
           )}
         </div>
       </div>
-    </>
+    </div>
   );
 };
 

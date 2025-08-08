@@ -6,9 +6,22 @@ from typing import Any
 
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.base import BaseRepository
+
+
+class NoteNotFoundError(Exception):
+    """Raised when a note cannot be found."""
+
+    pass
+
+
+class DuplicateNoteError(Exception):
+    """Raised when attempting to create a note with a title that already exists."""
+
+    pass
 
 
 class NotesRepository(BaseRepository):
@@ -222,6 +235,77 @@ class NotesRepository(BaseRepository):
                 return False
         except SQLAlchemyError as e:
             self._logger.error(f"Database error in delete({title}): {e}", exc_info=True)
+            raise
+
+    async def rename_and_update(
+        self, original_title: str, new_title: str, content: str, include_in_prompt: bool
+    ) -> str:
+        """Renames a note and updates its content, preserving the primary key.
+
+        Args:
+            original_title: Current title of the note
+            new_title: New title for the note
+            content: Updated content
+            include_in_prompt: Whether to include in prompt
+
+        Returns:
+            Status message
+
+        Raises:
+            NoteNotFoundError: If original note not found
+            DuplicateNoteError: If new title conflicts with existing note
+            SQLAlchemyError: If database error occurs
+        """
+        try:
+            # First verify the original note exists
+            existing_note = await self.get_by_title(original_title)
+            if not existing_note:
+                raise NoteNotFoundError(
+                    f"Cannot rename because note '{original_title}' was not found"
+                )
+
+            # Check if new title conflicts with existing note (unless it's the same note)
+            if new_title != original_title:
+                conflicting_note = await self.get_by_title(new_title)
+                if conflicting_note:
+                    raise DuplicateNoteError(
+                        f"A note with title '{new_title}' already exists"
+                    )
+
+            # Update the note in place, preserving the primary key
+            stmt = (
+                update(notes_table)
+                .where(notes_table.c.title == original_title)
+                .values(
+                    title=new_title,
+                    content=content,
+                    include_in_prompt=include_in_prompt,
+                    updated_at=func.now(),
+                )
+            )
+
+            result = await self._db.execute_with_retry(stmt)
+            if result.rowcount > 0:  # type: ignore[attr-defined]
+                self._logger.info(
+                    f"Renamed note from '{original_title}' to '{new_title}'"
+                )
+                # Enqueue indexing task for the updated note
+                await self._enqueue_indexing_task(new_title)
+                return "Success"
+            else:
+                # This indicates the note was deleted between our check and update
+                self._logger.warning(
+                    f"No rows updated when renaming {original_title} - note may have been deleted"
+                )
+                raise NoteNotFoundError(
+                    f"Note '{original_title}' not found (may have been deleted)"
+                )
+
+        except SQLAlchemyError as e:
+            self._logger.error(
+                f"Database error in rename_and_update({original_title} -> {new_title}): {e}",
+                exc_info=True,
+            )
             raise
 
     async def _enqueue_indexing_task(self, title: str) -> None:

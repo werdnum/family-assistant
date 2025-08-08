@@ -22,7 +22,7 @@
             <!-- Assistant Data -->
             <div class="nav-group">
                 <span class="nav-label">Data</span>
-                <a href="{{ request.app.url_path_for('ui_list_notes') }}">Notes</a>
+                <a href="{{ request.app.url_path_for('notes_ui') }}">Notes</a>
                 <a href="{{ request.app.url_path_for('view_context_page') }}">Context</a>
             </div>
             <span class="nav-separator">|</span>
@@ -30,22 +30,22 @@
             <!-- Documents -->
             <div class="nav-group">
                 <span class="nav-label">Documents</span>
-                <a href="{{ request.app.url_path_for('ui_list_documents') }}">List</a>
-                <a href="{{ request.app.url_path_for('get_document_upload_form') }}">Upload</a>
-                <a href="{{ request.app.url_path_for('ui_vector_search') }}">Search</a>
+                <a href="/documents">List</a>
+                <a href="/documents/upload">Upload</a>
+                <a href="/vector-search">Search</a>
             </div>
             <span class="nav-separator">|</span>
             
             <!-- Chat & History -->
             <a href="/chat">Chat</a>
-            <a href="{{ request.app.url_path_for('ui_message_history') }}">History</a>
+            <a href="{{ request.app.url_path_for('history_ui') }}">History</a>
             <span class="nav-separator">|</span>
             
             <!-- Automation -->
             <div class="nav-group">
                 <span class="nav-label">Automation</span>
-                <a href="{{ request.app.url_path_for('events_list') }}">Events</a>
-                <a href="{{ request.app.url_path_for('listeners_list') }}">Event Listeners</a>
+                <a href="/events">Events</a>
+                <a href="/event-listeners">Event Listeners</a>
             </div>
             <span class="nav-separator">|</span>
             
@@ -53,17 +53,17 @@
             <div class="nav-group">
                 <span class="nav-label">Internal</span>
                 <a href="{{ request.app.url_path_for('tools_ui') }}">Tools</a>
-                <a href="{{ request.app.url_path_for('ui_list_tasks') }}">Task Queue</a>
+                <a href="{{ request.app.url_path_for('tasks_ui') }}">Task Queue</a>
                 <a href="{{ request.app.url_path_for('error_list') }}">Error Logs</a>
             </div>
             <span class="nav-separator">|</span>
             
             <!-- Help -->
-            <a href="{{ request.app.url_path_for('ui_list_docs') }}">Help</a>
+            <a href="/docs">Help</a>
             
             {% if user %}
             <span class="nav-separator">|</span>
-            <a href="{{ request.app.url_path_for('ui_manage_api_tokens') }}">API Tokens</a>
+            <a href="/settings/tokens">API Tokens</a>
             {% if AUTH_ENABLED %}
             <span class="nav-separator">|</span>
             <a href="{{ request.app.url_path_for('logout') }}">Logout ({{ user.get("name", user.get("sub")) }})</a>

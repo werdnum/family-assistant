@@ -11,7 +11,7 @@ from family_assistant.web.dependencies import get_db
 
 logger = logging.getLogger(__name__)
 
-listeners_api_router = APIRouter(prefix="/event-listeners", tags=["Event Listeners"])
+listeners_api_router = APIRouter(tags=["Event Listeners"])
 
 
 class EventListenerResponse(BaseModel):

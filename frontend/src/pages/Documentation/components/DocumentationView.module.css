@@ -1,0 +1,270 @@
+/* Documentation view container */
+.container {
+  display: flex;
+  height: calc(100vh - 80px); /* Adjust based on layout */
+  overflow: hidden;
+}
+
+/* Loading and error states */
+.loading {
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-light);
+  font-style: italic;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.error {
+  padding: 2rem;
+  background-color: var(--accent-bg);
+  border-left: 4px solid #e74c3c;
+  color: var(--text);
+  border-radius: 4px;
+  width: 100%;
+  max-width: 600px;
+  margin: 2rem auto;
+}
+
+.error h2 {
+  margin-top: 0;
+  color: #e74c3c;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 280px;
+  min-width: 280px;
+  background-color: var(--accent-bg);
+  border-right: 1px solid var(--border);
+  padding: 1rem;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.sidebarHeader {
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.backButton {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: all 0.2s ease;
+}
+
+.backButton:hover {
+  background-color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Document navigation */
+.docNav h3 {
+  margin: 0 0 1rem 0;
+  font-size: 1em;
+  color: var(--text);
+}
+
+.docList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.docList li {
+  margin-bottom: 0.25rem;
+}
+
+.docNavItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text-light);
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+  text-transform: capitalize;
+  transition: all 0.2s ease;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.docNavItem:hover {
+  background-color: var(--accent);
+  color: var(--text);
+}
+
+.docNavItem.active {
+  background-color: var(--accent);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Main content area */
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.contentHeader {
+  background-color: var(--bg);
+  padding: 1.5rem 2rem 1rem 2rem;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.contentHeader h1 {
+  margin: 0;
+  color: var(--text);
+  font-size: 2rem;
+  text-transform: capitalize;
+}
+
+/* Markdown content styling */
+.markdownContent {
+  padding: 2rem;
+  max-width: 900px;
+  margin: 0 auto;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+/* Markdown element styles */
+.markdownContent h1,
+.markdownContent h2,
+.markdownContent h3,
+.markdownContent h4,
+.markdownContent h5,
+.markdownContent h6 {
+  color: var(--text);
+  margin-top: 2rem;
+  margin-bottom: 1rem;
+}
+
+.markdownContent h1 {
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 0.5rem;
+}
+
+.markdownContent h2 {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.25rem;
+}
+
+.markdownContent p {
+  margin-bottom: 1rem;
+}
+
+.markdownContent ul,
+.markdownContent ol {
+  margin-bottom: 1rem;
+  padding-left: 2rem;
+}
+
+.markdownContent li {
+  margin-bottom: 0.5rem;
+}
+
+.markdownContent blockquote {
+  border-left: 4px solid var(--accent);
+  margin: 1rem 0;
+  padding: 0.5rem 1rem;
+  background-color: var(--accent-bg);
+  color: var(--text-light);
+}
+
+.markdownContent table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+}
+
+.markdownContent th,
+.markdownContent td {
+  border: 1px solid var(--border);
+  padding: 0.5rem;
+  text-align: left;
+}
+
+.markdownContent th {
+  background-color: var(--accent-bg);
+  font-weight: 600;
+}
+
+/* Code styling */
+.codeBlock {
+  background-color: var(--accent-bg) !important;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1rem !important;
+  overflow-x: auto;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.9em;
+  line-height: 1.4;
+  margin: 1rem 0;
+}
+
+.inlineCode {
+  background-color: var(--accent-bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.2rem 0.4rem;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.9em;
+}
+
+.markdownContent a {
+  color: #0066cc;
+  text-decoration: none;
+}
+
+.markdownContent a:hover {
+  text-decoration: underline;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .container {
+    flex-direction: column;
+    height: auto;
+  }
+  
+  .sidebar {
+    width: 100%;
+    min-width: unset;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 200px;
+  }
+  
+  .content {
+    overflow-y: visible;
+  }
+  
+  .contentHeader {
+    position: static;
+  }
+  
+  .markdownContent {
+    padding: 1rem;
+  }
+  
+  .contentHeader h1 {
+    font-size: 1.5rem;
+  }
+}

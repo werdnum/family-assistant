@@ -84,7 +84,7 @@ dependencies = [
     "alembic>=1.15.2",
     "filetype>=1.2.0",
     # For detecting file types
-    "playwright>=1.40.0",
+    "playwright==1.54",
     # For web scraping and JS rendering
     "starlark-pyo3>=0.1.0",
     # For Starlark scripting language support

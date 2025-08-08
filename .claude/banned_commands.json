@@ -50,5 +50,14 @@
   {
     "regexp": "\\b(cd|pushd)\\s+frontend\\b.*(&&|;)\\s*npm",
     "explanation": "Use 'npm ... --prefix frontend' instead of '(cd frontend && npm ...)' to avoid directory changes and follow project conventions."
+  },
+  {
+    "regexp": "\\bpoe\\s+(dev|serve)\\b",
+    "explanation": "The dev server is already running and auto-reloading. No need to start/restart it. Check logs at /var/log/family-assistant/dev-server.log if needed."
+  },
+  {
+    "regexp": "\\bpkill\\b.*\\bpoe\\b",
+    "explanation": "Don't kill the poe dev server - it's already running and auto-reloading. Check logs at /var/log/family-assistant/dev-server.log if needed."
   }
 ]
+

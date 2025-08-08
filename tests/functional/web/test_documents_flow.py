@@ -214,6 +214,9 @@ async def test_upload_document_with_content_parts_flow(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 @pytest.mark.postgres
+@pytest.mark.skip(
+    reason="Documents UI has been migrated to React - use test_react_documents_ui.py instead"
+)
 async def test_view_document_detail_flow(web_test_fixture: WebTestFixture) -> None:
     """Test viewing document details through the UI."""
     page = web_test_fixture.page
@@ -262,6 +265,9 @@ async def test_view_document_detail_flow(web_test_fixture: WebTestFixture) -> No
 @pytest.mark.playwright
 @pytest.mark.asyncio
 @pytest.mark.postgres
+@pytest.mark.skip(
+    reason="Documents UI has been migrated to React - use test_react_documents_ui.py instead"
+)
 async def test_file_validation_flow(web_test_fixture: WebTestFixture) -> None:
     """Test form validation for document upload."""
     page = web_test_fixture.page
@@ -310,6 +316,9 @@ async def test_file_validation_flow(web_test_fixture: WebTestFixture) -> None:
 @pytest.mark.playwright
 @pytest.mark.asyncio
 @pytest.mark.postgres
+@pytest.mark.skip(
+    reason="Documents UI has been migrated to React - use test_react_documents_ui.py instead"
+)
 async def test_metadata_json_validation(web_test_fixture: WebTestFixture) -> None:
     """Test that invalid JSON in metadata field shows an error."""
     page = web_test_fixture.page
@@ -340,6 +349,9 @@ async def test_metadata_json_validation(web_test_fixture: WebTestFixture) -> Non
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
+@pytest.mark.skip(
+    reason="Documents UI has been migrated to React - use test_react_documents_ui.py instead"
+)
 async def test_empty_documents_state(web_test_fixture: WebTestFixture) -> None:
     """Test the empty state display when no documents exist."""
     page = web_test_fixture.page
@@ -365,6 +377,9 @@ async def test_empty_documents_state(web_test_fixture: WebTestFixture) -> None:
 @pytest.mark.playwright
 @pytest.mark.asyncio
 @pytest.mark.postgres
+@pytest.mark.skip(
+    reason="Documents UI has been migrated to React - use test_react_documents_ui.py instead"
+)
 async def test_reindex_document_flow(web_test_fixture: WebTestFixture) -> None:
     """Test re-indexing a document through the UI."""
     page = web_test_fixture.page
@@ -404,6 +419,9 @@ async def test_reindex_document_flow(web_test_fixture: WebTestFixture) -> None:
 @pytest.mark.playwright
 @pytest.mark.asyncio
 @pytest.mark.postgres
+@pytest.mark.skip(
+    reason="Documents UI has been migrated to React - use test_react_documents_ui.py instead"
+)
 async def test_multiple_document_upload_flow(web_test_fixture: WebTestFixture) -> None:
     """Test uploading multiple documents in sequence."""
     page = web_test_fixture.page
@@ -447,6 +465,9 @@ async def test_multiple_document_upload_flow(web_test_fixture: WebTestFixture) -
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
+@pytest.mark.skip(
+    reason="Documents UI has been migrated to React - use test_react_documents_ui.py instead"
+)
 async def test_pagination_flow(web_test_fixture: WebTestFixture) -> None:
     """Test pagination controls on the documents list page."""
     page = web_test_fixture.page

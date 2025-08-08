@@ -1,0 +1,72 @@
+/* Documentation list container */
+.container {
+  padding: 1rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.container h1 {
+  margin-bottom: 1.5rem;
+  color: var(--text);
+}
+
+/* Loading and error states */
+.loading {
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-light);
+  font-style: italic;
+}
+
+.error {
+  padding: 1rem;
+  background-color: var(--accent-bg);
+  border-left: 4px solid #e74c3c;
+  color: var(--text);
+  border-radius: 4px;
+}
+
+.empty {
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-light);
+  font-style: italic;
+}
+
+/* Documentation list */
+.docsList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.docItem {
+  display: block;
+  padding: 1rem;
+  background-color: var(--accent-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  text-decoration: none;
+  color: var(--text);
+  transition: all 0.2s ease;
+}
+
+.docItem:hover {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  transform: translateX(4px);
+}
+
+.docTitle {
+  font-size: 1.1em;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+  color: var(--text);
+  text-transform: capitalize;
+}
+
+.docFilename {
+  font-size: 0.85em;
+  color: var(--text-light);
+  font-family: monospace;
+}
