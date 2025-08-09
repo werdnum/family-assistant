@@ -107,7 +107,7 @@ jobs:
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace && \
-              if [ -d "/opt/frontend-dist" ] && [ ! -d "/workspace/src/family_assistant/static/dist" ]; then \
+              if [ -d "/opt/frontend-dist" ] && [ ! -f "/workspace/src/family_assistant/static/dist/router.html" ]; then \
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/src/family_assistant/static/dist; \
                 cp -r /opt/frontend-dist/* /workspace/src/family_assistant/static/dist/; \
@@ -151,7 +151,7 @@ jobs:
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace && \
-              if [ -d "/opt/frontend-dist" ] && [ ! -d "/workspace/src/family_assistant/static/dist" ]; then \
+              if [ -d "/opt/frontend-dist" ] && [ ! -f "/workspace/src/family_assistant/static/dist/router.html" ]; then \
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/src/family_assistant/static/dist; \
                 cp -r /opt/frontend-dist/* /workspace/src/family_assistant/static/dist/; \

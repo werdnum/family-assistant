@@ -217,10 +217,24 @@ TRUNCATED=false
 
 if [[ $DIFF_SIZE -gt $MAX_DIFF_CHARS ]]; then
     echo "${YELLOW}Warning: Diff is too large ($DIFF_SIZE chars), truncating to $MAX_DIFF_CHARS chars${NC}"
-    # Truncate the diff, trying to keep it meaningful
-    DIFF="${DIFF:0:$MAX_DIFF_CHARS}
+    
+    # Smart truncation: find a safe place to cut (end of a line)
+    # Try to cut at the last newline before the limit
+    TRUNCATE_POS=$MAX_DIFF_CHARS
+    SAFE_TRUNCATE_POS=$(echo "${DIFF:0:$MAX_DIFF_CHARS}" | grep -n "^" | tail -1 | cut -d: -f1)
+    
+    # If we found a line boundary, use it, otherwise fall back to character limit
+    if [[ -n "$SAFE_TRUNCATE_POS" ]]; then
+        # Count characters up to that line
+        SAFE_CHAR_COUNT=$(echo "${DIFF}" | head -n "$SAFE_TRUNCATE_POS" | wc -c)
+        if [[ $SAFE_CHAR_COUNT -lt $MAX_DIFF_CHARS ]]; then
+            TRUNCATE_POS=$SAFE_CHAR_COUNT
+        fi
+    fi
+    
+    DIFF="${DIFF:0:$TRUNCATE_POS}
 
-[... diff truncated due to size ...]"
+[... diff truncated due to size - showing first $TRUNCATE_POS chars of $DIFF_SIZE total ...]"
     TRUNCATED=true
 fi
 

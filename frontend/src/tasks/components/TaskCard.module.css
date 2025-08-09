@@ -1,0 +1,159 @@
+/* Task card */
+.taskCard {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1rem;
+  background-color: var(--bg);
+  margin-bottom: 1rem;
+}
+
+/* Header with ID and Status */
+.taskHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+}
+
+.taskTitle {
+  margin: 0;
+  font-size: 1.1rem;
+  color: var(--text);
+}
+
+.taskId {
+  font-size: 0.9rem;
+  color: var(--text-light);
+  margin-top: 0.25rem;
+}
+
+.taskActions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Status badges */
+.statusBadge {
+  padding: 0.25rem 0.5rem;
+  border-radius: 3px;
+  font-size: 0.85rem;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+
+.statusPending {
+  background-color: #ffc107;
+  color: #000;
+}
+
+.statusProcessing {
+  background-color: #17a2b8;
+  color: #fff;
+}
+
+.statusDone {
+  background-color: #28a745;
+  color: #fff;
+}
+
+.statusFailed {
+  background-color: #dc3545;
+  color: #fff;
+}
+
+.statusDefault {
+  background-color: #6c757d;
+  color: #fff;
+}
+
+/* Task Details Grid */
+.taskDetailsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.detailItem {
+  color: var(--text);
+}
+
+.detailLabel {
+  font-weight: bold;
+  color: var(--text);
+}
+
+.detailValue {
+  margin-top: 0.25rem;
+  font-size: 0.9rem;
+  color: var(--text-light);
+}
+
+.detailMonospace {
+  font-family: monospace;
+}
+
+/* Recurrence Rule */
+.recurrenceSection {
+  margin-bottom: 1rem;
+}
+
+.recurrenceValue {
+  margin-top: 0.25rem;
+  font-family: monospace;
+  font-size: 0.9rem;
+  background-color: var(--accent-bg);
+  padding: 0.5rem;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+/* Error Message */
+.errorSection {
+  margin-bottom: 1rem;
+}
+
+.errorLabel {
+  font-weight: bold;
+  color: var(--error);
+}
+
+.errorMessage {
+  margin-top: 0.25rem;
+  color: var(--error);
+  background-color: #f8d7da;
+  border: 1px solid #f5c6cb;
+  border-radius: 3px;
+  padding: 0.5rem;
+  font-size: 0.9rem;
+  font-family: monospace;
+}
+
+/* Payload section */
+.payloadSection {
+  color: var(--text);
+}
+
+.payloadValue {
+  margin-top: 0.5rem;
+}
+
+.noPayload {
+  padding: 0.5rem;
+  background-color: var(--accent-bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-light);
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
+/* Dark mode adjustments for error messages */
+.dark .errorMessage {
+  background-color: rgba(220, 53, 69, 0.15);
+  border-color: rgba(220, 53, 69, 0.3);
+}

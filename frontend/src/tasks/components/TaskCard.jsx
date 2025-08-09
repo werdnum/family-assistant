@@ -1,6 +1,7 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import JsonPayloadViewer from './JsonPayloadViewer';
+import styles from './TaskCard.module.css';
 
 const TaskCard = ({ task, onRetry }) => {
   // Format dates for display
@@ -16,27 +17,19 @@ const TaskCard = ({ task, onRetry }) => {
     }
   };
 
-  // Get status color and styles
-  const getStatusStyle = (status) => {
-    const baseStyle = {
-      padding: '0.25rem 0.5rem',
-      borderRadius: '3px',
-      fontSize: '0.85rem',
-      fontWeight: 'bold',
-      textTransform: 'uppercase',
-    };
-
+  // Get status CSS class
+  const getStatusClass = (status) => {
     switch (status?.toLowerCase()) {
       case 'pending':
-        return { ...baseStyle, backgroundColor: '#ffc107', color: '#000' };
+        return `${styles.statusBadge} ${styles.statusPending}`;
       case 'processing':
-        return { ...baseStyle, backgroundColor: '#17a2b8', color: '#fff' };
+        return `${styles.statusBadge} ${styles.statusProcessing}`;
       case 'done':
-        return { ...baseStyle, backgroundColor: '#28a745', color: '#fff' };
+        return `${styles.statusBadge} ${styles.statusDone}`;
       case 'failed':
-        return { ...baseStyle, backgroundColor: '#dc3545', color: '#fff' };
+        return `${styles.statusBadge} ${styles.statusFailed}`;
       default:
-        return { ...baseStyle, backgroundColor: '#6c757d', color: '#fff' };
+        return `${styles.statusBadge} ${styles.statusDefault}`;
     }
   };
 
@@ -53,34 +46,15 @@ const TaskCard = ({ task, onRetry }) => {
   };
 
   return (
-    <div
-      style={{
-        border: '1px solid #ddd',
-        borderRadius: '5px',
-        padding: '1rem',
-        backgroundColor: '#fff',
-        marginBottom: '1rem',
-      }}
-    >
+    <div className={styles.taskCard}>
       {/* Header with ID and Status */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '0.75rem',
-          borderBottom: '1px solid #eee',
-          paddingBottom: '0.5rem',
-        }}
-      >
+      <div className={styles.taskHeader}>
         <div>
-          <h4 style={{ margin: 0, fontSize: '1.1rem' }}>Task #{task.id}</h4>
-          <div style={{ fontSize: '0.9rem', color: '#666', marginTop: '0.25rem' }}>
-            Task ID: {task.task_id}
-          </div>
+          <h4 className={styles.taskTitle}>Task #{task.id}</h4>
+          <div className={styles.taskId}>Task ID: {task.task_id}</div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <span style={getStatusStyle(task.status)}>{task.status}</span>
+        <div className={styles.taskActions}>
+          <span className={getStatusClass(task.status)}>{task.status}</span>
           {canRetry(task.status) && (
             <Button onClick={handleRetryClick} size="sm" title="Manually retry this task">
               Retry
@@ -90,42 +64,29 @@ const TaskCard = ({ task, onRetry }) => {
       </div>
 
       {/* Task Details Grid */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-          gap: '1rem',
-          marginBottom: '1rem',
-        }}
-      >
+      <div className={styles.taskDetailsGrid}>
         {/* Task Type */}
-        <div>
-          <strong>Type:</strong>
-          <div style={{ marginTop: '0.25rem', fontFamily: 'monospace', fontSize: '0.9rem' }}>
-            {task.task_type}
-          </div>
+        <div className={styles.detailItem}>
+          <div className={styles.detailLabel}>Type:</div>
+          <div className={`${styles.detailValue} ${styles.detailMonospace}`}>{task.task_type}</div>
         </div>
 
         {/* Created At */}
-        <div>
-          <strong>Created:</strong>
-          <div style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
-            {formatDate(task.created_at)}
-          </div>
+        <div className={styles.detailItem}>
+          <div className={styles.detailLabel}>Created:</div>
+          <div className={styles.detailValue}>{formatDate(task.created_at)}</div>
         </div>
 
         {/* Scheduled At */}
-        <div>
-          <strong>Scheduled:</strong>
-          <div style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
-            {formatDate(task.scheduled_at)}
-          </div>
+        <div className={styles.detailItem}>
+          <div className={styles.detailLabel}>Scheduled:</div>
+          <div className={styles.detailValue}>{formatDate(task.scheduled_at)}</div>
         </div>
 
         {/* Retry Count */}
-        <div>
-          <strong>Retries:</strong>
-          <div style={{ marginTop: '0.25rem', fontSize: '0.9rem' }}>
+        <div className={styles.detailItem}>
+          <div className={styles.detailLabel}>Retries:</div>
+          <div className={styles.detailValue}>
             {task.retry_count} / {task.max_retries}
           </div>
         </div>
@@ -133,70 +94,32 @@ const TaskCard = ({ task, onRetry }) => {
 
       {/* Recurrence Rule (if available) */}
       {task.recurrence_rule && (
-        <div style={{ marginBottom: '1rem' }}>
-          <strong>Recurrence Rule:</strong>
-          <div
-            style={{
-              marginTop: '0.25rem',
-              fontFamily: 'monospace',
-              fontSize: '0.9rem',
-              backgroundColor: '#f8f9fa',
-              padding: '0.5rem',
-              borderRadius: '3px',
-            }}
-          >
-            {task.recurrence_rule}
-          </div>
+        <div className={styles.recurrenceSection}>
+          <div className={styles.detailLabel}>Recurrence Rule:</div>
+          <div className={styles.recurrenceValue}>{task.recurrence_rule}</div>
         </div>
       )}
 
       {/* Error Message (if failed) */}
       {task.status?.toLowerCase() === 'failed' && task.error_message && (
-        <div style={{ marginBottom: '1rem' }}>
-          <strong style={{ color: '#dc3545' }}>Error Message:</strong>
-          <div
-            style={{
-              marginTop: '0.25rem',
-              color: '#dc3545',
-              backgroundColor: '#f8d7da',
-              border: '1px solid #f5c6cb',
-              borderRadius: '3px',
-              padding: '0.5rem',
-              fontSize: '0.9rem',
-              fontFamily: 'monospace',
-            }}
-          >
-            {task.error_message}
-          </div>
+        <div className={styles.errorSection}>
+          <div className={styles.errorLabel}>Error Message:</div>
+          <div className={styles.errorMessage}>{task.error_message}</div>
         </div>
       )}
 
       {/* Payload */}
       {task.payload && (
-        <div>
-          <strong>Payload:</strong>
-          <div style={{ marginTop: '0.5rem' }}>
+        <div className={styles.payloadSection}>
+          <div className={styles.detailLabel}>Payload:</div>
+          <div className={styles.payloadValue}>
             <JsonPayloadViewer data={task.payload} taskId={task.id} />
           </div>
         </div>
       )}
 
       {/* Show empty payload message if no payload */}
-      {!task.payload && (
-        <div
-          style={{
-            padding: '0.5rem',
-            backgroundColor: '#f8f9fa',
-            border: '1px solid #e9ecef',
-            borderRadius: '3px',
-            color: '#6c757d',
-            fontSize: '0.9rem',
-            fontStyle: 'italic',
-          }}
-        >
-          No payload data
-        </div>
-      )}
+      {!task.payload && <div className={styles.noPayload}>No payload data</div>}
     </div>
   );
 };

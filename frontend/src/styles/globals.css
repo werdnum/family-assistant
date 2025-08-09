@@ -4,6 +4,7 @@
 
 @layer base {
   :root {
+    /* Tailwind CSS variables (HSL format) */
     --background: 0 0% 100%;
     --foreground: 222.2 84% 4.9%;
     
@@ -22,7 +23,7 @@
     --muted: 210 40% 96%;
     --muted-foreground: 215.4 16.3% 46.9%;
     
-    --accent: 210 40% 96%;
+    --accent: 217.2 32.6% 17.5%;
     --accent-foreground: 222.2 84% 4.9%;
     
     --destructive: 0 84.2% 60.2%;
@@ -33,9 +34,19 @@
     --ring: 222.2 84% 4.9%;
     
     --radius: 0.5rem;
+
+    /* Legacy CSS variables for compatibility with existing components */
+    --bg: #ffffff;
+    --text: #212529;
+    --text-light: #6c757d;
+    --accent-bg: #f8f9fa;
+    --accent-hover: hsl(var(--secondary));
+    --accent-text: #212529;
+    --error: #dc3545;
   }
 
   .dark {
+    /* Tailwind CSS variables (HSL format) */
     --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;
     
@@ -63,6 +74,15 @@
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
     --ring: 212.7 26.8% 83.9%;
+
+    /* Legacy CSS variables for dark mode */
+    --bg: hsl(222.2, 84%, 4.9%);
+    --text: hsl(210, 40%, 98%);
+    --text-light: hsl(215, 20.2%, 65.1%);
+    --accent-bg: hsl(217.2, 32.6%, 17.5%);
+    --accent-hover: hsl(217.2, 32.6%, 25%);
+    --accent-text: hsl(210, 40%, 98%);
+    --error: hsl(0, 62.8%, 50%);
   }
 }
 
@@ -74,3 +94,4 @@
     @apply bg-background text-foreground;
   }
 }
+

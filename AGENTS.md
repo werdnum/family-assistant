@@ -74,12 +74,9 @@ script.
 
 ### Pages
 
-The application serves pages from two different systems:
-
-- **Vite:** The main chat interface (`/chat`) is a single-page application (SPA) served by Vite. The
-  entry point is `frontend/chat.html`.
-- **Jinja2:** Other pages, such as the notes list and document management, are rendered by the
-  FastAPI backend using Jinja2 templates.
+The application is a modern React single-page application (SPA) served by Vite. All UI pages are now
+React-based components within the SPA architecture. The entry point is `frontend/chat.html`, and the
+application uses client-side routing to handle navigation between different views and features.
 
 ## Development Commands
 
@@ -864,13 +861,14 @@ service_profiles:
 
 ### Adding New UI Endpoints
 
-When adding new web UI endpoints that serve HTML pages:
+When adding new web API endpoints:
 
 1. Create your router in `src/family_assistant/web/routers/`
-2. Always include `now_utc: datetime.now(timezone.utc)` in the template context when using
-   `TemplateResponse`
-3. **Important**: Add your new endpoint to the `BASE_UI_ENDPOINTS` list in
-   `tests/functional/web/test_ui_endpoints.py` to ensure it's tested for basic accessibility
+2. **Important**: Add your new endpoint to the appropriate test files in `tests/functional/web/` to
+   ensure it's tested for basic functionality
+
+Note: UI pages are now handled entirely by the React frontend. If you need to add new UI views,
+create React components in the `frontend/` directory rather than server-side endpoints.
 
 ## Important Notes
 
