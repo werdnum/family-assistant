@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import styles from './ErrorsList.module.css';
 
 const ErrorsList = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -93,22 +94,22 @@ const ErrorsList = () => {
   const getLevelBadgeClass = (level) => {
     switch (level) {
       case 'CRITICAL':
-        return 'badge bg-danger';
+        return `${styles.badge} ${styles.badgeDanger}`;
       case 'ERROR':
-        return 'badge bg-warning text-dark';
+        return `${styles.badge} ${styles.badgeWarning}`;
       case 'WARNING':
-        return 'badge bg-warning text-dark';
+        return `${styles.badge} ${styles.badgeWarning}`;
       default:
-        return 'badge bg-secondary';
+        return `${styles.badge} ${styles.badgeSecondary}`;
     }
   };
 
   const getRowClass = (level) => {
     if (level === 'CRITICAL') {
-      return 'table-danger';
+      return styles.tableDanger;
     }
     if (level === 'ERROR') {
-      return 'table-warning';
+      return styles.tableWarning;
     }
     return '';
   };
@@ -217,19 +218,19 @@ const ErrorsList = () => {
 
     return (
       <nav aria-label="Error log pagination">
-        <ul className="pagination">{pages}</ul>
+        <ul className={styles.pagination}>{pages}</ul>
       </nav>
     );
   };
 
   return (
-    <div className="errors-list">
-      <h1 className="mb-4">Error Logs</h1>
+    <div className={styles.errorsList}>
+      <h1>Error Logs</h1>
 
       {/* Filter Form */}
-      <div className="filter-form">
-        <form onSubmit={handleFilterSubmit} className="row">
-          <div className="col">
+      <div className={styles.filterForm}>
+        <form onSubmit={handleFilterSubmit} className={styles.filterRow}>
+          <div className={styles.filterCol}>
             <label htmlFor="level">Level</label>
             <select
               id="level"
@@ -243,7 +244,7 @@ const ErrorsList = () => {
             </select>
           </div>
 
-          <div className="col">
+          <div className={styles.filterCol}>
             <label htmlFor="logger">Logger Name</label>
             <input
               type="text"
@@ -254,7 +255,7 @@ const ErrorsList = () => {
             />
           </div>
 
-          <div className="col">
+          <div className={styles.filterCol}>
             <label htmlFor="days">Time Range</label>
             <select
               id="days"
@@ -268,7 +269,7 @@ const ErrorsList = () => {
             </select>
           </div>
 
-          <div className="col col-auto">
+          <div className={styles.filterColAuto}>
             <Button type="submit" variant="default">
               Filter
             </Button>
@@ -281,25 +282,25 @@ const ErrorsList = () => {
 
       {/* Results Summary */}
       {!loading && (
-        <div className="results-summary">
+        <div className={styles.resultsSummary}>
           <strong>{totalCount}</strong> error(s) found
         </div>
       )}
 
       {/* Loading State */}
-      {loading && <div className="loading">Loading errors...</div>}
+      {loading && <div className={styles.loading}>Loading errors...</div>}
 
       {/* Error State */}
       {error && (
-        <div className="error-message">
+        <div className={styles.errorMessage}>
           <strong>Error loading data:</strong> {error}
         </div>
       )}
 
       {/* Error List */}
       {!loading && !error && (
-        <div className="table-responsive">
-          <table className="table">
+        <div className={styles.tableResponsive}>
+          <table className={styles.table}>
             <thead>
               <tr>
                 <th style={{ width: '150px' }}>Timestamp</th>
@@ -323,20 +324,20 @@ const ErrorsList = () => {
                   </td>
                   <td>
                     <div
-                      className="text-truncate"
+                      className={styles.textTruncate}
                       style={{ maxWidth: '500px' }}
                       title={errorItem.message}
                     >
                       {errorItem.message}
                     </div>
                     {errorItem.exception_type && (
-                      <small className="text-muted">
+                      <small className={styles.textMuted}>
                         {errorItem.exception_type}: {errorItem.exception_message}
                       </small>
                     )}
                   </td>
                   <td>
-                    <Link to={`/errors/${errorItem.id}`} className="btn-outline-primary btn-sm">
+                    <Link to={`/errors/${errorItem.id}`} className={styles.viewDetailsLink}>
                       View Details
                     </Link>
                   </td>
@@ -349,7 +350,7 @@ const ErrorsList = () => {
 
       {/* No Results */}
       {!loading && !error && errors.length === 0 && (
-        <div className="alert alert-info">No errors found matching your criteria.</div>
+        <div className={styles.noResults}>No errors found matching your criteria.</div>
       )}
 
       {/* Pagination */}

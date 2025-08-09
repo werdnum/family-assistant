@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import TasksFilter from './TasksFilter';
 import TaskCard from './TaskCard';
+import styles from './TasksList.module.css';
 
 const TasksList = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -133,17 +134,13 @@ const TasksList = () => {
   }, []);
 
   if (loading) {
-    return (
-      <div style={{ textAlign: 'center', padding: '2rem' }}>
-        <div>Loading tasks...</div>
-      </div>
-    );
+    return <div className={styles.loading}>Loading tasks...</div>;
   }
 
   if (error) {
     return (
-      <div style={{ textAlign: 'center', padding: '2rem', color: 'red' }}>
-        <div>Error loading tasks: {error}</div>
+      <div className={styles.errorContainer}>
+        <div className={styles.errorMessage}>Error loading tasks: {error}</div>
         <Button onClick={fetchTasks} variant="secondary">
           Retry
         </Button>
@@ -152,8 +149,8 @@ const TasksList = () => {
   }
 
   return (
-    <div>
-      <header style={{ marginBottom: '2rem' }}>
+    <div className={styles.tasksList}>
+      <header className={styles.header}>
         <h1>Task Queue</h1>
         <p>View and manage background tasks. Shows up to 500 tasks based on current filters.</p>
       </header>
@@ -167,12 +164,12 @@ const TasksList = () => {
       />
 
       {tasks.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '2rem', color: '#666' }}>
+        <div className={styles.emptyState}>
           {hasActiveFilters ? 'No tasks match the current filters.' : 'No tasks found.'}
         </div>
       ) : (
-        <div>
-          <div style={{ marginBottom: '1rem', color: '#666' }}>
+        <div className={styles.resultsContainer}>
+          <div className={styles.resultsSummary}>
             Showing {tasks.length} task{tasks.length !== 1 ? 's' : ''}
             {hasActiveFilters && (
               <span>
@@ -185,7 +182,7 @@ const TasksList = () => {
             )}
           </div>
 
-          <div style={{ display: 'grid', gap: '1rem' }}>
+          <div className={styles.tasksGrid}>
             {tasks.map((task) => (
               <TaskCard key={task.id} task={task} onRetry={handleRetry} />
             ))}
