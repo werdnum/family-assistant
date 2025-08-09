@@ -119,6 +119,11 @@ export default defineConfig(({ mode }) => ({
               return undefined;
             }
 
+            // Icon libraries - keep them with importing modules
+            if (id.includes('lucide-react')) {
+              return undefined;
+            }
+
             // Chat-specific UI components
             if (id.includes('@assistant-ui')) {
               return 'assistant-ui';
