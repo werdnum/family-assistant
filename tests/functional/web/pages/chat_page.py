@@ -26,7 +26,7 @@ class ChatPage(BasePage):
     CONVERSATION_TITLE = ".conversation-title"
     CONVERSATION_PREVIEW = ".conversation-preview"
     # Updated: Sidebar is now a div with specific classes
-    SIDEBAR = "div.w-80.flex-shrink-0.border-r"  # Desktop sidebar
+    SIDEBAR = "div.w-80.flex-shrink-0.border-r, div.h-full.w-80.flex-shrink-0.border-r"  # Desktop sidebar
     SIDEBAR_SHEET = '[role="dialog"][data-state]'  # Mobile sheet
     SIDEBAR_OVERLAY = ".fixed.inset-0.z-40"  # Mobile overlay
     CHAT_CONTAINER = ".flex.min-w-0.flex-1"  # Main content container
@@ -60,7 +60,7 @@ class ChatPage(BasePage):
         # Wait for the chat input to be available and enabled
         chat_input = await self.page.wait_for_selector(self.CHAT_INPUT, state="visible")
         if not chat_input:
-            raise Exception("Chat input not found")
+            raise RuntimeError("Chat input not found")
 
         # Focus the input
         await chat_input.click()
@@ -230,23 +230,20 @@ class ChatPage(BasePage):
 
     async def toggle_sidebar(self) -> None:
         """Toggle the conversation sidebar."""
-        # For mobile, the toggle button might be visible only on mobile
-        viewport_size = self.page.viewport_size
-        if viewport_size and viewport_size["width"] <= 768:
-            # Try both the standard toggle and a mobile-specific selector
-            toggle_button = await self.page.query_selector(self.SIDEBAR_TOGGLE)
-            if not toggle_button:
-                # Try alternative selectors for mobile
-                toggle_button = await self.page.query_selector("button:has-text('☰')")
-            if not toggle_button:
-                toggle_button = await self.page.query_selector(".lg\\:hidden button")
-        else:
-            toggle_button = await self.page.wait_for_selector(self.SIDEBAR_TOGGLE)
+        # The toggle button is now always visible (removed lg:hidden)
+        # Try the aria-label selector first
+        toggle_button = await self.page.query_selector(self.SIDEBAR_TOGGLE)
+        if not toggle_button:
+            # Fallback to the hamburger text
+            toggle_button = await self.page.query_selector("button:has-text('☰')")
 
         if toggle_button:
             await toggle_button.click()
+        else:
+            raise RuntimeError("Could not find sidebar toggle button")
 
         # Wait longer for Sheet animation on mobile
+        viewport_size = self.page.viewport_size
         if viewport_size and viewport_size["width"] <= 768:
             await self.page.wait_for_timeout(
                 1500
@@ -260,21 +257,30 @@ class ChatPage(BasePage):
         viewport_size = self.page.viewport_size
         if viewport_size and viewport_size["width"] <= 768:
             # Mobile: Check for Sheet dialog state
-            # The Sheet component uses data-state="open" or data-state="closed"
-            sheet = await self.page.query_selector(self.SIDEBAR_SHEET)
+            # The Sheet component from shadcn/ui uses data-state="open" or data-state="closed"
+            sheet = await self.page.query_selector('[data-state="open"][role="dialog"]')
             if sheet:
-                state = await sheet.get_attribute("data-state")
-                return state == "open"
-            # Also check if the overlay is visible as an alternative
-            overlay = await self.page.query_selector(self.SIDEBAR_OVERLAY)
-            return overlay is not None
+                # If we found a sheet with data-state="open", check if it contains sidebar content
+                sidebar_content = await sheet.query_selector(
+                    '[data-testid="new-chat-button"]'
+                )
+                return sidebar_content is not None
+            return False
         else:
-            # Desktop: Check sidebar margin class
-            sidebar = await self.page.query_selector(self.SIDEBAR)
+            # Desktop: Check if sidebar is visible by looking for its presence and checking the margin class
+            # Try multiple selectors for the sidebar
+            sidebar = await self.page.query_selector("div.w-80.flex-shrink-0.border-r")
+            if not sidebar:
+                sidebar = await self.page.query_selector(
+                    "div.h-full.w-80.flex-shrink-0.border-r"
+                )
+
             if sidebar:
                 # Check the classes to see if it's visible (ml-0) or hidden (-ml-80)
                 classes = await sidebar.get_attribute("class") or ""
-                return "ml-0" in classes or "-ml-80" not in classes
+                # If ml-0 is present, it's open. If -ml-80 is present, it's closed.
+                # If neither is present, assume it's open (default state)
+                return "-ml-80" not in classes
             return False
 
     async def create_new_chat(self) -> None:

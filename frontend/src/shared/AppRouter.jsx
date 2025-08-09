@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './Layout.tsx';
 
 // Lazy load all route components for code splitting
-const ChatPage = lazy(() => import('../chat/ChatPage'));
+const ChatPage = lazy(() => import('../chat/ChatApp'));
 const ToolsApp = lazy(() => import('../tools/ToolsApp'));
 const ErrorsApp = lazy(() => import('../errors/ErrorsApp'));
 const ContextPage = lazy(() => import('./ContextPage'));

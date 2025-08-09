@@ -13,6 +13,7 @@ export interface ConversationSidebarProps {
   onNewChat: () => void;
   isOpen: boolean;
   onRefresh: () => void;
+  isMobile?: boolean;
 }
 
 export interface ChatAppProps {

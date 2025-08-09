@@ -15,6 +15,7 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
   onNewChat,
   isOpen,
   onRefresh: _onRefresh,
+  isMobile = false,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -119,12 +120,20 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
     </div>
   );
 
-  // Always render the desktop version - mobile rendering is handled by ChatApp
+  // Handle both desktop and mobile rendering
+  // On mobile, the sidebar should be absolutely positioned as an overlay
   return (
     <div
       className={`h-full w-80 flex-shrink-0 border-r bg-background transition-all duration-300 ${
         isOpen ? 'ml-0' : '-ml-80'
       }`}
+      style={{
+        // On mobile (handled by overlay), ensure sidebar appears above content
+        position: isMobile && isOpen ? 'absolute' : 'relative',
+        zIndex: isMobile && isOpen ? 45 : 'auto',
+        left: 0,
+        top: 0,
+      }}
     >
       <SidebarContent />
     </div>

@@ -255,13 +255,15 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         const processedMessages: Message[] = [];
         const toolResponses = new Map<string, string>();
 
-        data.messages.forEach((msg: Record<string, any>) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data.messages.forEach((msg: any) => {
           if (msg.role === 'tool' && msg.tool_call_id) {
             toolResponses.set(msg.tool_call_id, msg.content || 'Tool executed successfully');
           }
         });
 
-        data.messages.forEach((msg: Record<string, any>) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data.messages.forEach((msg: any) => {
           if (msg.role === 'tool') {
             return;
           }
@@ -272,7 +274,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               content.push({ type: 'text', text: msg.content });
             }
 
-            msg.tool_calls.forEach((toolCall: Record<string, any>) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            msg.tool_calls.forEach((toolCall: any) => {
               const toolResponse = toolResponses.get(toolCall.id);
               // Extract the function name from the tool call
               const toolName = toolCall.function?.name || toolCall.name || 'unknown';
@@ -401,7 +404,6 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             size="sm"
             onClick={() => setSidebarOpen(!sidebarOpen)}
             aria-label="Toggle sidebar"
-            className="lg:hidden"
           >
             ☰
           </Button>
@@ -410,15 +412,6 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
         {/* Body */}
         <div className="flex flex-1 overflow-hidden">
-          {/* Mobile overlay */}
-          {sidebarOpen && isMobile && (
-            <div
-              className="fixed inset-0 z-40 bg-black/50"
-              onClick={() => setSidebarOpen(false)}
-              aria-hidden="true"
-            />
-          )}
-
           {/* Sidebar - Desktop */}
           {!isMobile && (
             <ConversationSidebar
@@ -429,25 +422,25 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               onNewChat={handleNewChat}
               isOpen={sidebarOpen}
               onRefresh={fetchConversations}
+              isMobile={isMobile}
             />
           )}
 
-          {/* Sidebar - Mobile Sheet */}
-          {isMobile && (
-            <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-              <SheetContent side="left" className="w-80 p-0">
-                <ConversationSidebar
-                  conversations={conversations}
-                  conversationsLoading={conversationsLoading}
-                  currentConversationId={conversationId}
-                  onConversationSelect={handleConversationSelect}
-                  onNewChat={handleNewChat}
-                  isOpen={true}
-                  onRefresh={fetchConversations}
-                />
-              </SheetContent>
-            </Sheet>
-          )}
+          {/* Sidebar - Mobile Sheet (Portal-based overlay) */}
+          <Sheet open={sidebarOpen && isMobile} onOpenChange={setSidebarOpen}>
+            <SheetContent side="left" className="w-80 p-0">
+              <ConversationSidebar
+                conversations={conversations}
+                conversationsLoading={conversationsLoading}
+                currentConversationId={conversationId}
+                onConversationSelect={handleConversationSelect}
+                onNewChat={handleNewChat}
+                isOpen={true}
+                onRefresh={fetchConversations}
+                isMobile={isMobile}
+              />
+            </SheetContent>
+          </Sheet>
 
           {/* Main content */}
           <div className="flex min-w-0 flex-1 flex-col">
