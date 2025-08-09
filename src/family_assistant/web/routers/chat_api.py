@@ -2,7 +2,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -174,6 +174,10 @@ async def get_conversations(
     db_context: Annotated[DatabaseContext, Depends(get_db)],
     limit: int = 20,
     offset: int = 0,
+    interface_type: str | None = None,
+    conversation_id: str | None = None,
+    date_from: str | None = None,  # Expected as YYYY-MM-DD string
+    date_to: str | None = None,  # Expected as YYYY-MM-DD string
 ) -> ConversationListResponse:
     """
     Get a list of chat conversations for the web interface.
@@ -181,13 +185,52 @@ async def get_conversations(
     Args:
         limit: Maximum number of conversations to return
         offset: Number of conversations to skip for pagination
+        interface_type: Filter by interface type (web, telegram, api, email)
+        conversation_id: Filter by specific conversation ID
+        date_from: Filter conversations with messages after this date (YYYY-MM-DD)
+        date_to: Filter conversations with messages before this date (YYYY-MM-DD)
 
     Returns:
         List of conversation summaries with metadata
     """
-    # Use optimized query for conversation summaries
+    # Parse date strings to datetime objects
+    date_from_dt = None
+    date_to_dt = None
+
+    if date_from:
+        try:
+            date_from_dt = datetime.strptime(date_from, "%Y-%m-%d").replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError as err:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid date_from format: {date_from}. Expected YYYY-MM-DD",
+            ) from err
+
+    if date_to:
+        try:
+            # Set to end of day to include all messages from the target date
+            date_to_dt = datetime.strptime(date_to, "%Y-%m-%d").replace(
+                tzinfo=timezone.utc
+            )
+            date_to_dt = date_to_dt.replace(
+                hour=23, minute=59, second=59, microsecond=999999
+            )
+        except ValueError as err:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid date_to format: {date_to}. Expected YYYY-MM-DD",
+            ) from err
+
+    # Use optimized query for conversation summaries with all filters
     summaries, total = await db_context.message_history.get_conversation_summaries(
-        interface_type="web", limit=limit, offset=offset
+        interface_type=interface_type,
+        limit=limit,
+        offset=offset,
+        conversation_id=conversation_id,
+        date_from=date_from_dt,
+        date_to=date_to_dt,
     )
 
     # Convert to response format
@@ -221,13 +264,22 @@ async def get_conversation_messages(
     Returns:
         List of messages in the conversation
     """
-    # Get messages for this specific conversation
+    # Get messages for this specific conversation across all interfaces
+    # Since conversation_id should be unique, we don't need to filter by interface_type
     history_by_chat = await db_context.message_history.get_all_grouped(
-        interface_type="web", conversation_id=conversation_id
+        interface_type=None, conversation_id=conversation_id
     )
 
-    # Extract messages for this conversation (already filtered by conversation_id)
-    messages = history_by_chat.get(("web", conversation_id), [])
+    # Collect messages from all interfaces for this conversation ID
+    messages = []
+    for (_interface_type, conv_id), conv_messages in history_by_chat.items():
+        if conv_id == conversation_id:
+            messages.extend(conv_messages)
+
+    # Sort messages by timestamp to maintain chronological order across interfaces
+    messages.sort(
+        key=lambda msg: msg.get("timestamp", datetime.min.replace(tzinfo=timezone.utc))
+    )
 
     # Convert to response format
     response_messages = []
