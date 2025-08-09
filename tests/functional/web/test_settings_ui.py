@@ -20,19 +20,23 @@ async def test_token_management_page_loads(
     # Wait for the page heading to appear (API Token Management)
     await page.wait_for_selector("h1:has-text('API Token')", timeout=10000)
 
-    # Check that page has expected structure
-    token_container = page.locator("[class*='tokenManagement']")
-    if await token_container.count() > 0:
-        assert await token_container.is_visible()
+    # Check that page has expected structure - look for the tokens section
+    tokens_section = page.locator("h2:has-text('Your Tokens')")
+    await tokens_section.wait_for(timeout=10000)
+    assert await tokens_section.is_visible()
 
-    # Check for token list or empty state
-    token_list = page.locator("[class*='tokenList']")
-    empty_state = page.locator("[class*='emptyState']")
+    # Check for token list or empty state using more specific selectors
+    token_cards = (
+        page.locator("div")
+        .filter(has=page.locator("h3"))
+        .filter(has=page.locator("code"))
+    )  # Token cards have h3 and code elements
+    empty_state_text = page.locator("text=No API tokens found")
     create_button = page.locator("button:has-text('Create')")
 
     # Should have either tokens or empty state
-    has_tokens = await token_list.count() > 0
-    has_empty = await empty_state.count() > 0
+    has_tokens = await token_cards.count() > 0
+    has_empty = await empty_state_text.count() > 0
     has_create = await create_button.count() > 0
 
     assert has_tokens or has_empty, "Should show token list or empty state"
@@ -96,15 +100,19 @@ async def test_token_list_display(
     await page.wait_for_timeout(2000)
 
     # Check for token items or empty state
-    token_items = page.locator("[class*='tokenItem'], [class*='tokenRow']")
-    empty_message = page.locator("text=/no.*token/i")
+    token_cards = (
+        page.locator("div")
+        .filter(has=page.locator("h3"))
+        .filter(has=page.locator("code"))
+    )  # Token cards have h3 and code elements
+    empty_message = page.locator("text=No API tokens found")
 
-    if await token_items.count() > 0:
+    if await token_cards.count() > 0:
         # If tokens exist, check structure
-        first_token = token_items.first
+        first_token = token_cards.first
 
         # Should have token details
-        token_name = first_token.locator("[class*='tokenName'], [class*='name']")
+        token_name = first_token.locator("h3")  # Token name is in h3
         revoke_button = first_token.locator("button:has-text('Revoke')")
 
         has_name = await token_name.count() > 0
