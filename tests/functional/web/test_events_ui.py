@@ -644,6 +644,12 @@ async def test_events_clear_filters_functionality(
     assert clear_button is not None, "Clear Filters button not found"
     await clear_button.click()
 
+    # Wait for filters to be cleared by checking the source select value
+    await page.wait_for_function(
+        "() => { const el = document.querySelector('select[name=\"source_id\"]'); return el && el.value === ''; }",
+        timeout=5000,
+    )
+
     # Verify all filters are cleared
     source_value = await source_select.input_value()
     hours_value = await hours_select.input_value()

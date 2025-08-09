@@ -115,6 +115,12 @@ async def test_event_listeners_filters_interaction(
     clear_button = page.locator("button:has-text('Clear Filters')")
     await clear_button.click()
 
+    # Wait for filters to be cleared by checking the source select value
+    await page.wait_for_function(
+        "() => { const el = document.querySelector('select[name=\"source_id\"]'); return el && el.value === ''; }",
+        timeout=5000,
+    )
+
     # Verify filters are cleared
     source_value = await source_select.input_value()
     action_value = await action_select.input_value()

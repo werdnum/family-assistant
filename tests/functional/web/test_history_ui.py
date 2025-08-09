@@ -36,7 +36,7 @@ async def test_history_page_basic_loading(
     page.on("response", on_response)
 
     # Navigate to history page
-    print(f"\n=== Navigating to {server_url}/history ===")
+    print(f"=== Navigating to {server_url}/history ===")
     await page.goto(f"{server_url}/history")
 
     # Take a screenshot before waiting
@@ -75,13 +75,13 @@ async def test_history_page_basic_loading(
 
     # Check for console and network errors
     if console_errors:
-        print("\n=== CONSOLE ERRORS DETECTED ===")
+        print("=== CONSOLE ERRORS DETECTED ===")
         for err in console_errors:
             print(f"  - {err}")
         # Don't fail immediately, let's see what loaded
 
     if network_errors:
-        print("\n=== NETWORK ERRORS DETECTED ===")
+        print("=== NETWORK ERRORS DETECTED ===")
         for err in network_errors:
             print(f"  - {err}")
 
@@ -96,7 +96,7 @@ async def test_history_page_basic_loading(
 
         # Get final page state
         final_content = await page.content()
-        print(f"\nFinal page HTML (first 2000 chars):\n{final_content[:2000]}")
+        print(f"Final page HTML (first 2000 chars):{final_content[:2000]}")
 
         # Check if there were critical errors
         assert not console_errors, f"Console errors detected: {console_errors}"
@@ -223,6 +223,12 @@ async def test_history_filters_interface(
     await clear_button.wait_for(state="visible", timeout=5000)
     assert await clear_button.is_visible(), "Clear Filters button not found"
     await clear_button.click()
+
+    # Wait for filters to be cleared by checking the interface select value
+    await page.wait_for_function(
+        "() => { const el = document.querySelector('select[name=\"interface_type\"]'); return el && el.value === ''; }",
+        timeout=5000,
+    )
 
     # Verify filters are cleared
     interface_value = await interface_select.input_value()
