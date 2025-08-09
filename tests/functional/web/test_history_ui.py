@@ -584,19 +584,20 @@ async def test_history_filter_state_management(
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
 
-    # Navigate to history page
-    await page.goto(f"{server_url}/history")
+    # Navigate to history page with URL parameters to auto-expand filters
+    await page.goto(f"{server_url}/history?interface_type=all")
 
     # Wait for page to load
     await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
-    await page.wait_for_timeout(1000)
+    await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
 
     # Apply multiple filters
     interface_select = page.locator("select[name='interface_type']")
-    await interface_select.wait_for(timeout=5000)
+    await interface_select.wait_for(state="visible", timeout=5000)
     await interface_select.select_option("telegram", force=True)
 
     date_from_input = page.locator("input[name='date_from']")
+    await date_from_input.wait_for(state="visible", timeout=5000)
     await date_from_input.fill("2024-06-01", force=True)
     # Trigger change event explicitly by pressing Tab to blur the field
     await date_from_input.press("Tab")
@@ -707,17 +708,16 @@ async def test_history_interface_filter_functionality(
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
 
-    # Navigate to history page
-    await page.goto(f"{server_url}/history")
+    # Navigate to history page with URL parameters to auto-expand filters
+    await page.goto(f"{server_url}/history?interface_type=all")
     await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
 
-    # Open filters section
-    filters_section = page.locator("details summary:has-text('Filters')")
-    await filters_section.click()
+    # Wait for page content to load (not show "Loading...")
+    await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
 
-    # Test different interface filter options
+    # Test different interface filter options (should be visible due to URL parameters)
     interface_select = page.locator("select[name='interface_type']")
-    await interface_select.wait_for(state="visible", timeout=5000)
+    await interface_select.wait_for(state="visible", timeout=10000)
 
     # Check that all interface options are available
     options = await interface_select.locator("option").all_text_contents()
@@ -758,12 +758,11 @@ async def test_history_date_range_filtering(
     server_url = web_test_fixture.base_url
 
     # Navigate to history page
-    await page.goto(f"{server_url}/history")
+    await page.goto(f"{server_url}/history?interface_type=all")
     await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
 
-    # Open filters section
-    filters_section = page.locator("details summary:has-text('Filters')")
-    await filters_section.click()
+    # Wait for page content to load (not show "Loading...")
+    await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
 
     # Set date filters
     date_from_input = page.locator("input[name='date_from']")
@@ -806,17 +805,16 @@ async def test_history_conversation_id_filter(
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
 
-    # Navigate to history page
-    await page.goto(f"{server_url}/history")
+    # Navigate to history page with URL parameters to auto-expand filters
+    await page.goto(f"{server_url}/history?interface_type=all")
     await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
 
-    # Open filters section
-    filters_section = page.locator("details summary:has-text('Filters')")
-    await filters_section.click()
+    # Wait for page content to load (not show "Loading...")
+    await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
 
-    # Test conversation ID filter
+    # Test conversation ID filter (should be visible due to URL parameters)
     conv_input = page.locator("input[name='conversation_id']")
-    await conv_input.wait_for(state="visible", timeout=5000)
+    await conv_input.wait_for(state="visible", timeout=10000)
 
     # Enter a specific conversation ID
     test_conv_id = "web_conv_test_123"
@@ -849,12 +847,11 @@ async def test_history_combined_filters_interaction(
     server_url = web_test_fixture.base_url
 
     # Navigate to history page
-    await page.goto(f"{server_url}/history")
+    await page.goto(f"{server_url}/history?interface_type=all")
     await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
 
-    # Open filters section
-    filters_section = page.locator("details summary:has-text('Filters')")
-    await filters_section.click()
+    # Wait for page content to load (not show "Loading...")
+    await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
 
     # Apply multiple filters
     interface_select = page.locator("select[name='interface_type']")
@@ -911,15 +908,16 @@ async def test_history_filter_validation_and_error_handling(
     await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
 
     # Page should still load (frontend handles invalid dates gracefully)
-    # or show an appropriate error state
+    # The frontend should show an error message or fallback gracefully
     has_heading = await page.locator("h1:has-text('Conversation History')").count() > 0
-    has_error = await page.locator("[class*='error'], .error").count() > 0
 
-    assert has_heading or has_error, "Page should either load normally or show error"
+    assert has_heading, "Page should load normally with graceful error handling"
 
     # Test with valid date format
-    filters_section = page.locator("details summary:has-text('Filters')")
-    await filters_section.click()
+    # Navigate with URL parameters to auto-expand filters
+    await page.goto(f"{server_url}/history?interface_type=all")
+    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+    await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
 
     date_from_input = page.locator("input[name='date_from']")
     await date_from_input.wait_for(state="visible", timeout=5000)

@@ -20,6 +20,10 @@ const HistoryFilters = ({ filters, onFiltersChange, onClearFilters, loading = fa
     if (!date) {
       return '';
     }
+    // Check if date is valid before calling toISOString
+    if (Number.isNaN(date.getTime())) {
+      return '';
+    }
     // Convert to YYYY-MM-DD format for input
     return date.toISOString().split('T')[0];
   };
@@ -29,7 +33,9 @@ const HistoryFilters = ({ filters, onFiltersChange, onClearFilters, loading = fa
       return null;
     }
     // Ensure consistent UTC interpretation across browsers
-    return new Date(dateString + 'T00:00:00Z');
+    const date = new Date(dateString + 'T00:00:00Z');
+    // Return null for invalid dates to avoid crashes
+    return Number.isNaN(date.getTime()) ? null : date;
   };
 
   return (
