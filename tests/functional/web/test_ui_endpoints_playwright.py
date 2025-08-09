@@ -166,7 +166,17 @@ async def test_navigation_links_work(
         if href and not href.startswith("http"):  # Skip external links
             # Click the link
             await link.click()
-            await base_page.wait_for_load()
+
+            # For chat page, wait for the React app to fully load
+            if "/chat" in href:
+                # Wait for chat interface to be ready
+                await page.wait_for_selector(
+                    '[data-react-mounted="true"]', timeout=10000
+                )
+                # Wait for chat UI elements to be interactive
+                await page.wait_for_selector("main .flex.flex-1.flex-col", timeout=5000)
+            else:
+                await base_page.wait_for_load()
 
             # Verify we navigated somewhere
             current_url = page.url
