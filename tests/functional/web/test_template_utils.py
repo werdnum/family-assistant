@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -93,13 +94,19 @@ class TestTemplateUtils:
         # Test main.css lookup
         result = get_static_asset("main.css", entry_name="main")
 
-        # Should return the CSS file associated with the main entry
-        # With the new structure, CSS is in the imported custom module
-        assert result.startswith("/static/dist/assets/custom-"), (
-            f"Expected path to start with '/static/dist/assets/custom-', got '{result}'"
+        # Should return the first CSS file associated with the main entry
+        # The main entry can include both main-*.css and custom-*.css files
+        assert result.startswith("/static/dist/assets/"), (
+            f"Expected path to start with '/static/dist/assets/', got '{result}'"
         )
         assert result.endswith(".css"), (
             f"Expected path to end with '.css', got '{result}'"
+        )
+        # Should match patterns for main-*.css, custom-*.css, or globals-*.css files
+        assert re.search(
+            r"/static/dist/assets/(main|custom|globals)-.*\.css", result
+        ), (
+            f"Expected path to match 'main-*.css', 'custom-*.css', or 'globals-*.css', got '{result}'"
         )
 
     def test_get_static_asset_dev_mode(self) -> None:

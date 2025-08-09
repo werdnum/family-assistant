@@ -1,7 +1,5 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import '../chat/chat.css'; // Reuse the chat styles
-import '../chat/thread.css'; // Reuse the thread styles for tool UI
 import './test-bench.css'; // Additional test bench specific styles
 import { ToolTestBench } from './ToolTestBench';
 

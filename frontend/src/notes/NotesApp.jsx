@@ -1,6 +1,6 @@
 import React from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
-import NotesList from './components/NotesList';
+import NotesListWithDataTable from './components/NotesListWithDataTable';
 import NotesForm from './components/NotesForm';
 
 const NotesApp = () => {
@@ -10,7 +10,7 @@ const NotesApp = () => {
     <div>
       <Routes>
         {/* Notes list page - matches /notes */}
-        <Route index element={<NotesList />} />
+        <Route index element={<NotesListWithDataTable />} />
 
         {/* Add note page - matches /notes/add */}
         <Route

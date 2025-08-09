@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
+import { Button } from '@/components/ui/button';
 import styles from './DocumentationView.module.css';
 
 const DocumentationView = ({ onBackToList }) => {
@@ -67,9 +68,9 @@ const DocumentationView = ({ onBackToList }) => {
         <div className={styles.error}>
           <h2>Error</h2>
           <p>Error loading documentation: {error}</p>
-          <button onClick={onBackToList} className={styles.backButton}>
+          <Button onClick={onBackToList} variant="outline">
             ← Back to Documentation List
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -80,9 +81,9 @@ const DocumentationView = ({ onBackToList }) => {
       {/* Sidebar */}
       <div className={styles.sidebar}>
         <div className={styles.sidebarHeader}>
-          <button onClick={onBackToList} className={styles.backButton}>
+          <Button onClick={onBackToList} variant="outline">
             ← Documentation
-          </button>
+          </Button>
         </div>
 
         {availableDocs.length > 0 && (
@@ -91,14 +92,14 @@ const DocumentationView = ({ onBackToList }) => {
             <ul className={styles.docList}>
               {availableDocs.map((docFilename) => (
                 <li key={docFilename}>
-                  <button
+                  <Button
                     onClick={() => handleDocNavigation(docFilename)}
-                    className={`${styles.docNavItem} ${
-                      docFilename === filename ? styles.active : ''
-                    }`}
+                    variant={docFilename === filename ? 'default' : 'ghost'}
+                    size="sm"
+                    className={styles.docNavItem}
                   >
                     {docFilename.replace(/\.md$/, '').replace(/_/g, ' ')}
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>

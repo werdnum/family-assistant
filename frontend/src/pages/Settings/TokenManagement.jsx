@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Button } from '@/components/ui/button';
 import styles from './TokenManagement.module.css';
 
 const TokenManagement = () => {
@@ -166,13 +167,9 @@ const TokenManagement = () => {
     <div className={styles.container}>
       <div className={styles.header}>
         <h1>API Token Management</h1>
-        <button
-          className={styles.createButton}
-          onClick={() => setShowCreateForm(!showCreateForm)}
-          disabled={creating}
-        >
+        <Button onClick={() => setShowCreateForm(!showCreateForm)} disabled={creating}>
           Create New Token
-        </button>
+        </Button>
       </div>
 
       {error && <div className={styles.error}>{error}</div>}
@@ -186,16 +183,17 @@ const TokenManagement = () => {
           </p>
           <div className={styles.tokenDisplay}>
             <code>{createdToken.full_token}</code>
-            <button
-              className={styles.copyButton}
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => copyToClipboard(createdToken.full_token)}
             >
               Copy
-            </button>
+            </Button>
           </div>
-          <button className={styles.dismissButton} onClick={() => setCreatedToken(null)}>
+          <Button variant="ghost" onClick={() => setCreatedToken(null)}>
             Dismiss
-          </button>
+          </Button>
         </div>
       )}
 
@@ -230,23 +228,19 @@ const TokenManagement = () => {
             </div>
 
             <div className={styles.formActions}>
-              <button
-                type="submit"
-                disabled={creating || !formData.name.trim()}
-                className={styles.submitButton}
-              >
+              <Button type="submit" disabled={creating || !formData.name.trim()}>
                 {creating ? 'Creating...' : 'Create Token'}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="secondary"
                 onClick={() => {
                   setShowCreateForm(false);
                   setFormData({ name: '', expires_at: '' });
                 }}
-                className={styles.cancelButton}
               >
                 Cancel
-              </button>
+              </Button>
             </div>
           </form>
         </div>
@@ -295,13 +289,14 @@ const TokenManagement = () => {
 
                 {!token.is_revoked && (
                   <div className={styles.tokenActions}>
-                    <button
-                      className={styles.revokeButton}
+                    <Button
+                      variant="destructive"
+                      size="sm"
                       onClick={() => setTokenToRevoke(token)}
                       disabled={revoking[token.id]}
                     >
                       {revoking[token.id] ? 'Revoking...' : 'Revoke'}
-                    </button>
+                    </Button>
                   </div>
                 )}
               </div>
@@ -321,16 +316,16 @@ const TokenManagement = () => {
             <p>This action cannot be undone and will immediately invalidate the token.</p>
 
             <div className={styles.modalActions}>
-              <button
-                className={styles.confirmRevokeButton}
+              <Button
+                variant="destructive"
                 onClick={() => revokeToken(tokenToRevoke.id)}
                 disabled={revoking[tokenToRevoke.id]}
               >
                 {revoking[tokenToRevoke.id] ? 'Revoking...' : 'Yes, Revoke Token'}
-              </button>
-              <button className={styles.cancelButton} onClick={() => setTokenToRevoke(null)}>
+              </Button>
+              <Button variant="secondary" onClick={() => setTokenToRevoke(null)}>
                 Cancel
-              </button>
+              </Button>
             </div>
           </div>
         </div>

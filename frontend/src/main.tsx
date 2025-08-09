@@ -1,8 +1,8 @@
 // Main entry point for the frontend build
 // This file will be loaded by Vite and can import other modules
 
-// Import Simple.css locally instead of from CDN
-import 'simpledotcss/simple.css';
+// Import our new globals CSS with Tailwind and shadcn/ui variables
+import './styles/globals.css';
 
 // Import our custom CSS
 import './custom.css';

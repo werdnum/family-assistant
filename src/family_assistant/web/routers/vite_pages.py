@@ -44,8 +44,13 @@ def _serve_vite_html_file(request: Request, html_filename: str) -> Response:
         if html_file.exists():
             return FileResponse(html_file, media_type="text/html")
         else:
+            logger.error(
+                f"Dev mode: HTML file {html_filename} not found at {html_file}. "
+                f"Frontend dir exists: {frontend_dir.exists()}"
+            )
             raise HTTPException(
-                status_code=404, detail=f"HTML file {html_filename} not found"
+                status_code=404,
+                detail=f"HTML file {html_filename} not found in dev mode",
             )
     else:
         # In production mode, serve from dist directory
@@ -54,8 +59,24 @@ def _serve_vite_html_file(request: Request, html_filename: str) -> Response:
         if html_file.exists():
             return FileResponse(html_file, media_type="text/html")
         else:
+            # Enhanced error logging for CI debugging
+            contents = []
+            if static_dir.exists():
+                try:
+                    contents = [p.name for p in static_dir.iterdir()][
+                        :10
+                    ]  # Limit to first 10 files
+                except OSError:
+                    contents = ["Error reading directory"]
+
+            logger.error(
+                f"Production mode: HTML file {html_filename} not found at {html_file}. "
+                f"Static dir exists: {static_dir.exists()}. "
+                f"Contents (first 10): {contents}"
+            )
             raise HTTPException(
-                status_code=404, detail=f"Built HTML file {html_filename} not found"
+                status_code=404,
+                detail=f"Built HTML file {html_filename} not found in production mode",
             )
 
 

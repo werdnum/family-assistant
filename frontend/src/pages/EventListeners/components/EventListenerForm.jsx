@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 
 const EventListenerForm = ({ isEdit, onSuccess, onCancel }) => {
   const { id } = useParams();
@@ -459,17 +460,12 @@ const EventListenerForm = ({ isEdit, onSuccess, onCancel }) => {
 
         {/* Actions */}
         <div className="form-actions">
-          <button type="submit" disabled={loading} className="button">
+          <Button type="submit" disabled={loading}>
             {loading ? 'Saving...' : isEdit ? 'Save Changes' : 'Create Listener'}
-          </button>
-          <button
-            type="button"
-            onClick={handleCancel}
-            className="button"
-            style={{ backgroundColor: 'var(--bg-secondary)' }}
-          >
+          </Button>
+          <Button type="button" variant="secondary" onClick={handleCancel}>
             Cancel
-          </button>
+          </Button>
         </div>
       </form>
 

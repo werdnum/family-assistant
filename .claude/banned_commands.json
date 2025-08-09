@@ -58,6 +58,18 @@
   {
     "regexp": "\\bpkill\\b.*\\bpoe\\b",
     "explanation": "Don't kill the poe dev server - it's already running and auto-reloading. Check logs at /var/log/family-assistant/dev-server.log if needed."
+  },
+  {
+    "regexp": "\\bnpm\\s+run\\s+dev\\b",
+    "explanation": "The dev server is already running on devcontainer-backend-1:5173 with hot reloading. Do not start another instance."
+  },
+  {
+    "regexp": "localhost:5173",
+    "explanation": "Use devcontainer-backend-1:5173 instead of localhost:5173. The app is running in a container."
+  },
+  {
+    "regexp": "ss\\s+-tuln.*5173",
+    "explanation": "The frontend dev server is running on http://devcontainer-backend-1:5173, not localhost. Use that address for testing."
   }
 ]
 

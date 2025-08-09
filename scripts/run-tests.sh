@@ -148,28 +148,30 @@ echo "${BLUE}  ▸ Building frontend...${NC}"
 (cd frontend && npm run build)
 
 # Phase 2: Parallel execution of tests and analysis
+
+# Start pytest (always runs)
+echo "${BLUE}  ▸ Starting pytest...${NC}"
+TEST_START=$(date +%s)
+if [ "${USE_MEMORY_LIMIT:-0}" = "1" ]; then
+    scripts/run_with_memory_limit.sh pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PARALLELISM $PYTEST_ARGS &
+else
+    pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PARALLELISM $PYTEST_ARGS &
+fi
+TEST_PID=$!
+
+# Start frontend unit tests (always runs)
+echo "${BLUE}  ▸ Starting frontend unit tests...${NC}"
+FRONTEND_TEST_START=$(date +%s)
+(cd frontend && npm run test -- --run) &
+FRONTEND_TEST_PID=$!
+
+# Start linting and type checking only if not skipped
 if [ $SKIP_LINT -eq 0 ]; then
     # Start basedpyright
     echo "${BLUE}  ▸ Starting basedpyright...${NC}"
     PYRIGHT_START=$(date +%s)
     ${VIRTUAL_ENV:-.venv}/bin/basedpyright src tests &
     PYRIGHT_PID=$!
-
-    # Give pyright a moment to start
-    sleep 2
-
-    # Start pytest
-    echo "${BLUE}  ▸ Starting pytest...${NC}"
-    TEST_START=$(date +%s)
-    
-    # Check if memory limit is explicitly requested via environment variable
-    if [ "${USE_MEMORY_LIMIT:-0}" = "1" ]; then
-        scripts/run_with_memory_limit.sh pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PARALLELISM $PYTEST_ARGS &
-    else
-        # Default: run without memory limit
-        pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PARALLELISM $PYTEST_ARGS &
-    fi
-    TEST_PID=$!
 
     # Start pylint
     echo "${BLUE}  ▸ Starting pylint...${NC}"
@@ -182,12 +184,6 @@ if [ $SKIP_LINT -eq 0 ]; then
     FRONTEND_START=$(date +%s)
     (cd frontend && npm run check) &
     FRONTEND_PID=$!
-else
-    # Just run pytest when linting is skipped
-    echo "${BLUE}  ▸ Starting pytest...${NC}"
-    TEST_START=$(date +%s)
-    pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PARALLELISM $PYTEST_ARGS &
-    TEST_PID=$!
 fi
 
 # Wait for processes and collect results
@@ -195,7 +191,33 @@ PYRIGHT_EXIT=0
 TEST_EXIT=0
 PYLINT_EXIT=0
 FRONTEND_EXIT=0
+FRONTEND_TEST_EXIT=0
 
+# Wait for pytest (always running)
+if wait $TEST_PID; then
+    END_TIME=$(date +%s)
+    ELAPSED=$((END_TIME - TEST_START))
+    echo "${GREEN}  ✓ Tests complete (${ELAPSED}s)${NC}"
+else
+    TEST_EXIT=$?
+    END_TIME=$(date +%s)
+    ELAPSED=$((END_TIME - TEST_START))
+    echo "${RED}  ❌ Tests failed (${ELAPSED}s)${NC}"
+fi
+
+# Wait for frontend unit tests (always running)
+if wait $FRONTEND_TEST_PID; then
+    END_TIME=$(date +%s)
+    ELAPSED=$((END_TIME - FRONTEND_TEST_START))
+    echo "${GREEN}  ✓ Frontend unit tests complete (${ELAPSED}s)${NC}"
+else
+    FRONTEND_TEST_EXIT=$?
+    END_TIME=$(date +%s)
+    ELAPSED=$((END_TIME - FRONTEND_TEST_START))
+    echo "${RED}  ❌ Frontend unit tests failed (${ELAPSED}s)${NC}"
+fi
+
+# Wait for linting/type checking only if they were started
 if [ $SKIP_LINT -eq 0 ]; then
     # Wait for pyright
     if wait $PYRIGHT_PID; then
@@ -207,18 +229,6 @@ if [ $SKIP_LINT -eq 0 ]; then
         END_TIME=$(date +%s)
         ELAPSED=$((END_TIME - PYRIGHT_START))
         echo "${RED}  ❌ Type checking failed (${ELAPSED}s)${NC}"
-    fi
-
-    # Wait for tests
-    if wait $TEST_PID; then
-        END_TIME=$(date +%s)
-        ELAPSED=$((END_TIME - TEST_START))
-        echo "${GREEN}  ✓ Tests complete (${ELAPSED}s)${NC}"
-    else
-        TEST_EXIT=$?
-        END_TIME=$(date +%s)
-        ELAPSED=$((END_TIME - TEST_START))
-        echo "${RED}  ❌ Tests failed (${ELAPSED}s)${NC}"
     fi
 
     # Wait for pylint
@@ -244,18 +254,6 @@ if [ $SKIP_LINT -eq 0 ]; then
         ELAPSED=$((END_TIME - FRONTEND_START))
         echo "${RED}  ❌ Frontend linting failed (${ELAPSED}s)${NC}"
     fi
-else
-    # Just wait for tests when linting is skipped
-    if wait $TEST_PID; then
-        END_TIME=$(date +%s)
-        ELAPSED=$((END_TIME - TEST_START))
-        echo "${GREEN}  ✓ Tests complete (${ELAPSED}s)${NC}"
-    else
-        TEST_EXIT=$?
-        END_TIME=$(date +%s)
-        ELAPSED=$((END_TIME - TEST_START))
-        echo "${RED}  ❌ Tests failed (${ELAPSED}s)${NC}"
-    fi
 fi
 
 # Calculate total time
@@ -267,7 +265,7 @@ echo "${BLUE}━━━━━━━━━━━━━━━━━━━━━━�
 echo "${BLUE}Total time: ${TOTAL_TIME}s${NC}"
 
 # Exit with appropriate code
-if [ $PYRIGHT_EXIT -ne 0 ] || [ $TEST_EXIT -ne 0 ] || [ $PYLINT_EXIT -ne 0 ] || [ $FRONTEND_EXIT -ne 0 ]; then
+if [ $PYRIGHT_EXIT -ne 0 ] || [ $TEST_EXIT -ne 0 ] || [ $PYLINT_EXIT -ne 0 ] || [ $FRONTEND_EXIT -ne 0 ] || [ $FRONTEND_TEST_EXIT -ne 0 ]; then
     echo "${RED}Some checks failed!${NC}"
     if [ -f .report.json ]; then
         echo ""

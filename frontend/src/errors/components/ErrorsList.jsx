@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 
 const ErrorsList = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -138,13 +139,14 @@ const ErrorsList = () => {
     // Previous button
     pages.push(
       <li key="prev" className={`page-item ${currentPage === 1 ? 'disabled' : ''}`}>
-        <button
-          className="page-link"
+        <Button
+          variant="outline"
+          size="sm"
           onClick={() => handlePageChange(currentPage - 1)}
           disabled={currentPage === 1}
         >
           Previous
-        </button>
+        </Button>
       </li>
     );
 
@@ -152,9 +154,9 @@ const ErrorsList = () => {
     if (startPage > 1) {
       pages.push(
         <li key={1} className="page-item">
-          <button className="page-link" onClick={() => handlePageChange(1)}>
+          <Button variant="outline" size="sm" onClick={() => handlePageChange(1)}>
             1
-          </button>
+          </Button>
         </li>
       );
       if (startPage > 2) {
@@ -170,9 +172,13 @@ const ErrorsList = () => {
     for (let i = startPage; i <= endPage; i++) {
       pages.push(
         <li key={i} className={`page-item ${i === currentPage ? 'active' : ''}`}>
-          <button className="page-link" onClick={() => handlePageChange(i)}>
+          <Button
+            variant={i === currentPage ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => handlePageChange(i)}
+          >
             {i}
-          </button>
+          </Button>
         </li>
       );
     }
@@ -188,9 +194,9 @@ const ErrorsList = () => {
       }
       pages.push(
         <li key={totalPages} className="page-item">
-          <button className="page-link" onClick={() => handlePageChange(totalPages)}>
+          <Button variant="outline" size="sm" onClick={() => handlePageChange(totalPages)}>
             {totalPages}
-          </button>
+          </Button>
         </li>
       );
     }
@@ -198,13 +204,14 @@ const ErrorsList = () => {
     // Next button
     pages.push(
       <li key="next" className={`page-item ${currentPage === totalPages ? 'disabled' : ''}`}>
-        <button
-          className="page-link"
+        <Button
+          variant="outline"
+          size="sm"
           onClick={() => handlePageChange(currentPage + 1)}
           disabled={currentPage === totalPages}
         >
           Next
-        </button>
+        </Button>
       </li>
     );
 
@@ -262,12 +269,12 @@ const ErrorsList = () => {
           </div>
 
           <div className="col col-auto">
-            <button type="submit" className="btn-primary">
+            <Button type="submit" variant="default">
               Filter
-            </button>
-            <button type="button" onClick={handleClearFilters} className="btn-secondary">
+            </Button>
+            <Button type="button" onClick={handleClearFilters} variant="secondary">
               Clear
-            </button>
+            </Button>
           </div>
         </form>
       </div>

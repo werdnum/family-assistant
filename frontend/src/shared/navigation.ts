@@ -1,0 +1,58 @@
+import {
+  FileText,
+  Search,
+  MessageCircle,
+  History,
+  Calendar,
+  Cog,
+  HelpCircle,
+  FolderOpen,
+  Upload,
+  Settings,
+  AlertTriangle,
+} from 'lucide-react';
+
+export interface NavigationItem {
+  type: 'section' | 'external' | 'link' | 'current';
+  title: string;
+  href?: string;
+  to?: string;
+  icon?: React.ComponentType<{ className?: string }>;
+}
+
+export const getNavigationItems = (currentPage?: string): NavigationItem[] => [
+  { type: 'section', title: 'Data' },
+  { type: 'external', href: '/notes', title: 'Notes', icon: FileText },
+  { type: 'link', to: '/context', title: 'Context', icon: FileText },
+  { type: 'section', title: 'Documents' },
+  { type: 'external', href: '/documents/', title: 'List', icon: FolderOpen },
+  { type: 'external', href: '/documents/upload', title: 'Upload', icon: Upload },
+  { type: 'external', href: '/vector-search', title: 'Search', icon: Search },
+  { type: 'section', title: 'Communication' },
+  {
+    type: currentPage === 'chat' ? 'current' : 'link',
+    to: '/chat',
+    title: 'Chat',
+    icon: MessageCircle,
+  },
+  { type: 'external', href: '/history', title: 'History', icon: History },
+  { type: 'section', title: 'Automation' },
+  { type: 'external', href: '/events', title: 'Events', icon: Calendar },
+  { type: 'external', href: '/event-listeners', title: 'Event Listeners', icon: Settings },
+  { type: 'section', title: 'Internal' },
+  {
+    type: currentPage === 'tools' ? 'current' : 'link',
+    to: '/tools',
+    title: 'Tools',
+    icon: Cog,
+  },
+  { type: 'external', href: '/tasks', title: 'Task Queue', icon: Settings },
+  {
+    type: currentPage === 'errors' ? 'current' : 'link',
+    to: '/errors',
+    title: 'Error Logs',
+    icon: AlertTriangle,
+  },
+  { type: 'section', title: 'Help' },
+  { type: 'external', href: '/docs/', title: 'Help', icon: HelpCircle },
+];

@@ -8,18 +8,22 @@ from .base_page import BasePage
 class NotesPage(BasePage):
     """Page object for notes-related functionality."""
 
-    # Selectors
+    # Selectors - Updated for shadcn/ui components
     ADD_NOTE_BUTTON = "a:has-text('Add New Note')"
     NOTE_TITLE_INPUT = "#title"
     NOTE_CONTENT_TEXTAREA = "#content"
     INCLUDE_IN_PROMPT_CHECKBOX = "input[name='include_in_prompt']"
     SAVE_BUTTON = "button:has-text('Save')"
-    DELETE_BUTTON = "button[type='submit']:has-text('Delete')"
-    SEARCH_INPUT = "#search-notes"
+    DELETE_BUTTON = (
+        "button:has-text('Delete')"  # Simplified - no longer a submit button
+    )
+    SEARCH_INPUT = (
+        "input[placeholder*='Search notes']"  # Search by placeholder instead of ID
+    )
     NOTE_ROW = "tbody tr"
     NOTE_TITLE_IN_LIST = "td:first-child"
     EDIT_NOTE_LINK = "a:has-text('Edit')"
-    NO_NOTES_MESSAGE = "text=No notes found"
+    NO_NOTES_MESSAGE = "td:has-text('No notes found')"
 
     async def navigate_to_notes_list(self) -> None:
         """Navigate to the notes list page."""
@@ -63,15 +67,26 @@ class NotesPage(BasePage):
         await self.fill_form_field(self.NOTE_TITLE_INPUT, title)
         await self.fill_form_field(self.NOTE_CONTENT_TEXTAREA, content)
 
-        # Handle the checkbox
-        checkbox = await self.page.wait_for_selector(self.INCLUDE_IN_PROMPT_CHECKBOX)
+        # Handle the checkbox - use state='attached' to avoid visibility issues
+        checkbox = await self.page.wait_for_selector(
+            self.INCLUDE_IN_PROMPT_CHECKBOX, state="attached", timeout=5000
+        )
         if checkbox:
             is_checked = await checkbox.is_checked()
             if is_checked != include_in_prompt:
-                await checkbox.click()
+                # Click the label instead of the checkbox directly for better reliability
+                label = await self.page.query_selector(
+                    "label:has(input[name='include_in_prompt'])"
+                )
+                if label:
+                    await label.click()
+                else:
+                    await checkbox.click()
 
-        # Submit the form
+        # Submit the form and wait for navigation back to notes list
         await self.page.click(self.SAVE_BUTTON)
+        # Wait for navigation to the notes list page after save
+        await self.page.wait_for_url(f"{self.base_url}/notes", timeout=10000)
         await self.wait_for_load()
 
     async def edit_note(
@@ -100,15 +115,24 @@ class NotesPage(BasePage):
 
         if include_in_prompt is not None:
             checkbox = await self.page.wait_for_selector(
-                self.INCLUDE_IN_PROMPT_CHECKBOX
+                self.INCLUDE_IN_PROMPT_CHECKBOX, state="attached", timeout=5000
             )
             if checkbox:
                 is_checked = await checkbox.is_checked()
                 if is_checked != include_in_prompt:
-                    await checkbox.click()
+                    # Click the label instead of the checkbox directly for better reliability
+                    label = await self.page.query_selector(
+                        "label:has(input[name='include_in_prompt'])"
+                    )
+                    if label:
+                        await label.click()
+                    else:
+                        await checkbox.click()
 
-        # Submit the form
+        # Submit the form and wait for navigation back to notes list
         await self.page.click(self.SAVE_BUTTON)
+        # Wait for navigation to the notes list page after save
+        await self.page.wait_for_url(f"{self.base_url}/notes", timeout=10000)
         await self.wait_for_load()
 
     async def delete_note(self, title: str) -> None:
@@ -123,14 +147,18 @@ class NotesPage(BasePage):
         self.page.on("dialog", lambda dialog: dialog.accept())
 
         # Find the row with the note and click its delete button
-        note_row = await self.page.wait_for_selector(f"tr:has(td:text-is('{title}'))")
-        if note_row:
-            # In React version, delete button is a simple button, not in a form
-            delete_button = await note_row.query_selector("button:has-text('Delete')")
-            if delete_button:
-                await delete_button.click()
-                # Wait for the network request to complete and UI to update
-                await self.wait_for_load(wait_for_network=True)
+        # Use more flexible selector to find the row
+        rows = await self.page.locator("tbody tr").all()
+        for row in rows:
+            first_cell = await row.locator("td:first-child").text_content()
+            if first_cell and first_cell.strip() == title:
+                # Found the right row, click its delete button
+                delete_buttons = await row.locator("button:has-text('Delete')").all()
+                if delete_buttons:
+                    await delete_buttons[0].click()
+                    # Wait for the network request to complete and UI to update
+                    await self.wait_for_load(wait_for_network=True)
+                    break
 
     async def search_notes(self, query: str) -> None:
         """Search for notes using the search input.
@@ -158,7 +186,9 @@ class NotesPage(BasePage):
         # Check if it's the empty state
         if len(note_rows) == 1:
             first_row_text = await note_rows[0].text_content()
-            if first_row_text and "No notes found" in first_row_text:
+            if first_row_text and (
+                "No notes found" in first_row_text or "No results" in first_row_text
+            ):
                 return 0
         return len(note_rows)
 
@@ -172,10 +202,21 @@ class NotesPage(BasePage):
             True if the note is found, False otherwise
         """
         await self.ensure_on_notes_list()
+        # Wait for the table to be fully rendered
+        await self.page.locator(self.NOTE_ROW).first.wait_for(
+            state="visible", timeout=5000
+        )
+
         try:
             # Look for a table cell containing the exact title
-            await self.page.wait_for_selector(f"td:text-is('{title}')", timeout=5000)
-            return True
+            # Use has-text for more flexible matching (handles whitespace better)
+            elements = await self.page.locator(f"td:has-text('{title}')").all()
+            # Check if any element contains exactly the title
+            for elem in elements:
+                text = await elem.text_content()
+                if text and text.strip() == title:
+                    return True
+            return False
         except Exception:
             return False
 
@@ -191,7 +232,12 @@ class NotesPage(BasePage):
         titles = []
         for element in title_elements:
             text = await element.text_content()
-            if text and text.strip() != "No notes found.":
+            if text and text.strip() not in [
+                "No notes found",
+                "No notes found.",
+                "No results.",
+                "No results",
+            ]:
                 titles.append(text.strip())
         return titles
 
@@ -202,14 +248,17 @@ class NotesPage(BasePage):
             title: The title of the note to edit
         """
         await self.ensure_on_notes_list()
-        # Find the row containing the title
-        note_row = await self.page.wait_for_selector(f"tr:has(td:text-is('{title}'))")
-        if note_row:
-            # Click the Edit link in that row
-            edit_link = await note_row.query_selector(self.EDIT_NOTE_LINK)
-            if edit_link:
-                await edit_link.click()
-                await self.wait_for_load()
+        # Find the row containing the title - use more flexible matching
+        rows = await self.page.locator("tbody tr").all()
+        for row in rows:
+            first_cell = await row.locator("td:first-child").text_content()
+            if first_cell and first_cell.strip() == title:
+                # Found the right row, click its Edit link
+                edit_links = await row.locator(self.EDIT_NOTE_LINK).all()
+                if edit_links:
+                    await edit_links[0].click()
+                    await self.wait_for_load()
+                    break
 
     async def is_empty_state_visible(self) -> bool:
         """Check if the empty state message is visible.
@@ -233,7 +282,9 @@ class NotesPage(BasePage):
 
         title_input = await self.page.wait_for_selector(self.NOTE_TITLE_INPUT)
         content_textarea = await self.page.wait_for_selector(self.NOTE_CONTENT_TEXTAREA)
-        checkbox = await self.page.wait_for_selector(self.INCLUDE_IN_PROMPT_CHECKBOX)
+        checkbox = await self.page.wait_for_selector(
+            self.INCLUDE_IN_PROMPT_CHECKBOX, state="attached", timeout=5000
+        )
 
         note_data = {
             "title": await title_input.input_value() if title_input else "",

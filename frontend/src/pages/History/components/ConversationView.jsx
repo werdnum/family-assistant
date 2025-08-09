@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 import MessageDisplay from './MessageDisplay';
 import styles from './ConversationView.module.css';
 
@@ -94,9 +95,9 @@ const ConversationView = ({ onBackToList }) => {
     return (
       <div className={styles.conversationView}>
         <div className={styles.header}>
-          <button onClick={onBackToList} className={styles.backButton}>
+          <Button onClick={onBackToList} variant="outline">
             ← Back to Conversations
-          </button>
+          </Button>
         </div>
         <div className={styles.error}>Error: {error}</div>
       </div>
@@ -108,9 +109,9 @@ const ConversationView = ({ onBackToList }) => {
   return (
     <div className={styles.conversationView}>
       <div className={styles.header}>
-        <button onClick={onBackToList} className={styles.backButton}>
+        <Button onClick={onBackToList} variant="outline">
           ← Back to Conversations
-        </button>
+        </Button>
         <h1 className={styles.title}>Conversation Details</h1>
       </div>
 

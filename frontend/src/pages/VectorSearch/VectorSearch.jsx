@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 import styles from './VectorSearch.module.css';
 
 const VectorSearch = () => {
@@ -298,35 +299,28 @@ const VectorSearch = () => {
                           value={row.value}
                           onChange={(e) => updateMetadataFilter(row.id, 'value', e.target.value)}
                         />
-                        <button
+                        <Button
                           type="button"
-                          className={styles.removeFilterBtn}
+                          variant="destructive"
+                          size="sm"
                           onClick={() => removeMetadataFilter(row.id)}
                         >
                           Remove
-                        </button>
+                        </Button>
                       </div>
                     ))}
-                    <button
-                      type="button"
-                      className={styles.addFilterBtn}
-                      onClick={addMetadataFilter}
-                    >
+                    <Button type="button" variant="secondary" onClick={addMetadataFilter}>
                       Add Metadata Filter
-                    </button>
+                    </Button>
                   </div>
                 </div>
               </div>
             </details>
           </div>
 
-          <button
-            type="submit"
-            className={`${styles.searchButton} ${styles.fullWidth}`}
-            disabled={loading}
-          >
+          <Button type="submit" className={styles.fullWidth} disabled={loading}>
             {loading ? 'Searching...' : 'Search'}
-          </button>
+          </Button>
         </div>
       </form>
 
