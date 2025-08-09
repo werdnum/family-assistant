@@ -58,7 +58,6 @@ async def test_basic_chat_conversation(
 
     # Get the current conversation ID to verify it's set
     conv_id = await chat_page.get_current_conversation_id()
-    print(f"DEBUG: Current conversation ID: {conv_id}")
     assert conv_id is not None, "Conversation ID should be set after creating new chat"
 
     # Verify chat input is enabled
