@@ -101,9 +101,9 @@ class TestTemplateUtils:
         assert result.endswith(".css"), (
             f"Expected path to end with '.css', got '{result}'"
         )
-        # Should be either main-*.css or custom-*.css
-        assert "main-" in result or "custom-" in result, (
-            f"Expected path to contain 'main-' or 'custom-', got '{result}'"
+        # Should be either main-*.css, custom-*.css, or globals-*.css (Tailwind)
+        assert "main-" in result or "custom-" in result or "globals-" in result, (
+            f"Expected path to contain 'main-', 'custom-', or 'globals-', got '{result}'"
         )
 
     def test_get_static_asset_dev_mode(self) -> None:
