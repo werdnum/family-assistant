@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import AppRouter from './AppRouter';
+import { ThemeProvider } from './ThemeProvider';
 
 // Import Tailwind CSS and custom styles
 import '../styles/globals.css';
@@ -14,7 +15,9 @@ function mountApp() {
     const root = ReactDOM.createRoot(container);
     root.render(
       <React.StrictMode>
-        <AppRouter />
+        <ThemeProvider defaultTheme="system" storageKey="family-assistant-theme">
+          <AppRouter />
+        </ThemeProvider>
       </React.StrictMode>
     );
     // Add a data attribute to indicate React has mounted (used by tests)

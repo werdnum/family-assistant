@@ -26,6 +26,7 @@ import {
   navigationMenuTriggerStyle,
 } from '@/components/ui/navigation-menu';
 import NavigationSheet from './NavigationSheet';
+import { ThemeToggle } from './ThemeToggle';
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -223,6 +224,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     Help
                   </ExternalNavLink>
                 </NavigationMenuLink>
+              </NavigationMenuItem>
+
+              <Separator orientation="vertical" className="h-6" />
+
+              {/* Theme Toggle */}
+              <NavigationMenuItem>
+                <ThemeToggle />
               </NavigationMenuItem>
             </NavigationMenuList>
           </NavigationMenu>

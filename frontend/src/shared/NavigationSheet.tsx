@@ -8,7 +8,9 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet';
+import { Separator } from '@/components/ui/separator';
 import { getNavigationItems } from './navigation';
+import { ThemeToggle } from './ThemeToggle';
 import { cn } from '@/lib/utils';
 
 interface NavigationSheetProps {
@@ -76,6 +78,13 @@ const NavigationSheet: React.FC<NavigationSheetProps> = ({
               </a>
             );
           })}
+
+          {/* Theme Toggle Section */}
+          <Separator className="my-2" />
+          <div className="flex items-center justify-between px-3 py-2">
+            <span className="text-sm font-medium">Theme</span>
+            <ThemeToggle variant="ghost" size="sm" />
+          </div>
         </nav>
       </SheetContent>
     </Sheet>
