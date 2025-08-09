@@ -33,12 +33,12 @@ const NavigationSheet: React.FC<NavigationSheetProps> = ({
   return (
     <Sheet>
       <SheetTrigger asChild>{children}</SheetTrigger>
-      <SheetContent side={side} className="w-[300px] sm:w-[400px]">
-        <SheetHeader>
+      <SheetContent side={side} className="w-[300px] sm:w-[400px] flex flex-col">
+        <SheetHeader className="flex-shrink-0">
           <SheetTitle>{title}</SheetTitle>
           <SheetDescription>{description}</SheetDescription>
         </SheetHeader>
-        <nav className="flex flex-col gap-4 mt-6">
+        <nav className="flex-1 flex flex-col gap-4 mt-6 overflow-y-auto pr-2">
           {navigationItems.map((item, index) => {
             if (item.type === 'section') {
               return (
