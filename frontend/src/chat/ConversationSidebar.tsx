@@ -49,7 +49,7 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
   };
 
   const SidebarContent = () => (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col min-h-0">
       <div className="flex flex-col gap-3 p-6 pb-4">
         <h2 className="text-lg font-semibold">Conversations</h2>
         <Button
@@ -74,7 +74,7 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
 
       <Separator />
 
-      <ScrollArea className="flex-1 px-6">
+      <ScrollArea className="flex-1 px-6 overflow-y-auto">
         <div className="py-4">
           {conversationsLoading ? (
             <div className="py-8 text-center text-sm text-muted-foreground italic">

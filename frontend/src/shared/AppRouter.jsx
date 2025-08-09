@@ -49,15 +49,13 @@ const AppRouter = () => {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Chat routes */}
+        {/* Chat routes - no Layout wrapper as ChatApp has its own complete UI */}
         <Route
           path="/chat"
           element={
-            <Layout>
-              <Suspense fallback={<LoadingSpinner />}>
-                <ChatPage />
-              </Suspense>
-            </Layout>
+            <Suspense fallback={<LoadingSpinner />}>
+              <ChatPage />
+            </Suspense>
           }
         />
 
