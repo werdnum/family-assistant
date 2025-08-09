@@ -168,7 +168,7 @@ async def test_navigation_links_work(
             await link.click()
 
             # For chat page, wait for the React app to fully load
-            if "/chat" in href:
+            if href == "/chat":
                 # Wait for chat interface to be ready
                 await page.wait_for_selector(
                     '[data-react-mounted="true"]', timeout=10000

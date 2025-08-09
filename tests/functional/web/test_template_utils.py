@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -101,9 +102,11 @@ class TestTemplateUtils:
         assert result.endswith(".css"), (
             f"Expected path to end with '.css', got '{result}'"
         )
-        # Should be either main-*.css, custom-*.css, or globals-*.css (Tailwind)
-        assert "main-" in result or "custom-" in result or "globals-" in result, (
-            f"Expected path to contain 'main-', 'custom-', or 'globals-', got '{result}'"
+        # Should match patterns for main-*.css, custom-*.css, or globals-*.css files
+        assert re.search(
+            r"/static/dist/assets/(main|custom|globals)-.*\.css", result
+        ), (
+            f"Expected path to match 'main-*.css', 'custom-*.css', or 'globals-*.css', got '{result}'"
         )
 
     def test_get_static_asset_dev_mode(self) -> None:

@@ -9,10 +9,12 @@ import {
   getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
+  Column,
 } from '@tanstack/react-table';
 import { ChevronDown, ChevronUp, ChevronsUpDown } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Table,
   TableBody,
@@ -69,14 +71,13 @@ export function DataTable<TData, TValue>({
     <div className="w-full">
       {searchable && (
         <div className="flex items-center py-4">
-          {/* TODO: Replace with shadcn/ui Input component for consistency */}
-          <input
+          <Input
             placeholder={searchPlaceholder}
             value={(table.getColumn(searchColumnId)?.getFilterValue() as string) ?? ''}
             onChange={(event) =>
               table.getColumn(searchColumnId)?.setFilterValue(event.target.value)
             }
-            className="max-w-sm border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            className="max-w-sm"
           />
         </div>
       )}
@@ -147,17 +148,13 @@ export function DataTable<TData, TValue>({
 }
 
 // Helper component for sortable column headers
-// TODO: Use Column<TData, unknown> type from @tanstack/react-table
-interface SortableHeaderProps {
-  column: {
-    toggleSorting: (ascending?: boolean) => void;
-    getIsSorted: () => false | 'asc' | 'desc';
-  };
+interface SortableHeaderProps<TData> {
+  column: Column<TData, unknown>;
   title: string;
   className?: string;
 }
 
-export function SortableHeader({ column, title, className }: SortableHeaderProps) {
+export function SortableHeader<TData>({ column, title, className }: SortableHeaderProps<TData>) {
   return (
     <Button
       variant="ghost"
