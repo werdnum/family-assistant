@@ -218,21 +218,10 @@ async def test_history_filters_interface(
     assert to_value == "2024-12-31"
 
     # Test Clear Filters button
-    # First check if any button exists in the filters actions area
-    all_buttons = await page.query_selector_all(
-        ".filtersActions button, details button"
-    )
-    assert len(all_buttons) > 0, "No buttons found in filters section"
-
-    # Find Clear Filters button
-    clear_button = None
-    for btn in all_buttons:
-        text = await btn.text_content()
-        if text and "Clear" in text and "Filters" in text:
-            clear_button = btn
-            break
-
-    assert clear_button is not None, "Clear Filters button not found"
+    # Look for Clear Filters button within the filters form (more specific selector)
+    clear_button = page.locator("details button:has-text('Clear Filters')")
+    await clear_button.wait_for(state="visible", timeout=5000)
+    assert await clear_button.is_visible(), "Clear Filters button not found"
     await clear_button.click()
 
     # Verify filters are cleared
