@@ -107,12 +107,16 @@ jobs:
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace && \
-              if [ -d "/opt/frontend-dist" ] && [ ! -f "/workspace/src/family_assistant/static/dist/router.html" ]; then \
+              if [ -d "/opt/frontend-dist" ]; then \
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/src/family_assistant/static/dist; \
                 cp -r /opt/frontend-dist/* /workspace/src/family_assistant/static/dist/; \
                 # Also copy the .vite directory which contains the manifest \
                 [ -d "/opt/frontend-dist/.vite" ] && cp -r /opt/frontend-dist/.vite /workspace/src/family_assistant/static/dist/.vite; \
+                echo "Frontend assets copied successfully"; \
+                ls -la /workspace/src/family_assistant/static/dist/; \
+              else \
+                echo "No pre-built frontend assets found at /opt/frontend-dist"; \
               fi && \
               mkdir -p test-results && \
               .venv/bin/pytest -q --timeout=300 --db sqlite -m "not postgres" \
@@ -164,12 +168,16 @@ jobs:
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace && \
-              if [ -d "/opt/frontend-dist" ] && [ ! -f "/workspace/src/family_assistant/static/dist/router.html" ]; then \
+              if [ -d "/opt/frontend-dist" ]; then \
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/src/family_assistant/static/dist; \
                 cp -r /opt/frontend-dist/* /workspace/src/family_assistant/static/dist/; \
                 # Also copy the .vite directory which contains the manifest \
                 [ -d "/opt/frontend-dist/.vite" ] && cp -r /opt/frontend-dist/.vite /workspace/src/family_assistant/static/dist/.vite; \
+                echo "Frontend assets copied successfully"; \
+                ls -la /workspace/src/family_assistant/static/dist/; \
+              else \
+                echo "No pre-built frontend assets found at /opt/frontend-dist"; \
               fi && \
               mkdir -p test-results && \
               .venv/bin/pytest --postgres -q --timeout=300 \
