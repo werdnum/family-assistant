@@ -31,12 +31,15 @@ RUN npm ci --no-audit --no-fund
 COPY --chown=claude:claude frontend /opt/frontend/
 
 # Build frontend and prepare dist assets
-RUN npm run build && \
+RUN mkdir -p /opt/src/family_assistant/static/dist && \
+    npm run build && \
     # Copy built assets to a known location
     mkdir -p /opt/frontend-dist && \
-    cp -r ../src/family_assistant/static/dist/* /opt/frontend-dist/ && \
-    # Also copy the .vite directory which contains the manifest
-    cp -r ../src/family_assistant/static/dist/.vite /opt/frontend-dist/.vite && \
+    # The Vite build outputs to the static/dist directory relative to project root
+    # Since the Docker build context is the project root, files are copied to /opt/
+    cp -r /opt/src/family_assistant/static/dist/* /opt/frontend-dist/ && \
+    # Also copy the .vite directory which contains the manifest if it exists
+    (test -d /opt/src/family_assistant/static/dist/.vite && cp -r /opt/src/family_assistant/static/dist/.vite /opt/frontend-dist/) || true && \
     # Clean up source files but keep node_modules for CI linting
     rm -rf src *.html *.js *.json
 

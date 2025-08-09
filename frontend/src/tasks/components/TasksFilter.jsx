@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Button } from '@/components/ui/button';
 
 const TasksFilter = ({ filters, taskTypes, onFilterChange, hasActiveFilters, onClearFilters }) => {
   const [localFilters, setLocalFilters] = useState(filters);
@@ -163,20 +164,9 @@ const TasksFilter = ({ filters, taskTypes, onFilterChange, hasActiveFilters, onC
         {/* Clear Filters Button */}
         {hasActiveFilters && (
           <div style={{ display: 'flex', alignItems: 'end' }}>
-            <button
-              onClick={onClearFilters}
-              style={{
-                padding: '0.5rem 1rem',
-                backgroundColor: '#dc3545',
-                color: 'white',
-                border: 'none',
-                borderRadius: '3px',
-                cursor: 'pointer',
-                fontSize: '0.9rem',
-              }}
-            >
+            <Button onClick={onClearFilters} variant="destructive" size="sm">
               Clear All Filters
-            </button>
+            </Button>
           </div>
         )}
       </div>

@@ -1,4 +1,5 @@
 import React from 'react';
+import { Button } from '@/components/ui/button';
 import JsonPayloadViewer from './JsonPayloadViewer';
 
 const TaskCard = ({ task, onRetry }) => {
@@ -81,21 +82,9 @@ const TaskCard = ({ task, onRetry }) => {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <span style={getStatusStyle(task.status)}>{task.status}</span>
           {canRetry(task.status) && (
-            <button
-              onClick={handleRetryClick}
-              style={{
-                padding: '0.25rem 0.5rem',
-                fontSize: '0.8rem',
-                backgroundColor: '#007bff',
-                color: 'white',
-                border: 'none',
-                borderRadius: '3px',
-                cursor: 'pointer',
-              }}
-              title="Manually retry this task"
-            >
+            <Button onClick={handleRetryClick} size="sm" title="Manually retry this task">
               Retry
-            </button>
+            </Button>
           )}
         </div>
       </div>

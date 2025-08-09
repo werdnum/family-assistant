@@ -1,12 +1,10 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import AppRouter from './AppRouter';
+import { ThemeProvider } from './ThemeProvider';
 
-// Import Simple.css and custom styles for consistency
-import 'simpledotcss/simple.css';
-import '../custom.css';
-import '../chat/chat.css';
-import '../chat/thread.css';
+// Import Tailwind CSS and custom styles
+import '../styles/globals.css';
 import '../tools/tools.css';
 import '../errors/errors.css';
 
@@ -17,7 +15,9 @@ function mountApp() {
     const root = ReactDOM.createRoot(container);
     root.render(
       <React.StrictMode>
-        <AppRouter />
+        <ThemeProvider defaultTheme="system" storageKey="family-assistant-theme">
+          <AppRouter />
+        </ThemeProvider>
       </React.StrictMode>
     );
     // Add a data attribute to indicate React has mounted (used by tests)

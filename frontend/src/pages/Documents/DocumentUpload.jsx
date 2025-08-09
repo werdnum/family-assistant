@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 import styles from './Documents.module.css';
 
 const DocumentUpload = () => {
@@ -150,27 +151,27 @@ const DocumentUpload = () => {
         <div className={styles.formSection}>
           <h2>Upload Type</h2>
           <div className={styles.uploadTypeButtons}>
-            <button
+            <Button
               type="button"
-              className={`${styles.typeButton} ${uploadType === 'file' ? styles.active : ''}`}
+              variant={uploadType === 'file' ? 'default' : 'outline'}
               onClick={() => handleUploadTypeChange('file')}
             >
               Upload File
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className={`${styles.typeButton} ${uploadType === 'url' ? styles.active : ''}`}
+              variant={uploadType === 'url' ? 'default' : 'outline'}
               onClick={() => handleUploadTypeChange('url')}
             >
               Scrape URL
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className={`${styles.typeButton} ${uploadType === 'content' ? styles.active : ''}`}
+              variant={uploadType === 'content' ? 'default' : 'outline'}
               onClick={() => handleUploadTypeChange('content')}
             >
               Manual Content
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -314,9 +315,9 @@ const DocumentUpload = () => {
         </div>
 
         <div className={styles.formActions}>
-          <button type="submit" className={styles.submitButton} disabled={loading}>
+          <Button type="submit" disabled={loading}>
             {loading ? 'Uploading...' : 'Upload Document'}
-          </button>
+          </Button>
           <Link to="/documents" className={styles.cancelButton}>
             Cancel
           </Link>

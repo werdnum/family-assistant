@@ -1,12 +1,11 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import ChatApp from './ChatApp';
+import { ThemeProvider } from '../shared/ThemeProvider';
 
-// Import Simple.css and custom styles for consistency
-import 'simpledotcss/simple.css';
+// Import Tailwind CSS and custom styles
+import '../styles/globals.css';
 import '../custom.css';
-import './chat.css';
-import './thread.css';
 
 // Ensure the DOM is ready before mounting
 function mountChatApp() {
@@ -15,7 +14,9 @@ function mountChatApp() {
     const root = ReactDOM.createRoot(container);
     root.render(
       <React.StrictMode>
-        <ChatApp />
+        <ThemeProvider defaultTheme="system" storageKey="family-assistant-theme">
+          <ChatApp />
+        </ThemeProvider>
       </React.StrictMode>
     );
   }

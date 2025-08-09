@@ -1,14 +1,18 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
+import { Button } from '@/components/ui/button';
+import { Sheet, SheetContent } from '@/components/ui/sheet';
+import { Menu } from 'lucide-react';
 import { Thread } from './Thread';
 import ConversationSidebar from './ConversationSidebar';
 import { useStreamingResponse } from './useStreamingResponse';
 import { LOADING_MARKER } from './constants';
-import { useSearchParams } from 'react-router-dom';
 import { generateUUID } from '../utils/uuid';
+import { ChatAppProps, Message, MessageContent, Conversation } from './types';
+import NavigationSheet from '../shared/NavigationSheet';
 
 // Helper function to parse tool arguments
-const parseToolArguments = (args) => {
+const parseToolArguments = (args: unknown): Record<string, unknown> => {
   if (typeof args === 'string') {
     try {
       return JSON.parse(args);
@@ -20,20 +24,16 @@ const parseToolArguments = (args) => {
   return args;
 };
 
-const ChatPage = ({ profileId = 'default_assistant' } = {}) => {
-  const [messages, setMessages] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 768);
-  const [conversationId, setConversationId] = useState(null);
-  const [conversations, setConversations] = useState([]);
-  const [conversationsLoading, setConversationsLoading] = useState(true);
-  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
-  const streamingMessageIdRef = useRef(null);
-  const toolCallMessageIdRef = useRef(null);
-  const hasInitializedRef = useRef(false);
-
-  // Use React Router hooks for navigation
-  const [searchParams, setSearchParams] = useSearchParams();
+const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) => {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(window.innerWidth > 768);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [conversationsLoading, setConversationsLoading] = useState<boolean>(true);
+  const [isMobile, setIsMobile] = useState<boolean>(window.innerWidth <= 768);
+  const streamingMessageIdRef = useRef<string | null>(null);
+  const toolCallMessageIdRef = useRef<string | null>(null);
 
   // Fetch conversations list
   const fetchConversations = useCallback(async () => {
@@ -52,7 +52,7 @@ const ChatPage = ({ profileId = 'default_assistant' } = {}) => {
   }, []);
 
   // Streaming callbacks
-  const handleStreamingMessage = useCallback((content) => {
+  const handleStreamingMessage = useCallback((content: string) => {
     if (streamingMessageIdRef.current) {
       setMessages((prev) => {
         // Update the loading message with actual content
@@ -63,7 +63,7 @@ const ChatPage = ({ profileId = 'default_assistant' } = {}) => {
             const toolCalls = existingContent.filter((part) => part.type === 'tool-call');
 
             // Create new content array with updated text and preserved tool calls
-            const newContent = [
+            const newContent: MessageContent[] = [
               {
                 type: 'text',
                 text: content, // Use the accumulated content directly from the hook
@@ -83,7 +83,7 @@ const ChatPage = ({ profileId = 'default_assistant' } = {}) => {
     }
   }, []);
 
-  const handleStreamingError = useCallback((error, _metadata) => {
+  const handleStreamingError = useCallback((error: Error | string, _metadata: unknown) => {
     console.error('Streaming error:', error, _metadata);
     if (streamingMessageIdRef.current) {
       setMessages((prev) =>
@@ -112,7 +112,7 @@ const ChatPage = ({ profileId = 'default_assistant' } = {}) => {
   }, [fetchConversations]);
 
   // Handle tool calls during streaming
-  const handleStreamingToolCall = useCallback((toolCalls) => {
+  const handleStreamingToolCall = useCallback((toolCalls: Array<Record<string, unknown>>) => {
     if (toolCalls && toolCalls.length > 0) {
       setMessages((prev) => {
         let updatedMessages = [...prev];
@@ -125,7 +125,7 @@ const ChatPage = ({ profileId = 'default_assistant' } = {}) => {
               toolCallMessageIdRef.current = msg.id;
 
               // Replace the loading message with tool calls
-              const toolParts = toolCalls.map((tc) => {
+              const toolParts: MessageContent[] = toolCalls.map((tc) => {
                 const args = parseToolArguments(tc.arguments);
                 return {
                   type: 'tool-call',
@@ -168,7 +168,7 @@ const ChatPage = ({ profileId = 'default_assistant' } = {}) => {
           // Update existing tool call message with new/updated tool calls
           updatedMessages = updatedMessages.map((msg) => {
             if (msg.id === toolCallMessageIdRef.current) {
-              const toolParts = toolCalls.map((tc) => {
+              const toolParts: MessageContent[] = toolCalls.map((tc) => {
                 const args = parseToolArguments(tc.arguments);
                 return {
                   type: 'tool-call',
@@ -212,42 +212,71 @@ const ChatPage = ({ profileId = 'default_assistant' } = {}) => {
   // Handle window resize
   useEffect(() => {
     const handleResize = () => {
-      setIsMobile(window.innerWidth <= 768);
+      const newIsMobile = window.innerWidth <= 768;
+      setIsMobile(newIsMobile);
+
+      // Close sidebar when switching to mobile to prevent layout issues
+      if (newIsMobile) {
+        setSidebarOpen(false);
+      }
     };
 
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Initialize conversation ID from URL or localStorage
+  useEffect(() => {
+    fetchConversations();
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlConversationId = urlParams.get('conversation_id');
+    const lastConversationId = localStorage.getItem('lastConversationId');
+
+    if (urlConversationId) {
+      setConversationId(urlConversationId);
+      loadConversationMessages(urlConversationId);
+    } else if (lastConversationId) {
+      setConversationId(lastConversationId);
+      loadConversationMessages(lastConversationId);
+      window.history.replaceState({}, '', `/chat?conversation_id=${lastConversationId}`);
+    } else {
+      handleNewChat();
+    }
+  }, []);
+
   // Load messages for a conversation
-  const loadConversationMessages = useCallback(async (convId) => {
+  const loadConversationMessages = async (convId: string) => {
     try {
       setIsLoading(true);
       const response = await fetch(`/api/v1/chat/conversations/${convId}/messages`);
       if (response.ok) {
         const data = await response.json();
 
-        const processedMessages = [];
-        const toolResponses = new Map();
+        const processedMessages: Message[] = [];
+        const toolResponses = new Map<string, string>();
 
-        data.messages.forEach((msg) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data.messages.forEach((msg: any) => {
           if (msg.role === 'tool' && msg.tool_call_id) {
             toolResponses.set(msg.tool_call_id, msg.content || 'Tool executed successfully');
           }
         });
 
-        data.messages.forEach((msg) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data.messages.forEach((msg: any) => {
           if (msg.role === 'tool') {
             return;
           }
 
           if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
-            const content = [];
+            const content: MessageContent[] = [];
             if (msg.content) {
               content.push({ type: 'text', text: msg.content });
             }
 
-            msg.tool_calls.forEach((toolCall) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            msg.tool_calls.forEach((toolCall: any) => {
               const toolResponse = toolResponses.get(toolCall.id);
               // Extract the function name from the tool call
               const toolName = toolCall.function?.name || toolCall.name || 'unknown';
@@ -293,13 +322,13 @@ const ChatPage = ({ profileId = 'default_assistant' } = {}) => {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  };
 
   // Handle conversation selection
-  const handleConversationSelect = (convId) => {
+  const handleConversationSelect = (convId: string) => {
     setConversationId(convId);
     localStorage.setItem('lastConversationId', convId);
-    setSearchParams({ conversation_id: convId });
+    window.history.pushState({}, '', `/chat?conversation_id=${convId}`);
     loadConversationMessages(convId);
 
     if (window.innerWidth <= 768) {
@@ -308,64 +337,31 @@ const ChatPage = ({ profileId = 'default_assistant' } = {}) => {
   };
 
   // Handle new chat creation
-  const handleNewChat = useCallback(() => {
+  const handleNewChat = () => {
     const newConvId = `web_conv_${generateUUID()}`;
     setConversationId(newConvId);
     setMessages([]);
     localStorage.setItem('lastConversationId', newConvId);
-    setSearchParams({ conversation_id: newConvId });
+    window.history.pushState({}, '', `/chat?conversation_id=${newConvId}`);
 
     if (window.innerWidth <= 768) {
       setSidebarOpen(false);
     }
-  }, [setSearchParams]);
-
-  // Initialize conversation ID from URL params
-  useEffect(() => {
-    // Only fetch conversations once
-    if (!hasInitializedRef.current) {
-      fetchConversations();
-      hasInitializedRef.current = true;
-    }
-
-    const urlConversationId = searchParams.get('conversation_id');
-    const lastConversationId = localStorage.getItem('lastConversationId');
-
-    // Only initialize if we don't have a conversation ID yet, or if URL changed
-    if (!conversationId || (urlConversationId && urlConversationId !== conversationId)) {
-      if (urlConversationId) {
-        setConversationId(urlConversationId);
-        loadConversationMessages(urlConversationId);
-      } else if (lastConversationId && !conversationId) {
-        setConversationId(lastConversationId);
-        loadConversationMessages(lastConversationId);
-        setSearchParams({ conversation_id: lastConversationId });
-      } else if (!conversationId) {
-        handleNewChat();
-      }
-    }
-  }, [
-    searchParams,
-    conversationId,
-    fetchConversations,
-    loadConversationMessages,
-    handleNewChat,
-    setSearchParams,
-  ]);
+  };
 
   // Handle new messages from the user
   const handleNew = useCallback(
-    async (message) => {
-      const userMessage = {
-        id: `msg_${generateUUID()}`,
+    async (message: { content: { text: string }[] }) => {
+      const userMessage: Message = {
+        id: `msg_${Date.now()}`,
         role: 'user',
         content: [{ type: 'text', text: message.content[0].text }],
         createdAt: new Date(),
       };
 
-      const assistantMessageId = `msg_${generateUUID()}_assistant`;
+      const assistantMessageId = `msg_${Date.now()}_assistant`;
       // Add both user message and a loading assistant message
-      const loadingAssistantMessage = {
+      const loadingAssistantMessage: Message = {
         id: assistantMessageId,
         role: 'assistant',
         content: [{ type: 'text', text: LOADING_MARKER }], // Special marker for loading state
@@ -387,7 +383,7 @@ const ChatPage = ({ profileId = 'default_assistant' } = {}) => {
     [conversationId, sendStreamingMessage, profileId]
   );
 
-  const convertMessage = useCallback((message) => {
+  const convertMessage = useCallback((message: Message) => {
     return message;
   }, []);
 
@@ -399,52 +395,86 @@ const ChatPage = ({ profileId = 'default_assistant' } = {}) => {
   });
 
   return (
-    <div className={`chat-app-wrapper ${sidebarOpen ? 'with-sidebar' : ''}`}>
-      <div className="chat-app-header">
-        <button
-          className="sidebar-toggle"
+    <div className="flex min-h-screen flex-col bg-background">
+      {/* Header */}
+      <div className="sticky top-0 z-50 flex items-center gap-4 border-b bg-background/95 p-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={() => setSidebarOpen(!sidebarOpen)}
           aria-label="Toggle sidebar"
         >
-          ☰
-        </button>
-        <h1>Chat</h1>
+          <Menu className="h-4 w-4" />
+        </Button>
+        <h1 className="text-xl font-semibold">Chat</h1>
+
+        {/* Main Navigation Menu */}
+        <div className="ml-auto">
+          <NavigationSheet currentPage="chat">
+            <Button variant="outline" size="sm">
+              <Menu className="h-4 w-4" />
+              <span className="sr-only">Open main menu</span>
+            </Button>
+          </NavigationSheet>
+        </div>
       </div>
-      <div className="chat-app-body">
-        {sidebarOpen && isMobile && (
-          <div
-            className="sidebar-overlay"
-            onClick={() => setSidebarOpen(false)}
-            aria-hidden="true"
+
+      {/* Body */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Sidebar - Desktop */}
+        {!isMobile && (
+          <ConversationSidebar
+            conversations={conversations}
+            conversationsLoading={conversationsLoading}
+            currentConversationId={conversationId}
+            onConversationSelect={handleConversationSelect}
+            onNewChat={handleNewChat}
+            isOpen={sidebarOpen}
+            onRefresh={fetchConversations}
+            isMobile={isMobile}
           />
         )}
-        <ConversationSidebar
-          conversations={conversations}
-          conversationsLoading={conversationsLoading}
-          currentConversationId={conversationId}
-          onConversationSelect={handleConversationSelect}
-          onNewChat={handleNewChat}
-          isOpen={sidebarOpen}
-          onRefresh={fetchConversations}
-        />
-        <div className="chat-main-content">
-          <AssistantRuntimeProvider runtime={runtime}>
-            <div className="chat-container">
-              <div className="chat-info">
-                <h2>Family Assistant Chat</h2>
-                {conversationId && (
-                  <div className="conversation-id">
-                    Conversation: {conversationId.substring(0, 20)}...
-                  </div>
-                )}
+
+        {/* Sidebar - Mobile Sheet (Portal-based overlay) */}
+        <Sheet open={sidebarOpen && isMobile} onOpenChange={setSidebarOpen}>
+          <SheetContent side="left" className="w-80 p-0">
+            <ConversationSidebar
+              conversations={conversations}
+              conversationsLoading={conversationsLoading}
+              currentConversationId={conversationId}
+              onConversationSelect={handleConversationSelect}
+              onNewChat={handleNewChat}
+              isOpen={true}
+              onRefresh={fetchConversations}
+              isMobile={isMobile}
+            />
+          </SheetContent>
+        </Sheet>
+
+        {/* Main content */}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <main className="flex flex-1 flex-col overflow-hidden">
+            <AssistantRuntimeProvider runtime={runtime}>
+              <div className="flex flex-1 flex-col overflow-hidden">
+                <div className="border-b bg-muted/50 p-6">
+                  <h2 className="text-xl font-semibold">Family Assistant Chat</h2>
+                  {conversationId && (
+                    <div className="mt-1 text-xs text-muted-foreground font-mono">
+                      Conversation: {conversationId.substring(0, 20)}...
+                    </div>
+                  )}
+                </div>
+                <Thread />
               </div>
-              <Thread />
-            </div>
-          </AssistantRuntimeProvider>
+            </AssistantRuntimeProvider>
+          </main>
+          <footer className="border-t p-4 text-center text-sm text-muted-foreground bg-background">
+            <p>&copy; {new Date().getFullYear()} Family Assistant</p>
+          </footer>
         </div>
       </div>
     </div>
   );
 };
 
-export default ChatPage;
+export default ChatApp;

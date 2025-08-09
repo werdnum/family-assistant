@@ -1,4 +1,5 @@
 import React from 'react';
+import { Button } from '@/components/ui/button';
 import styles from './EventFilters.module.css';
 
 const EventFilters = ({ filters, onFiltersChange, onClearFilters, loading = false }) => {
@@ -75,14 +76,9 @@ const EventFilters = ({ filters, onFiltersChange, onClearFilters, loading = fals
         </div>
 
         <div className={styles.filtersActions}>
-          <button
-            type="button"
-            className={`${styles.clearButton} button`}
-            onClick={onClearFilters}
-            disabled={loading}
-          >
+          <Button type="button" variant="secondary" onClick={onClearFilters} disabled={loading}>
             Clear Filters
-          </button>
+          </Button>
         </div>
       </details>
     </form>

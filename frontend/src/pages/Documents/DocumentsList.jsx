@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 import styles from './Documents.module.css';
 
 const DocumentsList = () => {
@@ -170,13 +171,13 @@ const DocumentsList = () => {
                 <div className={styles.cell}>{formatDate(doc.created_at)}</div>
                 <div className={styles.cell}>{formatDate(doc.added_at)}</div>
                 <div className={styles.cell}>
-                  <button
-                    className={styles.reindexButton}
+                  <Button
+                    size="sm"
                     onClick={() => handleReindex(doc.id)}
                     disabled={reindexing[doc.id]}
                   >
                     {reindexing[doc.id] ? 'Reindexing...' : 'Reindex'}
-                  </button>
+                  </Button>
                 </div>
               </div>
             ))}
@@ -184,25 +185,27 @@ const DocumentsList = () => {
 
           {totalPages > 1 && (
             <div className={styles.pagination}>
-              <button
+              <Button
                 onClick={() => handlePageChange(currentPage - 1)}
                 disabled={currentPage === 1}
-                className={styles.pageButton}
+                variant="outline"
+                size="sm"
               >
                 Previous
-              </button>
+              </Button>
 
               <span className={styles.pageInfo}>
                 Page {currentPage} of {totalPages}
               </span>
 
-              <button
+              <Button
                 onClick={() => handlePageChange(currentPage + 1)}
                 disabled={currentPage === totalPages}
-                className={styles.pageButton}
+                variant="outline"
+                size="sm"
               >
                 Next
-              </button>
+              </Button>
             </div>
           )}
         </>

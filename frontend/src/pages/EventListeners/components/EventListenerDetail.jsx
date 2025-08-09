@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 
 const EventListenerDetail = () => {
   const { id } = useParams();
@@ -396,23 +397,19 @@ const EventListenerDetail = () => {
         <h2>Actions</h2>
         <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
           {/* Toggle Enable/Disable */}
-          <button onClick={handleToggleEnabled} disabled={updating} className="button">
+          <Button onClick={handleToggleEnabled} disabled={updating}>
             {updating ? 'Updating...' : listener.enabled ? 'Disable' : 'Enable'} Listener
-          </button>
+          </Button>
 
           {/* Edit */}
-          <Link to={`/event-listeners/${listener.id}/edit`} className="button">
-            Edit Listener
-          </Link>
+          <Button asChild>
+            <Link to={`/event-listeners/${listener.id}/edit`}>Edit Listener</Link>
+          </Button>
 
           {/* Delete */}
-          <button
-            onClick={handleDelete}
-            className="button"
-            style={{ backgroundColor: 'var(--bg-error)', color: 'white' }}
-          >
+          <Button onClick={handleDelete} variant="destructive">
             Delete Listener
-          </button>
+          </Button>
         </div>
       </section>
 

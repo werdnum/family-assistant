@@ -1,5 +1,6 @@
 import React from 'react';
 import { CheckCircleIcon, ClockIcon, AlertCircleIcon, DownloadIcon } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 // Generic fallback tool UI that handles any tool call
 const ToolFallback = ({ toolName, args, result, status }) => {
@@ -1378,13 +1379,14 @@ export const GetFullDocumentContentToolUI = ({ args, result, status }) => {
                   <div className="tool-document-content-display">
                     <pre>{displayContent}</pre>
                     {shouldTruncate && (
-                      <button
-                        className="tool-document-expand-btn"
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={() => setIsExpanded(!isExpanded)}
                         type="button"
                       >
                         {isExpanded ? '🔼 Show less' : '🔽 Show more'}
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>

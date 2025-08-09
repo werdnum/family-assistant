@@ -127,8 +127,8 @@ async def test_page_navigation_elements(web_test_fixture: WebTestFixture) -> Non
     page = web_test_fixture.page
     base_url = web_test_fixture.base_url
 
-    # Navigate to homepage
-    await page.goto(base_url)
+    # Navigate to notes page which has traditional navigation
+    await page.goto(f"{base_url}/notes")
     await page.wait_for_load_state("networkidle")
 
     # Check for any navigation links - the app should have some navigation

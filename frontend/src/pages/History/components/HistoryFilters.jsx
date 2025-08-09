@@ -1,4 +1,5 @@
 import React from 'react';
+import { Button } from '@/components/ui/button';
 import styles from './HistoryFilters.module.css';
 
 const HistoryFilters = ({ filters, onFiltersChange, onClearFilters, loading = false }) => {
@@ -100,14 +101,9 @@ const HistoryFilters = ({ filters, onFiltersChange, onClearFilters, loading = fa
         </div>
 
         <div className={styles.filtersActions}>
-          <button
-            type="button"
-            className={`${styles.clearButton} button`}
-            onClick={onClearFilters}
-            disabled={loading}
-          >
+          <Button type="button" variant="secondary" onClick={onClearFilters} disabled={loading}>
             Clear Filters
-          </button>
+          </Button>
         </div>
       </details>
     </form>

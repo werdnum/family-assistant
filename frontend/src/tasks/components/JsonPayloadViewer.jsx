@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Button } from '@/components/ui/button';
 
 const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
   const containerRef = useRef(null);
@@ -92,36 +93,17 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
       >
         <div style={{ fontSize: '0.9rem', fontWeight: 'bold' }}>Task Payload</div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-          <button
+          <Button
             onClick={handleToggleExpand}
-            style={{
-              padding: '0.25rem 0.5rem',
-              fontSize: '0.8rem',
-              backgroundColor: '#6c757d',
-              color: 'white',
-              border: 'none',
-              borderRadius: '3px',
-              cursor: 'pointer',
-            }}
+            variant="secondary"
+            size="sm"
             title="Toggle JSON view"
           >
             {isExpanded ? 'Hide' : 'Show'}
-          </button>
-          <button
-            onClick={handleCopy}
-            style={{
-              padding: '0.25rem 0.5rem',
-              fontSize: '0.8rem',
-              backgroundColor: '#007bff',
-              color: 'white',
-              border: 'none',
-              borderRadius: '3px',
-              cursor: 'pointer',
-            }}
-            title="Copy JSON to clipboard"
-          >
+          </Button>
+          <Button onClick={handleCopy} variant="default" size="sm" title="Copy JSON to clipboard">
             {copyStatus || 'Copy'}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -132,21 +114,14 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
             // Simple text view by default
             <div>
               <div style={{ marginBottom: '0.5rem' }}>
-                <button
+                <Button
                   onClick={handleUseEditor}
-                  style={{
-                    padding: '0.25rem 0.5rem',
-                    fontSize: '0.8rem',
-                    backgroundColor: '#28a745',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '3px',
-                    cursor: 'pointer',
-                  }}
+                  variant="secondary"
+                  size="sm"
                   title="Load rich editor"
                 >
                   Load Rich Editor
-                </button>
+                </Button>
               </div>
               <pre
                 style={{

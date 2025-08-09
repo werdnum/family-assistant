@@ -1,9 +1,9 @@
 import React, { useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import Layout from './Layout';
+import Layout from './Layout.tsx';
 
 // Lazy load all route components for code splitting
-const ChatPage = lazy(() => import('../chat/ChatPage'));
+const ChatPage = lazy(() => import('../chat/ChatApp'));
 const ToolsApp = lazy(() => import('../tools/ToolsApp'));
 const ErrorsApp = lazy(() => import('../errors/ErrorsApp'));
 const ContextPage = lazy(() => import('./ContextPage'));
@@ -49,15 +49,13 @@ const AppRouter = () => {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Chat routes */}
+        {/* Chat routes - no Layout wrapper as ChatApp has its own complete UI */}
         <Route
           path="/chat"
           element={
-            <Layout>
-              <Suspense fallback={<LoadingSpinner />}>
-                <ChatPage />
-              </Suspense>
-            </Layout>
+            <Suspense fallback={<LoadingSpinner />}>
+              <ChatPage />
+            </Suspense>
           }
         />
 

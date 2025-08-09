@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Button } from '@/components/ui/button';
 import styles from './MessageDisplay.module.css';
 
 const MessageDisplay = ({ message }) => {
@@ -87,14 +88,15 @@ const MessageDisplay = ({ message }) => {
                   <span className={styles.toolCallName}>
                     {toolCall.function?.name || toolCall.name || 'Unknown Tool'}
                   </span>
-                  <button
-                    className={styles.expandButton}
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => toggleToolCall(index)}
                     aria-expanded={expandedToolCalls.has(index)}
                   >
                     {expandedToolCalls.has(index) ? '▼' : '▶'}
                     {expandedToolCalls.has(index) ? 'Hide' : 'Show'} Details
-                  </button>
+                  </Button>
                 </div>
 
                 {expandedToolCalls.has(index) && (
@@ -131,14 +133,15 @@ const MessageDisplay = ({ message }) => {
             <div className={styles.errorHeader}>
               <span className={styles.errorIcon}>⚠️</span>
               <span>Error Occurred</span>
-              <button
-                className={styles.expandButton}
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setExpandedTraceback(!expandedTraceback)}
                 aria-expanded={expandedTraceback}
               >
                 {expandedTraceback ? '▼' : '▶'}
                 {expandedTraceback ? 'Hide' : 'Show'} Traceback
-              </button>
+              </Button>
             </div>
 
             {expandedTraceback && (

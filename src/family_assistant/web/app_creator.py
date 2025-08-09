@@ -256,6 +256,17 @@ if AUTH_ENABLED:
     logger.info("Authentication routes included.")
 
 app.include_router(vite_pages_router, tags=["Vite Pages"])
+
+# Log registered UI routes for debugging CI issues
+ui_routes = []
+for route in vite_pages_router.routes:
+    if hasattr(route, "path") and hasattr(route, "methods"):
+        methods = getattr(route, "methods", set())
+        path = getattr(route, "path", "unknown")
+        method = list(methods)[0] if methods else "GET"
+        ui_routes.append(f"{method} {path}")
+logger.info(f"Registered UI routes: {ui_routes}")
+
 # NOTE: The following routers have been removed as their Jinja2 templates
 # have been migrated to React components served via vite_pages_router:
 #   * documentation_router - docs now via React

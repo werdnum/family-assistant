@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 import styles from './Documents.module.css';
 
 const DocumentDetail = () => {
@@ -222,9 +223,9 @@ const DocumentDetail = () => {
         </div>
 
         <div className={styles.actionButtons}>
-          <button className={styles.reindexButton} onClick={handleReindex} disabled={reindexing}>
+          <Button onClick={handleReindex} disabled={reindexing}>
             {reindexing ? 'Reindexing...' : 'Reindex Document'}
-          </button>
+          </Button>
         </div>
       </div>
 
