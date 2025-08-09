@@ -569,7 +569,7 @@ async def test_responsive_sidebar_mobile(
     await page.wait_for_timeout(2000)
 
     # On mobile, sidebar should be closed by default
-    is_open_initially = await chat_page.is_sidebar_open()
+    assert not await chat_page.is_sidebar_open()
 
     # Check if toggle button exists
     toggle_button = await page.query_selector("button[aria-label='Toggle sidebar']")
