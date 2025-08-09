@@ -114,7 +114,20 @@ jobs:
                 # Also copy the .vite directory which contains the manifest \
                 [ -d "/opt/frontend-dist/.vite" ] && cp -r /opt/frontend-dist/.vite /workspace/src/family_assistant/static/dist/.vite; \
               fi && \
-              .venv/bin/pytest -q --timeout=300 --db sqlite -m "not postgres"'
+              mkdir -p test-results && \
+              .venv/bin/pytest -q --timeout=300 --db sqlite -m "not postgres" \
+                --screenshot=on --video=retain-on-failure --tracing=retain-on-failure \
+                --output=test-results'
+      - name: Upload Playwright test artifacts (SQLite)
+        uses: actions/upload-artifact@v4
+        if: always() # Upload artifacts even if tests fail
+        with:
+          name: playwright-artifacts-sqlite-${{ github.run_id }}
+          path: |
+            test-results/
+            /tmp/history_page_*.png
+          retention-days: 7
+          if-no-files-found: ignore
   test-postgres:
     needs: [prepare, build-devcontainer]
     runs-on: ubuntu-latest
@@ -158,7 +171,20 @@ jobs:
                 # Also copy the .vite directory which contains the manifest \
                 [ -d "/opt/frontend-dist/.vite" ] && cp -r /opt/frontend-dist/.vite /workspace/src/family_assistant/static/dist/.vite; \
               fi && \
-              .venv/bin/pytest --postgres -q --timeout=300'
+              mkdir -p test-results && \
+              .venv/bin/pytest --postgres -q --timeout=300 \
+                --screenshot=on --video=retain-on-failure --tracing=retain-on-failure \
+                --output=test-results'
+      - name: Upload Playwright test artifacts (PostgreSQL)
+        uses: actions/upload-artifact@v4
+        if: always() # Upload artifacts even if tests fail
+        with:
+          name: playwright-artifacts-postgres-${{ github.run_id }}
+          path: |
+            test-results/
+            /tmp/history_page_*.png
+          retention-days: 7
+          if-no-files-found: ignore
   # Require all test jobs to pass
   all-tests:
     needs: [lint, test-sqlite, test-postgres]
