@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import styles from './TasksFilter.module.css';
 
 const TasksFilter = ({ filters, taskTypes, onFilterChange, hasActiveFilters, onClearFilters }) => {
   const [localFilters, setLocalFilters] = useState(filters);
@@ -43,38 +44,20 @@ const TasksFilter = ({ filters, taskTypes, onFilterChange, hasActiveFilters, onC
   };
 
   return (
-    <div
-      style={{
-        marginBottom: '2rem',
-        padding: '1rem',
-        border: '1px solid #ddd',
-        borderRadius: '5px',
-        backgroundColor: '#f9f9f9',
-      }}
-    >
-      <h3 style={{ marginTop: 0, marginBottom: '1rem' }}>Filters</h3>
+    <div className={styles.tasksFilter}>
+      <h3 className={styles.filterTitle}>Filters</h3>
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-          gap: '1rem',
-          alignItems: 'end',
-        }}
-      >
+      <div className={styles.filterGrid}>
         {/* Status Filter */}
-        <div>
-          <label
-            htmlFor="status-filter"
-            style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}
-          >
+        <div className={styles.filterField}>
+          <label htmlFor="status-filter" className={styles.filterLabel}>
             Status:
           </label>
           <select
             id="status-filter"
             value={localFilters.status}
             onChange={(e) => handleInputChange('status', e.target.value)}
-            style={{ width: '100%', padding: '0.5rem' }}
+            className={styles.filterSelect}
           >
             <option value="">All</option>
             <option value="pending">Pending</option>
@@ -85,11 +68,8 @@ const TasksFilter = ({ filters, taskTypes, onFilterChange, hasActiveFilters, onC
         </div>
 
         {/* Task Type Filter with autocomplete */}
-        <div>
-          <label
-            htmlFor="task-type-filter"
-            style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}
-          >
+        <div className={styles.filterField}>
+          <label htmlFor="task-type-filter" className={styles.filterLabel}>
             Task Type:
           </label>
           <input
@@ -99,7 +79,7 @@ const TasksFilter = ({ filters, taskTypes, onFilterChange, hasActiveFilters, onC
             value={localFilters.task_type}
             onChange={(e) => handleInputChange('task_type', e.target.value)}
             placeholder="Filter by task type..."
-            style={{ width: '100%', padding: '0.5rem' }}
+            className={styles.filterInput}
           />
           <datalist id="task-types">
             {taskTypes.map((type) => (
@@ -109,11 +89,8 @@ const TasksFilter = ({ filters, taskTypes, onFilterChange, hasActiveFilters, onC
         </div>
 
         {/* Date From Filter */}
-        <div>
-          <label
-            htmlFor="date-from-filter"
-            style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}
-          >
+        <div className={styles.filterField}>
+          <label htmlFor="date-from-filter" className={styles.filterLabel}>
             From Date:
           </label>
           <input
@@ -121,16 +98,13 @@ const TasksFilter = ({ filters, taskTypes, onFilterChange, hasActiveFilters, onC
             id="date-from-filter"
             value={formatDateForInput(localFilters.date_from)}
             onChange={(e) => handleDateChange('date_from', e.target.value)}
-            style={{ width: '100%', padding: '0.5rem' }}
+            className={styles.filterInput}
           />
         </div>
 
         {/* Date To Filter */}
-        <div>
-          <label
-            htmlFor="date-to-filter"
-            style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}
-          >
+        <div className={styles.filterField}>
+          <label htmlFor="date-to-filter" className={styles.filterLabel}>
             To Date:
           </label>
           <input
@@ -138,23 +112,20 @@ const TasksFilter = ({ filters, taskTypes, onFilterChange, hasActiveFilters, onC
             id="date-to-filter"
             value={formatDateForInput(localFilters.date_to)}
             onChange={(e) => handleDateChange('date_to', e.target.value)}
-            style={{ width: '100%', padding: '0.5rem' }}
+            className={styles.filterInput}
           />
         </div>
 
         {/* Sort Order Filter */}
-        <div>
-          <label
-            htmlFor="sort-filter"
-            style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}
-          >
+        <div className={styles.filterField}>
+          <label htmlFor="sort-filter" className={styles.filterLabel}>
             Sort Order:
           </label>
           <select
             id="sort-filter"
             value={localFilters.sort}
             onChange={(e) => handleInputChange('sort', e.target.value)}
-            style={{ width: '100%', padding: '0.5rem' }}
+            className={styles.filterSelect}
           >
             <option value="desc">Newest First</option>
             <option value="asc">Oldest First</option>
@@ -163,7 +134,7 @@ const TasksFilter = ({ filters, taskTypes, onFilterChange, hasActiveFilters, onC
 
         {/* Clear Filters Button */}
         {hasActiveFilters && (
-          <div style={{ display: 'flex', alignItems: 'end' }}>
+          <div className={styles.clearButtonContainer}>
             <Button onClick={onClearFilters} variant="destructive" size="sm">
               Clear All Filters
             </Button>
@@ -172,26 +143,26 @@ const TasksFilter = ({ filters, taskTypes, onFilterChange, hasActiveFilters, onC
       </div>
 
       {hasActiveFilters && (
-        <div style={{ marginTop: '1rem', fontSize: '0.9rem', color: '#666' }}>
+        <div className={styles.activeFilters}>
           <strong>Active filters:</strong>
           {localFilters.status && (
-            <span style={{ marginLeft: '0.5rem' }}>Status: {localFilters.status}</span>
+            <span className={styles.filterTag}>Status: {localFilters.status}</span>
           )}
           {localFilters.task_type && (
-            <span style={{ marginLeft: '0.5rem' }}>Type: {localFilters.task_type}</span>
+            <span className={styles.filterTag}>Type: {localFilters.task_type}</span>
           )}
           {localFilters.date_from && (
-            <span style={{ marginLeft: '0.5rem' }}>
+            <span className={styles.filterTag}>
               From: {new Date(localFilters.date_from).toLocaleString()}
             </span>
           )}
           {localFilters.date_to && (
-            <span style={{ marginLeft: '0.5rem' }}>
+            <span className={styles.filterTag}>
               To: {new Date(localFilters.date_to).toLocaleString()}
             </span>
           )}
           {localFilters.sort !== 'desc' && (
-            <span style={{ marginLeft: '0.5rem' }}>
+            <span className={styles.filterTag}>
               Sort: {localFilters.sort === 'asc' ? 'Oldest First' : 'Newest First'}
             </span>
           )}

@@ -74,12 +74,9 @@ script.
 
 ### Pages
 
-The application serves pages from two different systems:
-
-- **Vite:** The main chat interface (`/chat`) is a single-page application (SPA) served by Vite. The
-  entry point is `frontend/chat.html`.
-- **Jinja2:** Other pages, such as the notes list and document management, are rendered by the
-  FastAPI backend using Jinja2 templates.
+The application is a modern React single-page application (SPA) served by Vite. All UI pages are now
+React-based components within the SPA architecture. The entry point is `frontend/chat.html`, and the
+application uses client-side routing to handle navigation between different views and features.
 
 ## Development Commands
 
