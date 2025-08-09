@@ -25,14 +25,7 @@ import {
   NavigationMenuTrigger,
   navigationMenuTriggerStyle,
 } from '@/components/ui/navigation-menu';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from '@/components/ui/sheet';
+import NavigationSheet from './NavigationSheet';
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -77,28 +70,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     return <a ref={ref} className={cn(navigationMenuTriggerStyle(), className)} {...props} />;
   });
   ExternalNavLink.displayName = 'ExternalNavLink';
-
-  const mobileMenuItems = [
-    { type: 'section', title: 'Data' },
-    { type: 'external', href: '/notes', title: 'Notes', icon: FileText },
-    { type: 'link', to: '/context', title: 'Context', icon: FileText },
-    { type: 'section', title: 'Documents' },
-    { type: 'external', href: '/documents/', title: 'List', icon: FolderOpen },
-    { type: 'external', href: '/documents/upload', title: 'Upload', icon: Upload },
-    { type: 'external', href: '/vector-search', title: 'Search', icon: Search },
-    { type: 'section', title: 'Communication' },
-    { type: 'link', to: '/chat', title: 'Chat', icon: MessageCircle },
-    { type: 'external', href: '/history', title: 'History', icon: History },
-    { type: 'section', title: 'Automation' },
-    { type: 'external', href: '/events', title: 'Events', icon: Calendar },
-    { type: 'external', href: '/event-listeners', title: 'Event Listeners', icon: Settings },
-    { type: 'section', title: 'Internal' },
-    { type: 'link', to: '/tools', title: 'Tools', icon: Cog },
-    { type: 'external', href: '/tasks', title: 'Task Queue', icon: Settings },
-    { type: 'link', to: '/errors', title: 'Error Logs', icon: AlertTriangle },
-    { type: 'section', title: 'Help' },
-    { type: 'external', href: '/docs/', title: 'Help', icon: HelpCircle },
-  ];
 
   return (
     <>
@@ -260,63 +231,17 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         {/* Mobile Navigation */}
         <div className="md:hidden flex items-center justify-between px-4 py-3">
           <div className="text-lg font-semibold">Family Assistant</div>
-          <Sheet>
-            <SheetTrigger asChild>
-              <Button variant="outline" size="icon">
-                <Menu className="h-4 w-4" />
-                <span className="sr-only">Open navigation menu</span>
-              </Button>
-            </SheetTrigger>
-            <SheetContent side="left" className="w-[300px] sm:w-[400px]">
-              <SheetHeader>
-                <SheetTitle>Navigation</SheetTitle>
-                <SheetDescription>Browse the Family Assistant features</SheetDescription>
-              </SheetHeader>
-              <nav className="flex flex-col gap-4 mt-6">
-                {mobileMenuItems.map((item, index) => {
-                  if (item.type === 'section') {
-                    return (
-                      <div key={index} className="pt-4 first:pt-0">
-                        <h4 className="text-sm font-medium text-muted-foreground mb-2">
-                          {item.title}
-                        </h4>
-                      </div>
-                    );
-                  }
-
-                  const Icon = item.icon!;
-                  const isActive = item.type === 'link' && currentPage === item.to?.split('/')[1];
-
-                  if (item.type === 'link') {
-                    return (
-                      <Link
-                        key={index}
-                        to={item.to!}
-                        className={cn(
-                          'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground',
-                          isActive && 'bg-accent/50 text-accent-foreground'
-                        )}
-                      >
-                        <Icon className="h-4 w-4" />
-                        {item.title}
-                      </Link>
-                    );
-                  }
-
-                  return (
-                    <a
-                      key={index}
-                      href={item.href!}
-                      className="flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
-                    >
-                      <Icon className="h-4 w-4" />
-                      {item.title}
-                    </a>
-                  );
-                })}
-              </nav>
-            </SheetContent>
-          </Sheet>
+          <NavigationSheet
+            currentPage={currentPage}
+            title="Navigation"
+            description="Browse the Family Assistant features"
+            side="left"
+          >
+            <Button variant="outline" size="icon">
+              <Menu className="h-4 w-4" />
+              <span className="sr-only">Open navigation menu</span>
+            </Button>
+          </NavigationSheet>
         </div>
       </header>
 

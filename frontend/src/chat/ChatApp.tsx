@@ -2,13 +2,14 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
+import { Menu } from 'lucide-react';
 import { Thread } from './Thread';
-import NavHeader from './NavHeader';
 import ConversationSidebar from './ConversationSidebar';
 import { useStreamingResponse } from './useStreamingResponse';
 import { LOADING_MARKER } from './constants';
 import { generateUUID } from '../utils/uuid';
 import { ChatAppProps, Message, MessageContent, Conversation } from './types';
+import NavigationSheet from '../shared/NavigationSheet';
 
 // Helper function to parse tool arguments
 const parseToolArguments = (args: unknown): Record<string, unknown> => {
@@ -394,78 +395,85 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   });
 
   return (
-    <>
-      <NavHeader />
-      <div className="flex min-h-screen flex-col bg-background">
-        {/* Header */}
-        <div className="sticky top-0 z-50 flex items-center gap-4 border-b bg-background/95 p-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            aria-label="Toggle sidebar"
-          >
-            ☰
-          </Button>
-          <h1 className="text-xl font-semibold">Chat</h1>
-        </div>
+    <div className="flex min-h-screen flex-col bg-background">
+      {/* Header */}
+      <div className="sticky top-0 z-50 flex items-center gap-4 border-b bg-background/95 p-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+          aria-label="Toggle sidebar"
+        >
+          <Menu className="h-4 w-4" />
+        </Button>
+        <h1 className="text-xl font-semibold">Chat</h1>
 
-        {/* Body */}
-        <div className="flex flex-1 overflow-hidden">
-          {/* Sidebar - Desktop */}
-          {!isMobile && (
+        {/* Main Navigation Menu */}
+        <div className="ml-auto">
+          <NavigationSheet currentPage="chat">
+            <Button variant="outline" size="sm">
+              <Menu className="h-4 w-4" />
+              <span className="sr-only">Open main menu</span>
+            </Button>
+          </NavigationSheet>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Sidebar - Desktop */}
+        {!isMobile && (
+          <ConversationSidebar
+            conversations={conversations}
+            conversationsLoading={conversationsLoading}
+            currentConversationId={conversationId}
+            onConversationSelect={handleConversationSelect}
+            onNewChat={handleNewChat}
+            isOpen={sidebarOpen}
+            onRefresh={fetchConversations}
+            isMobile={isMobile}
+          />
+        )}
+
+        {/* Sidebar - Mobile Sheet (Portal-based overlay) */}
+        <Sheet open={sidebarOpen && isMobile} onOpenChange={setSidebarOpen}>
+          <SheetContent side="left" className="w-80 p-0">
             <ConversationSidebar
               conversations={conversations}
               conversationsLoading={conversationsLoading}
               currentConversationId={conversationId}
               onConversationSelect={handleConversationSelect}
               onNewChat={handleNewChat}
-              isOpen={sidebarOpen}
+              isOpen={true}
               onRefresh={fetchConversations}
               isMobile={isMobile}
             />
-          )}
+          </SheetContent>
+        </Sheet>
 
-          {/* Sidebar - Mobile Sheet (Portal-based overlay) */}
-          <Sheet open={sidebarOpen && isMobile} onOpenChange={setSidebarOpen}>
-            <SheetContent side="left" className="w-80 p-0">
-              <ConversationSidebar
-                conversations={conversations}
-                conversationsLoading={conversationsLoading}
-                currentConversationId={conversationId}
-                onConversationSelect={handleConversationSelect}
-                onNewChat={handleNewChat}
-                isOpen={true}
-                onRefresh={fetchConversations}
-                isMobile={isMobile}
-              />
-            </SheetContent>
-          </Sheet>
-
-          {/* Main content */}
-          <div className="flex min-w-0 flex-1 flex-col">
-            <main className="flex flex-1 flex-col overflow-hidden">
-              <AssistantRuntimeProvider runtime={runtime}>
-                <div className="flex flex-1 flex-col overflow-hidden">
-                  <div className="border-b bg-muted/50 p-6">
-                    <h2 className="text-xl font-semibold">Family Assistant Chat</h2>
-                    {conversationId && (
-                      <div className="mt-1 text-xs text-muted-foreground font-mono">
-                        Conversation: {conversationId.substring(0, 20)}...
-                      </div>
-                    )}
-                  </div>
-                  <Thread />
+        {/* Main content */}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <main className="flex flex-1 flex-col overflow-hidden">
+            <AssistantRuntimeProvider runtime={runtime}>
+              <div className="flex flex-1 flex-col overflow-hidden">
+                <div className="border-b bg-muted/50 p-6">
+                  <h2 className="text-xl font-semibold">Family Assistant Chat</h2>
+                  {conversationId && (
+                    <div className="mt-1 text-xs text-muted-foreground font-mono">
+                      Conversation: {conversationId.substring(0, 20)}...
+                    </div>
+                  )}
                 </div>
-              </AssistantRuntimeProvider>
-            </main>
-            <footer className="border-t p-4 text-center text-sm text-muted-foreground bg-background">
-              <p>&copy; {new Date().getFullYear()} Family Assistant</p>
-            </footer>
-          </div>
+                <Thread />
+              </div>
+            </AssistantRuntimeProvider>
+          </main>
+          <footer className="border-t p-4 text-center text-sm text-muted-foreground bg-background">
+            <p>&copy; {new Date().getFullYear()} Family Assistant</p>
+          </footer>
         </div>
       </div>
-    </>
+    </div>
   );
 };
 
