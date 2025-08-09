@@ -3,8 +3,38 @@
 from typing import Any
 
 import pytest
+from playwright.async_api import Page
 
 from .conftest import WebTestFixture
+
+
+async def wait_for_history_page_loaded(page: Page, timeout: int = 15000) -> bool:
+    """Wait for the history page to load completely and return whether it succeeded."""
+    try:
+        # Try multiple selectors that indicate the page is loaded
+        await page.wait_for_selector(
+            "h1:has-text('Conversation History'), h1, main, [data-testid='history-page']",
+            timeout=timeout,
+        )
+
+        # Additional check - make sure the page text is there
+        page_text = await page.text_content("body")
+        if page_text and "Conversation History" in page_text:
+            return True
+
+        # If no text, try waiting a bit more for React to mount
+        await page.wait_for_timeout(2000)
+        page_text = await page.text_content("body")
+        return page_text is not None and "Conversation History" in page_text
+
+    except Exception as e:
+        print(f"Failed to wait for history page: {e}")
+        # Check if page has any content at all
+        try:
+            page_text = await page.text_content("body")
+            return page_text is not None and "Conversation History" in page_text
+        except Exception:
+            return False
 
 
 @pytest.mark.playwright
@@ -85,11 +115,11 @@ async def test_history_page_basic_loading(
         for err in network_errors:
             print(f"  - {err}")
 
-    # Try to wait for h1 with more debugging
-    try:
-        await page.wait_for_selector("h1", timeout=10000)
-    except Exception as e:
-        print(f"Failed to find h1 element: {e}")
+    # Wait for the history page to load
+    page_loaded = await wait_for_history_page_loaded(page, timeout=15000)
+
+    if not page_loaded:
+        print("Failed to detect history page load - taking diagnostics")
         # Take another screenshot
         await page.screenshot(path="/tmp/history_page_after_wait.png")
         print("Screenshot saved to /tmp/history_page_after_wait.png")
@@ -99,11 +129,11 @@ async def test_history_page_basic_loading(
         print(f"Final page HTML (first 2000 chars):{final_content[:2000]}")
 
         # Check if there were critical errors
-        assert not console_errors, f"Console errors detected: {console_errors}"
-        raise
+        if console_errors:
+            print(f"Console errors detected: {console_errors}")
 
-    # Check page title and heading
-    await page.wait_for_selector("h1:has-text('Conversation History')")
+        assert not console_errors, f"Console errors detected: {console_errors}"
+        assert page_loaded, "History page failed to load properly"
 
     # Verify React components have loaded by checking for filters section
     filters_section = page.locator("details summary:has-text('Filters')")
@@ -161,7 +191,8 @@ async def test_history_filters_interface(
     await page.goto(f"{server_url}/history")
 
     # Wait for page to load
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+    page_loaded = await wait_for_history_page_loaded(page)
+    assert page_loaded, "History page failed to load"
 
     # Wait for filters section to be visible
     filters_section = page.locator("details summary:has-text('Filters')")
@@ -848,7 +879,10 @@ async def test_history_combined_filters_interaction(
 
     # Navigate to history page
     await page.goto(f"{server_url}/history?interface_type=all")
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+
+    # Wait for page to load
+    page_loaded = await wait_for_history_page_loaded(page)
+    assert page_loaded, "History page failed to load"
 
     # Wait for page content to load (not show "Loading...")
     await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)

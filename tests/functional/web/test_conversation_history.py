@@ -528,11 +528,13 @@ async def test_get_conversations_invalid_date_formats(
         response = await client.get("/api/v1/chat/conversations?date_from=invalid-date")
         assert response.status_code == 400
         assert "Invalid date_from format" in response.json()["detail"]
+        assert "Expected YYYY-MM-DD format" in response.json()["detail"]
 
         # Test invalid date_to format
         response = await client.get("/api/v1/chat/conversations?date_to=2024-13-45")
         assert response.status_code == 400
         assert "Invalid date_to format" in response.json()["detail"]
+        assert "Expected YYYY-MM-DD format" in response.json()["detail"]
 
 
 @pytest.mark.asyncio

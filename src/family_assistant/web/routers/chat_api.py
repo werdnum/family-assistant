@@ -202,12 +202,11 @@ async def get_conversations(
             date_from_dt = datetime.strptime(date_from, "%Y-%m-%d").replace(
                 tzinfo=timezone.utc
             )
-        except ValueError:
-            # Log warning but don't fail - ignore invalid date parameter
-            logger.warning(
-                f"Invalid date_from format ignored: {date_from}. Expected YYYY-MM-DD"
-            )
-            date_from_dt = None
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid date_from format: '{date_from}'. Expected YYYY-MM-DD format.",
+            ) from e
 
     if date_to:
         try:
@@ -218,12 +217,11 @@ async def get_conversations(
             date_to_dt = date_to_dt.replace(
                 hour=23, minute=59, second=59, microsecond=999999
             )
-        except ValueError:
-            # Log warning but don't fail - ignore invalid date parameter
-            logger.warning(
-                f"Invalid date_to format ignored: {date_to}. Expected YYYY-MM-DD"
-            )
-            date_to_dt = None
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid date_to format: '{date_to}'. Expected YYYY-MM-DD format.",
+            ) from e
 
     # Use optimized query for conversation summaries with all filters
     summaries, total = await db_context.message_history.get_conversation_summaries(
