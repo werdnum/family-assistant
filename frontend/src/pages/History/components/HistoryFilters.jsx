@@ -62,15 +62,17 @@ const HistoryFilters = ({ filters, onFiltersChange, onClearFilters, loading = fa
           <div className={styles.filterGroup}>
             <Label htmlFor="interface_type">Interface Type</Label>
             <Select
-              value={filters.interface_type || ''}
-              onValueChange={(value) => handleFilterChange('interface_type', value)}
+              value={filters.interface_type || '_all'}
+              onValueChange={(value) =>
+                handleFilterChange('interface_type', value === '_all' ? '' : value)
+              }
               disabled={loading}
             >
-              <SelectTrigger>
+              <SelectTrigger data-testid="interface-type-select">
                 <SelectValue placeholder="All Interfaces" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All Interfaces</SelectItem>
+                <SelectItem value="_all">All Interfaces</SelectItem>
                 <SelectItem value="web">Web</SelectItem>
                 <SelectItem value="telegram">Telegram</SelectItem>
                 <SelectItem value="api">API</SelectItem>

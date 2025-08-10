@@ -6,6 +6,8 @@ from typing import Any
 import pytest
 from playwright.async_api import Page
 
+from tests.functional.web.pages.history_page import HistoryPage
+
 from .conftest import WebTestFixture
 
 
@@ -189,29 +191,20 @@ async def test_history_filters_interface(
     server_url = web_test_fixture.base_url
 
     # Navigate to history page
-    await page.goto(f"{server_url}/history")
-
-    # Wait for page to load
-    page_loaded = await wait_for_history_page_loaded(page)
-    assert page_loaded, "History page failed to load"
+    history_page = HistoryPage(page, server_url)
+    await history_page.navigate_to()
 
     # Wait for filters section to be visible
     filters_section = page.locator("details summary:has-text('Filters')")
     await filters_section.wait_for(state="visible", timeout=5000)
 
-    # Check if details is already open by checking if select is visible
-    interface_select = page.locator("select[name='interface_type']")
-    is_visible = await interface_select.is_visible()
+    # Click the summary to open the filters if needed
+    await filters_section.click()
+    await page.wait_for_timeout(500)
 
-    if not is_visible:
-        # Click the summary to open the filters
-        await filters_section.click()
-        await page.wait_for_timeout(500)
-
-    # Wait for the interface select to be visible
-    await interface_select.wait_for(state="visible", timeout=5000)
-    await interface_select.select_option("web", force=True)
-    selected_value = await interface_select.input_value()
+    # Test interface type filter using the page object
+    await history_page.set_interface_type_filter("web")
+    selected_value = await history_page.get_interface_type_filter_value()
     assert selected_value == "web"
 
     # Test conversation ID filter (should be a text input)
@@ -256,19 +249,16 @@ async def test_history_filters_interface(
     assert await clear_button.is_visible(), "Clear Filters button not found"
     await clear_button.click()
 
-    # Wait for filters to be cleared by checking the interface select value
-    await page.wait_for_function(
-        "() => { const el = document.querySelector('select[name=\"interface_type\"]'); return el && el.value === ''; }",
-        timeout=5000,
-    )
+    # Wait for filters to be cleared
+    await page.wait_for_timeout(1000)  # Give React time to update
 
     # Verify filters are cleared
-    interface_value = await interface_select.input_value()
+    interface_value = await history_page.get_interface_type_filter_value()
     conv_value = await conv_input.input_value()
     from_value_after = await date_from_input.input_value()
     to_value_after = await date_to_input.input_value()
 
-    assert interface_value == ""
+    assert interface_value == "_all"
     assert conv_value == ""
     assert from_value_after == ""
     assert to_value_after == ""
@@ -289,10 +279,10 @@ async def test_history_filters_url_state_preservation(
     # Wait for page to load
     await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
 
-    # Check that filter values are restored from URL
-    interface_select = page.locator("select[name='interface_type']")
-    await interface_select.wait_for(timeout=5000)
-    selected_value = await interface_select.input_value()
+    # Use HistoryPage to check filter values
+    history_page = HistoryPage(page, server_url)
+    await page.wait_for_timeout(1000)  # Wait for React to apply URL params
+    selected_value = await history_page.get_interface_type_filter_value()
     assert selected_value == "web"
 
     # Verify URL contains the filter parameter
@@ -624,9 +614,8 @@ async def test_history_filter_state_management(
     await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
 
     # Apply multiple filters
-    interface_select = page.locator("select[name='interface_type']")
-    await interface_select.wait_for(state="visible", timeout=5000)
-    await interface_select.select_option("telegram", force=True)
+    history_page = HistoryPage(page, server_url)
+    await history_page.set_interface_type_filter("telegram")
 
     date_from_input = page.locator("input[name='date_from']")
     await date_from_input.wait_for(state="visible", timeout=5000)
@@ -647,7 +636,7 @@ async def test_history_filter_state_management(
     await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
 
     # Check that filter values are restored after reload
-    interface_value = await interface_select.input_value()
+    interface_value = await history_page.get_interface_type_filter_value()
     date_value = await date_from_input.input_value()
 
     assert interface_value == "telegram"
@@ -748,19 +737,19 @@ async def test_history_interface_filter_functionality(
     await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
 
     # Test different interface filter options (should be visible due to URL parameters)
-    interface_select = page.locator("select[name='interface_type']")
-    await interface_select.wait_for(state="visible", timeout=10000)
+    history_page = HistoryPage(page, server_url)
+    await page.wait_for_timeout(1000)  # Let React render
 
     # Check that all interface options are available
-    options = await interface_select.locator("option").all_text_contents()
+    options = await history_page.get_interface_type_options()
     expected_options = ["All Interfaces", "Web", "Telegram", "API", "Email"]
     for expected in expected_options:
-        assert any(expected.lower() in opt.lower() for opt in options), (
-            f"Missing option: {expected}"
+        assert any(expected in opt for opt in options), (
+            f"{expected} option not found in interface filter"
         )
 
     # Test filtering by telegram (should show fewer/no results in test env)
-    await interface_select.select_option("telegram", force=True)
+    await history_page.set_interface_type_filter("telegram")
     await page.wait_for_timeout(1000)  # Wait for API call
 
     # Check URL updated
@@ -773,7 +762,7 @@ async def test_history_interface_filter_functionality(
     assert "telegram" in page.url.lower()
 
     # Switch back to web filter
-    await interface_select.select_option("web", force=True)
+    await history_page.set_interface_type_filter("web")
     await page.wait_for_timeout(1000)
 
     # Check URL updated again
@@ -889,8 +878,8 @@ async def test_history_combined_filters_interaction(
     await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
 
     # Apply multiple filters
-    interface_select = page.locator("select[name='interface_type']")
-    await interface_select.select_option("web", force=True)
+    history_page = HistoryPage(page, server_url)
+    await history_page.set_interface_type_filter("web")
 
     date_from_input = page.locator("input[name='date_from']")
     await date_from_input.fill("2024-08-01", force=True)
@@ -914,11 +903,11 @@ async def test_history_combined_filters_interaction(
     await page.wait_for_timeout(1000)
 
     # Verify all filter values are cleared
-    interface_value = await interface_select.input_value()
+    interface_value = await history_page.get_interface_type_filter_value()
     date_value = await date_from_input.input_value()
     conv_value = await conv_input.input_value()
 
-    assert interface_value == ""
+    assert interface_value == "_all"
     assert date_value == ""
     assert conv_value == ""
 
