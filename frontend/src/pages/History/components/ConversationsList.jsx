@@ -23,7 +23,9 @@ const ConversationsList = () => {
       return null;
     }
     // Ensure consistent UTC interpretation across browsers
-    return new Date(dateString + 'T00:00:00Z');
+    const date = new Date(dateString + 'T00:00:00Z');
+    // Return null for invalid dates to avoid crashes
+    return Number.isNaN(date.getTime()) ? null : date;
   };
 
   // Get current filter values from URL params (always in sync with URL)

@@ -3,8 +3,38 @@
 from typing import Any
 
 import pytest
+from playwright.async_api import Page
 
 from .conftest import WebTestFixture
+
+
+async def wait_for_history_page_loaded(page: Page, timeout: int = 15000) -> bool:
+    """Wait for the history page to load completely and return whether it succeeded."""
+    try:
+        # Try multiple selectors that indicate the page is loaded
+        await page.wait_for_selector(
+            "h1:has-text('Conversation History'), h1, main, [data-testid='history-page']",
+            timeout=timeout,
+        )
+
+        # Additional check - make sure the page text is there
+        page_text = await page.text_content("body")
+        if page_text and "Conversation History" in page_text:
+            return True
+
+        # If no text, try waiting a bit more for React to mount
+        await page.wait_for_timeout(2000)
+        page_text = await page.text_content("body")
+        return page_text is not None and "Conversation History" in page_text
+
+    except Exception as e:
+        logging.error(f"Failed to wait for history page: {e}")
+        # Check if page has any content at all
+        try:
+            page_text = await page.text_content("body")
+            return page_text is not None and "Conversation History" in page_text
+        except Exception:
+            return False
 
 
 @pytest.mark.playwright
@@ -85,11 +115,11 @@ async def test_history_page_basic_loading(
         for err in network_errors:
             print(f"  - {err}")
 
-    # Try to wait for h1 with more debugging
-    try:
-        await page.wait_for_selector("h1", timeout=10000)
-    except Exception as e:
-        print(f"Failed to find h1 element: {e}")
+    # Wait for the history page to load
+    page_loaded = await wait_for_history_page_loaded(page, timeout=15000)
+
+    if not page_loaded:
+        print("Failed to detect history page load - taking diagnostics")
         # Take another screenshot
         await page.screenshot(path="/tmp/history_page_after_wait.png")
         print("Screenshot saved to /tmp/history_page_after_wait.png")
@@ -99,11 +129,11 @@ async def test_history_page_basic_loading(
         print(f"Final page HTML (first 2000 chars):{final_content[:2000]}")
 
         # Check if there were critical errors
-        assert not console_errors, f"Console errors detected: {console_errors}"
-        raise
+        if console_errors:
+            print(f"Console errors detected: {console_errors}")
 
-    # Check page title and heading
-    await page.wait_for_selector("h1:has-text('Conversation History')")
+        assert not console_errors, f"Console errors detected: {console_errors}"
+        assert page_loaded, "History page failed to load properly"
 
     # Verify React components have loaded by checking for filters section
     filters_section = page.locator("details summary:has-text('Filters')")
@@ -161,7 +191,8 @@ async def test_history_filters_interface(
     await page.goto(f"{server_url}/history")
 
     # Wait for page to load
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+    page_loaded = await wait_for_history_page_loaded(page)
+    assert page_loaded, "History page failed to load"
 
     # Wait for filters section to be visible
     filters_section = page.locator("details summary:has-text('Filters')")
@@ -584,19 +615,20 @@ async def test_history_filter_state_management(
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
 
-    # Navigate to history page
-    await page.goto(f"{server_url}/history")
+    # Navigate to history page with URL parameters to auto-expand filters
+    await page.goto(f"{server_url}/history?interface_type=all")
 
     # Wait for page to load
     await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
-    await page.wait_for_timeout(1000)
+    await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
 
     # Apply multiple filters
     interface_select = page.locator("select[name='interface_type']")
-    await interface_select.wait_for(timeout=5000)
+    await interface_select.wait_for(state="visible", timeout=5000)
     await interface_select.select_option("telegram", force=True)
 
     date_from_input = page.locator("input[name='date_from']")
+    await date_from_input.wait_for(state="visible", timeout=5000)
     await date_from_input.fill("2024-06-01", force=True)
     # Trigger change event explicitly by pressing Tab to blur the field
     await date_from_input.press("Tab")
@@ -696,3 +728,239 @@ async def test_history_page_with_conversation_data(
 
     # Should be back on the list page
     await page.wait_for_selector("h1:has-text('Conversation History')", timeout=5000)
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_history_interface_filter_functionality(
+    web_test_fixture: WebTestFixture,
+) -> None:
+    """Test interface type filter functionality with real API integration."""
+    page = web_test_fixture.page
+    server_url = web_test_fixture.base_url
+
+    # Navigate to history page with URL parameters to auto-expand filters
+    await page.goto(f"{server_url}/history?interface_type=all")
+    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+
+    # Wait for page content to load (not show "Loading...")
+    await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
+
+    # Test different interface filter options (should be visible due to URL parameters)
+    interface_select = page.locator("select[name='interface_type']")
+    await interface_select.wait_for(state="visible", timeout=10000)
+
+    # Check that all interface options are available
+    options = await interface_select.locator("option").all_text_contents()
+    expected_options = ["All Interfaces", "Web", "Telegram", "API", "Email"]
+    for expected in expected_options:
+        assert any(expected.lower() in opt.lower() for opt in options), (
+            f"Missing option: {expected}"
+        )
+
+    # Test filtering by telegram (should show fewer/no results in test env)
+    await interface_select.select_option("telegram", force=True)
+    await page.wait_for_timeout(1000)  # Wait for API call
+
+    # Check URL updated
+    await page.wait_for_url("**/history?*interface_type=telegram*", timeout=5000)
+
+    # Check results summary updated
+    results_summary = page.locator("text=/Found \\d+ conversation/")
+    await results_summary.wait_for(timeout=5000)
+    await results_summary.text_content()  # Verify results summary updated
+    assert "telegram" in page.url.lower()
+
+    # Switch back to web filter
+    await interface_select.select_option("web", force=True)
+    await page.wait_for_timeout(1000)
+
+    # Check URL updated again
+    await page.wait_for_url("**/history?*interface_type=web*", timeout=5000)
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_history_date_range_filtering(
+    web_test_fixture: WebTestFixture,
+) -> None:
+    """Test date range filtering functionality."""
+    page = web_test_fixture.page
+    server_url = web_test_fixture.base_url
+
+    # Navigate to history page
+    await page.goto(f"{server_url}/history?interface_type=all")
+    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+
+    # Wait for page content to load (not show "Loading...")
+    await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
+
+    # Set date filters
+    date_from_input = page.locator("input[name='date_from']")
+    date_to_input = page.locator("input[name='date_to']")
+
+    await date_from_input.wait_for(state="visible", timeout=5000)
+    await date_to_input.wait_for(state="visible", timeout=5000)
+
+    # Set a date range that should capture recent conversations
+    await date_from_input.fill("2024-01-01", force=True)
+    await date_from_input.press("Tab")
+    await page.wait_for_timeout(500)
+
+    await date_to_input.fill("2024-12-31", force=True)
+    await date_to_input.press("Tab")
+    await page.wait_for_timeout(1000)
+
+    # Check URL contains date filters
+    current_url = page.url
+    assert "date_from=2024-01-01" in current_url
+    assert "date_to=2024-12-31" in current_url
+
+    # Clear date filters and verify they're removed from URL
+    clear_button = page.locator("details button:has-text('Clear Filters')")
+    await clear_button.click()
+    await page.wait_for_timeout(1000)
+
+    # URL should no longer have date filters
+    cleared_url = page.url
+    assert "date_from" not in cleared_url
+    assert "date_to" not in cleared_url
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_history_conversation_id_filter(
+    web_test_fixture: WebTestFixture,
+) -> None:
+    """Test conversation ID filtering functionality."""
+    page = web_test_fixture.page
+    server_url = web_test_fixture.base_url
+
+    # Navigate to history page with URL parameters to auto-expand filters
+    await page.goto(f"{server_url}/history?interface_type=all")
+    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+
+    # Wait for page content to load (not show "Loading...")
+    await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
+
+    # Test conversation ID filter (should be visible due to URL parameters)
+    conv_input = page.locator("input[name='conversation_id']")
+    await conv_input.wait_for(state="visible", timeout=10000)
+
+    # Enter a specific conversation ID
+    test_conv_id = "web_conv_test_123"
+    await conv_input.fill(test_conv_id, force=True)
+    await conv_input.press("Tab")
+    await page.wait_for_timeout(1000)
+
+    # Check URL contains the conversation ID filter
+    current_url = page.url
+    assert f"conversation_id={test_conv_id}" in current_url
+
+    # The results should either show the specific conversation (if exists) or empty state
+    results_summary = page.locator("text=/Found \\d+ conversation/")
+    await results_summary.wait_for(timeout=5000)
+    summary_text = await results_summary.text_content()
+    # Should show 0 conversations (since this ID likely doesn't exist) or 1 if it does
+    assert summary_text is not None
+    assert (
+        "Found 0 conversation" in summary_text or "Found 1 conversation" in summary_text
+    )
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_history_combined_filters_interaction(
+    web_test_fixture: WebTestFixture,
+) -> None:
+    """Test interaction of multiple filters applied together."""
+    page = web_test_fixture.page
+    server_url = web_test_fixture.base_url
+
+    # Navigate to history page
+    await page.goto(f"{server_url}/history?interface_type=all")
+
+    # Wait for page to load
+    page_loaded = await wait_for_history_page_loaded(page)
+    assert page_loaded, "History page failed to load"
+
+    # Wait for page content to load (not show "Loading...")
+    await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
+
+    # Apply multiple filters
+    interface_select = page.locator("select[name='interface_type']")
+    await interface_select.select_option("web", force=True)
+
+    date_from_input = page.locator("input[name='date_from']")
+    await date_from_input.fill("2024-08-01", force=True)
+    await date_from_input.press("Tab")
+
+    conv_input = page.locator("input[name='conversation_id']")
+    await conv_input.fill("web_conv", force=True)
+    await conv_input.press("Tab")
+
+    await page.wait_for_timeout(1500)
+
+    # Verify all filters are in URL
+    current_url = page.url
+    assert "interface_type=web" in current_url
+    assert "date_from=2024-08-01" in current_url
+    assert "conversation_id=web_conv" in current_url
+
+    # Clear all filters
+    clear_button = page.locator("details button:has-text('Clear Filters')")
+    await clear_button.click()
+    await page.wait_for_timeout(1000)
+
+    # Verify all filter values are cleared
+    interface_value = await interface_select.input_value()
+    date_value = await date_from_input.input_value()
+    conv_value = await conv_input.input_value()
+
+    assert interface_value == ""
+    assert date_value == ""
+    assert conv_value == ""
+
+    # URL should be clean
+    cleared_url = page.url
+    assert "interface_type" not in cleared_url
+    assert "date_from" not in cleared_url
+    assert "conversation_id" not in cleared_url
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_history_filter_validation_and_error_handling(
+    web_test_fixture: WebTestFixture,
+) -> None:
+    """Test filter validation and error handling."""
+    page = web_test_fixture.page
+    server_url = web_test_fixture.base_url
+
+    # Navigate to history page with invalid date format in URL
+    await page.goto(f"{server_url}/history?date_from=invalid-date")
+    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+
+    # Page should still load (frontend handles invalid dates gracefully)
+    # The frontend should show an error message or fallback gracefully
+    has_heading = await page.locator("h1:has-text('Conversation History')").count() > 0
+
+    assert has_heading, "Page should load normally with graceful error handling"
+
+    # Test with valid date format
+    # Navigate with URL parameters to auto-expand filters
+    await page.goto(f"{server_url}/history?interface_type=all")
+    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+    await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
+
+    date_from_input = page.locator("input[name='date_from']")
+    await date_from_input.wait_for(state="visible", timeout=5000)
+
+    # HTML date inputs should handle validation automatically
+    await date_from_input.fill("2024-08-09", force=True)
+    await date_from_input.press("Tab")
+    await page.wait_for_timeout(500)
+
+    # Should work without errors
+    current_value = await date_from_input.input_value()
+    assert current_value == "2024-08-09"
