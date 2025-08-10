@@ -104,6 +104,7 @@ jobs:
             -v ${{ github.workspace }}:/workspace \
             -e CLAUDE_PROJECT_REPO="" \
             -e UV_CACHE_DIR=/opt/uv-cache \
+            -e CI=true \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace && \
@@ -176,6 +177,7 @@ jobs:
             -e TEST_DATABASE_URL="postgresql://test:test@localhost:5432/test" \
             -e CLAUDE_PROJECT_REPO="" \
             -e UV_CACHE_DIR=/opt/uv-cache \
+            -e CI=true \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace && \

@@ -98,13 +98,32 @@ def build_frontend_assets() -> None:
     frontend_dir = Path(__file__).parent.parent.parent.parent / "frontend"
     dist_dir = frontend_dir.parent / "src" / "family_assistant" / "static" / "dist"
 
+    def log_dist_state(prefix: str) -> None:
+        """Helper to log dist directory state."""
+        print(f"\n=== {prefix}: Dist Directory State ===")
+        print(f"Path: {dist_dir}")
+        print(f"Exists: {dist_dir.exists()}")
+        if dist_dir.exists():
+            files = list(dist_dir.iterdir())
+            print(f"File count: {len(files)}")
+            # Check critical files
+            router_html = dist_dir / "router.html"
+            manifest = dist_dir / ".vite" / "manifest.json"
+            print(f"router.html: {'EXISTS' if router_html.exists() else 'MISSING'}")
+            print(f"manifest.json: {'EXISTS' if manifest.exists() else 'MISSING'}")
+            if not router_html.exists() or not manifest.exists():
+                # List what IS there if critical files are missing
+                print("Available files:")
+                for f in sorted(files)[:10]:
+                    print(f"  - {f.name}")
+
+    # Log initial state
+    log_dist_state("FIXTURE START")
+
     # Skip building in CI - assets are pre-built and copied in the CI workflow
     if os.getenv("CI") == "true":
         print("\n=== Skipping frontend build in CI (using pre-built assets) ===")
-        if dist_dir.exists() and any(dist_dir.iterdir()):
-            print(f"Frontend assets found at: {dist_dir}")
-        else:
-            print(f"WARNING: No frontend assets found at: {dist_dir}")
+        log_dist_state("CI CHECK")
         return
 
     print("\n=== Building frontend assets ===")
