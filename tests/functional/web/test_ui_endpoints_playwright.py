@@ -192,7 +192,7 @@ async def test_navigation_links_work(
             await base_page.navigate_to("/notes")
             await base_page.wait_for_load()
 
-            # Navigation links are always visible in the header, no need to reopen modal
+            # Navigation links were previously hidden in a modal; now they are always visible in the header, so we do not need to trigger any modal to access them during tests.
 
     # Assert no console errors throughout navigation
     console_error_checker.assert_no_errors()
