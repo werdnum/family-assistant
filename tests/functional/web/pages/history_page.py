@@ -40,8 +40,7 @@ class HistoryPage:
         Args:
             interface_type: The interface type to select (e.g., "web", "telegram", "api", "email")
         """
-        # Wait for the filters to be fully rendered
-        await self.page.wait_for_timeout(1000)
+        # Don't wait for details[open] - just check if filters are accessible
 
         # Try multiple selectors to find the interface type combobox
         # First try data-testid (if frontend was rebuilt)
@@ -83,8 +82,11 @@ class HistoryPage:
         if option:
             await option.click()
 
-        # Wait for the dropdown to close
-        await self.page.wait_for_timeout(500)
+        # Wait for the dropdown to close by checking the combobox is no longer expanded
+        await self.page.wait_for_function(
+            "() => !document.querySelector('[role=combobox][aria-expanded=true]')",
+            timeout=5000,
+        )
 
     async def get_interface_type_options(self) -> list[str]:
         """Get all available interface type options.
@@ -110,6 +112,12 @@ class HistoryPage:
 
         # Close dropdown by pressing Escape
         await self.page.keyboard.press("Escape")
+
+        # Wait for dropdown to close
+        await self.page.wait_for_function(
+            "() => !document.querySelector('[role=combobox][aria-expanded=true]')",
+            timeout=5000,
+        )
 
         return options
 
@@ -196,8 +204,11 @@ class HistoryPage:
         )
         if button:
             await button.click()
-            # Wait for the filter to be applied
-            await self.page.wait_for_timeout(1000)
+            # Wait for URL to update with new filter parameters
+            await self.page.wait_for_function(
+                "() => window.location.search.includes('interface_type') || window.location.search.includes('conversation_id')",
+                timeout=5000,
+            )
 
     async def clear_filters(self) -> None:
         """Click the Clear Filters button."""
@@ -206,8 +217,11 @@ class HistoryPage:
         )
         if button:
             await button.click()
-            # Wait for filters to clear
-            await self.page.wait_for_timeout(500)
+            # Wait for URL to be cleared of all filter params
+            await self.page.wait_for_function(
+                "() => window.location.search === '' || window.location.search === '?'",
+                timeout=5000,
+            )
 
     async def get_conversation_count(self) -> int:
         """Get the number of conversations displayed.
@@ -227,5 +241,8 @@ class HistoryPage:
         conversations = await self.page.query_selector_all(self.CONVERSATION_ITEM)
         if index < len(conversations):
             await conversations[index].click()
-            # Wait for navigation
-            await self.page.wait_for_timeout(1000)
+            # Wait for navigation to conversation detail
+            await self.page.wait_for_selector(
+                "h1:has-text('Conversation Details'), h1:has-text('Conversation History')",
+                timeout=5000,
+            )
