@@ -92,11 +92,20 @@ def vite_and_api_ports() -> tuple[int, int]:
     return 0, api_port  # Vite port is 0 since we're not using it
 
 
-@pytest.fixture(scope="module", autouse=True)
+@pytest.fixture(scope="session", autouse=True)
 def build_frontend_assets() -> None:
     """Build frontend assets before running web tests."""
     frontend_dir = Path(__file__).parent.parent.parent.parent / "frontend"
     dist_dir = frontend_dir.parent / "src" / "family_assistant" / "static" / "dist"
+
+    # Skip building in CI - assets are pre-built and copied in the CI workflow
+    if os.getenv("CI") == "true":
+        print("\n=== Skipping frontend build in CI (using pre-built assets) ===")
+        if dist_dir.exists() and any(dist_dir.iterdir()):
+            print(f"Frontend assets found at: {dist_dir}")
+        else:
+            print(f"WARNING: No frontend assets found at: {dist_dir}")
+        return
 
     print("\n=== Building frontend assets ===")
     print(f"Frontend directory: {frontend_dir}")
