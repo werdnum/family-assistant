@@ -344,10 +344,21 @@ async def web_test_fixture(
     page.on("response", log_response)
 
     _, api_port = vite_and_api_ports
+    base_url = f"http://localhost:{api_port}"
+
+    # WORKAROUND: Pre-load the router to avoid race conditions with dynamic imports
+    # The first test that navigates to a page with dynamic imports (like /history)
+    # can fail with 404 errors if the router hasn't fully initialized.
+    # This ensures the router and its import resolution is ready.
+    print("Pre-loading router to initialize dynamic import resolution...")
+    await page.goto(base_url)
+    await page.wait_for_load_state("networkidle", timeout=5000)
+    print("Router initialization complete")
+
     return WebTestFixture(
         assistant=web_only_assistant,
         page=page,
-        base_url=f"http://localhost:{api_port}",  # Direct to API server (serves built assets)
+        base_url=base_url,  # Direct to API server (serves built assets)
     )
 
 
