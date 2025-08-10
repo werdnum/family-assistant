@@ -1,5 +1,6 @@
 """Playwright-based functional tests for chat history React UI."""
 
+import logging
 from typing import Any
 
 import pytest
