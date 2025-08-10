@@ -28,7 +28,7 @@ async def wait_for_history_page_loaded(page: Page, timeout: int = 15000) -> bool
         return page_text is not None and "Conversation History" in page_text
 
     except Exception as e:
-        print(f"Failed to wait for history page: {e}")
+        logging.error(f"Failed to wait for history page: {e}")
         # Check if page has any content at all
         try:
             page_text = await page.text_content("body")
