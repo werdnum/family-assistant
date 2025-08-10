@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import './tools.css';
 
 // Global variable to cache the dynamic import promise
 let jsonEditorImportPromise = null;

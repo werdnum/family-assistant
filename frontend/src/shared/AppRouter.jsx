@@ -1,8 +1,8 @@
 import React, { useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import Layout from './Layout.tsx';
 
 // Lazy load all route components for code splitting
+const Layout = lazy(() => import('./Layout.tsx'));
 const ChatPage = lazy(() => import('../chat/ChatApp'));
 const ToolsApp = lazy(() => import('../tools/ToolsApp'));
 const ErrorsApp = lazy(() => import('../errors/ErrorsApp'));
@@ -45,6 +45,14 @@ const FallbackRedirect = () => {
   );
 };
 
+const withLayout = (element) => (
+  <Suspense fallback={<LoadingSpinner />}>
+    <Layout>
+      <Suspense fallback={<LoadingSpinner />}>{element}</Suspense>
+    </Layout>
+  </Suspense>
+);
+
 const AppRouter = () => {
   return (
     <BrowserRouter>
@@ -60,148 +68,40 @@ const AppRouter = () => {
         />
 
         {/* Tools routes */}
-        <Route
-          path="/tools"
-          element={
-            <Layout>
-              <Suspense fallback={<LoadingSpinner />}>
-                <ToolsApp />
-              </Suspense>
-            </Layout>
-          }
-        />
+        <Route path="/tools" element={withLayout(<ToolsApp />)} />
 
         {/* Errors routes */}
-        <Route
-          path="/errors/*"
-          element={
-            <Layout>
-              <Suspense fallback={<LoadingSpinner />}>
-                <ErrorsApp />
-              </Suspense>
-            </Layout>
-          }
-        />
+        <Route path="/errors/*" element={withLayout(<ErrorsApp />)} />
 
         {/* Context page (test conversion) */}
-        <Route
-          path="/context"
-          element={
-            <Layout>
-              <Suspense fallback={<LoadingSpinner />}>
-                <ContextPage />
-              </Suspense>
-            </Layout>
-          }
-        />
+        <Route path="/context" element={withLayout(<ContextPage />)} />
 
         {/* Notes routes */}
-        <Route
-          path="/notes/*"
-          element={
-            <Layout>
-              <Suspense fallback={<LoadingSpinner />}>
-                <NotesApp />
-              </Suspense>
-            </Layout>
-          }
-        />
+        <Route path="/notes/*" element={withLayout(<NotesApp />)} />
 
         {/* Tasks routes */}
-        <Route
-          path="/tasks/*"
-          element={
-            <Layout>
-              <Suspense fallback={<LoadingSpinner />}>
-                <TasksApp />
-              </Suspense>
-            </Layout>
-          }
-        />
+        <Route path="/tasks/*" element={withLayout(<TasksApp />)} />
 
         {/* Event Listeners routes */}
-        <Route
-          path="/event-listeners/*"
-          element={
-            <Layout>
-              <Suspense fallback={<LoadingSpinner />}>
-                <EventListenersApp />
-              </Suspense>
-            </Layout>
-          }
-        />
+        <Route path="/event-listeners/*" element={withLayout(<EventListenersApp />)} />
 
         {/* Events routes */}
-        <Route
-          path="/events/*"
-          element={
-            <Layout>
-              <Suspense fallback={<LoadingSpinner />}>
-                <EventsApp />
-              </Suspense>
-            </Layout>
-          }
-        />
+        <Route path="/events/*" element={withLayout(<EventsApp />)} />
 
         {/* History routes */}
-        <Route
-          path="/history/*"
-          element={
-            <Layout>
-              <Suspense fallback={<LoadingSpinner />}>
-                <HistoryApp />
-              </Suspense>
-            </Layout>
-          }
-        />
+        <Route path="/history/*" element={withLayout(<HistoryApp />)} />
 
         {/* Documentation routes */}
-        <Route
-          path="/docs/*"
-          element={
-            <Layout>
-              <Suspense fallback={<LoadingSpinner />}>
-                <DocumentationApp />
-              </Suspense>
-            </Layout>
-          }
-        />
+        <Route path="/docs/*" element={withLayout(<DocumentationApp />)} />
 
         {/* Settings routes */}
-        <Route
-          path="/settings/tokens"
-          element={
-            <Layout>
-              <Suspense fallback={<LoadingSpinner />}>
-                <TokenManagement />
-              </Suspense>
-            </Layout>
-          }
-        />
+        <Route path="/settings/tokens" element={withLayout(<TokenManagement />)} />
 
         {/* Documents routes */}
-        <Route
-          path="/documents/*"
-          element={
-            <Layout>
-              <Suspense fallback={<LoadingSpinner />}>
-                <DocumentsPage />
-              </Suspense>
-            </Layout>
-          }
-        />
+        <Route path="/documents/*" element={withLayout(<DocumentsPage />)} />
 
         {/* Vector Search routes */}
-        <Route
-          path="/vector-search/*"
-          element={
-            <Layout>
-              <Suspense fallback={<LoadingSpinner />}>
-                <VectorSearchPage />
-              </Suspense>
-            </Layout>
-          }
-        />
+        <Route path="/vector-search/*" element={withLayout(<VectorSearchPage />)} />
 
         {/* Default redirect to chat */}
         <Route path="/" element={<Navigate to="/chat" replace />} />

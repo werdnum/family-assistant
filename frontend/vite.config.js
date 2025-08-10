@@ -80,9 +80,9 @@ export default defineConfig(({ mode }) => ({
         'tool-test-bench': path.resolve(__dirname, 'tool-test-bench.html'),
       },
       output: {
-        // Manual chunks configuration to split vendor libraries
+        // Manual chunks configuration to avoid loading page-specific deps globally
         manualChunks: (id) => {
-          // Split node_modules into vendor chunks
+          // Let Rollup create chunks for node_modules when needed
           if (id.includes('node_modules')) {
             // DON'T manually chunk React - let it be included in the entry bundle
             // This ensures React is always available when the app starts
@@ -119,13 +119,18 @@ export default defineConfig(({ mode }) => ({
               return undefined;
             }
 
+            // Icon libraries - keep them with importing modules
+            if (id.includes('lucide-react')) {
+              return undefined;
+            }
+
             // Chat-specific UI components
             if (id.includes('@assistant-ui')) {
               return 'assistant-ui';
             }
 
-            // All other vendor libraries
-            return 'vendor';
+            // Let other dependencies stay with the importing chunk
+            return undefined;
           }
           // Keep app code in the default chunks
         },
