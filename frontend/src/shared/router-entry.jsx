@@ -5,8 +5,6 @@ import { ThemeProvider } from './ThemeProvider';
 
 // Import Tailwind CSS and custom styles
 import '../styles/globals.css';
-import '../tools/tools.css';
-import '../errors/errors.css';
 
 // Ensure the DOM is ready before mounting
 function mountApp() {

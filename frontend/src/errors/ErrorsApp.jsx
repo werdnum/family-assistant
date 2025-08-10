@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import ErrorsList from './components/ErrorsList';
 import ErrorDetail from './components/ErrorDetail';
+import './errors.css';
 
 const ErrorsApp = () => {
   // Set the page title
