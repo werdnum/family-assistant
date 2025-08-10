@@ -25,6 +25,40 @@
   align-items: start;
 }
 
+/* Mobile responsive design */
+@media (max-width: 768px) {
+  .container {
+    padding: 1rem;
+    max-width: 100vw;
+    box-sizing: border-box;
+    overflow-x: hidden;
+  }
+  
+  .formGrid {
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+  
+  .formGrid label {
+    padding-top: 0;
+    margin-bottom: 0.25rem;
+  }
+  
+  .fullWidth {
+    grid-column: 1;
+  }
+  
+  .filterRow {
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+  
+  .snippetDetailsContent span {
+    min-width: unset;
+    display: block;
+  }
+}
+
 .formGrid label {
   font-weight: 600;
   padding-top: 0.5rem;
@@ -312,3 +346,4 @@
   min-width: 120px;
   font-weight: 600;
 }
+

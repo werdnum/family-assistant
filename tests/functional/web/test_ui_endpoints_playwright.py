@@ -155,6 +155,12 @@ async def test_navigation_links_work(
     await base_page.navigate_to("/notes")
     await base_page.wait_for_load()
 
+    # Wait for the React app navigation bar to load - navigation links are directly visible
+    await page.wait_for_selector("nav a", timeout=10000)
+
+    # Wait for the page to finish network requests (notes might still be loading but nav should work)
+    await page.wait_for_load_state("networkidle", timeout=5000)
+
     # Find and test navigation links
     nav_links = await page.locator("nav a").all()
     assert len(nav_links) > 0, "No navigation links found"
@@ -185,6 +191,8 @@ async def test_navigation_links_work(
             # Go back to notes page for next test
             await base_page.navigate_to("/notes")
             await base_page.wait_for_load()
+
+            # Navigation links are always visible in the header, no need to reopen modal
 
     # Assert no console errors throughout navigation
     console_error_checker.assert_no_errors()

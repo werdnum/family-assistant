@@ -564,11 +564,12 @@ main pre {
     body {
         /* !important needed to override SimpleCSS specificity */
         grid-template-columns: 0 100% 0 !important; /* Use full width middle column on mobile */
-        margin: 0.5em !important;
+        margin: 0 !important; /* Remove all margins on mobile to prevent width calculation issues */
+        padding: 0.5rem !important; /* Use padding instead of margin for spacing */
         max-width: 100vw !important;
         box-sizing: border-box !important;
         overflow-x: hidden !important;
-        width: auto !important; /* Let it size naturally within the viewport */
+        width: 100vw !important; /* Force exact viewport width */
     }
     
     /* Make tables responsive on mobile - use stacking layout */
@@ -638,6 +639,7 @@ main pre {
     
     .filter-group {
         width: 100%;
+        min-width: unset;
     }
     
     .filter-actions {
