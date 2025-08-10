@@ -8,6 +8,7 @@ import pytest
 from family_assistant.storage.context import DatabaseContext
 
 from .conftest import WebTestFixture
+from .pages.events_page import EventsPage
 
 
 @pytest.mark.playwright
@@ -187,95 +188,37 @@ async def test_events_list_filters_interface(
     await page.goto(f"{server_url}/events")
     await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
 
-    # Wait for filters section to be visible
-    filters_section = page.locator("details summary:has-text('Filters')")
-    await filters_section.wait_for(state="visible", timeout=5000)
+    # Create page object
+    events_page = EventsPage(page, server_url)
 
-    # Check if details is already open by checking if select is visible
-    source_select = page.locator("select[name='source_id']")
-    is_visible = await source_select.is_visible()
-
-    if not is_visible:
-        # Click the summary to open the filters
-        await filters_section.click()
-        await page.wait_for_timeout(500)
-        # Wait for the select to become visible after opening
-        await source_select.wait_for(state="visible", timeout=5000)
+    # Open filters section
+    await events_page.open_filters()
 
     # Test source dropdown
-    await source_select.wait_for(state="visible", timeout=5000)
-    await source_select.select_option("home_assistant")
-    selected_value = await source_select.input_value()
+    await events_page.set_source_filter("home_assistant")
+    selected_value = await events_page.get_source_filter_value()
     assert selected_value == "home_assistant"
 
     # Test hours selector
-    hours_select = page.locator("select[name='hours']")
-    await hours_select.wait_for(timeout=5000)
-    await hours_select.select_option("6")
-    hours_value = await hours_select.input_value()
+    await events_page.set_hours_filter("6")
+    hours_value = await events_page.get_hours_filter_value()
     assert hours_value == "6"
 
-    # Test only triggered checkbox - use label click for better compatibility
-    checkbox_label = page.locator("label:has(input[name='only_triggered'])")
-    await checkbox_label.wait_for(state="visible", timeout=5000)
-
-    triggered_checkbox = page.locator("input[name='only_triggered']")
-    # Wait for the checkbox element to be present
-    await triggered_checkbox.wait_for(state="attached", timeout=5000)
-
-    # Check initial state
-    initial_state = await triggered_checkbox.is_checked()
-
-    # Click the label to toggle
-    await checkbox_label.click()
-
-    # Wait for the checkbox state to actually change using a safer approach
-    # that checks for element existence first
-    await page.wait_for_function(
-        f"""
-        () => {{
-            const checkbox = document.querySelector('input[name="only_triggered"]');
-            return checkbox && checkbox.checked === {str(not initial_state).lower()};
-        }}
-        """,
-        timeout=5000,
-    )
-
-    is_checked = await triggered_checkbox.is_checked()
+    # Test only triggered checkbox
+    initial_state = await events_page.get_only_triggered_filter_value()
+    await events_page.set_only_triggered_filter(not initial_state)
+    is_checked = await events_page.get_only_triggered_filter_value()
     assert is_checked is not initial_state  # Verify the state toggled
 
     # Test Clear Filters button
-    # First check if any button exists in the filters actions area
-    all_buttons = await page.query_selector_all(
-        ".filtersActions button, details button"
-    )
-    assert len(all_buttons) > 0, "No buttons found in filters section"
-
-    # Get button texts for debugging
-    button_texts = []
-    for btn in all_buttons:
-        text = await btn.text_content()
-        button_texts.append(text)
-
-    # Find Clear Filters button
-    clear_button = None
-    for btn in all_buttons:
-        text = await btn.text_content()
-        if text and "Clear" in text and "Filters" in text:
-            clear_button = btn
-            break
-
-    assert clear_button is not None, (
-        f"Clear Filters button not found. Found buttons: {button_texts}"
-    )
-    await clear_button.click()
+    await events_page.clear_filters()
 
     # Verify filters are cleared
-    source_value = await source_select.input_value()
-    hours_value_after = await hours_select.input_value()
-    is_checked_after = await triggered_checkbox.is_checked()
+    source_value = await events_page.get_source_filter_value()
+    hours_value_after = await events_page.get_hours_filter_value()
+    is_checked_after = await events_page.get_only_triggered_filter_value()
 
-    assert source_value == ""
+    assert source_value == "_all"  # Default value
     assert hours_value_after == "24"  # Default value
     assert is_checked_after is False
 
@@ -297,18 +240,20 @@ async def test_events_filters_url_state_management(
     # Wait for page to load
     await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
 
-    # Check that filter values are restored from URL
-    source_select = page.locator("select[name='source_id']")
-    await source_select.wait_for(timeout=5000)
-    selected_value = await source_select.input_value()
-    assert selected_value == "home_assistant"
+    # Create page object
+    events_page = EventsPage(page, server_url)
 
-    hours_select = page.locator("select[name='hours']")
-    hours_value = await hours_select.input_value()
+    # Open filters to see the values
+    await events_page.open_filters()
+
+    # Check that filter values are restored from URL
+    selected_source = await events_page.get_source_filter_value()
+    assert selected_source == "home_assistant"
+
+    hours_value = await events_page.get_hours_filter_value()
     assert hours_value == "6"
 
-    triggered_checkbox = page.locator("input[name='only_triggered']")
-    is_checked = await triggered_checkbox.is_checked()
+    is_checked = await events_page.get_only_triggered_filter_value()
     assert is_checked is True
 
     # Verify URL contains the filter parameters
@@ -332,13 +277,11 @@ async def test_events_filters_url_state_persistence_after_reload(
     await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
     await page.wait_for_timeout(1000)
 
-    # Apply filters
-    source_select = page.locator("select[name='source_id']")
-    await source_select.wait_for(timeout=5000)
-    await source_select.select_option("indexing")
-
-    hours_select = page.locator("select[name='hours']")
-    await hours_select.select_option("48")
+    # Create page object and apply filters
+    events_page = EventsPage(page, server_url)
+    await events_page.open_filters()
+    await events_page.set_source_filter("indexing")
+    await events_page.set_hours_filter("48")
 
     # Wait for URL to update
     await page.wait_for_timeout(1000)
@@ -352,9 +295,13 @@ async def test_events_filters_url_state_persistence_after_reload(
     await page.reload()
     await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
 
+    # Create page object for verification after reload
+    events_page = EventsPage(page, server_url)
+    await events_page.open_filters()
+
     # Check that filter values are restored after reload
-    source_value = await source_select.input_value()
-    hours_value = await hours_select.input_value()
+    source_value = await events_page.get_source_filter_value()
+    hours_value = await events_page.get_hours_filter_value()
 
     assert source_value == "indexing"
     assert hours_value == "48"
@@ -618,66 +565,30 @@ async def test_events_clear_filters_functionality(
     await page.goto(f"{server_url}/events")
     await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
 
-    # Wait for filters section to be visible
-    filters_section = page.locator("details summary:has-text('Filters')")
-    await filters_section.wait_for(state="visible", timeout=5000)
+    # Create page object
+    events_page = EventsPage(page, server_url)
 
-    # Check if details is already open by checking if select is visible
-    source_select = page.locator("select[name='source_id']")
-    is_visible = await source_select.is_visible()
-
-    if not is_visible:
-        # Click the summary to open the filters
-        await filters_section.click()
-        await page.wait_for_timeout(500)
-        # Wait for the select to become visible after opening
-        await source_select.wait_for(state="visible", timeout=5000)
-
-    # Apply multiple filters
-    await source_select.wait_for(state="visible", timeout=5000)
-    await source_select.select_option("home_assistant")
-
-    hours_select = page.locator("select[name='hours']")
-    await hours_select.select_option("1")
-
-    # Use label click for checkbox
-    checkbox_label = page.locator("label:has(input[name='only_triggered'])")
-    await checkbox_label.click()
+    # Open filters and apply multiple filters
+    await events_page.open_filters()
+    await events_page.set_source_filter("home_assistant")
+    await events_page.set_hours_filter("1")
+    await events_page.set_only_triggered_filter(True)
 
     # Wait for filters to be applied
     await page.wait_for_timeout(1000)
 
     # Clear filters using the clear button
-    # First check if any button exists in the filters actions area
-    all_buttons = await page.query_selector_all(
-        ".filtersActions button, details button"
-    )
-    assert len(all_buttons) > 0, "No buttons found in filters section"
+    await events_page.clear_filters()
 
-    # Find Clear Filters button
-    clear_button = None
-    for btn in all_buttons:
-        text = await btn.text_content()
-        if text and "Clear" in text and "Filters" in text:
-            clear_button = btn
-            break
-
-    assert clear_button is not None, "Clear Filters button not found"
-    await clear_button.click()
-
-    # Wait for filters to be cleared by checking the source select value
-    await page.wait_for_function(
-        "() => { const el = document.querySelector('select[name=\"source_id\"]'); return el && el.value === ''; }",
-        timeout=5000,
-    )
+    # Wait for filters to be cleared
+    await page.wait_for_timeout(500)
 
     # Verify all filters are cleared
-    source_value = await source_select.input_value()
-    hours_value = await hours_select.input_value()
-    triggered_checkbox = page.locator("input[name='only_triggered']")
-    is_checked = await triggered_checkbox.is_checked()
+    source_value = await events_page.get_source_filter_value()
+    hours_value = await events_page.get_hours_filter_value()
+    is_checked = await events_page.get_only_triggered_filter_value()
 
-    assert source_value == ""
+    assert source_value == "_all"
     assert hours_value == "24"
     assert is_checked is False
 
@@ -740,13 +651,17 @@ async def test_events_filter_changes_trigger_api_calls(
     await page.goto(f"{server_url}/events")
     await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
 
+    # Create page object
+    events_page = EventsPage(page, server_url)
+
+    # Open filters
+    await events_page.open_filters()
+
     # Clear existing requests
     api_requests.clear()
 
-    # Change a filter
-    source_select = page.locator("select[name='source_id']")
-    await source_select.wait_for(timeout=5000)
-    await source_select.select_option("home_assistant")
+    # Change a filter using the page object method
+    await events_page.set_source_filter("home_assistant")
 
     # Wait for API call
     await page.wait_for_timeout(2000)
