@@ -446,17 +446,49 @@ class MessageHistoryRepository(BaseRepository):
 
     async def get_conversation_summaries(
         self,
-        interface_type: str = "web",
+        interface_type: str | None = None,
         limit: int = 20,
         offset: int = 0,
+        conversation_id: str | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """
         Get conversation summaries with pagination, optimized for performance.
+
+        Args:
+            interface_type: Filter by interface type (None for all interfaces)
+            limit: Maximum number of conversations to return
+            offset: Number of conversations to skip for pagination
+            conversation_id: Filter by specific conversation ID
+            date_from: Filter conversations with messages after this date
+            date_to: Filter conversations with messages before this date
 
         Returns:
             Tuple of (summaries list, total count)
         """
         from sqlalchemy.sql import functions as func
+
+        # Build base conditions
+        base_conditions = []
+        base_conditions.append(message_history_table.c.role.in_(["user", "assistant"]))
+        base_conditions.append(message_history_table.c.content.isnot(None))
+
+        if interface_type:
+            base_conditions.append(
+                message_history_table.c.interface_type == interface_type
+            )
+
+        if conversation_id:
+            base_conditions.append(
+                message_history_table.c.conversation_id == conversation_id
+            )
+
+        if date_from:
+            base_conditions.append(message_history_table.c.timestamp >= date_from)
+
+        if date_to:
+            base_conditions.append(message_history_table.c.timestamp <= date_to)
 
         # Subquery to get the latest message id and count per conversation
         # We get the max internal_id within the max timestamp to handle timestamp collisions
@@ -465,11 +497,7 @@ class MessageHistoryRepository(BaseRepository):
                 message_history_table.c.conversation_id,
                 func.max(message_history_table.c.timestamp).label("max_timestamp"),
             )
-            .where(
-                message_history_table.c.interface_type == interface_type,
-                message_history_table.c.role.in_(["user", "assistant"]),
-                message_history_table.c.content.isnot(None),
-            )
+            .where(*base_conditions)
             .group_by(message_history_table.c.conversation_id)
             .subquery()
         )
@@ -490,25 +518,37 @@ class MessageHistoryRepository(BaseRepository):
                     message_history_table.c.timestamp == latest_msg_subq.c.max_timestamp
                 ),
             )
-            .where(
-                message_history_table.c.interface_type == interface_type,
-                message_history_table.c.role.in_(["user", "assistant"]),
-                message_history_table.c.content.isnot(None),
-            )
+            .where(*base_conditions)
             .group_by(message_history_table.c.conversation_id)
             .subquery()
         )
 
-        # Get message counts per conversation
+        # Get message counts per conversation (without content filter)
+        count_conditions = []
+        count_conditions.append(message_history_table.c.role.in_(["user", "assistant"]))
+
+        if interface_type:
+            count_conditions.append(
+                message_history_table.c.interface_type == interface_type
+            )
+
+        if conversation_id:
+            count_conditions.append(
+                message_history_table.c.conversation_id == conversation_id
+            )
+
+        if date_from:
+            count_conditions.append(message_history_table.c.timestamp >= date_from)
+
+        if date_to:
+            count_conditions.append(message_history_table.c.timestamp <= date_to)
+
         msg_count_subq = (
             select(
                 message_history_table.c.conversation_id,
                 func.count(message_history_table.c.internal_id).label("msg_count"),
             )
-            .where(
-                message_history_table.c.interface_type == interface_type,
-                message_history_table.c.role.in_(["user", "assistant"]),
-            )
+            .where(*count_conditions)
             .group_by(message_history_table.c.conversation_id)
             .subquery()
         )
@@ -519,6 +559,7 @@ class MessageHistoryRepository(BaseRepository):
                 message_history_table.c.conversation_id,
                 message_history_table.c.content,
                 message_history_table.c.timestamp,
+                message_history_table.c.interface_type,  # Include interface_type in results
                 msg_count_subq.c.msg_count.label("message_count"),
             )
             .join(
@@ -531,7 +572,6 @@ class MessageHistoryRepository(BaseRepository):
                 == msg_count_subq.c.conversation_id,
             )
             .where(
-                message_history_table.c.interface_type == interface_type,
                 message_history_table.c.content.isnot(None),
             )
             .order_by(message_history_table.c.timestamp.desc())
@@ -542,11 +582,7 @@ class MessageHistoryRepository(BaseRepository):
         # Count query - count conversations that have messages with content
         count_subquery = (
             select(message_history_table.c.conversation_id)
-            .where(
-                message_history_table.c.interface_type == interface_type,
-                message_history_table.c.role.in_(["user", "assistant"]),
-                message_history_table.c.content.isnot(None),
-            )
+            .where(*base_conditions)
             .distinct()
             .subquery()
         )
@@ -565,6 +601,7 @@ class MessageHistoryRepository(BaseRepository):
                 "last_message": row["content"][:100] if row["content"] else "",
                 "last_timestamp": row["timestamp"],
                 "message_count": row["message_count"],
+                "interface_type": row["interface_type"],  # Include interface_type
             })
 
         return summaries, total_count
