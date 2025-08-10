@@ -381,6 +381,98 @@ The project includes `tests/mocks/mock_llm.py` with:
   )
   ```
 
+### CI Debugging and Troubleshooting
+
+When CI tests fail, use these tools and techniques to debug issues efficiently.
+
+#### CI Status Monitoring
+
+```bash
+# View recent CI runs
+gh run list --limit 5
+
+# Check specific run status 
+gh run view <run-id>
+
+# Monitor CI run in real-time (tip: pipe to tail if output is too long)
+gh run watch <run-id>
+gh run watch <run-id> | tail -50
+
+# View failed job logs once run completes
+gh run view <run-id> --log-failed
+```
+
+#### Downloading and Analyzing Artifacts
+
+**First step when debugging: Download the JSON test report from artifacts**
+
+```bash
+# Download all artifacts from a CI run
+gh run download <run-id>
+
+# Download specific artifact (faster for large runs)
+gh run download <run-id> --name playwright-artifacts-sqlite-<run-id>
+gh run download <run-id> --name playwright-artifacts-postgres-<run-id>
+
+# List available artifacts
+gh run view <run-id> # Shows artifacts section at bottom
+```
+
+#### Artifact Contents
+
+**JSON Test Reports:**
+
+- `test-results/sqlite-report.json` - Detailed SQLite test results with timing and metadata
+- `test-results/postgres-report.json` - Detailed PostgreSQL test results
+- Include test names, outcomes, durations, and error details
+- Useful for analyzing patterns across test runs and understanding failures
+
+**Playwright Debugging Artifacts:**
+
+- `test-results/**/test-failed-*.png` - Screenshots at point of failure
+- `test-results/**/test-*.webm` - Videos of entire test execution
+- `test-results/**/trace.zip` - Detailed browser traces for step-by-step debugging
+- Located in subdirectories named after the failing test
+
+#### Debugging Workflow
+
+1. **Check CI status:** `gh run list --limit 5`
+2. **Download JSON report:** `gh run download <run-id> --name <artifact-name>`
+3. **Analyze test failures:** Open `*-report.json` to see detailed error messages
+4. **Review visual artifacts:** Check screenshots and videos for UI test failures
+5. **Use traces for deep debugging:** Open `trace.zip` in Playwright Trace Viewer
+
+#### Common Issues and Solutions
+
+**Frontend Build Failures:**
+
+- Check container build logs for frontend asset copying
+- Verify `router.html` and `.vite/manifest.json` are present in artifacts
+
+**Mobile Responsive Test Failures:**
+
+- Screenshots show actual vs. expected layout on mobile viewport
+- Check for horizontal scroll issues in 375px viewport
+
+**Navigation Test Failures:**
+
+- Videos show actual user interaction flow
+- Verify navigation elements are visible and clickable
+
+#### Playwright Artifacts in Detail
+
+When Playwright tests fail, these artifacts are automatically generated:
+
+- **Screenshots:** Capture the exact state when test failed
+- **Videos:** Show the complete test execution, helpful for understanding test flow
+- **Traces:** Comprehensive debugging data including:
+  - Network requests and responses
+  - Console logs and errors
+  - DOM snapshots at each step
+  - Action timeline with screenshots
+
+Open traces with: `npx playwright show-trace trace.zip`
+
 ### Running the Application
 
 ```bash

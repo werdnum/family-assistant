@@ -121,6 +121,7 @@ jobs:
               mkdir -p test-results && \
               .venv/bin/pytest -q --timeout=300 --db sqlite -m "not postgres" \
                 --screenshot=on --video=retain-on-failure --tracing=retain-on-failure \
+                --json-report --json-report-file=test-results/sqlite-report.json \
                 --output=test-results'
       - name: Upload Playwright test artifacts (SQLite)
         uses: actions/upload-artifact@v4
@@ -132,6 +133,16 @@ jobs:
             /tmp/history_page_*.png
           retention-days: 7
           if-no-files-found: ignore
+      - name: Output artifact info
+        if: always()
+        run: |
+          echo "🔍 Debug artifacts uploaded to: playwright-artifacts-sqlite-${{ github.run_id }}"
+          echo "📊 JSON test report: test-results/sqlite-report.json"
+          echo "📱 Screenshots: test-results/**/test-failed-*.png"
+          echo "🎥 Videos: test-results/**/test-*.webm"
+          echo "🕵️ Traces: test-results/**/trace.zip"
+          echo ""
+          echo "💡 Download with: gh run download ${{ github.run_id }} --name playwright-artifacts-sqlite-${{ github.run_id }}"
   test-postgres:
     needs: [prepare, build-devcontainer]
     runs-on: ubuntu-latest
@@ -182,6 +193,7 @@ jobs:
               mkdir -p test-results && \
               .venv/bin/pytest --postgres -q --timeout=300 \
                 --screenshot=on --video=retain-on-failure --tracing=retain-on-failure \
+                --json-report --json-report-file=test-results/postgres-report.json \
                 --output=test-results'
       - name: Upload Playwright test artifacts (PostgreSQL)
         uses: actions/upload-artifact@v4
@@ -193,6 +205,16 @@ jobs:
             /tmp/history_page_*.png
           retention-days: 7
           if-no-files-found: ignore
+      - name: Output artifact info
+        if: always()
+        run: |
+          echo "🔍 Debug artifacts uploaded to: playwright-artifacts-postgres-${{ github.run_id }}"
+          echo "📊 JSON test report: test-results/postgres-report.json"
+          echo "📱 Screenshots: test-results/**/test-failed-*.png"
+          echo "🎥 Videos: test-results/**/test-*.webm"
+          echo "🕵️ Traces: test-results/**/trace.zip"
+          echo ""
+          echo "💡 Download with: gh run download ${{ github.run_id }} --name playwright-artifacts-postgres-${{ github.run_id }}"
   # Require all test jobs to pass
   all-tests:
     needs: [lint, test-sqlite, test-postgres]
