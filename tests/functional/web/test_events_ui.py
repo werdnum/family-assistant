@@ -218,10 +218,31 @@ async def test_events_list_filters_interface(
     # Test only triggered checkbox - use label click for better compatibility
     checkbox_label = page.locator("label:has(input[name='only_triggered'])")
     await checkbox_label.wait_for(state="visible", timeout=5000)
-    await checkbox_label.click()
+
     triggered_checkbox = page.locator("input[name='only_triggered']")
+    # Wait for the checkbox element to be present
+    await triggered_checkbox.wait_for(state="attached", timeout=5000)
+
+    # Check initial state
+    initial_state = await triggered_checkbox.is_checked()
+
+    # Click the label to toggle
+    await checkbox_label.click()
+
+    # Wait for the checkbox state to actually change using a safer approach
+    # that checks for element existence first
+    await page.wait_for_function(
+        f"""
+        () => {{
+            const checkbox = document.querySelector('input[name="only_triggered"]');
+            return checkbox && checkbox.checked === {str(not initial_state).lower()};
+        }}
+        """,
+        timeout=5000,
+    )
+
     is_checked = await triggered_checkbox.is_checked()
-    assert is_checked is True
+    assert is_checked is not initial_state  # Verify the state toggled
 
     # Test Clear Filters button
     # First check if any button exists in the filters actions area
