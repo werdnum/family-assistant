@@ -10,6 +10,9 @@ from .base_page import BasePage
 class ChatPage(BasePage):
     """Page object for chat-related functionality."""
 
+    # Constants
+    ASSISTANT_LOADING_PLACEHOLDER = "..."
+
     # Selectors - Updated for shadcn/ui components
     SIDEBAR_TOGGLE = "button[aria-label='Toggle sidebar']"
     CHAT_INPUT = '[data-testid="chat-input"]'
@@ -289,12 +292,21 @@ class ChatPage(BasePage):
         if not await self.is_sidebar_open():
             await self.toggle_sidebar()
 
+        # Get current conversation ID before creating new chat
+        current_url = self.page.url
+
         new_chat_button = await self.page.wait_for_selector(self.NEW_CHAT_BUTTON)
         if new_chat_button:
             await new_chat_button.click()
+
+        # Wait for URL to change to new conversation
+        await self.page.wait_for_function(
+            f"window.location.href !== '{current_url}'", timeout=5000
+        )
+
         await self.wait_for_load()
-        # Give React time to update the state and cancel any active streams
-        await self.page.wait_for_timeout(1000)
+        # Additional small wait to ensure React state is fully updated
+        await self.page.wait_for_timeout(200)
 
     async def get_conversation_list(self) -> list[dict[str, Any]]:
         """Get the list of conversations from the sidebar.
@@ -431,6 +443,49 @@ class ChatPage(BasePage):
             await self.page.wait_for_selector(
                 self.LOADING_INDICATOR, state="hidden", timeout=1000
             )
+
+    async def wait_for_streaming_complete(self, timeout: int = 10000) -> None:
+        """Wait for any active streaming response to complete.
+
+        This checks for the absence of loading indicators and ensures
+        the assistant message is no longer updating.
+        """
+        # Wait for no typing indicator
+        await self.page.wait_for_function(
+            """() => {
+                const typingIndicator = document.querySelector('.typing-indicator');
+                return !typingIndicator;
+            }""",
+            timeout=timeout,
+        )
+
+        # Get the last assistant message content and wait for it to stabilize
+        start_time = time.time()
+        last_content = ""
+        stable_count = 0
+
+        while stable_count < 3:  # Need 3 consecutive checks with same content
+            # Check for timeout
+            if (time.time() - start_time) * 1000 > timeout:
+                raise TimeoutError(
+                    f"Timeout waiting for streaming to complete after {timeout}ms. "
+                    f"Last content: {last_content}"
+                )
+
+            await self.page.wait_for_timeout(200)
+            messages = await self.get_all_messages()
+            if messages and messages[-1]["role"] == "assistant":
+                current_content = messages[-1].get("content", "")
+                if (
+                    current_content == last_content
+                    and current_content != self.ASSISTANT_LOADING_PLACEHOLDER
+                ):
+                    stable_count += 1
+                else:
+                    stable_count = 0
+                    last_content = current_content
+            else:
+                break
 
     async def wait_for_conversation_saved(self, timeout: int = 20000) -> None:
         """Wait for conversation to be saved to backend by checking conversation list."""
