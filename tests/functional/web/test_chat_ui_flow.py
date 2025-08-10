@@ -173,6 +173,9 @@ async def test_conversation_persistence_and_switching(
     # Wait for conversation to be saved
     await chat_page.wait_for_conversation_saved()
 
+    # Ensure streaming has completely finished before switching conversations
+    await chat_page.page.wait_for_timeout(2000)
+
     # Create a new chat
     await chat_page.create_new_chat()
 

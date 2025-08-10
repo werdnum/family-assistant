@@ -293,8 +293,8 @@ class ChatPage(BasePage):
         if new_chat_button:
             await new_chat_button.click()
         await self.wait_for_load()
-        # Give React time to update the state
-        await self.page.wait_for_timeout(500)
+        # Give React time to update the state and cancel any active streams
+        await self.page.wait_for_timeout(1000)
 
     async def get_conversation_list(self) -> list[dict[str, Any]]:
         """Get the list of conversations from the sidebar.
