@@ -92,11 +92,39 @@ def vite_and_api_ports() -> tuple[int, int]:
     return 0, api_port  # Vite port is 0 since we're not using it
 
 
-@pytest.fixture(scope="module", autouse=True)
+@pytest.fixture(scope="session", autouse=True)
 def build_frontend_assets() -> None:
     """Build frontend assets before running web tests."""
     frontend_dir = Path(__file__).parent.parent.parent.parent / "frontend"
     dist_dir = frontend_dir.parent / "src" / "family_assistant" / "static" / "dist"
+
+    def log_dist_state(prefix: str) -> None:
+        """Helper to log dist directory state."""
+        print(f"\n=== {prefix}: Dist Directory State ===")
+        print(f"Path: {dist_dir}")
+        print(f"Exists: {dist_dir.exists()}")
+        if dist_dir.exists():
+            files = list(dist_dir.iterdir())
+            print(f"File count: {len(files)}")
+            # Check critical files
+            router_html = dist_dir / "router.html"
+            manifest = dist_dir / ".vite" / "manifest.json"
+            print(f"router.html: {'EXISTS' if router_html.exists() else 'MISSING'}")
+            print(f"manifest.json: {'EXISTS' if manifest.exists() else 'MISSING'}")
+            if not router_html.exists() or not manifest.exists():
+                # List what IS there if critical files are missing
+                print("Available files:")
+                for f in sorted(files)[:10]:
+                    print(f"  - {f.name}")
+
+    # Log initial state
+    log_dist_state("FIXTURE START")
+
+    # Skip building in CI - assets are pre-built and copied in the CI workflow
+    if os.getenv("CI") == "true":
+        print("\n=== Skipping frontend build in CI (using pre-built assets) ===")
+        log_dist_state("CI CHECK")
+        return
 
     print("\n=== Building frontend assets ===")
     print(f"Frontend directory: {frontend_dir}")
@@ -344,10 +372,46 @@ async def web_test_fixture(
     page.on("response", log_response)
 
     _, api_port = vite_and_api_ports
+    base_url = f"http://localhost:{api_port}"
+
+    # WORKAROUND: Pre-load the router to avoid race conditions with dynamic imports
+    # The first test that navigates to a page with dynamic imports (like /history or /docs)
+    # can fail with 404 errors if the router hasn't fully initialized.
+    # This ensures the router and its import resolution is ready.
+    print("Pre-loading router to initialize dynamic import resolution...")
+    await page.goto(base_url)
+    await page.wait_for_load_state("networkidle", timeout=5000)
+
+    # Pre-load critical dynamic imports that tests frequently navigate to
+    # This prevents "Failed to fetch" errors on first navigation
+    critical_routes = ["/docs", "/history", "/notes"]
+    for route in critical_routes:
+        print(f"Pre-loading route: {route}")
+        try:
+            await page.goto(f"{base_url}{route}")
+            # Wait for the route to load - use networkidle to ensure all resources are fetched
+            await page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception as e:
+            print(f"Warning: Failed to pre-load {route}: {e}")
+            # Continue with other routes even if one fails
+
+    # Return to root for a clean start
+    await page.goto(base_url)
+    await page.wait_for_load_state("networkidle", timeout=5000)
+
+    # TODO: Replace this sleep with a more deterministic wait condition
+    # The sleep is a workaround for dynamic import race conditions in Vite.
+    # Ideally, we should wait for a specific signal that all lazy-loaded
+    # components are ready, but Vite doesn't provide such a mechanism.
+    # This is only used in test setup, not in actual tests, so the
+    # performance impact is minimal (adds 1s to fixture setup, not per test).
+    await asyncio.sleep(1)
+    print("Router and dynamic imports initialization complete")
+
     return WebTestFixture(
         assistant=web_only_assistant,
         page=page,
-        base_url=f"http://localhost:{api_port}",  # Direct to API server (serves built assets)
+        base_url=base_url,  # Direct to API server (serves built assets)
     )
 
 

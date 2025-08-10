@@ -202,7 +202,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   }, []);
 
   // Initialize streaming hook
-  const { sendStreamingMessage, isStreaming } = useStreamingResponse({
+  const { sendStreamingMessage, cancelStream, isStreaming } = useStreamingResponse({
     onMessage: handleStreamingMessage,
     onError: handleStreamingError,
     onComplete: handleStreamingComplete,
@@ -326,6 +326,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
   // Handle conversation selection
   const handleConversationSelect = (convId: string) => {
+    // Cancel any active streaming before switching conversations
+    cancelStream();
+
     setConversationId(convId);
     localStorage.setItem('lastConversationId', convId);
     window.history.pushState({}, '', `/chat?conversation_id=${convId}`);
@@ -338,6 +341,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
   // Handle new chat creation
   const handleNewChat = () => {
+    // Cancel any active streaming before creating a new chat
+    cancelStream();
+
     const newConvId = `web_conv_${generateUUID()}`;
     setConversationId(newConvId);
     setMessages([]);

@@ -29,3 +29,4 @@ ci-artifacts/
 ci-artifacts-*/
 ci-artifacts-current/
 ci-artifacts-new/
+workspace-artifacts/

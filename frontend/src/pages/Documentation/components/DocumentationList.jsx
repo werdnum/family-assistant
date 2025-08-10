@@ -14,6 +14,7 @@ const DocumentationList = () => {
         setError(null);
 
         const response = await fetch('/api/documentation/');
+
         if (!response.ok) {
           throw new Error(`Failed to fetch documentation list: ${response.statusText}`);
         }
@@ -22,7 +23,12 @@ const DocumentationList = () => {
         setDocs(docsData);
       } catch (err) {
         console.error('Error fetching docs:', err);
-        setError(err.message);
+        // More detailed error message for debugging
+        if (err.name === 'TypeError' && err.message === 'Failed to fetch') {
+          setError('Unable to connect to server. Please try again.');
+        } else {
+          setError(err.message);
+        }
       } finally {
         setLoading(false);
       }

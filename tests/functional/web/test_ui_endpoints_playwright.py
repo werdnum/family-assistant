@@ -182,7 +182,7 @@ async def test_navigation_links_work(
                 # Wait for chat UI elements to be interactive
                 await page.wait_for_selector("main .flex.flex-1.flex-col", timeout=5000)
             else:
-                await base_page.wait_for_load()
+                await page.wait_for_load_state("networkidle", timeout=10000)
 
             # Verify we navigated somewhere
             current_url = page.url
@@ -190,7 +190,6 @@ async def test_navigation_links_work(
 
             # Go back to notes page for next test
             await base_page.navigate_to("/notes")
-            await base_page.wait_for_load()
 
             # Navigation links were previously hidden in a modal; now they are always visible in the header, so we do not need to trigger any modal to access them during tests.
 
