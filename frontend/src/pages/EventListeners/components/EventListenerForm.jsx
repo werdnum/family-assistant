@@ -1,6 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 const EventListenerForm = ({ isEdit, onSuccess, onCancel }) => {
   const { id } = useParams();
@@ -81,6 +95,28 @@ const EventListenerForm = ({ isEdit, onSuccess, onCancel }) => {
         [name]: null,
       });
     }
+  };
+
+  const handleSelectChange = (name, value) => {
+    setFormData({
+      ...formData,
+      [name]: value,
+    });
+
+    // Clear validation error for this field
+    if (validationErrors[name]) {
+      setValidationErrors({
+        ...validationErrors,
+        [name]: null,
+      });
+    }
+  };
+
+  const handleCheckboxChange = (name, checked) => {
+    setFormData({
+      ...formData,
+      [name]: checked,
+    });
   };
 
   const validateForm = () => {
@@ -203,336 +239,280 @@ const EventListenerForm = ({ isEdit, onSuccess, onCancel }) => {
   };
 
   if (loading && isEdit) {
-    return <div>Loading listener data...</div>;
+    return <div className="flex items-center justify-center p-8">Loading listener data...</div>;
   }
 
   return (
-    <div className="event-listener-form">
-      <h1>{isEdit ? `Edit Event Listener: ${formData.name}` : 'Create New Event Listener'}</h1>
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold">
+        {isEdit ? `Edit Event Listener: ${formData.name}` : 'Create New Event Listener'}
+      </h1>
 
       {error && (
-        <div className="error" style={{ marginBottom: '1rem' }}>
-          Error: {error}
-        </div>
+        <Alert variant="destructive">
+          <AlertDescription>Error: {error}</AlertDescription>
+        </Alert>
       )}
 
-      <form onSubmit={handleSubmit}>
-        {/* Basic Information */}
-        <div className="form-group">
-          <label htmlFor="name">Name *</label>
-          <input
-            type="text"
-            id="name"
-            name="name"
-            value={formData.name}
-            onChange={handleInputChange}
-            required
-          />
-          {validationErrors.name && <div className="validation-error">{validationErrors.name}</div>}
-        </div>
-
-        <div className="form-group">
-          <label htmlFor="description">Description</label>
-          <textarea
-            id="description"
-            name="description"
-            value={formData.description}
-            onChange={handleInputChange}
-            rows="3"
-          />
-        </div>
-
-        <div className="form-group">
-          <label htmlFor="source_id">Event Source</label>
-          <select
-            id="source_id"
-            name="source_id"
-            value={formData.source_id}
-            onChange={handleInputChange}
-          >
-            <option value="home_assistant">Home Assistant</option>
-            <option value="indexing">Document Indexing</option>
-            <option value="webhook">Webhook</option>
-          </select>
-        </div>
-
-        <div className="form-group">
-          <label htmlFor="action_type">Action Type</label>
-          {!isEdit ? (
-            <select
-              id="action_type"
-              name="action_type"
-              value={formData.action_type}
-              onChange={handleInputChange}
-            >
-              <option value="wake_llm">LLM Callback</option>
-              <option value="script">Script</option>
-            </select>
-          ) : (
-            <div
-              style={{
-                padding: '0.5rem',
-                backgroundColor: 'var(--bg-secondary)',
-                borderRadius: '4px',
-              }}
-            >
-              <strong>{formData.action_type === 'wake_llm' ? 'LLM Callback' : 'Script'}</strong>
-            </div>
-          )}
-          <div className="help-text">
-            {!isEdit
-              ? 'Choose how the listener responds to events'
-              : 'Action type cannot be changed after creation'}
-          </div>
-        </div>
-
-        {/* Trigger Conditions */}
-        <div className="form-group">
-          <label>Trigger Conditions</label>
-          <div style={{ marginBottom: '1rem' }}>
-            <input
-              type="radio"
-              id="conditions-json"
-              name="condition_type"
-              value="json"
-              checked={formData.condition_type === 'json'}
-              onChange={handleInputChange}
-            />
-            <label
-              htmlFor="conditions-json"
-              style={{ display: 'inline', marginLeft: '0.5rem', fontWeight: 'normal' }}
-            >
-              JSON Match Conditions
-            </label>
-          </div>
-          <div style={{ marginBottom: '1rem' }}>
-            <input
-              type="radio"
-              id="conditions-script"
-              name="condition_type"
-              value="script"
-              checked={formData.condition_type === 'script'}
-              onChange={handleInputChange}
-            />
-            <label
-              htmlFor="conditions-script"
-              style={{ display: 'inline', marginLeft: '0.5rem', fontWeight: 'normal' }}
-            >
-              Starlark Condition Script
-            </label>
-          </div>
-
-          {formData.condition_type === 'json' ? (
-            <div>
-              <textarea
-                name="match_conditions"
-                value={formData.match_conditions}
+      <Card>
+        <CardHeader>
+          <CardTitle>Event Listener Configuration</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Basic Information */}
+            <div className="space-y-2">
+              <Label htmlFor="name">Name *</Label>
+              <Input
+                id="name"
+                name="name"
+                value={formData.name}
                 onChange={handleInputChange}
-                rows="6"
-                placeholder={'{\n  "entity_id": "sensor.example",\n  "new_state.state": "on"\n}'}
-                style={{ fontFamily: 'monospace' }}
+                required
               />
-              {validationErrors.match_conditions && (
-                <div className="validation-error">{validationErrors.match_conditions}</div>
+              {validationErrors.name && (
+                <Alert variant="destructive" className="mt-2">
+                  <AlertDescription>{validationErrors.name}</AlertDescription>
+                </Alert>
               )}
-              <div className="help-text">
-                Define when this listener should trigger. Common fields: entity_id, new_state.state,
-                document_type
-              </div>
             </div>
-          ) : (
-            <div>
-              <textarea
-                name="condition_script"
-                value={formData.condition_script}
-                onChange={handleInputChange}
-                rows="6"
-                placeholder="# Return True to trigger the listener\nreturn event.get('entity_id') == 'sensor.example'"
-                style={{ fontFamily: 'monospace' }}
-              />
-              <div className="help-text">
-                Starlark script that returns True/False to determine if the listener should trigger.
-                The 'event' variable contains the event data.
-              </div>
-            </div>
-          )}
-        </div>
 
-        {/* Script Fields */}
-        {formData.action_type === 'script' && (
-          <>
-            <div className="form-group">
-              <label htmlFor="script_code">Script Code *</label>
-              <textarea
-                id="script_code"
-                name="script_code"
-                value={formData.script_code}
+            <div className="space-y-2">
+              <Label htmlFor="description">Description</Label>
+              <Textarea
+                id="description"
+                name="description"
+                value={formData.description}
                 onChange={handleInputChange}
-                rows="10"
-                style={{ fontFamily: 'monospace' }}
-                placeholder="# Starlark script to execute when triggered\nprint('Event triggered:', event)"
+                rows={3}
+                placeholder="Optional description for this event listener"
               />
-              {validationErrors.script_code && (
-                <div className="validation-error">{validationErrors.script_code}</div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="source_id">Event Source</Label>
+              <Select
+                value={formData.source_id}
+                onValueChange={(value) => handleSelectChange('source_id', value)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="home_assistant">Home Assistant</SelectItem>
+                  <SelectItem value="indexing">Document Indexing</SelectItem>
+                  <SelectItem value="webhook">Webhook</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="action_type">Action Type</Label>
+              {!isEdit ? (
+                <Select
+                  value={formData.action_type}
+                  onValueChange={(value) => handleSelectChange('action_type', value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="wake_llm">LLM Callback</SelectItem>
+                    <SelectItem value="script">Script</SelectItem>
+                  </SelectContent>
+                </Select>
+              ) : (
+                <div className="px-3 py-2 bg-muted rounded-md">
+                  <strong>{formData.action_type === 'wake_llm' ? 'LLM Callback' : 'Script'}</strong>
+                </div>
               )}
-              <div className="help-text">
-                Starlark script that will execute when the listener is triggered
-              </div>
+              <p className="text-sm text-muted-foreground">
+                {!isEdit
+                  ? 'Choose how the listener responds to events'
+                  : 'Action type cannot be changed after creation'}
+              </p>
             </div>
 
-            <div className="form-group">
-              <label htmlFor="timeout">Timeout (seconds)</label>
-              <input
-                type="number"
-                id="timeout"
-                name="timeout"
-                value={formData.timeout}
-                onChange={handleInputChange}
-                min="1"
-                max="900"
-              />
-              <div className="help-text">Maximum execution time for the script</div>
-            </div>
-          </>
-        )}
+            {/* Trigger Conditions */}
+            <div className="space-y-4">
+              <Label>Trigger Conditions</Label>
+              <RadioGroup
+                value={formData.condition_type}
+                onValueChange={(value) => handleSelectChange('condition_type', value)}
+                className="space-y-3"
+              >
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="json" id="conditions-json" />
+                  <Label htmlFor="conditions-json" className="font-normal">
+                    JSON Match Conditions
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="script" id="conditions-script" />
+                  <Label htmlFor="conditions-script" className="font-normal">
+                    Starlark Condition Script
+                  </Label>
+                </div>
+              </RadioGroup>
 
-        {/* LLM Fields */}
-        {formData.action_type === 'wake_llm' && (
-          <>
-            <div className="form-group">
-              <label htmlFor="llm_callback_prompt">LLM Callback Prompt</label>
-              <textarea
-                id="llm_callback_prompt"
-                name="llm_callback_prompt"
-                value={formData.llm_callback_prompt}
-                onChange={handleInputChange}
-                rows="3"
-                placeholder="Optional custom prompt for the LLM response"
-              />
-              <div className="help-text">
-                Optional custom prompt. If not provided, default prompt will be used.
-              </div>
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="action_parameters">Action Parameters (JSON)</label>
-              <textarea
-                id="action_parameters"
-                name="action_parameters"
-                value={formData.action_parameters}
-                onChange={handleInputChange}
-                rows="4"
-                style={{ fontFamily: 'monospace' }}
-                placeholder={'{\n  "tools": ["search_notes", "send_message"]\n}'}
-              />
-              {validationErrors.action_parameters && (
-                <div className="validation-error">{validationErrors.action_parameters}</div>
+              {formData.condition_type === 'json' ? (
+                <div className="space-y-2">
+                  <Textarea
+                    name="match_conditions"
+                    value={formData.match_conditions}
+                    onChange={handleInputChange}
+                    rows={6}
+                    placeholder='{\n  "entity_id": "sensor.example",\n  "new_state.state": "on"\n}'
+                    className="font-mono"
+                  />
+                  {validationErrors.match_conditions && (
+                    <Alert variant="destructive">
+                      <AlertDescription>{validationErrors.match_conditions}</AlertDescription>
+                    </Alert>
+                  )}
+                  <p className="text-sm text-muted-foreground">
+                    Define when this listener should trigger. Common fields: entity_id,
+                    new_state.state, document_type
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Textarea
+                    name="condition_script"
+                    value={formData.condition_script}
+                    onChange={handleInputChange}
+                    rows={6}
+                    placeholder="# Return True to trigger the listener\nreturn event.get('entity_id') == 'sensor.example'"
+                    className="font-mono"
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    Starlark script that returns True/False to determine if the listener should
+                    trigger. The 'event' variable contains the event data.
+                  </p>
+                </div>
               )}
-              <div className="help-text">
-                Configure how the LLM responds. Common fields: tools (array of tool names)
+            </div>
+
+            {/* Script Fields */}
+            {formData.action_type === 'script' && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="script_code">Script Code *</Label>
+                  <Textarea
+                    id="script_code"
+                    name="script_code"
+                    value={formData.script_code}
+                    onChange={handleInputChange}
+                    rows={10}
+                    className="font-mono"
+                    placeholder="# Starlark script to execute when triggered\nprint('Event triggered:', event)"
+                  />
+                  {validationErrors.script_code && (
+                    <Alert variant="destructive">
+                      <AlertDescription>{validationErrors.script_code}</AlertDescription>
+                    </Alert>
+                  )}
+                  <p className="text-sm text-muted-foreground">
+                    Starlark script that will execute when the listener is triggered
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="timeout">Timeout (seconds)</Label>
+                  <Input
+                    type="number"
+                    id="timeout"
+                    name="timeout"
+                    value={formData.timeout}
+                    onChange={handleInputChange}
+                    min={1}
+                    max={900}
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    Maximum execution time for the script
+                  </p>
+                </div>
+              </>
+            )}
+
+            {/* LLM Fields */}
+            {formData.action_type === 'wake_llm' && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="llm_callback_prompt">LLM Callback Prompt</Label>
+                  <Textarea
+                    id="llm_callback_prompt"
+                    name="llm_callback_prompt"
+                    value={formData.llm_callback_prompt}
+                    onChange={handleInputChange}
+                    rows={3}
+                    placeholder="Optional custom prompt for the LLM response"
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    Optional custom prompt. If not provided, default prompt will be used.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="action_parameters">Action Parameters (JSON)</Label>
+                  <Textarea
+                    id="action_parameters"
+                    name="action_parameters"
+                    value={formData.action_parameters}
+                    onChange={handleInputChange}
+                    rows={4}
+                    className="font-mono"
+                    placeholder='{\n  "tools": ["search_notes", "send_message"]\n}'
+                  />
+                  {validationErrors.action_parameters && (
+                    <Alert variant="destructive">
+                      <AlertDescription>{validationErrors.action_parameters}</AlertDescription>
+                    </Alert>
+                  )}
+                  <p className="text-sm text-muted-foreground">
+                    Configure how the LLM responds. Common fields: tools (array of tool names)
+                  </p>
+                </div>
+              </>
+            )}
+
+            {/* Checkboxes */}
+            <div className="space-y-4">
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="one_time"
+                  checked={formData.one_time}
+                  onCheckedChange={(checked) => handleCheckboxChange('one_time', checked)}
+                />
+                <Label htmlFor="one_time" className="font-normal">
+                  One-time listener (auto-disable after first trigger)
+                </Label>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="enabled"
+                  checked={formData.enabled}
+                  onCheckedChange={(checked) => handleCheckboxChange('enabled', checked)}
+                />
+                <Label htmlFor="enabled" className="font-normal">
+                  Enabled
+                </Label>
               </div>
             </div>
-          </>
-        )}
 
-        {/* Checkboxes */}
-        <div className="checkbox-group">
-          <input
-            type="checkbox"
-            id="one_time"
-            name="one_time"
-            checked={formData.one_time}
-            onChange={handleInputChange}
-          />
-          <label htmlFor="one_time">One-time listener (auto-disable after first trigger)</label>
-        </div>
-
-        <div className="checkbox-group">
-          <input
-            type="checkbox"
-            id="enabled"
-            name="enabled"
-            checked={formData.enabled}
-            onChange={handleInputChange}
-          />
-          <label htmlFor="enabled">Enabled</label>
-        </div>
-
-        {/* Actions */}
-        <div className="form-actions">
-          <Button type="submit" disabled={loading}>
-            {loading ? 'Saving...' : isEdit ? 'Save Changes' : 'Create Listener'}
-          </Button>
-          <Button type="button" variant="secondary" onClick={handleCancel}>
-            Cancel
-          </Button>
-        </div>
-      </form>
-
-      <style jsx>{`
-        .form-group {
-          margin-bottom: 1.5rem;
-        }
-
-        .form-group label {
-          display: block;
-          font-weight: bold;
-          margin-bottom: 0.5rem;
-        }
-
-        .form-group input[type="text"],
-        .form-group textarea,
-        .form-group input[type="number"],
-        .form-group select {
-          width: 100%;
-          padding: 0.5rem;
-          border: 1px solid var(--border);
-          border-radius: 4px;
-          background-color: var(--bg);
-          color: var(--text);
-        }
-
-        .form-group textarea {
-          min-height: 100px;
-          resize: vertical;
-        }
-
-        .checkbox-group {
-          margin: 1rem 0;
-        }
-
-        .checkbox-group label {
-          display: inline;
-          font-weight: normal;
-          margin-left: 0.5rem;
-        }
-
-        .form-actions {
-          margin-top: 2rem;
-          display: flex;
-          gap: 1rem;
-        }
-
-        .help-text {
-          font-size: 0.9em;
-          color: var(--text-light);
-          margin-top: 0.25rem;
-        }
-
-        .validation-error {
-          color: red;
-          margin-top: 0.5rem;
-          font-weight: bold;
-        }
-
-        .error {
-          color: red;
-          background-color: var(--bg-error);
-          padding: 1rem;
-          border-radius: 4px;
-          border: 1px solid red;
-        }
-      `}</style>
+            {/* Actions */}
+            <div className="flex gap-4 pt-6">
+              <Button type="submit" disabled={loading}>
+                {loading ? 'Saving...' : isEdit ? 'Save Changes' : 'Create Listener'}
+              </Button>
+              <Button type="button" variant="secondary" onClick={handleCancel}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 };

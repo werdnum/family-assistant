@@ -1,5 +1,14 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import styles from './HistoryFilters.module.css';
 
 const HistoryFilters = ({ filters, onFiltersChange, onClearFilters, loading = false }) => {
@@ -51,25 +60,30 @@ const HistoryFilters = ({ filters, onFiltersChange, onClearFilters, loading = fa
 
         <div className={styles.filtersGrid}>
           <div className={styles.filterGroup}>
-            <label htmlFor="interface_type">Interface Type:</label>
-            <select
-              name="interface_type"
-              id="interface_type"
-              value={filters.interface_type || ''}
-              onChange={(e) => handleFilterChange('interface_type', e.target.value)}
+            <Label htmlFor="interface_type">Interface Type</Label>
+            <Select
+              value={filters.interface_type || '_all'}
+              onValueChange={(value) =>
+                handleFilterChange('interface_type', value === '_all' ? '' : value)
+              }
               disabled={loading}
             >
-              <option value="">All Interfaces</option>
-              <option value="web">Web</option>
-              <option value="telegram">Telegram</option>
-              <option value="api">API</option>
-              <option value="email">Email</option>
-            </select>
+              <SelectTrigger data-testid="interface-type-select">
+                <SelectValue placeholder="All Interfaces" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="_all">All Interfaces</SelectItem>
+                <SelectItem value="web">Web</SelectItem>
+                <SelectItem value="telegram">Telegram</SelectItem>
+                <SelectItem value="api">API</SelectItem>
+                <SelectItem value="email">Email</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <div className={styles.filterGroup}>
-            <label htmlFor="conversation_id">Conversation ID:</label>
-            <input
+            <Label htmlFor="conversation_id">Conversation ID</Label>
+            <Input
               type="text"
               name="conversation_id"
               id="conversation_id"
@@ -77,13 +91,12 @@ const HistoryFilters = ({ filters, onFiltersChange, onClearFilters, loading = fa
               onChange={(e) => handleFilterChange('conversation_id', e.target.value)}
               disabled={loading}
               placeholder="Enter conversation ID (e.g., web_conv_...)"
-              className={styles.textInput}
             />
           </div>
 
           <div className={styles.filterGroup}>
-            <label htmlFor="date_from">From Date:</label>
-            <input
+            <Label htmlFor="date_from">From Date</Label>
+            <Input
               type="date"
               name="date_from"
               id="date_from"
@@ -94,8 +107,8 @@ const HistoryFilters = ({ filters, onFiltersChange, onClearFilters, loading = fa
           </div>
 
           <div className={styles.filterGroup}>
-            <label htmlFor="date_to">To Date:</label>
-            <input
+            <Label htmlFor="date_to">To Date</Label>
+            <Input
               type="date"
               name="date_to"
               id="date_to"

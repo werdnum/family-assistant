@@ -1,6 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Card, CardContent } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import styles from './VectorSearch.module.css';
 
 const VectorSearch = () => {
@@ -185,148 +198,193 @@ const VectorSearch = () => {
         <h1>Vector Search</h1>
       </div>
 
-      <form className={styles.searchForm} onSubmit={handleSearch}>
-        <div className={styles.formGrid}>
-          <label htmlFor="query_text">Search Query:</label>
-          <textarea
-            id="query_text"
-            name="query_text"
-            className={styles.searchInput}
-            placeholder="Describe what you're looking for..."
-            value={searchParams.query_text}
-            onChange={handleInputChange}
-            rows={3}
-          />
-
-          <label htmlFor="limit">Result Limit:</label>
-          <input
-            type="number"
-            id="limit"
-            name="limit"
-            className={styles.limitInput}
-            value={searchParams.limit}
-            onChange={handleInputChange}
-            min="1"
-            max="100"
-          />
-
-          <label className={styles.fullWidth}>Filter by Source Type:</label>
-          <div className={`${styles.checkboxGroup} ${styles.fullWidth}`}>
-            {availableOptions.source_types.map((type) => (
-              <label key={type}>
-                <input
-                  type="checkbox"
-                  checked={searchParams.filters.source_types.includes(type)}
-                  onChange={(e) => handleCheckboxChange('source_types', type, e.target.checked)}
+      <Card className="mb-6">
+        <CardContent className="pt-6">
+          <form className={styles.searchForm} onSubmit={handleSearch}>
+            <div className="grid gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="query_text">Search Query</Label>
+                <Textarea
+                  id="query_text"
+                  name="query_text"
+                  placeholder="Describe what you're looking for..."
+                  value={searchParams.query_text}
+                  onChange={handleInputChange}
+                  rows={3}
                 />
-                {type}
-              </label>
-            ))}
-          </div>
+              </div>
 
-          <label htmlFor="title_like">Title Contains:</label>
-          <input
-            type="text"
-            id="title_like"
-            name="filters.title_like"
-            className={styles.textInput}
-            placeholder="Filter by title..."
-            value={searchParams.filters.title_like}
-            onChange={handleInputChange}
-          />
+              <div className="space-y-2">
+                <Label htmlFor="limit">Result Limit</Label>
+                <Input
+                  type="number"
+                  id="limit"
+                  name="limit"
+                  value={searchParams.limit}
+                  onChange={handleInputChange}
+                  min="1"
+                  max="100"
+                />
+              </div>
 
-          <label htmlFor="created_after">Created After:</label>
-          <input
-            type="date"
-            id="created_after"
-            name="filters.created_after"
-            className={styles.dateInput}
-            value={searchParams.filters.created_after}
-            onChange={handleInputChange}
-          />
-
-          <label htmlFor="created_before">Created Before:</label>
-          <input
-            type="date"
-            id="created_before"
-            name="filters.created_before"
-            className={styles.dateInput}
-            value={searchParams.filters.created_before}
-            onChange={handleInputChange}
-          />
-
-          <div className={styles.fullWidth}>
-            <details className={styles.advancedOptions} open={advancedMode}>
-              <summary onClick={() => setAdvancedMode(!advancedMode)}>Advanced Options</summary>
-              <div className={styles.advancedContent}>
-                <div className={styles.formGrid}>
-                  <label className={styles.fullWidth}>Filter by Embedding Type:</label>
-                  <div className={`${styles.checkboxGroup} ${styles.fullWidth}`}>
-                    {availableOptions.types.map((type) => (
-                      <label key={type}>
-                        <input
-                          type="checkbox"
-                          checked={searchParams.filters.embedding_types.includes(type)}
-                          onChange={(e) =>
-                            handleCheckboxChange('embedding_types', type, e.target.checked)
-                          }
-                        />
+              <div className="space-y-2">
+                <Label>Filter by Source Type</Label>
+                <div className="flex flex-wrap gap-4">
+                  {availableOptions.source_types.map((type) => (
+                    <div key={type} className="flex items-center space-x-2">
+                      <Checkbox
+                        id={`source_type_${type}`}
+                        checked={searchParams.filters.source_types.includes(type)}
+                        onCheckedChange={(checked) =>
+                          handleCheckboxChange('source_types', type, checked)
+                        }
+                      />
+                      <Label
+                        htmlFor={`source_type_${type}`}
+                        className="text-sm font-normal cursor-pointer"
+                      >
                         {type}
-                      </label>
-                    ))}
-                  </div>
-
-                  <label className={styles.fullWidth}>Metadata Filters:</label>
-                  <div className={`${styles.metadataFilters} ${styles.fullWidth}`}>
-                    {metadataFilterRows.map((row) => (
-                      <div key={row.id} className={styles.filterRow}>
-                        <select
-                          className={styles.filterSelect}
-                          value={row.key}
-                          onChange={(e) => updateMetadataFilter(row.id, 'key', e.target.value)}
-                        >
-                          <option value="">-- Select Key --</option>
-                          {availableOptions.metadata_keys.map((key) => (
-                            <option key={key} value={key}>
-                              {key}
-                            </option>
-                          ))}
-                        </select>
-                        <input
-                          type="text"
-                          className={styles.filterInput}
-                          placeholder="Value"
-                          value={row.value}
-                          onChange={(e) => updateMetadataFilter(row.id, 'value', e.target.value)}
-                        />
-                        <Button
-                          type="button"
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => removeMetadataFilter(row.id)}
-                        >
-                          Remove
-                        </Button>
-                      </div>
-                    ))}
-                    <Button type="button" variant="secondary" onClick={addMetadataFilter}>
-                      Add Metadata Filter
-                    </Button>
-                  </div>
+                      </Label>
+                    </div>
+                  ))}
                 </div>
               </div>
-            </details>
-          </div>
 
-          <Button type="submit" className={styles.fullWidth} disabled={loading}>
-            {loading ? 'Searching...' : 'Search'}
-          </Button>
-        </div>
-      </form>
+              <div className="space-y-2">
+                <Label htmlFor="title_like">Title Contains</Label>
+                <Input
+                  type="text"
+                  id="title_like"
+                  name="filters.title_like"
+                  placeholder="Filter by title..."
+                  value={searchParams.filters.title_like}
+                  onChange={handleInputChange}
+                />
+              </div>
 
-      {error && <div className={styles.error}>Error: {error}</div>}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="created_after">Created After</Label>
+                  <Input
+                    type="date"
+                    id="created_after"
+                    name="filters.created_after"
+                    value={searchParams.filters.created_after}
+                    onChange={handleInputChange}
+                  />
+                </div>
 
-      {loading && <div className={styles.loading}>Searching...</div>}
+                <div className="space-y-2">
+                  <Label htmlFor="created_before">Created Before</Label>
+                  <Input
+                    type="date"
+                    id="created_before"
+                    name="filters.created_before"
+                    value={searchParams.filters.created_before}
+                    onChange={handleInputChange}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <details className={styles.advancedOptions} open={advancedMode}>
+                  <summary onClick={() => setAdvancedMode(!advancedMode)}>Advanced Options</summary>
+                  <div className="space-y-4 mt-4">
+                    <div className="space-y-2">
+                      <Label>Filter by Embedding Type</Label>
+                      <div className="flex flex-wrap gap-4">
+                        {availableOptions.types.map((type) => (
+                          <div key={type} className="flex items-center space-x-2">
+                            <Checkbox
+                              id={`embedding_type_${type}`}
+                              checked={searchParams.filters.embedding_types.includes(type)}
+                              onCheckedChange={(checked) =>
+                                handleCheckboxChange('embedding_types', type, checked)
+                              }
+                            />
+                            <Label
+                              htmlFor={`embedding_type_${type}`}
+                              className="text-sm font-normal cursor-pointer"
+                            >
+                              {type}
+                            </Label>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Metadata Filters</Label>
+                      <div className="space-y-2">
+                        {metadataFilterRows.map((row) => (
+                          <div key={row.id} className="flex gap-2 items-end">
+                            <div className="flex-1">
+                              <Select
+                                value={row.key}
+                                onValueChange={(value) =>
+                                  updateMetadataFilter(row.id, 'key', value)
+                                }
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select Key" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {availableOptions.metadata_keys.map((key) => (
+                                    <SelectItem key={key} value={key}>
+                                      {key}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="flex-1">
+                              <Input
+                                type="text"
+                                placeholder="Value"
+                                value={row.value}
+                                onChange={(e) =>
+                                  updateMetadataFilter(row.id, 'value', e.target.value)
+                                }
+                              />
+                            </div>
+                            <Button
+                              type="button"
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => removeMetadataFilter(row.id)}
+                            >
+                              Remove
+                            </Button>
+                          </div>
+                        ))}
+                        <Button type="button" variant="secondary" onClick={addMetadataFilter}>
+                          Add Metadata Filter
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </details>
+              </div>
+
+              <Button type="submit" className="w-full" disabled={loading}>
+                {loading ? 'Searching...' : 'Search'}
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+
+      {error && (
+        <Alert variant="destructive" className="mb-4">
+          <AlertDescription>Error: {error}</AlertDescription>
+        </Alert>
+      )}
+
+      {loading && (
+        <Alert className="mb-4">
+          <AlertDescription>Searching...</AlertDescription>
+        </Alert>
+      )}
 
       {results !== null && !loading && (
         <div className={styles.results}>
