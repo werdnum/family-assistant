@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import styles from './TokenManagement.module.css';
 
 const TokenManagement = () => {
@@ -172,78 +176,90 @@ const TokenManagement = () => {
         </Button>
       </div>
 
-      {error && <div className={styles.error}>{error}</div>}
+      {error && (
+        <Alert variant="destructive" className="mb-4">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
 
       {/* Created Token Display */}
       {createdToken && (
-        <div className={styles.createdToken}>
-          <h3>Token Created Successfully!</h3>
-          <p>
-            <strong>Copy this token now - it won't be shown again:</strong>
-          </p>
-          <div className={styles.tokenDisplay}>
-            <code>{createdToken.full_token}</code>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => copyToClipboard(createdToken.full_token)}
-            >
-              Copy
+        <Card className="mb-6 border-green-200 bg-green-50">
+          <CardHeader>
+            <CardTitle className="text-green-800">Token Created Successfully!</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-green-700">
+              <strong>Copy this token now - it won't be shown again:</strong>
+            </p>
+            <div className="flex gap-2 p-3 bg-gray-100 rounded-md">
+              <code className="flex-1 text-sm break-all">{createdToken.full_token}</code>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => copyToClipboard(createdToken.full_token)}
+              >
+                Copy
+              </Button>
+            </div>
+            <Button variant="ghost" onClick={() => setCreatedToken(null)}>
+              Dismiss
             </Button>
-          </div>
-          <Button variant="ghost" onClick={() => setCreatedToken(null)}>
-            Dismiss
-          </Button>
-        </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* Create Token Form */}
       {showCreateForm && (
-        <div className={styles.createForm}>
-          <h3>Create New Token</h3>
-          <form onSubmit={createToken}>
-            <div className={styles.formGroup}>
-              <label htmlFor="name">Token Name:</label>
-              <input
-                type="text"
-                id="name"
-                name="name"
-                value={formData.name}
-                onChange={handleInputChange}
-                required
-                placeholder="Enter a descriptive name for this token"
-              />
-            </div>
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Create New Token</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={createToken} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="name">Token Name</Label>
+                <Input
+                  type="text"
+                  id="name"
+                  name="name"
+                  value={formData.name}
+                  onChange={handleInputChange}
+                  required
+                  placeholder="Enter a descriptive name for this token"
+                />
+              </div>
 
-            <div className={styles.formGroup}>
-              <label htmlFor="expires_at">Expires At (Optional):</label>
-              <input
-                type="datetime-local"
-                id="expires_at"
-                name="expires_at"
-                value={formData.expires_at}
-                onChange={handleInputChange}
-                placeholder="Leave blank for no expiration"
-              />
-            </div>
+              <div className="space-y-2">
+                <Label htmlFor="expires_at">Expires At (Optional)</Label>
+                <Input
+                  type="datetime-local"
+                  id="expires_at"
+                  name="expires_at"
+                  value={formData.expires_at}
+                  onChange={handleInputChange}
+                />
+                <p className="text-sm text-muted-foreground">Leave blank for no expiration</p>
+              </div>
 
-            <div className={styles.formActions}>
-              <Button type="submit" disabled={creating || !formData.name.trim()}>
-                {creating ? 'Creating...' : 'Create Token'}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => {
-                  setShowCreateForm(false);
-                  setFormData({ name: '', expires_at: '' });
-                }}
-              >
-                Cancel
-              </Button>
-            </div>
-          </form>
-        </div>
+              <div className="flex gap-2">
+                <Button type="submit" disabled={creating || !formData.name.trim()}>
+                  {creating ? 'Creating...' : 'Create Token'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    setShowCreateForm(false);
+                    setFormData({ name: '', expires_at: '' });
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
       )}
 
       {/* Tokens List */}

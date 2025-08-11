@@ -71,7 +71,7 @@ async def test_search_documents_via_react_ui(
         ]:
             source_id = f"test-vector-search-{uuid.uuid4()}"
             api_form_data = {
-                "source_type": "test_vector_search",
+                "source_type": "manual_upload",
                 "source_id": source_id,
                 "title": title,
                 "metadata": json.dumps(metadata),
@@ -128,13 +128,11 @@ async def test_search_documents_via_react_ui(
         await advanced_options.click()
         await page.wait_for_timeout(500)
 
-    # Check if source type filters are visible
-    source_type_checkboxes = page.locator("input[type='checkbox']")
-    if await source_type_checkboxes.count() > 0:
-        # If we have checkboxes, try to check one
-        first_checkbox = source_type_checkboxes.first
-        if await first_checkbox.is_visible():
-            await first_checkbox.check()
+    # Check if source type filters are visible and click the label
+    # We click the label because the input itself is hidden for styling purposes
+    source_type_label = page.locator("label:has-text('manual_upload')")
+    if await source_type_label.is_visible():
+        await source_type_label.click()
 
 
 @pytest.mark.playwright

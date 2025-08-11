@@ -78,7 +78,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         {/* Desktop Navigation */}
         <div className="hidden md:block">
           <NavigationMenu className="mx-auto max-w-full">
-            <NavigationMenuList className="flex-wrap justify-start gap-2 px-4 py-3">
+            <NavigationMenuList className="flex-nowrap justify-start gap-2 px-4 py-3 overflow-x-auto">
               {/* Assistant Data */}
               <NavigationMenuItem>
                 <NavigationMenuTrigger className="text-sm">
@@ -140,7 +140,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               {/* Chat & History */}
               <NavigationMenuItem>
                 <NavigationMenuLink asChild>
-                  <NavLink to="/chat" isActive={currentPage === 'chat'}>
+                  <NavLink
+                    to="/chat"
+                    isActive={currentPage === 'chat'}
+                    className="whitespace-nowrap"
+                  >
                     <MessageCircle className="mr-2 h-4 w-4" />
                     Chat
                   </NavLink>

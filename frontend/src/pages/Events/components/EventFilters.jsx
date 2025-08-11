@@ -1,5 +1,15 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Card } from '@/components/ui/card';
 import styles from './EventFilters.module.css';
 
 const EventFilters = ({ filters, onFiltersChange, onClearFilters, loading = false }) => {
@@ -21,67 +31,80 @@ const EventFilters = ({ filters, onFiltersChange, onClearFilters, loading = fals
   };
 
   return (
-    <form onSubmit={handleSubmit} className={styles.filtersForm}>
-      <details className={styles.filtersDetails} open>
-        <summary className={styles.filtersSummary}>
-          <span>Filters</span>
-          {hasActiveFilters() && <span className={styles.activeFiltersIndicator}>Active</span>}
-        </summary>
+    <Card className={styles.filtersCard}>
+      <form onSubmit={handleSubmit} className={styles.filtersForm}>
+        <details className={styles.filtersDetails} open>
+          <summary className={styles.filtersSummary}>
+            <span>Filters</span>
+            {hasActiveFilters() && <span className={styles.activeFiltersIndicator}>Active</span>}
+          </summary>
 
-        <div className={styles.filtersGrid}>
-          <div className={styles.filterGroup}>
-            <label htmlFor="source_id">Event Source:</label>
-            <select
-              name="source_id"
-              id="source_id"
-              value={filters.source_id || ''}
-              onChange={(e) => handleFilterChange('source_id', e.target.value)}
-              disabled={loading}
-            >
-              <option value="">All Sources</option>
-              <option value="home_assistant">Home Assistant</option>
-              <option value="indexing">Indexing</option>
-              <option value="webhook">Webhook</option>
-            </select>
+          <div className={styles.filtersContent}>
+            <div className={styles.filtersGrid}>
+              <div className={styles.filterGroup}>
+                <Label htmlFor="source_id">Event Source</Label>
+                <Select
+                  value={filters.source_id || '_all'}
+                  onValueChange={(value) =>
+                    handleFilterChange('source_id', value === '_all' ? '' : value)
+                  }
+                  disabled={loading}
+                >
+                  <SelectTrigger id="source_id">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_all">All Sources</SelectItem>
+                    <SelectItem value="home_assistant">Home Assistant</SelectItem>
+                    <SelectItem value="indexing">Indexing</SelectItem>
+                    <SelectItem value="webhook">Webhook</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className={styles.filterGroup}>
+                <Label htmlFor="hours">Time Range</Label>
+                <Select
+                  value={String(filters.hours || 24)}
+                  onValueChange={(value) => handleFilterChange('hours', parseInt(value))}
+                  disabled={loading}
+                >
+                  <SelectTrigger id="hours">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">Last 1 hour</SelectItem>
+                    <SelectItem value="6">Last 6 hours</SelectItem>
+                    <SelectItem value="24">Last 24 hours</SelectItem>
+                    <SelectItem value="48">Last 48 hours</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className={styles.filterGroup}>
+                <div className={styles.checkboxWrapper}>
+                  <Checkbox
+                    id="only_triggered"
+                    checked={filters.only_triggered || false}
+                    onCheckedChange={(checked) => handleFilterChange('only_triggered', checked)}
+                    disabled={loading}
+                  />
+                  <Label htmlFor="only_triggered" className={styles.checkboxLabel}>
+                    Only show events that triggered listeners
+                  </Label>
+                </div>
+              </div>
+            </div>
+
+            <div className={styles.filtersActions}>
+              <Button type="button" variant="outline" onClick={onClearFilters} disabled={loading}>
+                Clear Filters
+              </Button>
+            </div>
           </div>
-
-          <div className={styles.filterGroup}>
-            <label htmlFor="hours">Time Range:</label>
-            <select
-              name="hours"
-              id="hours"
-              value={filters.hours || 24}
-              onChange={(e) => handleFilterChange('hours', parseInt(e.target.value))}
-              disabled={loading}
-            >
-              <option value={1}>Last 1 hour</option>
-              <option value={6}>Last 6 hours</option>
-              <option value={24}>Last 24 hours</option>
-              <option value={48}>Last 48 hours</option>
-            </select>
-          </div>
-
-          <div className={styles.filterGroup}>
-            <label className={styles.checkboxLabel}>
-              <input
-                type="checkbox"
-                name="only_triggered"
-                checked={filters.only_triggered || false}
-                onChange={(e) => handleFilterChange('only_triggered', e.target.checked)}
-                disabled={loading}
-              />
-              <span className={styles.checkboxText}>Only show events that triggered listeners</span>
-            </label>
-          </div>
-        </div>
-
-        <div className={styles.filtersActions}>
-          <Button type="button" variant="secondary" onClick={onClearFilters} disabled={loading}>
-            Clear Filters
-          </Button>
-        </div>
-      </details>
-    </form>
+        </details>
+      </form>
+    </Card>
   );
 };
 

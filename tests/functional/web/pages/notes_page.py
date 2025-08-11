@@ -12,7 +12,7 @@ class NotesPage(BasePage):
     ADD_NOTE_BUTTON = "a:has-text('Add New Note')"
     NOTE_TITLE_INPUT = "#title"
     NOTE_CONTENT_TEXTAREA = "#content"
-    INCLUDE_IN_PROMPT_CHECKBOX = "input[name='include_in_prompt']"
+    INCLUDE_IN_PROMPT_CHECKBOX = "#include_in_prompt"
     SAVE_BUTTON = "button:has-text('Save')"
     DELETE_BUTTON = (
         "button:has-text('Delete')"  # Simplified - no longer a submit button
@@ -75,9 +75,7 @@ class NotesPage(BasePage):
             is_checked = await checkbox.is_checked()
             if is_checked != include_in_prompt:
                 # Click the label instead of the checkbox directly for better reliability
-                label = await self.page.query_selector(
-                    "label:has(input[name='include_in_prompt'])"
-                )
+                label = await self.page.query_selector("label[for='include_in_prompt']")
                 if label:
                     await label.click()
                 else:
