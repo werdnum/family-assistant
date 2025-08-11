@@ -558,11 +558,27 @@ async def test_vector_ranking(
     logger.info("\n--- Running Vector Ranking Test ---")
 
     # --- Arrange: Mock Embeddings ---
-    # Create embeddings with controlled distances
-    base_vec = np.random.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32)
-    vec_close = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.01).tolist()
-    vec_medium = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.1).tolist()
-    vec_far = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.5).tolist()
+    # Create embeddings with controlled distances using deterministic vectors
+    # Use a fixed seed for reproducibility
+    rng = np.random.RandomState(42)
+    base_vec = rng.rand(TEST_EMBEDDING_DIMENSION).astype(np.float32)
+
+    # Create vectors with deterministic offsets to ensure proper ordering
+    # vec_close is very close to base_vec
+    vec_close = base_vec.copy()
+    vec_close[0] += 0.01  # Small deterministic offset
+    vec_close = vec_close.tolist()
+
+    # vec_medium is further from base_vec
+    vec_medium = base_vec.copy()
+    vec_medium[0] += 0.3  # Medium deterministic offset
+    vec_medium = vec_medium.tolist()
+
+    # vec_far is furthest from base_vec
+    vec_far = base_vec.copy()
+    vec_far[0] += 0.8  # Large deterministic offset
+    vec_far = vec_far.tolist()
+
     query_vec = base_vec.tolist()  # Query is the base vector
 
     email1_body = "Content for the closest document."
@@ -576,10 +592,18 @@ async def test_vector_ranking(
     email2_title = "Rank Test Medium"
     email3_title = "Rank Test Far"
 
-    # Add mock embeddings for titles
-    title1_vec = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.05).tolist()
-    title2_vec = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.06).tolist()
-    title3_vec = (base_vec + np.random.rand(TEST_EMBEDDING_DIMENSION) * 0.07).tolist()
+    # Add mock embeddings for titles (also deterministic)
+    title1_vec = base_vec.copy()
+    title1_vec[1] += 0.02  # Small offset on different dimension
+    title1_vec = title1_vec.tolist()
+
+    title2_vec = base_vec.copy()
+    title2_vec[1] += 0.25  # Medium offset on different dimension
+    title2_vec = title2_vec.tolist()
+
+    title3_vec = base_vec.copy()
+    title3_vec[1] += 0.7  # Large offset on different dimension
+    title3_vec = title3_vec.tolist()
 
     embedding_map = {
         email1_body: vec_close,

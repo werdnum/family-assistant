@@ -196,6 +196,7 @@ async def test_reindex_document_e2e(
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=mock_embedding_generator,
+        engine=pg_vector_db_engine,
     )
     worker.register_task_handler(
         "process_uploaded_document", buggy_indexer.process_document
