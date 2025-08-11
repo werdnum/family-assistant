@@ -447,29 +447,28 @@ async def test_history_conversation_detail_view(
     test_conversation_id = "test_conversation_id"
     await page.goto(f"{server_url}/history/{test_conversation_id}")
 
-    # Wait for page to load - look for either details or error
-    await page.wait_for_selector(
-        "h1:has-text('Conversation Details'), [class*='error'], text=Loading",
-        timeout=5000,
+    # Wait for the loading indicator to disappear.
+    await page.locator("text=Loading conversation...").wait_for(
+        state="hidden", timeout=10000
     )
 
-    # Should either show conversation details or an error state
+    # After loading, we should have either details or an error.
     detail_heading = page.locator("h1:has-text('Conversation Details')")
     error_message = page.locator("[class*='error'], .error")
-    loading_message = page.locator("text=Loading conversation")
 
-    # One of these states should be visible
-    has_details = await detail_heading.count() > 0 and await detail_heading.is_visible()
-    has_error = await error_message.count() > 0 and await error_message.is_visible()
-    has_loading = (
-        await loading_message.count() > 0 and await loading_message.is_visible()
+    # Wait for either the details heading or an error message to be visible.
+    await page.wait_for_selector(
+        "h1:has-text('Conversation Details'), [class*='error']", timeout=5000
     )
 
-    assert has_details or has_error or has_loading, (
-        "Conversation detail page should show some state"
+    has_details = await detail_heading.is_visible()
+    has_error = await error_message.is_visible()
+
+    assert has_details or has_error, (
+        "Conversation detail page should show details or an error after loading."
     )
 
-    # Back button should always be present
+    # The back button should be present in either the details or error state.
     back_button = page.locator("button:has-text('Back to Conversations')")
     await back_button.wait_for(timeout=5000)
     assert await back_button.is_visible()
