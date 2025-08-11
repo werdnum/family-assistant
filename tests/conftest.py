@@ -1082,6 +1082,10 @@ async def radicale_server(
 @pytest.fixture(scope="module")
 def vcr_config() -> dict[str, Any]:
     """Configure VCR for recording and replaying HTTP interactions."""
+    # Only use "once" mode if explicitly requested via environment variable
+    # Default to "none" mode which will only use existing cassettes
+    record_mode = os.getenv("VCR_RECORD_MODE", "none")
+
     return {
         # Filter sensitive headers
         "filter_headers": [
@@ -1093,8 +1097,8 @@ def vcr_config() -> dict[str, Any]:
         ],
         # Filter sensitive query parameters
         "filter_query_parameters": ["api_key", "key"],
-        # Default to "once" mode - record if cassette doesn't exist
-        "record_mode": os.getenv("VCR_RECORD_MODE", "once"),
+        # Default to "none" mode - only replay existing cassettes, don't record
+        "record_mode": record_mode,
         # Match requests on these attributes
         "match_on": ["method", "scheme", "host", "port", "path", "query", "body"],
         # Store cassettes in organized directory structure
