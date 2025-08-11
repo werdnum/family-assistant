@@ -492,6 +492,10 @@ class ChatPage(BasePage):
         start_time = time.time()
         current_conv_id = await self.get_current_conversation_id()
 
+        # First ensure streaming is complete before checking if saved
+        # This prevents the reload from interrupting message processing
+        await self.wait_for_streaming_complete(timeout=10000)
+
         while time.time() - start_time < timeout / 1000:
             try:
                 # Force a reload to ensure the conversation list is up-to-date
