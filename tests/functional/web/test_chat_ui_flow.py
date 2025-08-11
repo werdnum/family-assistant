@@ -170,11 +170,8 @@ async def test_conversation_persistence_and_switching(
         )
     first_conv_id = await chat_page.get_current_conversation_id()
 
-    # Wait for conversation to be saved
+    # Wait for conversation to be saved (this now includes wait_for_streaming_complete)
     await chat_page.wait_for_conversation_saved()
-
-    # Ensure streaming has completely finished before switching conversations
-    await chat_page.wait_for_streaming_complete()
 
     # Create a new chat
     await chat_page.create_new_chat()
