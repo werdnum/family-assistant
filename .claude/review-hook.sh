@@ -286,15 +286,25 @@ fi
 # Get current HEAD commit hash
 HEAD_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "no-head")
 
-# Check for sentinel phrase in the entire command
-# The sentinel should be: "Reviewed: HEAD-<commit-hash>"
+# Check for sentinel phrase or bypass pattern in the entire command
+# The sentinel should be: "Reviewed: HEAD-<commit-hash>" or "Bypass-Review: <reason>"
 SENTINEL_PHRASE="Reviewed: HEAD-$HEAD_COMMIT"
 HAS_SENTINEL=false
+BYPASS_REASON=""
 
-# Simply check if the sentinel phrase appears anywhere in the command
+# Check for the original sentinel phrase
 if echo "$COMMAND" | grep -qF "$SENTINEL_PHRASE"; then
     HAS_SENTINEL=true
     echo "${GREEN}✅ Found review override sentinel: $SENTINEL_PHRASE${NC}" >&2
+    echo "" >&2
+fi
+
+# Check for the new bypass pattern
+if echo "$COMMAND" | grep -qE "Bypass-Review:[[:space:]]*([^\"\'$'\n']+)"; then
+    HAS_SENTINEL=true
+    # Extract the bypass reason
+    BYPASS_REASON=$(echo "$COMMAND" | sed -n "s/.*Bypass-Review:[[:space:]]*\([^\"\'$'\n']*\).*/\1/p" | head -1)
+    echo "${GREEN}✅ Found review bypass: Bypass-Review: $BYPASS_REASON${NC}" >&2
     echo "" >&2
 fi
 
@@ -308,10 +318,17 @@ if [[ "$IS_PR_CREATE" == "true" ]]; then
         PR_BODY="${BASH_REMATCH[1]}"
     fi
     
-    if [[ -n "$PR_BODY" ]] && echo "$PR_BODY" | grep -qF "$SENTINEL_PHRASE"; then
-        HAS_SENTINEL=true
-        echo "${GREEN}✅ Found review override sentinel in PR body: $SENTINEL_PHRASE${NC}" >&2
-        echo "" >&2
+    if [[ -n "$PR_BODY" ]]; then
+        if echo "$PR_BODY" | grep -qF "$SENTINEL_PHRASE"; then
+            HAS_SENTINEL=true
+            echo "${GREEN}✅ Found review override sentinel in PR body: $SENTINEL_PHRASE${NC}" >&2
+            echo "" >&2
+        elif echo "$PR_BODY" | grep -qE "Bypass-Review:[[:space:]]*([^\"\'$'\n']+)"; then
+            HAS_SENTINEL=true
+            BYPASS_REASON=$(echo "$PR_BODY" | sed -n "s/.*Bypass-Review:[[:space:]]*\([^\"\'$'\n']*\).*/\1/p" | head -1)
+            echo "${GREEN}✅ Found review bypass in PR body: Bypass-Review: $BYPASS_REASON${NC}" >&2
+            echo "" >&2
+        fi
     fi
 fi
 
@@ -329,24 +346,55 @@ echo "$REVIEW_OUTPUT" >&2
 # Step 6: Process review results and decide whether to proceed
 echo "" >&2
 
-# If sentinel phrase is present, only fail on exit code 2 (blocking issues)
+# If sentinel phrase is present, allow even major issues with warning
 if [[ "$HAS_SENTINEL" == "true" ]]; then
     if [[ $REVIEW_EXIT_CODE -eq 2 ]]; then
-        echo "${RED}❌ Code review found blocking issues that cannot be overridden${NC}" >&2
+        echo "${YELLOW}⚠️ Code review found MAJOR issues but proceeding with bypass${NC}" >&2
+        echo "${RED}WARNING: Bypassing serious issues:${NC}" >&2
+        echo "• Potential build-breaking changes" >&2
+        echo "• Possible runtime errors" >&2
+        echo "• Security risks" >&2
         echo "" >&2
-        echo "Even with the review override sentinel, these critical issues must be fixed:" >&2
-        echo "• Build-breaking changes" >&2
-        echo "• Runtime errors" >&2
-        echo "• Security vulnerabilities" >&2
-        echo "" >&2
-        echo "${YELLOW}Staged changes will be restored after fixing issues${NC}" >&2
-        exit 2
+        echo "${GREEN}✅ Commit approved with bypass - you take full responsibility${NC}" >&2
+        
+        # Return JSON for hooks - approve with strong warning
+        REASON_MSG="MAJOR issues bypassed - user takes responsibility"
+        if [[ -n "$BYPASS_REASON" ]]; then
+            REASON_MSG="MAJOR issues bypassed: $BYPASS_REASON"
+        fi
+        cat << EOF
+{
+  "decision": "approve",
+  "reason": "$REASON_MSG"
+}
+EOF
+        exit 0
     elif [[ $REVIEW_EXIT_CODE -eq 1 ]]; then
         echo "${YELLOW}⚠️  Minor issues found but proceeding with review override${NC}" >&2
         echo "${GREEN}✅ Commit approved - you've acknowledged the warnings${NC}" >&2
+        
+        # Return JSON for hooks - allow with bypass
+        REASON_MSG="Minor issues bypassed"
+        if [[ -n "$BYPASS_REASON" ]]; then
+            REASON_MSG="Review bypassed: $BYPASS_REASON"
+        fi
+        cat << EOF
+{
+  "decision": "approve",
+  "reason": "$REASON_MSG"
+}
+EOF
         exit 0
     else
         echo "${GREEN}✅ No issues found - proceeding with commit${NC}" >&2
+        
+        # Return JSON for hooks - approve
+        cat << EOF
+{
+  "decision": "approve",
+  "reason": "No issues found"
+}
+EOF
         exit 0
     fi
 fi
@@ -355,6 +403,14 @@ fi
 if [[ $REVIEW_EXIT_CODE -eq 0 ]]; then
     # No issues found
     echo "${GREEN}✅ All checks passed, ready to commit${NC}" >&2
+    
+    # Return JSON for hooks - approve
+    cat << EOF
+{
+  "decision": "approve",
+  "reason": "All checks passed"
+}
+EOF
     exit 0
 else
     # Issues found - provide appropriate guidance based on severity
@@ -367,10 +423,19 @@ else
         echo "" >&2
         echo "${BOLD}To proceed anyway, add this to your commit message:${NC}" >&2
         echo "   ${YELLOW}$SENTINEL_PHRASE${NC}" >&2
+        echo "${BOLD}Or use:${NC} ${YELLOW}Bypass-Review: <reason>${NC}" >&2
         echo "" >&2
         echo "This acknowledges you've reviewed the warnings and decided to proceed." >&2
         echo "" >&2
         echo "${CYAN}Your staged changes are ready. Fix issues or add the sentinel phrase and retry.${NC}" >&2
+        
+        # Return JSON for hooks - block with helpful message
+        cat << EOF
+{
+  "decision": "block",
+  "reason": "Code review found minor issues that should be addressed:\n\nTo bypass with acknowledgment, add one of these to your commit message:\n• $SENTINEL_PHRASE\n• Bypass-Review: <your reason>\n\nThis confirms you've reviewed the warnings and decided to proceed."
+}
+EOF
     else
         # Major issues - stronger message
         echo "${RED}❌ Code review found blocking issues${NC}" >&2
@@ -379,8 +444,16 @@ else
         echo "The code appears to have serious problems that could break the build or cause runtime errors." >&2
         echo "" >&2
         echo "${CYAN}Your staged changes are ready. Fix the issues and retry.${NC}" >&2
+        
+        # Return JSON for hooks - block
+        cat << EOF
+{
+  "decision": "block",
+  "reason": "Code review found BLOCKING issues that appear to be serious problems:\n• Potential build breaks\n• Runtime errors\n• Security risks\n\nThese should be fixed before committing.\n\nTo override (use with caution), add to your commit message:\n• $SENTINEL_PHRASE\n• Bypass-Review: <reason why this is safe>"
+}
+EOF
     fi
-    exit 2
+    exit 0
 fi
 
 # Note: The cleanup function will always restore stashed changes on exit
