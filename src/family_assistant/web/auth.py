@@ -116,7 +116,10 @@ async def get_user_from_api_token(
     token_prefix = token_value[:8]
     token_secret_part = token_value[8:]
 
-    async with get_db_context() as db:
+    from family_assistant.web.app_creator import app
+
+    engine = app.state.database_engine
+    async with get_db_context(engine) as db:
         query = select(api_tokens_table).where(
             api_tokens_table.c.prefix == token_prefix
         )

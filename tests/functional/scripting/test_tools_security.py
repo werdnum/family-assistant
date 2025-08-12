@@ -24,7 +24,7 @@ async def test_deny_all_tools(db_engine: Any) -> None:
     tools_provider = MockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-123",
@@ -69,7 +69,7 @@ async def test_allowed_tools_filter(db_engine: Any) -> None:
     tools_provider = MockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-123",
@@ -131,7 +131,7 @@ async def test_no_restrictions_by_default(db_engine: Any) -> None:
     tools_provider = MockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-123",
@@ -171,7 +171,7 @@ async def test_empty_allowed_tools_denies_all(db_engine: Any) -> None:
     tools_provider = MockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-123",
@@ -209,7 +209,7 @@ async def test_security_logging(db_engine: Any, caplog: Any) -> None:
     tools_provider = MockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-123",
@@ -255,7 +255,7 @@ async def test_multiple_allowed_tools(db_engine: Any) -> None:
     tools_provider = MockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-123",
@@ -296,7 +296,7 @@ async def test_deny_all_overrides_allowed_tools(db_engine: Any) -> None:
     tools_provider = MockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-123",

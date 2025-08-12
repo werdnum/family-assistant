@@ -196,6 +196,7 @@ async def test_notes_indexing_e2e(
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=mock_embedding_generator_notes,
+        engine=pg_vector_db_engine,  # Pass the database engine
     )
 
     # Register task handlers
@@ -501,6 +502,7 @@ async def test_note_update_reindexing_e2e(
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=mock_embedding_generator_notes,
+        engine=pg_vector_db_engine,  # Pass the database engine
     )
 
     worker.register_task_handler("index_note", notes_indexer.handle_index_note)
@@ -755,6 +757,7 @@ async def test_notes_indexing_graceful_degradation(
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=mock_embedding_generator_notes,
+        engine=pg_vector_db_engine,  # Pass the database engine
     )
 
     worker.register_task_handler("index_note", notes_indexer.handle_index_note)

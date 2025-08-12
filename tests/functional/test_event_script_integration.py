@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.events import EventActionType
 from family_assistant.task_worker import TaskWorker, handle_script_execution
 from family_assistant.tools import (
@@ -155,7 +155,11 @@ log_motion()
 
     # Step 5: Set up infrastructure for event processing
     # Event processor
-    processor = EventProcessor(sources={}, sample_interval_hours=1.0)
+    processor = EventProcessor(
+        sources={},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: get_db_context(db_engine),
+    )
     processor._running = True
     await processor._refresh_listener_cache()
 
@@ -297,7 +301,11 @@ process_temperature()
         assert json.loads(create_result)["success"] is True
 
     # Set up infrastructure
-    processor = EventProcessor(sources={}, sample_interval_hours=1.0)
+    processor = EventProcessor(
+        sources={},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: get_db_context(db_engine),
+    )
     processor._running = True
     await processor._refresh_listener_cache()
 

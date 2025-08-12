@@ -85,20 +85,8 @@ def create_engine_with_sqlite_optimizations(database_url: str) -> AsyncEngine:
     return engine
 
 
-engine = create_engine_with_sqlite_optimizations(DATABASE_URL)
-pool_info = (
-    "StaticPool"
-    if DATABASE_URL.startswith("sqlite")
-    else "NullPool (no connection reuse)"
-)
-logger.info(
-    f"SQLAlchemy engine created for URL: {DATABASE_URL.split('@')[-1]} with {pool_info}"
-)  # Log URL safely
-
-
-def get_engine() -> AsyncEngine:
-    """Returns the initialized SQLAlchemy async engine."""
-    return engine
+# Global engine removed - use create_engine_with_sqlite_optimizations() directly
+# Engine should be created and managed at the application level (e.g., in Assistant class)
 
 
 # Define the API tokens table

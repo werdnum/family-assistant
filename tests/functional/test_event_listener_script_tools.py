@@ -36,7 +36,7 @@ async def mock_exec_context(
     mock_tools_provider.add_tool("add_or_update_note", mock_add_note)
 
     # Create a database context that will be used as async context manager
-    async with DatabaseContext() as db_context:
+    async with DatabaseContext(engine=db_engine) as db_context:
         yield ToolExecutionContext(
             interface_type="web",  # Use valid interface type
             conversation_id="test_conversation",

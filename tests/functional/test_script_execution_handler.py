@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.events import EventActionType, EventSourceType
 from family_assistant.task_worker import TaskWorker, handle_script_execution
 from family_assistant.tools import (
@@ -64,8 +64,12 @@ add_or_update_note(
         )
 
     # Step 2: Create minimal infrastructure
-    # Event processor
-    processor = EventProcessor(sources={}, sample_interval_hours=1.0)
+    # Event processor with database access
+    processor = EventProcessor(
+        sources={},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: get_db_context(db_engine),
+    )
     processor._running = True
     await processor._refresh_listener_cache()
 
@@ -158,7 +162,11 @@ async def test_script_with_syntax_error_creates_no_note(
         )
 
     # Step 2: Create infrastructure
-    processor = EventProcessor(sources={}, sample_interval_hours=1.0)
+    processor = EventProcessor(
+        sources={},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: get_db_context(db_engine),
+    )
     processor._running = True
     await processor._refresh_listener_cache()
 
@@ -265,7 +273,11 @@ add_or_update_note(
         )
 
     # Step 2: Create infrastructure
-    processor = EventProcessor(sources={}, sample_interval_hours=1.0)
+    processor = EventProcessor(
+        sources={},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: get_db_context(db_engine),
+    )
     processor._running = True
     await processor._refresh_listener_cache()
 

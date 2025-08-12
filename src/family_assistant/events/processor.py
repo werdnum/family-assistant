@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import select, text
@@ -15,7 +16,7 @@ from family_assistant.events.condition_evaluator import EventConditionEvaluator
 from family_assistant.events.sources import EventSource
 from family_assistant.events.storage import EventStorage
 from family_assistant.scripting import ScriptExecutionError
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.events import (
     check_and_update_rate_limit,
     event_listeners_table,
@@ -33,6 +34,7 @@ class EventProcessor:
         db_context: DatabaseContext | None = None,
         sample_interval_hours: float = 1.0,
         config: dict[str, Any] | None = None,
+        get_db_context_func: Callable[[], DatabaseContext] | None = None,
     ) -> None:
         """
         Initialize event processor.
@@ -42,10 +44,14 @@ class EventProcessor:
             db_context: Database context (optional, will create if needed)
             sample_interval_hours: Hours between storing event samples
             config: Optional configuration for script execution
+            get_db_context_func: Function to get database context with engine
         """
         self.sources = sources
-        self.event_storage = EventStorage(sample_interval_hours)
+        self.event_storage = EventStorage(
+            sample_interval_hours, get_db_context_func=get_db_context_func
+        )
         self._db_context = db_context  # Store for tests
+        self.get_db_context_func = get_db_context_func
         # Cache listeners by source_id for efficient lookup
         self._listener_cache: dict[str, list[dict]] = {}
         self._cache_refresh_interval = 60  # Refresh from DB every minute
@@ -142,8 +148,13 @@ class EventProcessor:
         if self._db_context:
             await process_with_context(self._db_context)
         else:
-            async with get_db_context() as db_ctx:
-                await process_with_context(db_ctx)
+            if self.get_db_context_func:
+                async with self.get_db_context_func() as db_ctx:
+                    await process_with_context(db_ctx)
+            else:
+                raise RuntimeError(
+                    "EventProcessor requires get_db_context_func to be provided"
+                )
 
     def _check_match_conditions(
         self,
@@ -196,8 +207,13 @@ class EventProcessor:
         if self._db_context:
             result = await self._db_context.fetch_all(query)
         else:
-            async with get_db_context() as db_ctx:
-                result = await db_ctx.fetch_all(query)
+            if self.get_db_context_func:
+                async with self.get_db_context_func() as db_ctx:
+                    result = await db_ctx.fetch_all(query)
+            else:
+                raise RuntimeError(
+                    "EventProcessor requires get_db_context_func to be provided"
+                )
 
         new_cache = {}
         for row in result:
@@ -231,8 +247,13 @@ class EventProcessor:
         self, listener: dict[str, Any], event_data: dict[str, Any]
     ) -> None:
         """Execute the action defined in the listener (opens new DB context)."""
-        async with get_db_context() as db_ctx:
-            await self._execute_action_in_context(db_ctx, listener, event_data)
+        if self.get_db_context_func:
+            async with self.get_db_context_func() as db_ctx:
+                await self._execute_action_in_context(db_ctx, listener, event_data)
+        else:
+            raise RuntimeError(
+                "EventProcessor requires get_db_context_func to be provided"
+            )
 
     async def _execute_action_in_context(
         self,
@@ -273,8 +294,13 @@ class EventProcessor:
 
     async def _disable_listener(self, listener_id: int) -> None:
         """Disable a one-time listener after it triggers (opens new DB context)."""
-        async with get_db_context() as db_ctx:
-            await self._disable_listener_in_context(db_ctx, listener_id)
+        if self.get_db_context_func:
+            async with self.get_db_context_func() as db_ctx:
+                await self._disable_listener_in_context(db_ctx, listener_id)
+        else:
+            raise RuntimeError(
+                "EventProcessor requires get_db_context_func to be provided"
+            )
 
     async def _disable_listener_in_context(
         self, db_ctx: DatabaseContext, listener_id: int

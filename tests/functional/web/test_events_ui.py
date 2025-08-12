@@ -499,7 +499,9 @@ async def test_events_with_actual_data(
     server_url = web_test_fixture.base_url
 
     # Create some test event data via the repository
-    async with DatabaseContext() as db_context:
+    async with DatabaseContext(
+        engine=web_test_fixture.assistant.database_engine
+    ) as db_context:
         # Create a test event
         await db_context.events.store_event(
             source_id="home_assistant",
@@ -746,7 +748,9 @@ async def test_events_json_formatting_in_detail_view(
 
     # Create a test event with complex JSON data
     test_event_id = None
-    async with DatabaseContext() as db_context:
+    async with DatabaseContext(
+        engine=web_test_fixture.assistant.database_engine
+    ) as db_context:
         await db_context.events.store_event(
             source_id="home_assistant",
             event_data={
@@ -802,7 +806,9 @@ async def test_events_triggered_listeners_display(
 
     # Create a test event with triggered listeners
     test_event_id = None
-    async with DatabaseContext() as db_context:
+    async with DatabaseContext(
+        engine=web_test_fixture.assistant.database_engine
+    ) as db_context:
         await db_context.events.store_event(
             source_id="indexing",
             event_data={"document": "test.pdf", "status": "processed"},
@@ -880,7 +886,9 @@ async def test_events_source_icons_display(
     server_url = web_test_fixture.base_url
 
     # Create events with different sources
-    async with DatabaseContext() as db_context:
+    async with DatabaseContext(
+        engine=web_test_fixture.assistant.database_engine
+    ) as db_context:
         await db_context.events.store_event(
             source_id="home_assistant",
             event_data={"test": "data"},
@@ -923,7 +931,9 @@ async def test_events_metadata_display(
 
     # Create a test event
     test_event_id = None
-    async with DatabaseContext() as db_context:
+    async with DatabaseContext(
+        engine=web_test_fixture.assistant.database_engine
+    ) as db_context:
         await db_context.events.store_event(
             source_id="home_assistant",
             event_data={"entity_id": "test.entity"},

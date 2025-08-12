@@ -54,6 +54,8 @@ async def poll_for_document_ready_event(
     max_attempts = int(timeout_seconds / poll_interval)
 
     for _ in range(max_attempts):
+        if not engine:
+            raise RuntimeError("Database engine not initialized")
         async with get_db_context(engine=engine) as db_ctx:
             # Use SQLAlchemy's JSON operators for cross-database compatibility
             stmt = select(recent_events_table.c.event_data).where(
@@ -121,6 +123,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
     event_processor = EventProcessor(
         sources={"indexing": indexing_source},
         sample_interval_hours=0.1,  # Short interval for testing
+        get_db_context_func=lambda: get_db_context(engine=db_engine),
     )
 
     # Create event listener that captures events
@@ -446,6 +449,7 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
         event_processor = EventProcessor(
             sources={"indexing": indexing_source},
             sample_interval_hours=0.1,
+            get_db_context_func=lambda: get_db_context(engine=db_engine),
         )
 
         # Mock processing service for wake_llm action
@@ -488,6 +492,7 @@ async def test_document_ready_event_includes_rich_metadata(
     event_processor = EventProcessor(
         sources={"indexing": indexing_source},
         sample_interval_hours=0.1,
+        get_db_context_func=lambda: get_db_context(engine=db_engine),
     )
 
     # Create a document with rich metadata
@@ -612,6 +617,7 @@ async def test_document_ready_event_handles_none_metadata(
     event_processor = EventProcessor(
         sources={"indexing": indexing_source},
         sample_interval_hours=0.1,  # Short interval for testing
+        get_db_context_func=lambda: get_db_context(engine=db_engine),
     )
 
     # Create a document with None metadata

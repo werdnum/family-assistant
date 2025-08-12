@@ -2,6 +2,8 @@ import json
 import logging
 import os
 import pathlib
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -112,12 +114,26 @@ else:
     logger.info("AuthMiddleware NOT added as AUTH_ENABLED is false.")
 
 
+# --- Lifespan context manager for startup/shutdown ---
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Manage application lifecycle events."""
+    # Startup
+    logger.info("Application starting up...")
+
+    yield
+
+    # Shutdown
+    logger.info("Application shutting down...")
+
+
 # --- FastAPI App Initialization ---
 app = FastAPI(
     title="Family Assistant Web Interface",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     middleware=middleware,
+    lifespan=lifespan,
 )
 
 # --- Store shared objects on app.state ---

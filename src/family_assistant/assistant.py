@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 import uvicorn
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 # Import Embedding interface/clients
 import family_assistant.embeddings as embeddings
@@ -37,6 +38,7 @@ from family_assistant.llm import LLMInterface
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage import init_db
+from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.context import (
     DatabaseContext,
     get_db_context,
@@ -109,9 +111,6 @@ class NullChatInterface:
 # --- Wrapper Functions for Type Compatibility ---
 # These wrappers might be needed by task handlers if they are registered from here
 # or if the Assistant class sets up the task worker directly.
-async def async_get_db_context_for_provider() -> DatabaseContext:
-    """Wraps get_db_context to be an awaitable returning DatabaseContext for providers."""
-    return get_db_context()
 
 
 async def task_wrapper_handle_log_message(
@@ -139,13 +138,17 @@ class Assistant:
         self,
         config: dict[str, Any],
         llm_client_overrides: dict[str, LLMInterface] | None = None,
+        database_engine: AsyncEngine | None = None,
     ) -> None:
         self.config = config
+        self._injected_database_engine = database_engine
         self.shutdown_event = asyncio.Event()
         self.llm_client_overrides = (
             llm_client_overrides if llm_client_overrides is not None else {}
         )
+        self.database_engine: AsyncEngine | None = None
 
+        # Initialize all instance attributes
         self.shared_httpx_client: httpx.AsyncClient | None = None
         self.embedding_generator: EmbeddingGenerator | None = None
         self.processing_services_registry: dict[str, ProcessingService] = {}
@@ -166,6 +169,24 @@ class Assistant:
 
         # Logging handler
         self.error_logging_handler = None
+
+    async def _get_db_context_for_provider(self) -> DatabaseContext:
+        """Provides database context for context providers."""
+        if not self.database_engine:
+            raise RuntimeError("Database engine not initialized")
+        return get_db_context(self.database_engine)
+
+    def _get_db_context_for_telegram(self) -> DatabaseContext:
+        """Provides database context for Telegram service."""
+        if not self.database_engine:
+            raise RuntimeError("Database engine not initialized")
+        return get_db_context(self.database_engine)
+
+    def _get_db_context_for_events(self) -> DatabaseContext:
+        """Provides database context for event system."""
+        if not self.database_engine:
+            raise RuntimeError("Database engine not initialized")
+        return get_db_context(self.database_engine)
 
     async def setup_dependencies(self) -> None:
         """Initializes and wires up all core application components."""
@@ -240,9 +261,23 @@ class Assistant:
         )
         fastapi_app.state.embedding_generator = self.embedding_generator
 
-        await init_db()
-        async with get_db_context() as db_ctx:
-            await db_ctx.init_vector_db()
+        # Create database engine
+        # Use injected engine if provided, otherwise create from config
+        if self._injected_database_engine:
+            self.database_engine = self._injected_database_engine
+            logger.info("Using injected database engine")
+        else:
+            database_url = self.config["database_url"]
+            self.database_engine = create_engine_with_sqlite_optimizations(database_url)
+            logger.info(f"Database engine created for URL: {database_url}")
+
+            # Initialize database only when we create our own engine
+            await init_db(self.database_engine)
+            async with get_db_context(self.database_engine) as db_ctx:
+                await db_ctx.init_vector_db()
+
+        # Store engine in FastAPI app state for web dependencies
+        fastapi_app.state.database_engine = self.database_engine
 
         # Setup error logging to database if enabled
         error_logging_config = self.config.get("logging", {}).get("database_errors", {})
@@ -250,10 +285,9 @@ class Assistant:
         if error_logging_config.get("enabled", True) and not os.environ.get(
             "FAMILY_ASSISTANT_DISABLE_DB_ERROR_LOGGING"
         ):
-            from family_assistant.storage.base import engine
             from family_assistant.utils.logging_handler import setup_error_logging
 
-            self.error_logging_handler = setup_error_logging(engine)
+            self.error_logging_handler = setup_error_logging(self.database_engine)
             logger.info("Database error logging handler initialized")
 
         resolved_profiles = self.config.get("service_profiles", [])
@@ -527,7 +561,7 @@ class Assistant:
             await confirming_provider_for_profile.get_tool_definitions()
 
             notes_provider = NotesContextProvider(
-                get_db_context_func=async_get_db_context_for_provider,
+                get_db_context_func=self._get_db_context_for_provider,
                 prompts=profile_proc_conf_dict["prompts"],
             )
             calendar_provider = CalendarContextProvider(
@@ -720,6 +754,9 @@ class Assistant:
 
         # Only initialize Telegram service if enabled
         if self.telegram_enabled:
+            assert self.database_engine is not None, (
+                "Database engine must be initialized before creating TelegramService"
+            )
             self.telegram_service = TelegramService(
                 telegram_token=self.config["telegram_token"],
                 allowed_user_ids=self.config["allowed_user_ids"],
@@ -727,7 +764,7 @@ class Assistant:
                 processing_service=self.default_processing_service,
                 processing_services_registry=self.processing_services_registry,
                 app_config=self.config,
-                get_db_context_func=get_db_context,
+                get_db_context_func=self._get_db_context_for_telegram,
                 # use_batching argument removed
             )
             fastapi_app.state.telegram_service = self.telegram_service
@@ -776,10 +813,14 @@ class Assistant:
                 storage_config = event_config.get("storage", {})
                 sample_interval_hours = storage_config.get("sample_interval_hours", 1.0)
 
+                assert self.database_engine is not None, (
+                    "Database engine must be initialized before creating EventProcessor"
+                )
                 self.event_processor = EventProcessor(
                     sources=event_sources,
                     sample_interval_hours=sample_interval_hours,
                     config=event_config,
+                    get_db_context_func=self._get_db_context_for_events,
                     # db_context will be created internally if not provided
                 )
                 logger.info(
@@ -918,7 +959,10 @@ class Assistant:
         from datetime import timedelta
 
         try:
-            async with get_db_context() as db_ctx:
+            assert self.database_engine is not None, (
+                "Database engine must be initialized before setting up system tasks"
+            )
+            async with get_db_context(self.database_engine) as db_ctx:
                 # Get the timezone from the default profile
                 if not self.default_processing_service:
                     logger.error(
@@ -1134,6 +1178,11 @@ class Assistant:
             self.error_logging_handler.close()
             logging.getLogger().removeHandler(self.error_logging_handler)
             logger.info("Error logging handler closed.")
+
+        # Close database engine
+        if self.database_engine:
+            await self.database_engine.dispose()
+            logger.info("Database engine disposed.")
 
         self._is_shutdown_complete = True
         logger.info("Assistant stop_services finished.")

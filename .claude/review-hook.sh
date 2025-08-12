@@ -244,7 +244,11 @@ if command -v pre-commit &> /dev/null && [[ -f "$REPO_ROOT/.pre-commit-config.ya
             break
         fi
         
-        if pre-commit run --files "${STAGED_FILES_FOR_PRECOMMIT[@]}"; then
+        # Capture pre-commit output to show on failure
+        PRECOMMIT_OUTPUT=$(pre-commit run --files "${STAGED_FILES_FOR_PRECOMMIT[@]}" 2>&1)
+        PRECOMMIT_EXIT=$?
+        
+        if [[ $PRECOMMIT_EXIT -eq 0 ]]; then
             # Pre-commit passed, check if it made any changes
             if git diff --quiet; then
                 echo "${GREEN}✅ Pre-commit hooks completed (no changes made)${NC}" >&2
@@ -262,7 +266,11 @@ if command -v pre-commit &> /dev/null && [[ -f "$REPO_ROOT/.pre-commit-config.ya
             fi
         else
             echo "${RED}❌ Pre-commit hooks failed${NC}" >&2
-            echo "Please fix the issues and try again." >&2
+            echo "" >&2
+            echo "${BOLD}Pre-commit output:${NC}" >&2
+            echo "$PRECOMMIT_OUTPUT" >&2
+            echo "" >&2
+            echo "${YELLOW}Please fix the issues and try again.${NC}" >&2
             exit 2
         fi
     done

@@ -38,7 +38,6 @@ if TYPE_CHECKING:
 
 
 # Use absolute package path
-from family_assistant.storage.base import get_engine
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +68,9 @@ class DatabaseContext:
             max_retries: Maximum number of retries for database operations.
             base_delay: Base delay in seconds for exponential backoff.
         """
-        self.engine = engine or get_engine()
+        if engine is None:
+            raise ValueError("DatabaseContext requires an engine to be provided")
+        self.engine = engine
         self.max_retries = max_retries
         self.base_delay = base_delay
         self.conn: AsyncConnection | None = None
@@ -148,8 +149,8 @@ class DatabaseContext:
             except DBAPIError as e:
                 # Check if the error is a ProgrammingError (syntax error, undefined object, etc.)
                 # or IntegrityError (constraint violations). These should not be retried.
-                if isinstance(e.orig, (ProgrammingError, IntegrityError)) or isinstance(
-                    e, (ProgrammingError, IntegrityError)
+                if isinstance(e.orig, ProgrammingError | IntegrityError) or isinstance(
+                    e, ProgrammingError | IntegrityError
                 ):  # Check original and wrapper
                     is_prog_error = isinstance(e.orig, ProgrammingError) or isinstance(
                         e, ProgrammingError
@@ -335,7 +336,7 @@ class DatabaseContext:
 # via __aenter__/__aexit__. Callers should instantiate DatabaseContext directly.
 # Keeping it for now but marking as potentially deprecated or for removal.
 def get_db_context(
-    engine: AsyncEngine | None = None, max_retries: int = 3, base_delay: float = 0.5
+    engine: AsyncEngine, max_retries: int = 3, base_delay: float = 0.5
 ) -> DatabaseContext:
     """
     Creates an instance of DatabaseContext.
@@ -344,7 +345,7 @@ def get_db_context(
     which is an asynchronous context manager.
 
     Args:
-        engine: Optional SQLAlchemy AsyncEngine for dependency injection.
+        engine: Required SQLAlchemy AsyncEngine for dependency injection.
         max_retries: Maximum number of retries for database operations.
         base_delay: Base delay in seconds for exponential backoff.
 

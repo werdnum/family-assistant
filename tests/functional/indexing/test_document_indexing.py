@@ -192,6 +192,11 @@ async def http_client(
         "Overrode embedding generator dependency for test client using dependency_overrides."
     )
 
+    # Set the database engine in app.state for the get_db dependency
+    original_database_engine = getattr(fastapi_app.state, "database_engine", None)
+    fastapi_app.state.database_engine = pg_vector_db_engine
+    logger.info("Set database_engine in app.state for test client.")
+
     # The pg_vector_db_engine fixture already patches storage.base.engine
     # so the app will use the correct test database.
 
@@ -202,8 +207,9 @@ async def http_client(
         yield client
     logger.info("Test HTTP client closed.")
 
-    # Clean up: restore original dependency overrides
+    # Clean up: restore original dependency overrides and app state
     fastapi_app.dependency_overrides = original_overrides
+    fastapi_app.state.database_engine = original_database_engine
 
     logger.info(
         "Cleaned up dependency overrides and app state after http_client fixture."
@@ -332,6 +338,7 @@ async def test_document_indexing_and_query_e2e(
         calendar_config=dummy_calendar_config,
         timezone_str=dummy_timezone_str,
         embedding_generator=mock_embedding_generator,  # Pass the mock generator
+        engine=pg_vector_db_engine,  # Pass the database engine
     )
     worker.register_task_handler(
         "process_uploaded_document",
@@ -739,6 +746,7 @@ async def test_document_indexing_with_llm_summary_e2e(
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=mock_embedding_generator,
+        engine=pg_vector_db_engine,  # Pass the database engine
     )
     worker.register_task_handler(
         "process_uploaded_document", document_indexer.process_document
@@ -996,6 +1004,7 @@ async def test_url_indexing_e2e(
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=mock_embedding_generator,
+        engine=pg_vector_db_engine,  # Pass the database engine
     )
     worker.register_task_handler(
         "process_uploaded_document",
@@ -1279,6 +1288,7 @@ async def test_url_indexing_auto_title_e2e(
         calendar_config={},
         timezone_str="UTC",
         embedding_generator=mock_embedding_generator,
+        engine=pg_vector_db_engine,  # Pass the database engine
     )
     worker.register_task_handler(
         "process_uploaded_document",

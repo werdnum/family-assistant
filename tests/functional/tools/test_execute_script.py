@@ -17,7 +17,7 @@ from family_assistant.tools.types import ToolExecutionContext
 @pytest.mark.asyncio
 async def test_execute_script_without_tools_provider(db_engine: Any) -> None:
     """Test execute_script when no tools provider is available."""
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         # Create context without processing service
         ctx = ToolExecutionContext(
             interface_type="test",
@@ -41,7 +41,7 @@ async def test_execute_script_without_tools_provider(db_engine: Any) -> None:
 @pytest.mark.asyncio
 async def test_execute_script_with_empty_tools_provider(db_engine: Any) -> None:
     """Test execute_script with an empty tools provider."""
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         # Create empty tools provider
         tools_provider = CompositeToolsProvider([])
 
@@ -72,7 +72,7 @@ len(tools)
 @pytest.mark.asyncio
 async def test_execute_script_with_tools(db_engine: Any) -> None:
     """Test execute_script with actual tools available."""
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         # Create a simple echo tool
         async def echo_tool(message: str) -> str:
             return f"Echo: {message}"
@@ -135,7 +135,7 @@ echo(message="Hello from Starlark!")
 @pytest.mark.asyncio
 async def test_execute_script_syntax_error(db_engine: Any) -> None:
     """Test execute_script with syntax errors."""
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         ctx = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-conv",
@@ -154,7 +154,7 @@ async def test_execute_script_syntax_error(db_engine: Any) -> None:
 @pytest.mark.asyncio
 async def test_execute_script_with_globals(db_engine: Any) -> None:
     """Test execute_script with global variables."""
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         ctx = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-conv",
@@ -176,7 +176,7 @@ async def test_execute_script_with_globals(db_engine: Any) -> None:
 @pytest.mark.asyncio
 async def test_execute_script_with_wake_llm(db_engine: Any) -> None:
     """Test execute_script with wake_llm calls."""
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         ctx = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-conv",

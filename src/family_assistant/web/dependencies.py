@@ -1,6 +1,6 @@
 import logging
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING  # Import TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException, Request, status
 
@@ -33,10 +33,14 @@ async def get_embedding_generator_dependency(request: Request) -> EmbeddingGener
     return generator
 
 
-async def get_db() -> AsyncGenerator[DatabaseContext, None]:
+async def get_db(request: Request) -> AsyncGenerator[DatabaseContext, None]:
     """FastAPI dependency to get a DatabaseContext."""
-    # Uses the engine configured in storage/base.py by default.
-    async with get_db_context() as db_context:
+    # Get engine from app.state (set by Assistant during setup)
+    engine = request.app.state.database_engine
+    if not engine:
+        raise RuntimeError("Database engine not initialized in app.state")
+
+    async with get_db_context(engine) as db_context:
         yield db_context
 
 
