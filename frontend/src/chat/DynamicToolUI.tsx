@@ -8,6 +8,7 @@ import { ToolWithConfirmation } from './ToolWithConfirmation';
  */
 export const DynamicToolUI: React.FC<{
   toolName: string;
+  toolCallId?: string;
   args: any;
   result?: any;
   status?: any;

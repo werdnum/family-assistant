@@ -83,7 +83,11 @@ class MockToolsProvider:
         ]
 
     async def execute_tool(
-        self, name: str, arguments: dict[str, Any], context: ToolExecutionContext
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
     ) -> str:
         """Execute a mock tool."""
         if name == "echo":
@@ -260,14 +264,18 @@ async def test_direct_callable_validates_parameters(db_engine: Any) -> None:
     # Create mock tools provider that validates parameters
     class ValidatingMockToolsProvider(MockToolsProvider):
         async def execute_tool(
-            self, name: str, arguments: dict[str, Any], context: ToolExecutionContext
+            self,
+            name: str,
+            arguments: dict[str, Any],
+            context: ToolExecutionContext,
+            call_id: str | None = None,
         ) -> str:
             """Execute a mock tool with validation."""
             if name == "echo":
                 if "message" not in arguments:
                     raise ValueError("Required parameter 'message' is missing")
                 return f"Echo: {arguments.get('message', '')}"
-            return await super().execute_tool(name, arguments, context)
+            return await super().execute_tool(name, arguments, context, call_id)
 
     # Create tools provider
     tools_provider = ValidatingMockToolsProvider()

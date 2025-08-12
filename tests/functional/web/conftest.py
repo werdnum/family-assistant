@@ -272,7 +272,7 @@ async def web_only_assistant(
                         "search_documents",
                         "delete_calendar_event",
                     ],
-                    "confirm_tools": ["delete_calendar_event"],
+                    "confirm_tools": ["delete_calendar_event", "add_or_update_note"],
                     "mcp_initialization_timeout_seconds": 5,
                 },
                 "chat_id_to_name_map": {},

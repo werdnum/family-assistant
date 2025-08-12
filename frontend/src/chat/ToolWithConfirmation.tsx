@@ -4,6 +4,7 @@ import { ToolConfirmationContext } from './ToolConfirmationContext';
 
 interface ToolWithConfirmationProps {
   toolName: string;
+  toolCallId?: string;
   args: any;
   result?: any;
   status?: any;
@@ -12,6 +13,7 @@ interface ToolWithConfirmationProps {
 
 export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
   toolName,
+  toolCallId,
   args,
   result,
   status,
@@ -20,9 +22,10 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
   const context = useContext(ToolConfirmationContext);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
 
-  // Create a key to match the confirmation request
-  const confirmationKey = `${toolName}:${JSON.stringify(args)}`;
-  const pendingConfirmation = context?.pendingConfirmations?.get(confirmationKey);
+  // Get the confirmation by tool_call_id
+  const pendingConfirmation = toolCallId
+    ? context?.pendingConfirmations?.get(toolCallId)
+    : undefined;
 
   useEffect(() => {
     if (pendingConfirmation?.timeout_seconds) {
@@ -44,22 +47,14 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
   }, [pendingConfirmation]);
 
   const handleApprove = async () => {
-    if (context?.handleConfirmation && pendingConfirmation) {
-      await context.handleConfirmation(
-        '', // toolCallId not needed since we match by request_id
-        pendingConfirmation.request_id,
-        true
-      );
+    if (context?.handleConfirmation && pendingConfirmation && toolCallId) {
+      await context.handleConfirmation(toolCallId, pendingConfirmation.request_id, true);
     }
   };
 
   const handleReject = async () => {
-    if (context?.handleConfirmation && pendingConfirmation) {
-      await context.handleConfirmation(
-        '', // toolCallId not needed since we match by request_id
-        pendingConfirmation.request_id,
-        false
-      );
+    if (context?.handleConfirmation && pendingConfirmation && toolCallId) {
+      await context.handleConfirmation(toolCallId, pendingConfirmation.request_id, false);
     }
   };
 

@@ -140,10 +140,11 @@ export const useStreamingResponse = ({
                       onToolConfirmationRequest({
                         request_id: payload.request_id,
                         tool_name: payload.tool_name,
+                        tool_call_id: payload.tool_call_id,
                         confirmation_prompt: payload.confirmation_prompt,
                         timeout_seconds: payload.timeout_seconds,
                         args: payload.args,
-                        timestamp: Date.now(),
+                        created_at: new Date().toISOString(),
                       });
                     }
                     break;

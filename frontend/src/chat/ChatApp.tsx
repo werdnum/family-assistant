@@ -60,9 +60,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     // Add to pending confirmations map
     setPendingConfirmations((prev) => {
       const newMap = new Map(prev);
-      // Store by a combination of tool_name and args for matching
-      const key = `${request.tool_name}:${JSON.stringify(request.args)}`;
-      newMap.set(key, request);
+      // Store by tool_call_id for matching
+      newMap.set(request.tool_call_id, request);
       return newMap;
     });
   }, []);
@@ -72,7 +71,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     // Remove from pending confirmations
     setPendingConfirmations((prev) => {
       const newMap = new Map(prev);
-      // Find and remove the confirmation by matching tool_call_id
+      // Find and remove the confirmation by matching request_id
       for (const [key, value] of newMap.entries()) {
         if (value.request_id === result.request_id) {
           newMap.delete(key);

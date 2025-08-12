@@ -49,7 +49,11 @@ class MockToolsProvider:
         return []  # Not used
 
     async def execute_tool(
-        self, name: str, arguments: dict[str, Any], context: ToolExecutionContext
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
     ) -> str:
         # Actual execution logic not needed for these tests, just conform to signature
         # The protocol expects a string return.

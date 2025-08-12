@@ -68,7 +68,11 @@ class SimpleToolsProvider:
         ]
 
     async def execute_tool(
-        self, name: str, arguments: dict[str, Any], context: ToolExecutionContext
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
     ) -> str:
         """Execute a tool."""
         if name == "greet":

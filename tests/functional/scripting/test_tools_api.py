@@ -58,7 +58,11 @@ class MockToolsProvider:
         ]
 
     async def execute_tool(
-        self, name: str, arguments: dict[str, Any], context: ToolExecutionContext
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
     ) -> str:
         """Execute a mock tool."""
         if name == "echo":

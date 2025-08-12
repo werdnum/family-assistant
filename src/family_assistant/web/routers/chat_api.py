@@ -440,6 +440,7 @@ async def api_chat_send_message_stream(
                     "type": "confirmation_request",
                     "request_id": request_id,
                     "tool_name": tool_name,
+                    "tool_call_id": tool_call_id,
                     "confirmation_prompt": confirmation_prompt,
                     "timeout_seconds": timeout_seconds,
                     "args": tool_args,
@@ -516,6 +517,7 @@ async def api_chat_send_message_stream(
                         event_data = {
                             "request_id": queue_event["request_id"],
                             "tool_name": queue_event["tool_name"],
+                            "tool_call_id": queue_event["tool_call_id"],
                             "confirmation_prompt": queue_event["confirmation_prompt"],
                             "timeout_seconds": queue_event["timeout_seconds"],
                             "args": queue_event["args"],

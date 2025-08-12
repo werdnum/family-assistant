@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -425,10 +426,14 @@ class ProcessingService:
                 )
                 break
 
-            # Execute tool calls
+            # Execute tool calls in parallel
             tool_response_messages_for_llm = []
 
-            for tool_call_item_obj in tool_calls_from_stream:
+            # Create async task for each tool execution
+            async def execute_single_tool(
+                tool_call_item_obj: Any,
+            ) -> tuple[LLMStreamEvent, dict[str, Any], dict[str, Any]]:
+                """Execute a single tool call and return the result."""
                 call_id = tool_call_item_obj.id
                 function_name = tool_call_item_obj.function.name
                 function_args_str = tool_call_item_obj.function.arguments
@@ -448,8 +453,7 @@ class ProcessingService:
                         "error_traceback": error_traceback,
                     }
 
-                    # Yield tool result event
-                    yield (
+                    return (
                         LLMStreamEvent(
                             type="tool_result",
                             tool_call_id=call_id,
@@ -457,15 +461,13 @@ class ProcessingService:
                             error=error_traceback,
                         ),
                         tool_response_message,
+                        {
+                            "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
+                            "role": "tool",
+                            "name": function_name or "unknown_function",
+                            "content": error_content,
+                        },
                     )
-
-                    tool_response_messages_for_llm.append({
-                        "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
-                        "role": "tool",
-                        "name": function_name or "unknown_function",
-                        "content": error_content,
-                    })
-                    continue
 
                 # Parse arguments
                 try:
@@ -486,7 +488,7 @@ class ProcessingService:
                         "error_traceback": error_traceback,
                     }
 
-                    yield (
+                    return (
                         LLMStreamEvent(
                             type="tool_result",
                             tool_call_id=call_id,
@@ -494,14 +496,12 @@ class ProcessingService:
                             error=error_traceback,
                         ),
                         tool_response_message,
+                        {
+                            "tool_call_id": call_id,
+                            "role": "tool",
+                            "content": error_content,
+                        },
                     )
-
-                    tool_response_messages_for_llm.append({
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "content": error_content,
-                    })
-                    continue
 
                 # Execute tool
                 logger.info(f"Executing tool '{function_name}' with args: {arguments}")
@@ -528,7 +528,7 @@ class ProcessingService:
                 try:
                     # Execute the tool
                     result = await self.tools_provider.execute_tool(
-                        function_name, arguments, tool_execution_context
+                        function_name, arguments, tool_execution_context, call_id
                     )
                     logger.info(f"Tool '{function_name}' executed successfully.")
 
@@ -539,19 +539,18 @@ class ProcessingService:
                         "error_traceback": None,
                     }
 
-                    yield (
+                    return (
                         LLMStreamEvent(
                             type="tool_result", tool_call_id=call_id, tool_result=result
                         ),
                         tool_response_message,
+                        {
+                            "tool_call_id": call_id,
+                            "role": "tool",
+                            "name": function_name,
+                            "content": result,
+                        },
                     )
-
-                    tool_response_messages_for_llm.append({
-                        "tool_call_id": call_id,
-                        "role": "tool",
-                        "name": function_name,
-                        "content": result,
-                    })
 
                 except ToolNotFoundError:
                     logger.error(f"Tool '{function_name}' not found.")
@@ -565,7 +564,7 @@ class ProcessingService:
                         "error_traceback": error_traceback,
                     }
 
-                    yield (
+                    return (
                         LLMStreamEvent(
                             type="tool_result",
                             tool_call_id=call_id,
@@ -573,14 +572,13 @@ class ProcessingService:
                             error=error_traceback,
                         ),
                         tool_response_message,
+                        {
+                            "tool_call_id": call_id,
+                            "role": "tool",
+                            "name": function_name,
+                            "content": error_content,
+                        },
                     )
-
-                    tool_response_messages_for_llm.append({
-                        "tool_call_id": call_id,
-                        "role": "tool",
-                        "name": function_name,
-                        "content": error_content,
-                    })
 
                 except Exception as e:
                     logger.error(
@@ -596,7 +594,7 @@ class ProcessingService:
                         "error_traceback": error_traceback,
                     }
 
-                    yield (
+                    return (
                         LLMStreamEvent(
                             type="tool_result",
                             tool_call_id=call_id,
@@ -604,13 +602,56 @@ class ProcessingService:
                             error=error_traceback,
                         ),
                         tool_response_message,
+                        {
+                            "tool_call_id": call_id,
+                            "role": "tool",
+                            "name": function_name,
+                            "content": error_content,
+                        },
                     )
 
-                    tool_response_messages_for_llm.append({
-                        "tool_call_id": call_id,
+            # Create tasks for all tool calls
+            tool_tasks = [
+                asyncio.create_task(execute_single_tool(tool_call))
+                for tool_call in tool_calls_from_stream
+            ]
+
+            # Process results as they complete
+            for completed_task in asyncio.as_completed(tool_tasks):
+                try:
+                    event, tool_response_message, llm_message = await completed_task
+
+                    # Yield tool result event
+                    yield (event, tool_response_message)
+
+                    # Add to messages for LLM
+                    tool_response_messages_for_llm.append(llm_message)
+
+                except Exception as e:
+                    # This should not happen since we handle exceptions inside execute_single_tool
+                    # But adding as extra safety
+                    logger.error(
+                        f"Unexpected error in parallel tool execution: {e}",
+                        exc_info=True,
+                    )
+                    error_event = LLMStreamEvent(
+                        type="tool_result",
+                        tool_call_id=f"error_{uuid.uuid4()}",
+                        tool_result=f"Unexpected error: {str(e)}",
+                        error=traceback.format_exc(),
+                    )
+                    error_message = {
                         "role": "tool",
-                        "name": function_name,
-                        "content": error_content,
+                        "tool_call_id": f"error_{uuid.uuid4()}",
+                        "content": f"Unexpected error: {str(e)}",
+                        "error_traceback": traceback.format_exc(),
+                    }
+                    yield (error_event, error_message)
+                    tool_response_messages_for_llm.append({
+                        "tool_call_id": f"error_{uuid.uuid4()}",
+                        "role": "tool",
+                        "name": "unknown",
+                        "content": f"Unexpected error: {str(e)}",
                     })
 
             # Add tool responses to messages for next iteration

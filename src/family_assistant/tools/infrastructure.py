@@ -10,6 +10,7 @@ import asyncio
 import inspect
 import json
 import logging
+import uuid
 from typing import Any, Protocol, get_type_hints
 
 from family_assistant.tools.types import ToolExecutionContext
@@ -90,7 +91,11 @@ class ToolsProvider(Protocol):
         ...
 
     async def execute_tool(
-        self, name: str, arguments: dict[str, Any], context: ToolExecutionContext
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
     ) -> str:
         """Executes a specific tool by name with given arguments.
 
@@ -151,7 +156,11 @@ class LocalToolsProvider:
         return self._definitions
 
     async def execute_tool(
-        self, name: str, arguments: dict[str, Any], context: ToolExecutionContext
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
     ) -> str:
         if name not in self._implementations:
             raise ToolNotFoundError(f"Local tool '{name}' not found.")
@@ -345,7 +354,11 @@ class CompositeToolsProvider:
         return all_definitions
 
     async def execute_tool(
-        self, name: str, arguments: dict[str, Any], context: ToolExecutionContext
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
     ) -> str:
         """Executes a tool by trying each provider until one succeeds."""
         last_error = None
@@ -354,7 +367,7 @@ class CompositeToolsProvider:
                 logger.debug(
                     f"Attempting to execute tool '{name}' with provider {type(provider).__name__}"
                 )
-                result = await provider.execute_tool(name, arguments, context)
+                result = await provider.execute_tool(name, arguments, context, call_id)
                 logger.debug(
                     f"Tool '{name}' executed successfully with provider {type(provider).__name__}"
                 )
@@ -429,7 +442,11 @@ class FilteredToolsProvider(ToolsProvider):
         return self._filtered_definitions
 
     async def execute_tool(
-        self, name: str, arguments: dict[str, Any], context: ToolExecutionContext
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
     ) -> str:
         """Execute a tool if it's allowed."""
         if (
@@ -526,13 +543,13 @@ class ConfirmingToolsProvider(ToolsProvider):
         return None
 
     async def execute_tool(
-        self, name: str, arguments: dict[str, Any], context: ToolExecutionContext
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
     ) -> str:
         """Executes tool with confirmation if required."""
-        # Import here to avoid circular dependencies
-        from family_assistant.telegram_bot import telegramify_markdown
-        from family_assistant.tools import TOOL_CONFIRMATION_RENDERERS
-
         # Skip type alias here to avoid the error
 
         # Ensure definitions are loaded to know which tools need confirmation
@@ -547,27 +564,8 @@ class ConfirmingToolsProvider(ToolsProvider):
                 )
                 return f"Error: Tool '{name}' requires confirmation, but the system is not configured to ask for it."
 
-            # 1. Fetch event details if needed for rendering, passing the context
-            event_details = await self._get_event_details_for_confirmation(
-                name, arguments, context
-            )
-
-            # 2. Get the renderer
-            renderer = TOOL_CONFIRMATION_RENDERERS.get(name)
-            if not renderer:
-                logger.error(
-                    f"No confirmation renderer found for tool '{name}'. Using default prompt."
-                )
-                # Fallback prompt - escape user-provided args carefully
-                args_str = json.dumps(arguments, indent=2, default=str)
-                confirmation_prompt = f"Please confirm executing tool `{telegramify_markdown.escape_markdown(name)}` with arguments:\n```json\n{telegramify_markdown.escape_markdown(args_str)}\n```"
-            else:
-                # Pass timezone_str from context to the renderer
-                confirmation_prompt = renderer(
-                    arguments, event_details, context.timezone_str
-                )
-
-            # 3. Request confirmation via callback (which handles Future creation/waiting)
+            # Request confirmation via callback (which handles Future creation/waiting)
+            # Note: The callback is responsible for rendering the confirmation prompt
             try:
                 logger.debug(f"Requesting confirmation for tool '{name}' via callback.")
 
@@ -577,11 +575,12 @@ class ConfirmingToolsProvider(ToolsProvider):
                 # Pass arguments by keyword to ensure correct mapping, especially for mocks.
                 # Call with positional arguments to match expected signature
                 user_confirmed = await typed_callback(
-                    context.conversation_id,
                     context.interface_type,
+                    context.conversation_id,
                     context.turn_id,
-                    confirmation_prompt,
                     name,
+                    call_id
+                    or f"tool_{uuid.uuid4()}",  # Generate a call_id if none provided
                     arguments,
                     self.confirmation_timeout,
                 )
@@ -592,7 +591,7 @@ class ConfirmingToolsProvider(ToolsProvider):
                     )
                     # Execute the tool using the wrapped provider
                     return await self.wrapped_provider.execute_tool(
-                        name, arguments, context
+                        name, arguments, context, call_id
                     )
                 else:
                     logger.info(f"User cancelled execution for tool '{name}'.")
@@ -617,7 +616,9 @@ class ConfirmingToolsProvider(ToolsProvider):
             logger.debug(
                 f"Tool '{name}' does not require confirmation. Executing directly."
             )
-            return await self.wrapped_provider.execute_tool(name, arguments, context)
+            return await self.wrapped_provider.execute_tool(
+                name, arguments, context, call_id
+            )
 
     async def close(self) -> None:
         """Closes the wrapped provider."""
