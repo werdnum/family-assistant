@@ -559,9 +559,14 @@ class Assistant:
             profile_confirm_tools_set = set(
                 profile_tools_conf_dict.get("confirm_tools", [])
             )
+            # Get confirmation timeout from config, default to 60 seconds
+            confirmation_timeout = profile_tools_conf_dict.get(
+                "confirmation_timeout_seconds", 60.0
+            )
             confirming_provider_for_profile = ConfirmingToolsProvider(
                 wrapped_provider=filtered_provider,
                 tools_requiring_confirmation=profile_confirm_tools_set,
+                confirmation_timeout=confirmation_timeout,
             )
             await confirming_provider_for_profile.get_tool_definitions()
 

@@ -601,6 +601,9 @@ class ConfirmingToolsProvider(ToolsProvider):
             except asyncio.TimeoutError:
                 logger.warning(f"Confirmation request for tool '{name}' timed out.")
                 return f"Action cancelled: Confirmation request for tool '{name}' timed out."
+            except asyncio.CancelledError:
+                logger.info(f"Confirmation request for tool '{name}' was cancelled.")
+                return f"Action cancelled: Confirmation request for tool '{name}' was cancelled."
             except Exception as conf_err:
                 logger.error(
                     f"Error during confirmation request for tool '{name}': {conf_err}",

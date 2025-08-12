@@ -27,13 +27,14 @@ import classNames from 'classnames';
 import { MarkdownText } from './MarkdownText';
 import { TooltipIconButton } from './TooltipIconButton';
 import { LOADING_MARKER } from './constants';
-import { toolUIsByName, ToolFallback } from './ToolUI';
+import { DynamicToolUI } from './DynamicToolUI';
 
 const messageContentComponents = {
   Text: MarkdownText,
   tools: {
-    by_name: toolUIsByName,
-    Fallback: ToolFallback,
+    // Use DynamicToolUI as the fallback which will handle all tools
+    Fallback: DynamicToolUI,
+    // Don't specify by_name since we want all tools to go through DynamicToolUI
   },
 };
 
