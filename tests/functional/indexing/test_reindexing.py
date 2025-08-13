@@ -88,9 +88,17 @@ async def http_client(
     mock_embedding_generator: MockEmbeddingGenerator,
 ) -> AsyncGenerator[httpx.AsyncClient, None]:
     """Provides a test client for the FastAPI application."""
-    fastapi_app.state.embedding_generator = mock_embedding_generator
+    # Store original state
+    original_embedding_generator = getattr(
+        fastapi_app.state, "embedding_generator", None
+    )
+    original_database_engine = getattr(fastapi_app.state, "database_engine", None)
     original_config = getattr(fastapi_app.state, "config", {})
-    test_config = original_config.copy()
+
+    # Set up test state
+    fastapi_app.state.embedding_generator = mock_embedding_generator
+    fastapi_app.state.database_engine = pg_vector_db_engine
+    test_config = original_config.copy() if isinstance(original_config, dict) else {}
     test_config["document_storage_path"] = "/tmp/reindex_test"
     fastapi_app.state.config = test_config
 
@@ -98,10 +106,21 @@ async def http_client(
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
 
+    # Restore original state
     if original_config:
         fastapi_app.state.config = original_config
     else:
         delattr(fastapi_app.state, "config")
+
+    if original_database_engine is not None:
+        fastapi_app.state.database_engine = original_database_engine
+    elif hasattr(fastapi_app.state, "database_engine"):
+        delattr(fastapi_app.state, "database_engine")
+
+    if original_embedding_generator is not None:
+        fastapi_app.state.embedding_generator = original_embedding_generator
+    elif hasattr(fastapi_app.state, "embedding_generator"):
+        delattr(fastapi_app.state, "embedding_generator")
 
 
 async def _helper_handle_embed_and_store_batch(

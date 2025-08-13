@@ -366,7 +366,9 @@ async def api_chat_send_message_stream(
     async def event_generator() -> AsyncGenerator[str, None]:
         """Generate SSE formatted events from the processing stream."""
         # Get a fresh database context for the stream
-        async with get_db_context() as stream_db_context:
+        async with get_db_context(
+            request.app.state.database_engine
+        ) as stream_db_context:
             try:
                 # Use the streaming version of handle_chat_interaction
                 async for (

@@ -195,7 +195,7 @@ async def app_fixture(
     # Override dependencies in app.state
     app.state.processing_service = test_processing_service
     app.state.tools_provider = test_tools_provider  # For /api/tools/execute if needed
-    app.state.engine = db_engine  # For get_db dependency
+    app.state.database_engine = db_engine  # For get_db dependency
     app.state.config = {  # Minimal config for dependencies
         "auth_enabled": False,  # Authentication is OFF for tests
         "database_url": str(db_engine.url),
@@ -209,7 +209,7 @@ async def app_fixture(
 
     # Ensure database is initialized for this app instance
     async with get_db_context(engine=db_engine) as temp_db_ctx:
-        await init_db()  # Initialize main schema
+        await init_db(db_engine)  # Initialize main schema
         await temp_db_ctx.init_vector_db()  # Initialize vector schema
 
     return app

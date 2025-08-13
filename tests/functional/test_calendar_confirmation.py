@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.calendar_integration import (
     fetch_event_details_for_confirmation,
 )
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.context import get_db_context
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -44,6 +44,7 @@ async def create_test_event_in_radicale(
     event_summary: str,
     start_dt: datetime,
     end_dt: datetime,
+    engine: Any,  # SQLAlchemy AsyncEngine
 ) -> str:
     """Helper to create an event in Radicale using the actual calendar tool and return its UID."""
     base_url, user, passwd, calendar_url = radicale_server_details
@@ -61,7 +62,7 @@ async def create_test_event_in_radicale(
     }
 
     # Create a minimal database context for the test
-    async with DatabaseContext() as db_ctx:
+    async with get_db_context(engine=engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-create",
@@ -126,7 +127,7 @@ async def test_modify_calendar_event_confirmation_shows_event_details(
     end_dt = start_dt + timedelta(hours=1)
 
     event_uid = await create_test_event_in_radicale(
-        radicale_server, event_summary, start_dt, end_dt
+        radicale_server, event_summary, start_dt, end_dt, pg_vector_db_engine
     )
 
     # Setup calendar config
@@ -219,7 +220,7 @@ async def test_delete_calendar_event_confirmation_shows_event_details(
     end_dt = start_dt + timedelta(hours=1)
 
     event_uid = await create_test_event_in_radicale(
-        radicale_server, event_summary, start_dt, end_dt
+        radicale_server, event_summary, start_dt, end_dt, pg_vector_db_engine
     )
 
     # Setup calendar config
@@ -287,7 +288,7 @@ async def test_confirming_tools_provider_with_calendar_events(
     end_dt = start_dt + timedelta(hours=2)
 
     event_uid = await create_test_event_in_radicale(
-        radicale_server, event_summary, start_dt, end_dt
+        radicale_server, event_summary, start_dt, end_dt, pg_vector_db_engine
     )
 
     # Debug logging

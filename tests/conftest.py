@@ -12,7 +12,7 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, Callable, Generator
 from typing import Any, Protocol
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import caldav
 import pytest
@@ -26,7 +26,6 @@ from testcontainers.postgres import PostgresContainer  # type: ignore[import-unt
 
 # Import for task_worker_manager fixture
 from family_assistant.processing import ProcessingService  # Import ProcessingService
-from family_assistant.storage import base as storage_base  # Import storage base module
 
 # Import the metadata and the original engine object from your storage base
 from family_assistant.storage import init_db  # Import init_db
@@ -243,22 +242,20 @@ async def db_engine(
     if not engine:
         raise ValueError(f"Unsupported database backend: {db_backend}")
 
-    # Patch the global engine used by storage modules
-    patcher = patch("family_assistant.storage.base.engine", engine)
-    patcher.start()
-    logger.info(f"Patched storage.base.engine with {db_backend} test engine.")
+    # No global engine to patch anymore - engine is passed via dependency injection
+    logger.info(f"Using {db_backend} test engine.")
 
     try:
-        # Initialize the database schema using the patched engine
-        await init_db()
+        # Initialize the database schema using the test engine
+        # Pass the engine to init_db for dependency injection
+        await init_db(engine)
         logger.info("Database schema initialized.")
 
         # Yield control to the test function
         yield engine
 
     finally:
-        # Cleanup: Stop the patch and dispose the engine
-        patcher.stop()
+        # Cleanup: dispose the engine
         logger.info(f"--- Test DB Teardown ({request.node.name}) ---")
 
         # Force close all connections before disposing
@@ -275,7 +272,6 @@ async def db_engine(
             await asyncio.sleep(0.1)
 
         logger.info("Test engine disposed.")
-        logger.info("Restored original storage.base.engine.")
         if db_backend == "sqlite" and tmp_name:
             os.unlink(tmp_name)
             logger.info("Removed temporary SQLite database file.")
@@ -673,10 +669,8 @@ async def pg_vector_db_engine(
 
     engine = create_engine_with_sqlite_optimizations(test_db_url)
 
-    # Patch the global engine
-    original_engine = storage_base.engine
-    storage_base.engine = engine
-    logger.info("Patched storage.base.engine with PostgreSQL test engine.")
+    # No global engine to patch anymore - engine is passed via dependency injection
+    logger.info("Using PostgreSQL test engine with vector support.")
 
     try:
         # Initialize vector extension first for PostgreSQL
@@ -686,15 +680,13 @@ async def pg_vector_db_engine(
 
         # Initialize the database schema
         logger.info("Initializing PostgreSQL database schema...")
-        await init_db()  # init_db uses the global engine
+        await init_db(engine)  # Pass engine for dependency injection
         logger.info("PostgreSQL database schema initialized.")
 
         yield engine
     finally:
         logger.info(f"--- PostgreSQL Test DB Teardown ({unique_db_name}) ---")
         await engine.dispose()
-        storage_base.engine = original_engine
-        logger.info("Restored original storage.base.engine.")
 
         # Drop the PostgreSQL database
         admin_engine = create_async_engine(

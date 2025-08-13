@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
 
@@ -12,9 +11,8 @@ class TestEventSourceDeduplication:
     """Test event source deduplication in Assistant."""
 
     @pytest.mark.asyncio
-    async def test_single_event_source_per_ha_instance(
-        self, db_engine: AsyncEngine
-    ) -> None:
+    @pytest.mark.no_db
+    async def test_single_event_source_per_ha_instance(self) -> None:
         """Test that only one event source is created per unique HA instance."""
         # Configure test with multiple profiles using same HA instance
         config = {
@@ -25,6 +23,7 @@ class TestEventSourceDeduplication:
             "embedding_model": "mock-deterministic-embedder",
             "embedding_dimensions": 384,
             "server_url": "http://test.local",
+            "database_url": "sqlite+aiosqlite:///:memory:",
             "event_system": {
                 "enabled": True,
                 "sources": {"home_assistant": {"enabled": True}},

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 import httpx
 import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
 from family_assistant.storage.context import get_db_context
@@ -257,12 +258,13 @@ async def test_get_conversation_messages_with_data(
 @pytest.mark.asyncio
 async def test_get_conversation_messages_cross_interface_retrieval(
     web_only_assistant: Assistant,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test that messages are retrieved from all interfaces for the same conversation ID."""
     conv_id = "test_conv_interface_filter"
 
     # Create test messages in different interfaces for same conversation ID
-    async with get_db_context() as db_context:
+    async with get_db_context(db_engine) as db_context:
         # Add web message
         await db_context.message_history.add_message(
             interface_type="web",
@@ -309,10 +311,11 @@ async def test_get_conversation_messages_cross_interface_retrieval(
 @pytest.mark.asyncio
 async def test_get_conversations_interface_filter(
     web_only_assistant: Assistant,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test filtering conversations by interface type."""
     # Create test conversations in different interfaces
-    async with get_db_context() as db_context:
+    async with get_db_context(db_engine) as db_context:
         # Add web conversation
         await db_context.message_history.add_message(
             interface_type="web",
@@ -397,10 +400,11 @@ async def test_get_conversations_interface_filter(
 @pytest.mark.asyncio
 async def test_get_conversations_conversation_id_filter(
     web_only_assistant: Assistant,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test filtering conversations by specific conversation ID."""
     # Create test conversations
-    async with get_db_context() as db_context:
+    async with get_db_context(db_engine) as db_context:
         for i in range(3):
             conv_id = f"conv_id_filter_test_{i}"
             await db_context.message_history.add_message(
@@ -438,13 +442,15 @@ async def test_get_conversations_conversation_id_filter(
 
 
 @pytest.mark.asyncio
-async def test_get_conversations_date_filters(web_only_assistant: Assistant) -> None:
+async def test_get_conversations_date_filters(
+    web_only_assistant: Assistant, db_engine: AsyncEngine
+) -> None:
     """Test filtering conversations by date range."""
     from datetime import timedelta
 
     # Create test conversations with different timestamps
     base_time = datetime.now(timezone.utc)
-    async with get_db_context() as db_context:
+    async with get_db_context(db_engine) as db_context:
         # Old conversation (3 days ago)
         await db_context.message_history.add_message(
             interface_type="web",
@@ -540,6 +546,7 @@ async def test_get_conversations_invalid_date_formats(
 @pytest.mark.asyncio
 async def test_get_conversations_combined_filters(
     web_only_assistant: Assistant,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test using multiple filters together."""
     from datetime import timedelta
@@ -547,7 +554,7 @@ async def test_get_conversations_combined_filters(
     base_time = datetime.now(timezone.utc)
 
     # Create test data
-    async with get_db_context() as db_context:
+    async with get_db_context(db_engine) as db_context:
         # Web conversation from yesterday matching all filters
         await db_context.message_history.add_message(
             interface_type="web",

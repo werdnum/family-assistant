@@ -2,6 +2,8 @@ import json
 import logging
 import os
 import pathlib
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -11,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.templating import _TemplateResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 # Import new auth and utils modules
 from family_assistant.web.auth import (
@@ -18,7 +21,8 @@ from family_assistant.web.auth import (
     PUBLIC_PATHS,
     SESSION_SECRET_KEY,
     AuthMiddleware,
-    auth_router,
+    AuthService,
+    create_auth_router,
 )
 from family_assistant.web.routers.api import api_router
 from family_assistant.web.routers.api_documentation import (
@@ -103,13 +107,64 @@ else:
         "SessionMiddleware NOT added (SESSION_SECRET_KEY is not set). Accessing request.session will fail, which might break OIDC if it were enabled."
     )
 
+
+# Create a wrapper for AuthMiddleware that will get AuthService from app.state
+class AuthMiddlewareWrapper:
+    """Wrapper that gets AuthService from app.state at runtime."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+        self.auth_service: AuthService | None = None
+        self.auth_middleware: AuthMiddleware | None = None
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # Get AuthService from app.state if not already cached
+        if self.auth_middleware is None and "app" in scope:
+            app = scope["app"]
+            if hasattr(app.state, "auth_service"):
+                self.auth_service = app.state.auth_service
+                if self.auth_service is not None:
+                    self.auth_middleware = AuthMiddleware(
+                        self.app, self.auth_service, PUBLIC_PATHS
+                    )
+
+        # Use AuthMiddleware if available and auth is enabled
+        if self.auth_middleware and AUTH_ENABLED:
+            await self.auth_middleware(scope, receive, send)
+        else:
+            await self.app(scope, receive, send)
+
+
 if AUTH_ENABLED:
-    middleware.append(
-        Middleware(AuthMiddleware, public_paths=PUBLIC_PATHS, auth_enabled=AUTH_ENABLED)
-    )
-    logger.info("AuthMiddleware added to the application middleware stack.")
+    middleware.append(Middleware(AuthMiddlewareWrapper))
+    logger.info("AuthMiddleware wrapper added to the application middleware stack.")
 else:
     logger.info("AuthMiddleware NOT added as AUTH_ENABLED is false.")
+
+
+# --- Lifespan context manager for startup/shutdown ---
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Manage application lifecycle events."""
+    # Startup
+    logger.info("Application starting up...")
+
+    # Initialize AuthService if database engine is available
+    # Note: database_engine will be set by Assistant during setup
+    if hasattr(app.state, "database_engine"):
+        app.state.auth_service = AuthService(app.state.database_engine)
+        logger.info("AuthService initialized with database engine")
+    else:
+        # For development or when database is not yet initialized
+        app.state.auth_service = AuthService()
+        logger.warning(
+            "AuthService initialized without database engine - API token auth will not work"
+        )
+
+    yield
+
+    # Shutdown
+    logger.info("Application shutting down...")
 
 
 # --- FastAPI App Initialization ---
@@ -118,6 +173,7 @@ app = FastAPI(
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     middleware=middleware,
+    lifespan=lifespan,
 )
 
 # --- Store shared objects on app.state ---
@@ -251,9 +307,7 @@ else:
     )
 
 # --- Include Routers ---
-if AUTH_ENABLED:
-    app.include_router(auth_router, tags=["Authentication"])
-    logger.info("Authentication routes included.")
+# Note: Auth router will be added after AuthService is initialized
 
 app.include_router(vite_pages_router, tags=["Vite Pages"])
 
@@ -341,10 +395,32 @@ async def serve_vite_html(request: Request, path: str) -> FileResponse:
     raise HTTPException(status_code=404, detail="Not found")
 
 
+def configure_app_auth(app: FastAPI, database_engine: Any | None = None) -> None:
+    """Configure authentication for the app with proper dependency injection.
+
+    This should be called after the app is created and database engine is available.
+    Typically called by Assistant.setup_dependencies().
+    """
+    # Initialize AuthService
+    auth_service = AuthService(database_engine)
+    app.state.auth_service = auth_service
+
+    # Include auth router
+    if AUTH_ENABLED:
+        auth_router = create_auth_router(auth_service)
+        app.include_router(auth_router, tags=["Authentication"])
+        logger.info("Authentication routes included with AuthService")
+
+    # Store auth configuration in app state for dependencies
+    app.state.config = app.state.config if hasattr(app.state, "config") else {}
+    app.state.config["auth_enabled"] = AUTH_ENABLED
+
+
 # Export the helper functions and app
 __all__ = [
     "app",
     "create_template_context",
     "get_dev_mode_from_request",
     "configure_app_debug",
+    "configure_app_auth",
 ]

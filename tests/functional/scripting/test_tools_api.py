@@ -82,7 +82,7 @@ async def test_tools_api_list(db_engine: Any) -> None:
     tools_provider = MockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-123",
@@ -113,7 +113,7 @@ async def test_tools_api_get(db_engine: Any) -> None:
     """Test getting a specific tool from Starlark."""
     tools_provider = MockToolsProvider()
 
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-123",
@@ -148,7 +148,7 @@ async def test_tools_api_execute(db_engine: Any) -> None:
     """Test executing tools from Starlark."""
     tools_provider = MockToolsProvider()
 
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-123",
@@ -183,7 +183,7 @@ async def test_tools_api_execute_json(db_engine: Any) -> None:
     """Test executing tools with JSON arguments from Starlark."""
     tools_provider = MockToolsProvider()
 
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-123",
@@ -239,7 +239,7 @@ async def test_tools_api_invalid_tool(db_engine: Any) -> None:
     """Test that executing an invalid tool raises an error."""
     tools_provider = MockToolsProvider()
 
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-123",
