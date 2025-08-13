@@ -78,12 +78,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         {/* Desktop Navigation */}
         <div className="hidden md:block">
           <NavigationMenu className="mx-auto max-w-full">
-            <NavigationMenuList className="flex-nowrap justify-start gap-2 px-4 py-3 overflow-x-auto">
+            <NavigationMenuList className="flex-nowrap justify-start gap-1 px-4 py-3 overflow-x-auto">
               {/* Assistant Data */}
               <NavigationMenuItem>
-                <NavigationMenuTrigger className="text-sm">
-                  <FileText className="mr-2 h-4 w-4" />
-                  Data
+                <NavigationMenuTrigger className="text-sm whitespace-nowrap">
+                  <FileText className="mr-2 h-4 w-4 flex-shrink-0" />
+                  <span className="whitespace-nowrap">Data</span>
                 </NavigationMenuTrigger>
                 <NavigationMenuContent>
                   <div className="grid gap-3 p-4 w-[200px]">
@@ -107,9 +107,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
               {/* Documents */}
               <NavigationMenuItem>
-                <NavigationMenuTrigger className="text-sm">
-                  <FolderOpen className="mr-2 h-4 w-4" />
-                  Documents
+                <NavigationMenuTrigger className="text-sm whitespace-nowrap">
+                  <FolderOpen className="mr-2 h-4 w-4 flex-shrink-0" />
+                  <span className="whitespace-nowrap">Documents</span>
                 </NavigationMenuTrigger>
                 <NavigationMenuContent>
                   <div className="grid gap-3 p-4 w-[200px]">
@@ -143,19 +143,19 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   <NavLink
                     to="/chat"
                     isActive={currentPage === 'chat'}
-                    className="whitespace-nowrap"
+                    className="whitespace-nowrap inline-flex items-center"
                   >
-                    <MessageCircle className="mr-2 h-4 w-4" />
-                    Chat
+                    <MessageCircle className="mr-2 h-4 w-4 flex-shrink-0" />
+                    <span className="whitespace-nowrap">Chat</span>
                   </NavLink>
                 </NavigationMenuLink>
               </NavigationMenuItem>
 
               <NavigationMenuItem>
                 <NavigationMenuLink asChild>
-                  <ExternalNavLink href="/history">
-                    <History className="mr-2 h-4 w-4" />
-                    History
+                  <ExternalNavLink href="/history" className="inline-flex items-center">
+                    <History className="mr-2 h-4 w-4 flex-shrink-0" />
+                    <span className="whitespace-nowrap">History</span>
                   </ExternalNavLink>
                 </NavigationMenuLink>
               </NavigationMenuItem>
@@ -164,9 +164,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
               {/* Automation */}
               <NavigationMenuItem>
-                <NavigationMenuTrigger className="text-sm">
-                  <Zap className="mr-2 h-4 w-4" />
-                  Automation
+                <NavigationMenuTrigger className="text-sm whitespace-nowrap">
+                  <Zap className="mr-2 h-4 w-4 flex-shrink-0" />
+                  <span className="whitespace-nowrap">Automation</span>
                 </NavigationMenuTrigger>
                 <NavigationMenuContent>
                   <div className="grid gap-3 p-4 w-[200px]">
@@ -190,9 +190,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
               {/* Internal/Admin */}
               <NavigationMenuItem>
-                <NavigationMenuTrigger className="text-sm">
-                  <Cog className="mr-2 h-4 w-4" />
-                  Internal
+                <NavigationMenuTrigger className="text-sm whitespace-nowrap">
+                  <Cog className="mr-2 h-4 w-4 flex-shrink-0" />
+                  <span className="whitespace-nowrap">Internal</span>
                 </NavigationMenuTrigger>
                 <NavigationMenuContent>
                   <div className="grid gap-3 p-4 w-[200px]">
@@ -223,9 +223,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               {/* Help */}
               <NavigationMenuItem>
                 <NavigationMenuLink asChild>
-                  <ExternalNavLink href="/docs/">
-                    <HelpCircle className="mr-2 h-4 w-4" />
-                    Help
+                  <ExternalNavLink href="/docs/" className="inline-flex items-center">
+                    <HelpCircle className="mr-2 h-4 w-4 flex-shrink-0" />
+                    <span className="whitespace-nowrap">Help</span>
                   </ExternalNavLink>
                 </NavigationMenuLink>
               </NavigationMenuItem>
