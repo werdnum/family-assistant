@@ -565,9 +565,9 @@ class Assistant:
             print(
                 f"DEBUG Assistant: Profile {profile_id} confirm_tools_set: {profile_confirm_tools_set}"
             )
-            # Get confirmation timeout from config, default to 60 seconds
+            # Get confirmation timeout from config, default to 3600 seconds (1 hour)
             confirmation_timeout = profile_tools_conf_dict.get(
-                "confirmation_timeout_seconds", 60.0
+                "confirmation_timeout_seconds", 3600.0
             )
             confirming_provider_for_profile = ConfirmingToolsProvider(
                 wrapped_provider=filtered_provider,

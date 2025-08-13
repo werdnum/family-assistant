@@ -273,6 +273,7 @@ async def web_only_assistant(
                         "delete_calendar_event",
                     ],
                     "confirm_tools": ["delete_calendar_event", "add_or_update_note"],
+                    "confirmation_timeout_seconds": 10.0,  # Short timeout for tests (10s instead of default 1hr)
                     "mcp_initialization_timeout_seconds": 5,
                 },
                 "chat_id_to_name_map": {},

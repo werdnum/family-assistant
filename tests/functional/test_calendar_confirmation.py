@@ -335,7 +335,7 @@ async def test_confirming_tools_provider_with_calendar_events(
     confirming_provider = ConfirmingToolsProvider(
         wrapped_provider=local_provider,
         tools_requiring_confirmation={"modify_calendar_event"},
-        confirmation_timeout=60.0,
+        confirmation_timeout=10.0,  # Short timeout for tests (10s instead of default 1hr)
     )
 
     # Create execution context

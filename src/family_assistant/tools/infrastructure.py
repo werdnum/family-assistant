@@ -469,7 +469,7 @@ class ConfirmingToolsProvider(ToolsProvider):
         self,
         wrapped_provider: ToolsProvider,
         tools_requiring_confirmation: set[str],
-        confirmation_timeout: float = 60.0,
+        confirmation_timeout: float = 3600.0,
     ) -> None:
         self.wrapped_provider = wrapped_provider
         self._tools_requiring_confirmation = tools_requiring_confirmation

@@ -69,7 +69,7 @@ async def test_tool_confirmation_timeout_flow(
     # Wait for confirmation dialog to appear
     await chat_page.wait_for_confirmation_dialog()
 
-    # The default timeout is 60s. Since we can't wait that long in tests,
+    # The test timeout is 10s (overridden from default 1hr). Since we can't wait that long in tests,
     # let's just verify the dialog appears and has the timeout countdown.
     # Check that the UI shows a countdown timer
     timer_element = await page.query_selector(
