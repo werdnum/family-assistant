@@ -71,6 +71,7 @@ from family_assistant.tools import (
 from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.utils.scraping import PlaywrightScraper
 from family_assistant.web.app_creator import app as fastapi_app
+from family_assistant.web.app_creator import configure_app_auth
 
 from .telegram_bot import TelegramService
 
@@ -278,6 +279,10 @@ class Assistant:
 
         # Store engine in FastAPI app state for web dependencies
         fastapi_app.state.database_engine = self.database_engine
+
+        # Configure authentication with the database engine
+        configure_app_auth(fastapi_app, self.database_engine)
+        logger.info("Authentication configured with database engine")
 
         # Setup error logging to database if enabled
         error_logging_config = self.config.get("logging", {}).get("database_errors", {})
