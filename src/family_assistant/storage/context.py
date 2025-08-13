@@ -149,7 +149,6 @@ class DatabaseContext:
             except DBAPIError as e:
                 # Check if the error is a ProgrammingError (syntax error, undefined object, etc.)
                 # or IntegrityError (constraint violations). These should not be retried.
-                if isinstance(e.orig, ProgrammingError | IntegrityError) or isinstance(
                 if isinstance(e.orig, (ProgrammingError, IntegrityError)) or isinstance(
                     e, (ProgrammingError, IntegrityError)
                 ):  # Check original and wrapper
