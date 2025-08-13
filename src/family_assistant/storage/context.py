@@ -150,7 +150,8 @@ class DatabaseContext:
                 # Check if the error is a ProgrammingError (syntax error, undefined object, etc.)
                 # or IntegrityError (constraint violations). These should not be retried.
                 if isinstance(e.orig, ProgrammingError | IntegrityError) or isinstance(
-                    e, ProgrammingError | IntegrityError
+                if isinstance(e.orig, (ProgrammingError, IntegrityError)) or isinstance(
+                    e, (ProgrammingError, IntegrityError)
                 ):  # Check original and wrapper
                     is_prog_error = isinstance(e.orig, ProgrammingError) or isinstance(
                         e, ProgrammingError
