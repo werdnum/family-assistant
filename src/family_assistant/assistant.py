@@ -559,11 +559,11 @@ class Assistant:
             profile_confirm_tools_set = set(
                 profile_tools_conf_dict.get("confirm_tools", [])
             )
-            print(
-                f"DEBUG Assistant: Profile {profile_id} confirm_tools from config: {profile_tools_conf_dict.get('confirm_tools', [])}"
+            logger.debug(
+                f"Assistant: Profile {profile_id} confirm_tools from config: {profile_tools_conf_dict.get('confirm_tools', [])}"
             )
-            print(
-                f"DEBUG Assistant: Profile {profile_id} confirm_tools_set: {profile_confirm_tools_set}"
+            logger.debug(
+                f"Assistant: Profile {profile_id} confirm_tools_set: {profile_confirm_tools_set}"
             )
             # Get confirmation timeout from config, default to 3600 seconds (1 hour)
             confirmation_timeout = profile_tools_conf_dict.get(

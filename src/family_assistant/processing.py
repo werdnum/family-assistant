@@ -429,190 +429,20 @@ class ProcessingService:
             # Execute tool calls in parallel
             tool_response_messages_for_llm = []
 
-            # Create async task for each tool execution
-            async def execute_single_tool(
-                tool_call_item_obj: Any,
-            ) -> tuple[LLMStreamEvent, dict[str, Any], dict[str, Any]]:
-                """Execute a single tool call and return the result."""
-                call_id = tool_call_item_obj.id
-                function_name = tool_call_item_obj.function.name
-                function_args_str = tool_call_item_obj.function.arguments
-
-                # Validate tool call
-                if not call_id or not function_name:
-                    logger.error(
-                        f"Invalid tool call: id='{call_id}', name='{function_name}'"
-                    )
-                    error_content = "Error: Invalid tool call structure."
-                    error_traceback = "Invalid tool call structure received from LLM."
-
-                    tool_response_message = {
-                        "role": "tool",
-                        "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
-                        "content": error_content,
-                        "error_traceback": error_traceback,
-                    }
-
-                    return (
-                        LLMStreamEvent(
-                            type="tool_result",
-                            tool_call_id=call_id,
-                            tool_result=error_content,
-                            error=error_traceback,
-                        ),
-                        tool_response_message,
-                        {
-                            "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
-                            "role": "tool",
-                            "name": function_name or "unknown_function",
-                            "content": error_content,
-                        },
-                    )
-
-                # Parse arguments
-                try:
-                    arguments = json.loads(function_args_str)
-                except json.JSONDecodeError:
-                    logger.error(
-                        f"Failed to parse arguments for {function_name}: {function_args_str}"
-                    )
-                    error_content = (
-                        f"Error: Invalid arguments format for {function_name}."
-                    )
-                    error_traceback = f"JSONDecodeError: {function_args_str}"
-
-                    tool_response_message = {
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "content": error_content,
-                        "error_traceback": error_traceback,
-                    }
-
-                    return (
-                        LLMStreamEvent(
-                            type="tool_result",
-                            tool_call_id=call_id,
-                            tool_result=error_content,
-                            error=error_traceback,
-                        ),
-                        tool_response_message,
-                        {
-                            "tool_call_id": call_id,
-                            "role": "tool",
-                            "content": error_content,
-                        },
-                    )
-
-                # Execute tool
-                logger.info(f"Executing tool '{function_name}' with args: {arguments}")
-                tool_execution_context = ToolExecutionContext(
-                    interface_type=interface_type,
-                    conversation_id=conversation_id,
-                    user_name=user_name,
-                    turn_id=turn_id,
-                    db_context=db_context,
-                    chat_interface=chat_interface,
-                    timezone_str=self.timezone_str,
-                    request_confirmation_callback=request_confirmation_callback,
-                    processing_service=self,
-                    clock=self.clock,
-                    home_assistant_client=self.home_assistant_client,
-                    event_sources=self.event_sources,
-                    indexing_source=(
-                        self.event_sources.get("indexing")
-                        if self.event_sources
-                        else None
-                    ),
-                )
-
-                try:
-                    # Execute the tool
-                    result = await self.tools_provider.execute_tool(
-                        function_name, arguments, tool_execution_context, call_id
-                    )
-                    logger.info(f"Tool '{function_name}' executed successfully.")
-
-                    tool_response_message = {
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "content": result,
-                        "error_traceback": None,
-                    }
-
-                    return (
-                        LLMStreamEvent(
-                            type="tool_result", tool_call_id=call_id, tool_result=result
-                        ),
-                        tool_response_message,
-                        {
-                            "tool_call_id": call_id,
-                            "role": "tool",
-                            "name": function_name,
-                            "content": result,
-                        },
-                    )
-
-                except ToolNotFoundError:
-                    logger.error(f"Tool '{function_name}' not found.")
-                    error_content = f"Error: Tool '{function_name}' not found."
-                    error_traceback = traceback.format_exc()
-
-                    tool_response_message = {
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "content": error_content,
-                        "error_traceback": error_traceback,
-                    }
-
-                    return (
-                        LLMStreamEvent(
-                            type="tool_result",
-                            tool_call_id=call_id,
-                            tool_result=error_content,
-                            error=error_traceback,
-                        ),
-                        tool_response_message,
-                        {
-                            "tool_call_id": call_id,
-                            "role": "tool",
-                            "name": function_name,
-                            "content": error_content,
-                        },
-                    )
-
-                except Exception as e:
-                    logger.error(
-                        f"Error executing tool '{function_name}': {e}", exc_info=True
-                    )
-                    error_content = f"Error executing {function_name}: {str(e)}"
-                    error_traceback = traceback.format_exc()
-
-                    tool_response_message = {
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "content": error_content,
-                        "error_traceback": error_traceback,
-                    }
-
-                    return (
-                        LLMStreamEvent(
-                            type="tool_result",
-                            tool_call_id=call_id,
-                            tool_result=error_content,
-                            error=error_traceback,
-                        ),
-                        tool_response_message,
-                        {
-                            "tool_call_id": call_id,
-                            "role": "tool",
-                            "name": function_name,
-                            "content": error_content,
-                        },
-                    )
-
             # Create tasks for all tool calls
             tool_tasks = [
-                asyncio.create_task(execute_single_tool(tool_call))
+                asyncio.create_task(
+                    self._execute_single_tool(
+                        tool_call,
+                        interface_type=interface_type,
+                        conversation_id=conversation_id,
+                        user_name=user_name,
+                        turn_id=turn_id,
+                        db_context=db_context,
+                        chat_interface=chat_interface,
+                        request_confirmation_callback=request_confirmation_callback,
+                    )
+                )
                 for tool_call in tool_calls_from_stream
             ]
 
@@ -662,6 +492,204 @@ class ProcessingService:
         if current_iteration > max_iterations:
             logger.warning(
                 f"Reached maximum iterations ({max_iterations}) in streaming tool loop."
+            )
+
+    async def _execute_single_tool(
+        self,
+        tool_call_item_obj: Any,
+        interface_type: str,
+        conversation_id: str,
+        user_name: str,
+        turn_id: str,
+        db_context: DatabaseContext,
+        chat_interface: ChatInterface | None,
+        request_confirmation_callback: Callable[
+            [str, str, str | None, str, str, dict[str, Any], float],
+            Awaitable[bool],
+        ]
+        | None,
+    ) -> tuple[LLMStreamEvent, dict[str, Any], dict[str, Any]]:
+        """Execute a single tool call and return the result.
+
+        Args:
+            tool_call_item_obj: The tool call object from LLM
+            interface_type: Interface type (e.g., 'telegram')
+            conversation_id: Conversation identifier
+            user_name: User name for context
+            turn_id: Current turn identifier
+            db_context: Database context
+            chat_interface: Chat interface for sending messages
+            request_confirmation_callback: Callback for tool confirmation
+
+        Returns:
+            Tuple of (event, tool_response_message, llm_message)
+        """
+        call_id = tool_call_item_obj.id
+        function_name = tool_call_item_obj.function.name
+        function_args_str = tool_call_item_obj.function.arguments
+
+        # Validate tool call
+        if not call_id or not function_name:
+            logger.error(f"Invalid tool call: id='{call_id}', name='{function_name}'")
+            error_content = "Error: Invalid tool call structure."
+            error_traceback = "Invalid tool call structure received from LLM."
+
+            tool_response_message = {
+                "role": "tool",
+                "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
+                "content": error_content,
+                "error_traceback": error_traceback,
+            }
+
+            return (
+                LLMStreamEvent(
+                    type="tool_result",
+                    tool_call_id=call_id,
+                    tool_result=error_content,
+                    error=error_traceback,
+                ),
+                tool_response_message,
+                {
+                    "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
+                    "role": "tool",
+                    "name": function_name or "unknown_function",
+                    "content": error_content,
+                },
+            )
+
+        # Parse arguments
+        try:
+            arguments = json.loads(function_args_str)
+        except json.JSONDecodeError:
+            logger.error(
+                f"Failed to parse arguments for {function_name}: {function_args_str}"
+            )
+            error_content = f"Error: Invalid arguments format for {function_name}."
+            error_traceback = f"JSONDecodeError: {function_args_str}"
+
+            tool_response_message = {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": error_content,
+                "error_traceback": error_traceback,
+            }
+
+            return (
+                LLMStreamEvent(
+                    type="tool_result",
+                    tool_call_id=call_id,
+                    tool_result=error_content,
+                    error=error_traceback,
+                ),
+                tool_response_message,
+                {
+                    "tool_call_id": call_id,
+                    "role": "tool",
+                    "content": error_content,
+                },
+            )
+
+        # Execute tool
+        logger.info(f"Executing tool '{function_name}' with args: {arguments}")
+        tool_execution_context = ToolExecutionContext(
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            user_name=user_name,
+            turn_id=turn_id,
+            db_context=db_context,
+            chat_interface=chat_interface,
+            timezone_str=self.timezone_str,
+            request_confirmation_callback=request_confirmation_callback,
+            processing_service=self,
+            clock=self.clock,
+            home_assistant_client=self.home_assistant_client,
+            event_sources=self.event_sources,
+            indexing_source=(
+                self.event_sources.get("indexing") if self.event_sources else None
+            ),
+        )
+
+        try:
+            # Execute the tool
+            result = await self.tools_provider.execute_tool(
+                function_name, arguments, tool_execution_context, call_id
+            )
+            logger.info(f"Tool '{function_name}' executed successfully.")
+
+            tool_response_message = {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": result,
+                "error_traceback": None,
+            }
+
+            return (
+                LLMStreamEvent(
+                    type="tool_result", tool_call_id=call_id, tool_result=result
+                ),
+                tool_response_message,
+                {
+                    "tool_call_id": call_id,
+                    "role": "tool",
+                    "name": function_name,
+                    "content": result,
+                },
+            )
+
+        except ToolNotFoundError:
+            logger.error(f"Tool '{function_name}' not found.")
+            error_content = f"Error: Tool '{function_name}' not found."
+            error_traceback = traceback.format_exc()
+
+            tool_response_message = {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": error_content,
+                "error_traceback": error_traceback,
+            }
+
+            return (
+                LLMStreamEvent(
+                    type="tool_result",
+                    tool_call_id=call_id,
+                    tool_result=error_content,
+                    error=error_traceback,
+                ),
+                tool_response_message,
+                {
+                    "tool_call_id": call_id,
+                    "role": "tool",
+                    "name": function_name,
+                    "content": error_content,
+                },
+            )
+
+        except Exception as e:
+            logger.error(f"Error executing tool '{function_name}': {e}", exc_info=True)
+            error_content = f"Error executing {function_name}: {str(e)}"
+            error_traceback = traceback.format_exc()
+
+            tool_response_message = {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": error_content,
+                "error_traceback": error_traceback,
+            }
+
+            return (
+                LLMStreamEvent(
+                    type="tool_result",
+                    tool_call_id=call_id,
+                    tool_result=error_content,
+                    error=error_traceback,
+                ),
+                tool_response_message,
+                {
+                    "tool_call_id": call_id,
+                    "role": "tool",
+                    "name": function_name,
+                    "content": error_content,
+                },
             )
 
     def _format_history_for_llm(

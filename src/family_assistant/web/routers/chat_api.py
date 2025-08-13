@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field
 
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
-from family_assistant.tools.confirmation import TOOL_CONFIRMATION_RENDERERS
 from family_assistant.web.confirmation_manager import web_confirmation_manager
 from family_assistant.web.dependencies import get_db, get_processing_service
 from family_assistant.web.models import ChatMessageResponse, ChatPromptRequest
@@ -405,22 +404,16 @@ async def api_chat_send_message_stream(
                 timeout_seconds: float,
             ) -> bool:
                 """Request confirmation from the user via SSE."""
-                # Get the confirmation renderer if available
-                renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
-                if renderer:
-                    # For calendar tools, we might need to fetch event details
-                    event_details = None
-                    if tool_name in ["delete_calendar_event", "modify_calendar_event"]:
-                        # TODO: Fetch event details if needed
-                        pass
+                # For the web UI, we don't use text renderers like Telegram does.
+                # Instead, we pass the tool information directly to the frontend
+                # which uses the existing ToolWithConfirmation components to render
+                # the tool call visually with proper formatting and details.
+                # This provides a better user experience than text-based confirmations.
 
-                    # Render the confirmation prompt
-                    confirmation_prompt = renderer(tool_args, event_details, "UTC")
-                else:
-                    # Default confirmation prompt
-                    confirmation_prompt = (
-                        f"Do you want to execute '{tool_name}' with these parameters?"
-                    )
+                # Default confirmation prompt (frontend will render tool details)
+                confirmation_prompt = (
+                    f"Do you want to execute '{tool_name}' with these parameters?"
+                )
 
                 # Create confirmation request
                 (

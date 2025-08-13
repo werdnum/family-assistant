@@ -684,13 +684,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         tool_args: dict[str, Any],
                         timeout_seconds: float,
                     ) -> bool:
-                        import sys
-
-                        print(
-                            "DEBUG: confirmation_callback_wrapper called!",
-                            file=sys.stderr,
-                        )
-                        sys.stderr.flush()
+                        logger.debug("confirmation_callback_wrapper called!")
                         # Render the confirmation prompt
                         from family_assistant.tools.confirmation import (
                             TOOL_CONFIRMATION_RENDERERS,
