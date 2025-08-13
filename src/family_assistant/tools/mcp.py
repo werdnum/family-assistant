@@ -645,7 +645,11 @@ class MCPToolsProvider:
             return False
 
     async def execute_tool(
-        self, name: str, arguments: dict[str, Any], context: ToolExecutionContext
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
     ) -> str:
         """Executes an MCP tool on the appropriate server with automatic reconnection on failure."""
         if not self._initialized:

@@ -674,26 +674,40 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     # Define an explicit wrapper function for the confirmation callback
                     # This captures `self` (for `self.confirmation_manager`) and `chat_id` from the outer scope
                     async def confirmation_callback_wrapper(
-                        # Update signature to match ConfirmationCallbackSignature Protocol
-                        conversation_id: str,  # Changed from chat_id: int
-                        interface_type: str,  # Match protocol and calling keyword
-                        turn_id: str | None,  # Match protocol and calling keyword
-                        prompt_text: str,  # Match protocol and calling keyword
-                        tool_name: str,  # Match protocol and calling keyword
-                        tool_args: dict[str, Any],  # Match protocol and calling keyword
-                        timeout: float,  # Match protocol and calling keyword
+                        # Update signature to match the new positional arguments from infrastructure.py
+                        # The order is: interface_type, conversation_id, turn_id, tool_name, call_id, tool_args, timeout_seconds
+                        interface_type: str,
+                        conversation_id: str,
+                        turn_id: str | None,
+                        tool_name: str,
+                        call_id: str,
+                        tool_args: dict[str, Any],
+                        timeout_seconds: float,
                     ) -> bool:
+                        logger.debug("confirmation_callback_wrapper called!")
+                        # Render the confirmation prompt
+                        from family_assistant.tools.confirmation import (
+                            TOOL_CONFIRMATION_RENDERERS,
+                        )
+
+                        renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
+                        if renderer:
+                            prompt_text = renderer(tool_args)
+                        else:
+                            prompt_text = f"Confirm execution of tool: {tool_name}"
+
                         # The `conversation_id` from the outer scope should ideally match the `conversation_id` parameter.
                         # We use the parameters passed to the callback by ProcessingService.
-                        return await self.confirmation_manager.request_confirmation(
+                        result = await self.confirmation_manager.request_confirmation(
                             conversation_id=conversation_id,  # Use the passed parameter
                             interface_type=interface_type,  # Use the passed parameter
                             turn_id=turn_id,  # Use the passed parameter
-                            prompt_text=prompt_text,  # Use the passed parameter
+                            prompt_text=prompt_text,  # Render the prompt
                             tool_name=tool_name,  # Use the passed parameter
                             tool_args=tool_args,  # Use the passed parameter
-                            timeout=timeout,  # Use the passed parameter
+                            timeout=timeout_seconds,  # Use the passed parameter
                         )
+                        return result
 
                     # Use the wrapper function as the callback
                     # Call the refactored handle_chat_interaction method
@@ -1101,14 +1115,27 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             try:
 
                 async def confirmation_callback_wrapper(
-                    conversation_id_cb: str,
+                    # Update signature to match the new positional arguments from infrastructure.py
+                    # The order is: interface_type, conversation_id, turn_id, tool_name, call_id, tool_args, timeout_seconds
                     interface_type_cb: str,
+                    conversation_id_cb: str,
                     turn_id_cb: str | None,
-                    prompt_text_cb: str,
                     tool_name_cb: str,
+                    call_id_cb: str,
                     tool_args_cb: dict[str, Any],
                     timeout_cb: float,
                 ) -> bool:
+                    # Render the confirmation prompt
+                    from family_assistant.tools.confirmation import (
+                        TOOL_CONFIRMATION_RENDERERS,
+                    )
+
+                    renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name_cb)
+                    if renderer:
+                        prompt_text_cb = renderer(tool_args_cb)
+                    else:
+                        prompt_text_cb = f"Confirm execution of tool: {tool_name_cb}"
+
                     return await self.confirmation_manager.request_confirmation(
                         conversation_id=conversation_id_cb,
                         interface_type=interface_type_cb,
