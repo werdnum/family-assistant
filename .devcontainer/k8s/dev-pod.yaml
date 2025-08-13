@@ -142,6 +142,8 @@ spec:
               value: "postgresql+asyncpg://test:test@localhost:5432/test"
             - name: DEV_MODE
               value: "true"
+            - name: MCP_CONFIG_PATH
+              value: "mcp_config.dev.json"
             - name: HOME
               value: "/home/claude"
           volumeMounts:

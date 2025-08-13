@@ -5,6 +5,7 @@ import json  # Keep for config logging and mcp_config.json
 import logging
 import os
 import signal
+import string  # For environment variable expansion in MCP config
 import sys
 import zoneinfo  # Keep for timezone validation in load_config
 from typing import Any
@@ -558,13 +559,40 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         f"Resolved {len(resolved_service_profiles)} service profiles. Default ID: {config_data['default_service_profile_id']}"
     )
 
+    def expand_env_vars_in_dict(data: Any) -> Any:
+        """Recursively expand environment variables in dictionary values.
+
+        Uses ${VAR} syntax for safer expansion to avoid accidental substitution
+        of literal dollar signs in configuration values.
+        """
+        if isinstance(data, dict):
+            return {key: expand_env_vars_in_dict(value) for key, value in data.items()}
+        elif isinstance(data, list):
+            return [expand_env_vars_in_dict(item) for item in data]
+        elif isinstance(data, str):
+            # Use string.Template for safer ${VAR} expansion
+            template = string.Template(data)
+            try:
+                expanded = template.substitute(os.environ)
+                return expanded
+            except (KeyError, ValueError) as e:
+                # If a variable is not found or invalid template syntax, log warning and return original
+                logger.warning(
+                    f"Environment variable expansion failed in MCP config: {e}. Using original value: {data}"
+                )
+                return data
+        else:
+            return data
+
     # Load MCP config from JSON file (remains top-level in config_data)
-    mcp_config_path = "mcp_config.json"
+    mcp_config_path = os.environ.get("MCP_CONFIG_PATH", "mcp_config.json")
     try:
         with open(mcp_config_path, encoding="utf-8") as f:
             loaded_mcp_config = json.load(f)
             if isinstance(loaded_mcp_config, dict):
-                config_data["mcp_config"] = loaded_mcp_config  # Store in config dict
+                # Expand environment variables in the loaded config
+                expanded_mcp_config = expand_env_vars_in_dict(loaded_mcp_config)
+                config_data["mcp_config"] = expanded_mcp_config  # Store in config dict
                 logger.info(f"Successfully loaded MCP config from {mcp_config_path}")
             else:
                 logger.error(

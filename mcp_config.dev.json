@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "time": {
+      "command": "uvx",
+      "args": ["mcp-server-time", "--local-timezone=Australia/Sydney"]
+    },
+    "python": {
+      "command": "deno",
+      "args": [
+        "run",
+        "-N",
+        "-R=node_modules",
+        "-W=node_modules",
+        "--node-modules-dir=auto",
+        "jsr:@pydantic/mcp-run-python",
+        "stdio"
+      ]
+    },
+    "homeassistant": {
+      "transport": "sse",
+      "url": "https://homeassistant.andrewgarrett.dev/mcp_server/sse",
+      "token": "${HOMEASSISTANT_API_KEY}"
+    }
+  }
+}
+
