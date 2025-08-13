@@ -756,6 +756,8 @@ class TaskWorker:
             try:
                 task = None  # Initialize task variable for the outer scope
                 # Database context per iteration (starts a transaction)
+                if not self.engine:
+                    raise RuntimeError("Database engine not initialized")
                 async with get_db_context(engine=self.engine) as db_context:
                     logger.debug(
                         "Polling for tasks on DB context: %s", db_context.engine.url

@@ -11,6 +11,8 @@ import logging
 from typing import Any
 
 from family_assistant.scripting.engine import StarlarkEngine
+from family_assistant.storage import init_db
+from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.types import ToolExecutionContext
 
@@ -98,11 +100,15 @@ class SimpleToolsProvider:
 
 async def main() -> None:
     """Run example demonstrating direct tool callables."""
+    # Create database engine for the example
+    engine = create_engine_with_sqlite_optimizations("sqlite+aiosqlite:///:memory:")
+    await init_db(engine)
+
     # Initialize components
     tools_provider = SimpleToolsProvider()
 
     # Create execution context
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=engine) as db:
         context = ToolExecutionContext(
             interface_type="demo",
             conversation_id="demo-123",

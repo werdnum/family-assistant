@@ -141,6 +141,7 @@ async def indexing_task_worker(
         embedding_generator=mock_pipeline_embedding_generator,  # Pass directly
         calendar_config={},
         timezone_str="UTC",
+        engine=pg_vector_db_engine,  # Pass the database engine
     )
     worker.register_task_handler(
         "embed_and_store_batch",

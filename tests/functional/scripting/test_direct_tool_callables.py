@@ -114,7 +114,7 @@ async def test_direct_tool_callable(db_engine: Any) -> None:
     tools_provider = MockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-123",
@@ -160,7 +160,7 @@ async def test_tool_prefix_fallback(db_engine: Any) -> None:
     tools_provider = MockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-123",
@@ -205,7 +205,7 @@ async def test_direct_callable_with_security(db_engine: Any) -> None:
     tools_provider = MockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-123",
@@ -273,7 +273,7 @@ async def test_direct_callable_validates_parameters(db_engine: Any) -> None:
     tools_provider = ValidatingMockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-123",
@@ -311,7 +311,7 @@ async def test_tools_api_still_works(db_engine: Any) -> None:
     tools_provider = MockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-123",
@@ -363,7 +363,7 @@ async def test_no_tools_when_denied(db_engine: Any) -> None:
     tools_provider = MockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test-123",

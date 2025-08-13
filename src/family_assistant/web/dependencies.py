@@ -1,6 +1,6 @@
 import logging
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING  # Import TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException, Request, status
 
@@ -33,10 +33,14 @@ async def get_embedding_generator_dependency(request: Request) -> EmbeddingGener
     return generator
 
 
-async def get_db() -> AsyncGenerator[DatabaseContext, None]:
+async def get_db(request: Request) -> AsyncGenerator[DatabaseContext, None]:
     """FastAPI dependency to get a DatabaseContext."""
-    # Uses the engine configured in storage/base.py by default.
-    async with get_db_context() as db_context:
+    # Get engine from app.state (set by Assistant during setup)
+    engine = request.app.state.database_engine
+    if not engine:
+        raise RuntimeError("Database engine not initialized in app.state")
+
+    async with get_db_context(engine) as db_context:
         yield db_context
 
 
@@ -73,9 +77,14 @@ async def get_current_api_user(request: Request) -> dict:
     Dependency to get the current user from an API token.
     Validates the token and fetches user details.
     """
-    from family_assistant.web.auth import (  # Import locally to avoid top-level circularity if any
-        get_user_from_api_token,
-    )
+    # Get AuthService from app state
+    auth_service = getattr(request.app.state, "auth_service", None)
+    if not auth_service:
+        logger.error("AuthService not found in app state.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service not configured.",
+        )
 
     token_value: str | None = None
     auth_header = request.headers.get("Authorization")
@@ -100,7 +109,9 @@ async def get_current_api_user(request: Request) -> dict:
     # Construct the header string as expected by get_user_from_api_token
     # get_user_from_api_token expects the full "Bearer <token>" string.
     auth_header_for_validation = f"Bearer {token_value}"
-    api_user = await get_user_from_api_token(auth_header_for_validation, request)
+    api_user = await auth_service.get_user_from_api_token(
+        auth_header_for_validation, request
+    )
 
     if not api_user:
         # Log prefix for security, avoid logging full token
@@ -123,14 +134,16 @@ async def get_current_active_user(request: Request) -> dict:
     Ensures the user is authenticated via OIDC (not an API token)
     for operations like creating new API tokens.
     """
-    if not hasattr(request.app.state, "config"):
-        logger.error("Application config not found in app.state.")
+    # Get AuthService from app state
+    auth_service = getattr(request.app.state, "auth_service", None)
+    if not auth_service:
+        logger.error("AuthService not found in app state.")
         raise HTTPException(
-            status_code=500,  # Internal Server Error
-            detail="Server configuration error.",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service not configured.",
         )
 
-    auth_enabled = request.app.state.config.get("auth_enabled", False)
+    auth_enabled = auth_service.auth_enabled
 
     if not auth_enabled:
         # If auth is not enabled, create a mock user for development/testing.

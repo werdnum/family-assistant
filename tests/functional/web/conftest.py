@@ -267,8 +267,12 @@ async def web_only_assistant(
                     "delegation_security_level": "none",
                 },
                 "tools_config": {
-                    "enable_local_tools": ["add_or_update_note", "search_documents"],
-                    "confirm_tools": [],
+                    "enable_local_tools": [
+                        "add_or_update_note",
+                        "search_documents",
+                        "delete_calendar_event",
+                    ],
+                    "confirm_tools": ["delete_calendar_event"],
                     "mcp_initialization_timeout_seconds": 5,
                 },
                 "chat_id_to_name_map": {},
@@ -280,12 +284,13 @@ async def web_only_assistant(
         "event_system": {"enabled": False},
     }
 
-    # Create Assistant instance using the provided mock LLM client
+    # Create Assistant instance using the provided mock LLM client and test database engine
     assistant = Assistant(
         config=test_config,
         llm_client_overrides={
             "default_assistant": mock_llm_client
         },  # Key by profile ID, not model name
+        database_engine=db_engine,  # Inject the test database engine
     )
 
     # Enable debug mode for tests to get detailed error messages

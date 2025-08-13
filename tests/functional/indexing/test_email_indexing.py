@@ -205,6 +205,11 @@ async def http_client(
     fastapi_app.state.embedding_generator = mock_embedder_for_fixture
     logger.info("Test http_client: Set mock_embedding_generator on fastapi_app.state.")
 
+    # Set the database engine in app.state for the get_db dependency
+    original_database_engine = getattr(fastapi_app.state, "database_engine", None)
+    fastapi_app.state.database_engine = pg_vector_db_engine
+    logger.info("Test http_client: Set database_engine in app.state.")
+
     with tempfile.TemporaryDirectory() as temp_attachment_dir:
         logger.info(
             f"Test http_client: Using temporary attachment directory: {temp_attachment_dir}"
@@ -238,6 +243,13 @@ async def http_client(
     elif hasattr(fastapi_app.state, "embedding_generator"):
         delattr(fastapi_app.state, "embedding_generator")
     logger.info("Test http_client: Restored original app.state.embedding_generator.")
+
+    # Restore database engine
+    if original_database_engine is not None:
+        fastapi_app.state.database_engine = original_database_engine
+    elif hasattr(fastapi_app.state, "database_engine"):
+        delattr(fastapi_app.state, "database_engine")
+    logger.info("Test http_client: Restored original app.state.database_engine.")
 
 
 # --- Helper Function for Test Setup ---

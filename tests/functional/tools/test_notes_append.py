@@ -12,7 +12,7 @@ from family_assistant.tools.types import ToolExecutionContext
 @pytest.mark.asyncio
 async def test_add_or_update_note_append(db_engine: Any) -> None:
     """Test that the append functionality works correctly for notes."""
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         exec_context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test_conversation",
@@ -85,7 +85,7 @@ async def test_add_or_update_note_append(db_engine: Any) -> None:
 @pytest.mark.asyncio
 async def test_append_multiple_times(db_engine: Any) -> None:
     """Test appending multiple times to the same note."""
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=db_engine) as db:
         exec_context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test_conversation",
@@ -124,7 +124,7 @@ async def test_append_multiple_times(db_engine: Any) -> None:
 @pytest.mark.postgres
 async def test_add_or_update_note_append_postgres(pg_vector_db_engine: Any) -> None:
     """Test that the append functionality works correctly for notes with PostgreSQL."""
-    async with DatabaseContext() as db:
+    async with DatabaseContext(engine=pg_vector_db_engine) as db:
         exec_context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test_conversation",

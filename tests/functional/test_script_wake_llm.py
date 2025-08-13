@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.events import EventActionType, EventSourceType
 from family_assistant.task_worker import (
     TaskWorker,
@@ -74,7 +74,11 @@ if temp > 25.0:
     new_task_event = asyncio.Event()
 
     # Event processor
-    processor = EventProcessor(sources={}, sample_interval_hours=1.0)
+    processor = EventProcessor(
+        sources={},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: get_db_context(db_engine),
+    )
     processor._running = True
     await processor._refresh_listener_cache()
 
@@ -254,7 +258,11 @@ if air_quality < 50:
     shutdown_event = asyncio.Event()
     new_task_event = asyncio.Event()
 
-    processor = EventProcessor(sources={}, sample_interval_hours=1.0)
+    processor = EventProcessor(
+        sources={},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: get_db_context(db_engine),
+    )
     processor._running = True
     await processor._refresh_listener_cache()
 
@@ -427,7 +435,11 @@ if temp > 30 or temp < 10:
     shutdown_event = asyncio.Event()
     new_task_event = asyncio.Event()
 
-    processor = EventProcessor(sources={}, sample_interval_hours=1.0)
+    processor = EventProcessor(
+        sources={},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: get_db_context(db_engine),
+    )
     processor._running = True
     await processor._refresh_listener_cache()
 

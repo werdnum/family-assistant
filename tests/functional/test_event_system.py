@@ -74,7 +74,9 @@ def safe_json_loads(data: str | dict | list) -> Any:
 @pytest.mark.asyncio
 async def test_event_storage_sampling(db_engine: AsyncEngine) -> None:
     """Test that event storage properly samples events (1 per entity per hour)."""
-    storage = EventStorage(sample_interval_hours=1.0)
+    storage = EventStorage(
+        sample_interval_hours=1.0, get_db_context_func=lambda: get_db_context(db_engine)
+    )
 
     # First event should be stored
     await storage.store_event(
@@ -98,7 +100,7 @@ async def test_event_storage_sampling(db_engine: AsyncEngine) -> None:
     )
 
     # Check stored events
-    async with get_db_context() as db_ctx:
+    async with get_db_context(db_engine) as db_ctx:
         from sqlalchemy import text
 
         result = await db_ctx.fetch_all(
@@ -121,7 +123,9 @@ async def test_home_assistant_event_processing(db_engine: AsyncEngine) -> None:
 
     # Create event processor
     processor = EventProcessor(
-        sources={"ha_test": ha_source}, sample_interval_hours=1.0
+        sources={"ha_test": ha_source},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: get_db_context(db_engine),
     )
     # Set processor as running (normally done by start())
     processor._running = True
@@ -150,7 +154,7 @@ async def test_home_assistant_event_processing(db_engine: AsyncEngine) -> None:
     await asyncio.sleep(0.1)
 
     # Query recent events
-    async with get_db_context() as db_ctx:
+    async with get_db_context(db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test_conversation",
@@ -194,7 +198,7 @@ async def test_home_assistant_event_processing(db_engine: AsyncEngine) -> None:
 async def test_event_listener_matching(db_engine: AsyncEngine) -> None:
     """Test event matching against listener conditions."""
     # Add a test listener
-    async with get_db_context() as db_ctx:
+    async with get_db_context(db_engine) as db_ctx:
         from sqlalchemy import text
 
         await db_ctx.execute_with_retry(
@@ -213,7 +217,11 @@ async def test_event_listener_matching(db_engine: AsyncEngine) -> None:
             },
         )
 
-    processor = EventProcessor(sources={}, sample_interval_hours=1.0)
+    processor = EventProcessor(
+        sources={},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: get_db_context(db_engine),
+    )
     await processor._refresh_listener_cache()
 
     # Test matching
@@ -241,7 +249,7 @@ async def test_test_event_listener_tool_matches_person_coming_home(
 ) -> None:
     """Test that test_event_listener tool correctly matches person coming home."""
     # Arrange
-    async with get_db_context() as db_ctx:
+    async with get_db_context(db_engine) as db_ctx:
         from sqlalchemy import text
 
         await db_ctx.execute_with_retry(text("DELETE FROM recent_events"))
@@ -292,7 +300,7 @@ async def test_test_event_listener_tool_matches_person_coming_home(
             )
 
     # Act
-    async with get_db_context() as db_ctx:
+    async with get_db_context(db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test_conversation",
@@ -326,7 +334,7 @@ async def test_test_event_listener_tool_no_match_wrong_state(
 ) -> None:
     """Test that test_event_listener tool provides analysis when no events match."""
     # Arrange
-    async with get_db_context() as db_ctx:
+    async with get_db_context(db_engine) as db_ctx:
         from sqlalchemy import text
 
         await db_ctx.execute_with_retry(text("DELETE FROM recent_events"))
@@ -349,7 +357,7 @@ async def test_test_event_listener_tool_no_match_wrong_state(
         )
 
     # Act
-    async with get_db_context() as db_ctx:
+    async with get_db_context(db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test_conversation",
@@ -387,7 +395,7 @@ async def test_test_event_listener_tool_empty_conditions_error(
     # Arrange - no events needed for this test
 
     # Act
-    async with get_db_context() as db_ctx:
+    async with get_db_context(db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test_conversation",
@@ -413,7 +421,7 @@ async def test_test_event_listener_tool_empty_conditions_error(
 async def test_event_type_matching(db_engine: AsyncEngine) -> None:
     """Test that event type matching works correctly."""
     # Arrange - store different event types
-    async with get_db_context() as db_ctx:
+    async with get_db_context(db_engine) as db_ctx:
         from sqlalchemy import text
 
         await db_ctx.execute_with_retry(text("DELETE FROM recent_events"))
@@ -457,7 +465,7 @@ async def test_event_type_matching(db_engine: AsyncEngine) -> None:
         )
 
     # Act - test matching state_changed events only
-    async with get_db_context() as db_ctx:
+    async with get_db_context(db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test_conversation",
@@ -484,7 +492,7 @@ async def test_event_type_matching(db_engine: AsyncEngine) -> None:
     assert data["matched_events"][0]["event_data"]["event_type"] == "state_changed"
 
     # Act - test matching call_service events only
-    async with get_db_context() as db_ctx:
+    async with get_db_context(db_engine) as db_ctx:
         exec_context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test_conversation",
@@ -519,12 +527,15 @@ async def test_cleanup_old_events(db_engine: AsyncEngine) -> None:
     from family_assistant.storage.events import cleanup_old_events
 
     # Arrange - create events with different ages
-    async with get_db_context() as db_ctx:
+    async with get_db_context(db_engine) as db_ctx:
         # Store events with different timestamps
         now = datetime.now(timezone.utc)
 
         # Use EventStorage to store events
-        storage = EventStorage(sample_interval_hours=0.01)  # Short interval for testing
+        storage = EventStorage(
+            sample_interval_hours=0.01,  # Short interval for testing
+            get_db_context_func=lambda: get_db_context(db_engine),
+        )
 
         # Old event (should be cleaned up)
         old_event_data = {
@@ -567,7 +578,7 @@ async def test_cleanup_old_events(db_engine: AsyncEngine) -> None:
         await db_ctx.execute_with_retry(stmt)
 
     # Act - run cleanup with 48 hour retention
-    async with get_db_context() as db_ctx:
+    async with get_db_context(db_engine) as db_ctx:
         deleted_count = await cleanup_old_events(db_ctx, retention_hours=48)
 
     # Assert - the cleanup function works correctly
@@ -583,7 +594,7 @@ async def test_end_to_end_event_listener_wakes_llm(
     from sqlalchemy import text
 
     # Step 1: Create an event listener that watches for motion detection
-    async with get_db_context() as db_ctx:
+    async with get_db_context(db_engine) as db_ctx:
         await db_ctx.execute_with_retry(
             text("""INSERT INTO event_listeners 
                  (name, match_conditions, source_id, action_type, action_config, enabled, 
@@ -608,7 +619,11 @@ async def test_end_to_end_event_listener_wakes_llm(
         )
 
     # Step 2: Create event processor and refresh cache
-    processor = EventProcessor(sources={}, sample_interval_hours=1.0)
+    processor = EventProcessor(
+        sources={},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: get_db_context(db_engine),
+    )
     processor._running = True
     await processor._refresh_listener_cache()
 
@@ -634,7 +649,7 @@ async def test_end_to_end_event_listener_wakes_llm(
     await processor.process_event("home_assistant", motion_event)
 
     # Step 4: Verify the event was stored
-    async with get_db_context() as db_ctx:
+    async with get_db_context(db_engine) as db_ctx:
         events_result = await db_ctx.fetch_all(
             text("SELECT * FROM recent_events WHERE source_id = 'home_assistant'")
         )
@@ -659,7 +674,7 @@ async def test_end_to_end_event_listener_wakes_llm(
         assert len(triggered_listeners) == 1
 
     # Step 5: Verify an LLM callback task was created
-    async with get_db_context() as db_ctx:
+    async with get_db_context(db_engine) as db_ctx:
         # Check tasks table for our callback
         tasks_result = await db_ctx.fetch_all(
             text(
@@ -799,7 +814,7 @@ async def test_one_time_listener_disables_after_trigger(
     from sqlalchemy import text
 
     # Create a one-time listener
-    async with get_db_context() as db_ctx:
+    async with get_db_context(db_engine) as db_ctx:
         result = await db_ctx.execute_with_retry(
             text("""INSERT INTO event_listeners 
                  (name, match_conditions, source_id, action_type, enabled, 
@@ -824,7 +839,11 @@ async def test_one_time_listener_disables_after_trigger(
         listener_id = result.scalar_one()
 
     # Create processor and process matching event
-    processor = EventProcessor(sources={}, sample_interval_hours=1.0)
+    processor = EventProcessor(
+        sources={},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: get_db_context(db_engine),
+    )
     processor._running = True
     await processor._refresh_listener_cache()
 
@@ -837,7 +856,7 @@ async def test_one_time_listener_disables_after_trigger(
     await processor.process_event("home_assistant", door_event)
 
     # Verify listener is now disabled
-    async with get_db_context() as db_ctx:
+    async with get_db_context(db_engine) as db_ctx:
         result = await db_ctx.fetch_one(
             text("SELECT enabled FROM event_listeners WHERE id = :id"),
             {"id": listener_id},

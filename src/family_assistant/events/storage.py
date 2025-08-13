@@ -5,12 +5,13 @@ Event storage management with sampling strategy.
 import json
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import text
 
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.events import EventSourceType
 
 logger = logging.getLogger(__name__)
@@ -19,16 +20,22 @@ logger = logging.getLogger(__name__)
 class EventStorage:
     """Manages storage of events with sampling strategy."""
 
-    def __init__(self, sample_interval_hours: float = 1.0) -> None:
+    def __init__(
+        self,
+        sample_interval_hours: float = 1.0,
+        get_db_context_func: Callable[[], DatabaseContext] | None = None,
+    ) -> None:
         """
         Initialize event storage.
 
         Args:
             sample_interval_hours: Hours between storing samples (default: 1 hour)
+            get_db_context_func: Function to get database context with engine
         """
         self.sample_interval_seconds = sample_interval_hours * 3600
         self.last_stored: dict[str, float] = {}  # key -> timestamp for sampling
         self.max_event_size = 100000  # 100KB max event size
+        self.get_db_context_func = get_db_context_func
 
     async def store_event(
         self,
@@ -37,9 +44,14 @@ class EventStorage:
         triggered_listener_ids: list[int] | None = None,
     ) -> None:
         """Store event if it should be stored based on sampling rules (opens new DB context)."""
-        async with get_db_context() as db_ctx:
-            await self.store_event_in_context(
-                db_ctx, source_id, event_data, triggered_listener_ids
+        if self.get_db_context_func:
+            async with self.get_db_context_func() as db_ctx:
+                await self.store_event_in_context(
+                    db_ctx, source_id, event_data, triggered_listener_ids
+                )
+        else:
+            raise RuntimeError(
+                "EventStorage requires get_db_context_func to be provided"
             )
 
     async def store_event_in_context(
@@ -89,9 +101,14 @@ class EventStorage:
         triggered_listener_ids: list[int] | None,
     ) -> None:
         """Write event to database (opens new DB context)."""
-        async with get_db_context() as db_ctx:
-            await self._write_event_in_context(
-                db_ctx, source_id, event_data, triggered_listener_ids
+        if self.get_db_context_func:
+            async with self.get_db_context_func() as db_ctx:
+                await self._write_event_in_context(
+                    db_ctx, source_id, event_data, triggered_listener_ids
+                )
+        else:
+            raise RuntimeError(
+                "EventStorage requires get_db_context_func to be provided"
             )
 
     async def _write_event_in_context(
