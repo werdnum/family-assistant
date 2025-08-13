@@ -10,6 +10,7 @@ import { LOADING_MARKER } from './constants';
 import { generateUUID } from '../utils/uuid';
 import { ChatAppProps, Message, MessageContent, Conversation } from './types';
 import NavigationSheet from '../shared/NavigationSheet';
+import { ToolConfirmationProvider } from './ToolConfirmationContext';
 
 // Helper function to parse tool arguments
 const parseToolArguments = (args: unknown): Record<string, unknown> => {
@@ -50,6 +51,65 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       setConversationsLoading(false);
     }
   }, []);
+
+  // Track pending confirmations by tool call ID
+  const [pendingConfirmations, setPendingConfirmations] = useState<Map<string, any>>(new Map());
+
+  const handleConfirmationRequest = useCallback((request: any) => {
+    console.log('Received confirmation request:', request);
+    // Add to pending confirmations map
+    setPendingConfirmations((prev) => {
+      const newMap = new Map(prev);
+      // Store by tool_call_id for matching
+      newMap.set(request.tool_call_id, request);
+      return newMap;
+    });
+  }, []);
+
+  const handleConfirmationResult = useCallback((result: any) => {
+    console.log('Received confirmation result:', result);
+    // Remove from pending confirmations
+    setPendingConfirmations((prev) => {
+      const newMap = new Map(prev);
+      // Find and remove the confirmation by matching request_id
+      for (const [key, value] of newMap.entries()) {
+        if (value.request_id === result.request_id) {
+          newMap.delete(key);
+          break;
+        }
+      }
+      return newMap;
+    });
+  }, []);
+
+  const handleConfirmation = useCallback(
+    async (toolCallId: string, requestId: string, approved: boolean) => {
+      try {
+        const response = await fetch('/api/v1/chat/confirm_tool', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            request_id: requestId,
+            approved: approved,
+            conversation_id: conversationId,
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          console.log('Confirmation response:', data);
+          // The result will come through SSE
+        } else {
+          console.error('Failed to send confirmation:', response.status);
+        }
+      } catch (error) {
+        console.error('Error sending confirmation:', error);
+      }
+    },
+    [conversationId]
+  );
 
   // Streaming callbacks
   const handleStreamingMessage = useCallback((content: string) => {
@@ -152,7 +212,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             return msg;
           });
 
-          // Add a new loading message for the text response
+          // Add a new loading message for the text response if there will be text content
+          // The text content will stream separately from tool calls
           const textResponseMessageId = `${streamingMessageIdRef.current}_text`;
           updatedMessages.push({
             id: textResponseMessageId,
@@ -207,6 +268,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     onError: handleStreamingError,
     onComplete: handleStreamingComplete,
     onToolCall: handleStreamingToolCall,
+    onToolConfirmationRequest: handleConfirmationRequest,
+    onToolConfirmationResult: handleConfirmationResult,
   });
 
   // Handle window resize
@@ -461,17 +524,19 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         <div className="flex min-w-0 flex-1 flex-col">
           <main className="flex flex-1 flex-col overflow-hidden">
             <AssistantRuntimeProvider runtime={runtime}>
-              <div className="flex flex-1 flex-col overflow-hidden">
-                <div className="border-b bg-muted/50 p-6">
-                  <h2 className="text-xl font-semibold">Family Assistant Chat</h2>
-                  {conversationId && (
-                    <div className="mt-1 text-xs text-muted-foreground font-mono">
-                      Conversation: {conversationId.substring(0, 20)}...
-                    </div>
-                  )}
+              <ToolConfirmationProvider value={{ pendingConfirmations, handleConfirmation }}>
+                <div className="flex flex-1 flex-col overflow-hidden">
+                  <div className="border-b bg-muted/50 p-6">
+                    <h2 className="text-xl font-semibold">Family Assistant Chat</h2>
+                    {conversationId && (
+                      <div className="mt-1 text-xs text-muted-foreground font-mono">
+                        Conversation: {conversationId.substring(0, 20)}...
+                      </div>
+                    )}
+                  </div>
+                  <Thread />
                 </div>
-                <Thread />
-              </div>
+              </ToolConfirmationProvider>
             </AssistantRuntimeProvider>
           </main>
           <footer className="border-t p-4 text-center text-sm text-muted-foreground bg-background">

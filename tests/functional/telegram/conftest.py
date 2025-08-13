@@ -89,7 +89,9 @@ async def telegram_handler_fixture(
                         "add_or_update_note",
                         "send_message_to_user",  # Enable the tool for this test
                     ],
-                    "confirm_tools": [],  # No confirmation for tests unless specified
+                    "confirm_tools": [
+                        "add_or_update_note"
+                    ],  # Enable confirmation for add_or_update_note
                     "mcp_initialization_timeout_seconds": 5,
                 },
                 "chat_id_to_name_map": {12345: "TestUser"},
@@ -182,6 +184,10 @@ async def telegram_handler_fixture(
         mock_request_confirmation_method
     )
 
+    # Also patch the update_handler's confirmation_manager since it has its own reference
+    assert assistant_app.telegram_service.update_handler is not None
+    assistant_app.telegram_service.update_handler.confirmation_manager.request_confirmation = mock_request_confirmation_method
+
     # Function to get DB context for the specific test engine
     def get_test_db_context_func() -> contextlib.AbstractAsyncContextManager[
         DatabaseContext
@@ -201,7 +207,7 @@ async def telegram_handler_fixture(
         handler=assistant_app.telegram_service.update_handler,  # Changed handler to update_handler
         mock_bot=mock_bot_instance,  # The bot from the real application, now mocked
         mock_llm=mock_llm_client,
-        mock_confirmation_manager=mock_request_confirmation_method,  # The mocked method
+        mock_confirmation_manager=assistant_app.telegram_service.update_handler.confirmation_manager.request_confirmation,  # Return the actual mock that's being used
         mock_application=mock_application_for_context,  # Pass the new mock application
         processing_service=assistant_app.default_processing_service,
         tools_provider=assistant_app.default_processing_service.tools_provider,

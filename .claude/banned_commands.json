@@ -70,6 +70,10 @@
   {
     "regexp": "ss\\s+-tuln.*5173",
     "explanation": "The frontend dev server is running on http://devcontainer-backend-1:5173, not localhost. Use that address for testing."
+  },
+  {
+    "regexp": "2>&1",
+    "explanation": "Redirecting stderr to stdout with 2>&1 can cause issues with the Bash tool. Please capture stderr and stdout separately if needed."
   }
 ]
 

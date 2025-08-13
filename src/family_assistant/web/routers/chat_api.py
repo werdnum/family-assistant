@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import uuid
@@ -11,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.web.confirmation_manager import web_confirmation_manager
 from family_assistant.web.dependencies import get_db, get_processing_service
 from family_assistant.web.models import ChatMessageResponse, ChatPromptRequest
 
@@ -54,6 +56,25 @@ class ConversationMessagesResponse(BaseModel):
     conversation_id: str = Field(..., description="Conversation identifier")
     messages: list[ConversationMessage] = Field(..., description="List of messages")
     total: int = Field(..., description="Total number of messages")
+
+
+class ToolConfirmationRequest(BaseModel):
+    """Request to confirm or reject a tool execution."""
+
+    request_id: str = Field(..., description="Confirmation request ID")
+    approved: bool = Field(..., description="Whether the tool execution is approved")
+    conversation_id: str | None = Field(
+        None, description="Optional conversation ID for validation"
+    )
+
+
+class ToolConfirmationResponse(BaseModel):
+    """Response for tool confirmation request."""
+
+    success: bool = Field(
+        ..., description="Whether the confirmation was processed successfully"
+    )
+    message: str | None = Field(None, description="Optional status message")
 
 
 @chat_api_router.post("/v1/chat/send_message")  # Path relative to the prefix in api.py
@@ -365,61 +386,195 @@ async def api_chat_send_message_stream(
 
     async def event_generator() -> AsyncGenerator[str, None]:
         """Generate SSE formatted events from the processing stream."""
+        # Queue for confirmation events
+        confirmation_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
         # Get a fresh database context for the stream
         async with get_db_context(
             request.app.state.database_engine
         ) as stream_db_context:
+            # Create confirmation callback that queues events
+            async def web_confirmation_callback(
+                interface_type_cb: str,
+                conversation_id_cb: str,
+                interface_message_id_cb: str | None,
+                tool_name: str,
+                tool_call_id: str,
+                tool_args: dict[str, Any],
+                timeout_seconds: float,
+            ) -> bool:
+                """Request confirmation from the user via SSE."""
+                # For the web UI, we don't use text renderers like Telegram does.
+                # Instead, we pass the tool information directly to the frontend
+                # which uses the existing ToolWithConfirmation components to render
+                # the tool call visually with proper formatting and details.
+                # This provides a better user experience than text-based confirmations.
+
+                # Default confirmation prompt (frontend will render tool details)
+                confirmation_prompt = (
+                    f"Do you want to execute '{tool_name}' with these parameters?"
+                )
+
+                # Create confirmation request
+                (
+                    request_id,
+                    future,
+                ) = await web_confirmation_manager.request_confirmation(
+                    conversation_id=conversation_id_cb,
+                    interface_type=interface_type_cb,
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                    confirmation_prompt=confirmation_prompt,
+                    timeout_seconds=timeout_seconds,
+                )
+
+                # Queue confirmation request event for client
+                await confirmation_queue.put({
+                    "type": "confirmation_request",
+                    "request_id": request_id,
+                    "tool_name": tool_name,
+                    "tool_call_id": tool_call_id,
+                    "confirmation_prompt": confirmation_prompt,
+                    "timeout_seconds": timeout_seconds,
+                    "args": tool_args,
+                })
+
+                # Wait for user response
+                try:
+                    approved = await future
+
+                    # Queue confirmation result event
+                    await confirmation_queue.put({
+                        "type": "confirmation_result",
+                        "request_id": request_id,
+                        "approved": approved,
+                    })
+
+                    return approved
+                except asyncio.CancelledError:
+                    # Handle cancellation
+                    logger.info(f"Confirmation request {request_id} was cancelled")
+                    return False
+                except Exception as e:
+                    # Handle any other exceptions
+                    logger.error(f"Error waiting for confirmation {request_id}: {e}")
+                    return False
+
+            # Create task to process the interaction stream
+            async def process_stream() -> None:
+                try:
+                    async for (
+                        event
+                    ) in selected_processing_service.handle_chat_interaction_stream(
+                        db_context=stream_db_context,
+                        interface_type=interface_type,
+                        conversation_id=conversation_id,
+                        trigger_content_parts=trigger_content_parts,
+                        trigger_interface_message_id=None,
+                        user_name=user_name_for_api,
+                        replied_to_interface_id=None,
+                        chat_interface=None,
+                        request_confirmation_callback=web_confirmation_callback,
+                    ):
+                        # Add events to queue
+                        await confirmation_queue.put({
+                            "type": "stream_event",
+                            "event": event,
+                        })
+
+                    # Signal end of stream
+                    await confirmation_queue.put({"type": "stream_end"})
+                except Exception as e:
+                    # Queue error event
+                    await confirmation_queue.put({"type": "error", "error": str(e)})
+
+            # Start the stream processing task
+            stream_task = asyncio.create_task(process_stream())
+
             try:
-                # Use the streaming version of handle_chat_interaction
-                async for (
-                    event
-                ) in selected_processing_service.handle_chat_interaction_stream(
-                    db_context=stream_db_context,
-                    interface_type=interface_type,
-                    conversation_id=conversation_id,
-                    trigger_content_parts=trigger_content_parts,
-                    trigger_interface_message_id=None,
-                    user_name=user_name_for_api,
-                    replied_to_interface_id=None,
-                    chat_interface=None,
-                    request_confirmation_callback=None,
-                ):
-                    # Format event based on type
-                    if event.type == "content":
-                        # Send text content chunks
-                        yield f"event: text\ndata: {json.dumps({'content': event.content})}\n\n"
+                # Process events from queue and yield SSE events
+                while True:
+                    try:
+                        # Get next event from queue with timeout
+                        queue_event = await asyncio.wait_for(
+                            confirmation_queue.get(), timeout=0.1
+                        )
+                    except asyncio.TimeoutError:
+                        # Check if stream task is done
+                        if stream_task.done():
+                            break
+                        continue
 
-                    elif event.type == "tool_call":
-                        # Convert tool_call to dict for JSON serialization
-                        if event.tool_call:
-                            tool_call_dict = {
-                                "id": event.tool_call.id,
-                                "function": {
-                                    "name": event.tool_call.function.name,
-                                    "arguments": event.tool_call.function.arguments,
-                                },
-                            }
-                            yield f"event: tool_call\ndata: {json.dumps({'tool_call': tool_call_dict})}\n\n"
+                    if queue_event["type"] == "confirmation_request":
+                        # Send confirmation request event
+                        event_data = {
+                            "request_id": queue_event["request_id"],
+                            "tool_name": queue_event["tool_name"],
+                            "tool_call_id": queue_event["tool_call_id"],
+                            "confirmation_prompt": queue_event["confirmation_prompt"],
+                            "timeout_seconds": queue_event["timeout_seconds"],
+                            "args": queue_event["args"],
+                        }
+                        yield f"event: tool_confirmation_request\ndata: {json.dumps(event_data)}\n\n"
 
-                    elif event.type == "tool_result":
-                        # Include tool_call_id for correlation
-                        yield f"event: tool_result\ndata: {json.dumps({'tool_call_id': event.tool_call_id, 'result': event.tool_result})}\n\n"
+                    elif queue_event["type"] == "confirmation_result":
+                        # Send confirmation result event
+                        event_data = {
+                            "request_id": queue_event["request_id"],
+                            "approved": queue_event["approved"],
+                        }
+                        yield f"event: tool_confirmation_result\ndata: {json.dumps(event_data)}\n\n"
 
-                    elif event.type == "done":
-                        # Send completion event with optional metadata
-                        done_data: dict[str, Any] = {}
-                        if event.metadata and event.metadata.get("reasoning_info"):
-                            done_data["reasoning_info"] = event.metadata[
-                                "reasoning_info"
-                            ]
-                        yield f"event: end\ndata: {json.dumps(done_data)}\n\n"
+                    elif queue_event["type"] == "stream_event":
+                        event = queue_event["event"]
+                        # Process normal stream events
+                        if event.type == "content":
+                            # Send text content chunks
+                            yield f"event: text\ndata: {json.dumps({'content': event.content})}\n\n"
 
-                    elif event.type == "error":
-                        # Send error event
-                        error_data = {"error": event.error or "An error occurred"}
-                        if event.metadata and event.metadata.get("error_id"):
-                            error_data["error_id"] = event.metadata["error_id"]
-                        yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
+                        elif event.type == "tool_call":
+                            # Convert tool_call to dict for JSON serialization
+                            if event.tool_call:
+                                tool_call_dict = {
+                                    "id": event.tool_call.id,
+                                    "function": {
+                                        "name": event.tool_call.function.name,
+                                        "arguments": event.tool_call.function.arguments,
+                                    },
+                                }
+                                yield f"event: tool_call\ndata: {json.dumps({'tool_call': tool_call_dict})}\n\n"
+
+                        elif event.type == "tool_result":
+                            # Include tool_call_id for correlation
+                            yield f"event: tool_result\ndata: {json.dumps({'tool_call_id': event.tool_call_id, 'result': event.tool_result})}\n\n"
+
+                        elif event.type == "done":
+                            # Send completion event with optional metadata
+                            done_data: dict[str, Any] = {}
+                            if event.metadata and event.metadata.get("reasoning_info"):
+                                done_data["reasoning_info"] = event.metadata[
+                                    "reasoning_info"
+                                ]
+                            yield f"event: end\ndata: {json.dumps(done_data)}\n\n"
+
+                        elif event.type == "error":
+                            # Send error event
+                            error_data = {"error": event.error or "An error occurred"}
+                            if event.metadata and event.metadata.get("error_id"):
+                                error_data["error_id"] = event.metadata["error_id"]
+                            yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
+
+                    elif queue_event["type"] == "stream_end":
+                        break
+
+                    elif queue_event["type"] == "error":
+                        error_id = str(uuid.uuid4())
+                        logger.error(
+                            f"Streaming error {error_id}: {queue_event['error']}"
+                        )
+                        yield f"event: error\ndata: {json.dumps({'error': queue_event['error'], 'error_id': error_id})}\n\n"
+                        break
+
             except Exception as e:
                 error_id = str(uuid.uuid4())
                 logger.error(f"Streaming error {error_id}: {e}", exc_info=True)
@@ -441,4 +596,39 @@ async def api_chat_send_message_stream(
             "X-Accel-Buffering": "no",  # Disable Nginx buffering
             "Access-Control-Allow-Origin": "*",  # CORS support
         },
+    )
+
+
+@chat_api_router.post("/v1/chat/confirm_tool")
+async def confirm_tool_execution(
+    payload: ToolConfirmationRequest,
+) -> ToolConfirmationResponse:
+    """
+    Handle confirmation response for a tool execution request.
+
+    This endpoint is called by the frontend when the user approves or rejects
+    a tool that requires confirmation.
+
+    Args:
+        payload: Confirmation request containing request_id and approval status
+
+    Returns:
+        Response indicating whether the confirmation was processed successfully
+    """
+    success = await web_confirmation_manager.handle_confirmation_response(
+        request_id=payload.request_id,
+        approved=payload.approved,
+        conversation_id=payload.conversation_id,
+    )
+
+    if success:
+        message = f"Tool execution {'approved' if payload.approved else 'rejected'}"
+        logger.info(f"Confirmation {payload.request_id}: {message}")
+    else:
+        message = "Confirmation request not found or already processed"
+        logger.warning(f"Failed to process confirmation {payload.request_id}")
+
+    return ToolConfirmationResponse(
+        success=success,
+        message=message,
     )

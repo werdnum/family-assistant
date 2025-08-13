@@ -34,6 +34,15 @@ class ChatPage(BasePage):
     SIDEBAR_OVERLAY = ".fixed.inset-0.z-40"  # Mobile overlay
     CHAT_CONTAINER = ".flex.min-w-0.flex-1"  # Main content container
     LOADING_INDICATOR = ".animate-bounce"  # Loading dots animation
+    # Updated for inline confirmation UI
+    CONFIRMATION_CONTAINER = ".tool-confirmation-container"
+    CONFIRMATION_PROMPT = ".tool-confirmation-container .prose"
+    CONFIRMATION_APPROVE_BUTTON = (
+        '.tool-confirmation-container button:has-text("Approve")'
+    )
+    CONFIRMATION_REJECT_BUTTON = (
+        '.tool-confirmation-container button:has-text("Reject")'
+    )
 
     async def navigate_to_chat(self, conversation_id: str | None = None) -> None:
         """Navigate to the chat page."""
@@ -641,3 +650,32 @@ class ChatPage(BasePage):
         raise TimeoutError(
             f"Timeout waiting for expected content. Got messages: {messages}"
         )
+
+    async def wait_for_confirmation_dialog(self, timeout: int = 10000) -> None:
+        """Wait for the inline tool confirmation UI to appear."""
+        await self.page.wait_for_selector(
+            self.CONFIRMATION_CONTAINER, state="visible", timeout=timeout
+        )
+
+    async def get_confirmation_prompt(self) -> str:
+        """Get the text from the tool confirmation prompt."""
+        prompt_element = await self.page.query_selector(self.CONFIRMATION_PROMPT)
+        if not prompt_element:
+            raise RuntimeError("Tool confirmation prompt not found")
+        return await prompt_element.text_content() or ""
+
+    async def approve_tool_confirmation(self) -> None:
+        """Click the approve button on the tool confirmation dialog."""
+        approve_button = await self.page.query_selector(
+            self.CONFIRMATION_APPROVE_BUTTON
+        )
+        if not approve_button:
+            raise RuntimeError("Tool confirmation approve button not found")
+        await approve_button.click()
+
+    async def reject_tool_confirmation(self) -> None:
+        """Click the reject button on the tool confirmation dialog."""
+        reject_button = await self.page.query_selector(self.CONFIRMATION_REJECT_BUTTON)
+        if not reject_button:
+            raise RuntimeError("Tool confirmation reject button not found")
+        await reject_button.click()

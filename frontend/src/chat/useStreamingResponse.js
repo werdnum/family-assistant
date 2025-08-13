@@ -5,6 +5,8 @@ import { useState, useCallback, useRef } from 'react';
  * @param {Object} options - Hook options
  * @param {Function} options.onMessage - Callback when content is streamed (receives accumulated content)
  * @param {Function} options.onToolCall - Callback when tool calls are updated (receives array of all tool calls)
+ * @param {Function} options.onToolConfirmationRequest - Callback when tool confirmation is requested
+ * @param {Function} options.onToolConfirmationResult - Callback when tool confirmation result is received
  * @param {Function} options.onError - Callback when an error occurs (receives Error object)
  * @param {Function} options.onComplete - Callback when stream completes (receives { content, toolCalls })
  * @returns {Object} { sendStreamingMessage, cancelStream, isStreaming }
@@ -12,6 +14,8 @@ import { useState, useCallback, useRef } from 'react';
 export const useStreamingResponse = ({
   onMessage = () => {},
   onToolCall = () => {},
+  onToolConfirmationRequest = () => {},
+  onToolConfirmationResult = () => {},
   onError = () => {},
   onComplete = () => {},
 } = {}) => {
@@ -130,6 +134,31 @@ export const useStreamingResponse = ({
                     }
                     break;
 
+                  case 'tool_confirmation_request':
+                    // Handle tool confirmation request
+                    if (payload.request_id && payload.tool_name) {
+                      onToolConfirmationRequest({
+                        request_id: payload.request_id,
+                        tool_name: payload.tool_name,
+                        tool_call_id: payload.tool_call_id,
+                        confirmation_prompt: payload.confirmation_prompt,
+                        timeout_seconds: payload.timeout_seconds,
+                        args: payload.args,
+                        created_at: new Date().toISOString(),
+                      });
+                    }
+                    break;
+
+                  case 'tool_confirmation_result':
+                    // Handle tool confirmation result
+                    if (payload.request_id !== undefined && payload.approved !== undefined) {
+                      onToolConfirmationResult({
+                        request_id: payload.request_id,
+                        approved: payload.approved,
+                      });
+                    }
+                    break;
+
                   case 'error':
                     onError(new Error(payload.error || 'Unknown error'));
                     break;
@@ -162,7 +191,14 @@ export const useStreamingResponse = ({
         abortControllerRef.current = null;
       }
     },
-    [onMessage, onToolCall, onError, onComplete]
+    [
+      onMessage,
+      onToolCall,
+      onToolConfirmationRequest,
+      onToolConfirmationResult,
+      onError,
+      onComplete,
+    ]
   );
 
   const cancelStream = useCallback(() => {

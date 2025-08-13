@@ -318,22 +318,24 @@ async def test_confirming_tools_provider_with_calendar_events(
     confirmation_prompts_shown = []
 
     async def capture_confirmation_callback(
-        conversation_id: str,
         interface_type: str,
+        conversation_id: str,
         turn_id: str | None,
-        prompt_text: str,
         tool_name: str,
+        call_id: str,
         tool_args: dict[str, Any],
-        timeout: float,
+        timeout_seconds: float,
     ) -> bool:
         """Capture the confirmation prompt and accept it."""
-        confirmation_prompts_shown.append(prompt_text)
+        # For testing, we just capture that the callback was called with the right tool
+        # We don't need to render the actual prompt here
+        confirmation_prompts_shown.append(f"{tool_name} called with args: {tool_args}")
         return True  # Accept confirmation
 
     confirming_provider = ConfirmingToolsProvider(
         wrapped_provider=local_provider,
         tools_requiring_confirmation={"modify_calendar_event"},
-        confirmation_timeout=60.0,
+        confirmation_timeout=10.0,  # Short timeout for tests (10s instead of default 1hr)
     )
 
     # Create execution context
@@ -362,29 +364,21 @@ async def test_confirming_tools_provider_with_calendar_events(
             context=exec_context,
         )
 
-        # Verify confirmation was requested with proper event details
+        # Verify confirmation was requested
         assert len(confirmation_prompts_shown) == 1, (
-            "Should have shown exactly one confirmation"
+            f"Should have shown exactly one confirmation, but got {len(confirmation_prompts_shown)}: {confirmation_prompts_shown}"
         )
-        confirmation_prompt = confirmation_prompts_shown[0]
+        confirmation_info = confirmation_prompts_shown[0]
 
-        # Original event details should be shown
-        # The confirmation uses telegramify_markdown which escapes special characters
-        from family_assistant.telegram_bot import telegramify_markdown
-
-        escaped_summary = telegramify_markdown.escape_markdown(event_summary)
-
-        assert (
-            event_summary in confirmation_prompt
-            or escaped_summary in confirmation_prompt
-        ), (
-            f"Original event summary '{event_summary}' (or escaped '{escaped_summary}') not in confirmation prompt"
+        # Check that the right tool was called with the right arguments
+        assert "modify_calendar_event called with args:" in confirmation_info, (
+            f"Expected confirmation for modify_calendar_event, got: {confirmation_info}"
         )
-        assert "Quarterly Business Review" in confirmation_prompt, (
-            "New summary not shown"
+        assert event_uid in confirmation_info, (
+            f"Event UID '{event_uid}' not in confirmation info: {confirmation_info}"
         )
-        assert "Event details not found" not in confirmation_prompt, (
-            f"Should not show 'Event details not found'. Full prompt:\n{confirmation_prompt}"
+        assert "Quarterly Business Review" in confirmation_info, (
+            f"New summary not in confirmation info: {confirmation_info}"
         )
 
         # The tool should have executed successfully
