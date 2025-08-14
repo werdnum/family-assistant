@@ -86,10 +86,8 @@ class ChatPage(BasePage):
         # Press Enter to send (this is more reliable than clicking the button)
         await chat_input.press("Enter")
 
-        # Wait for the message to be processed, but use a shorter timeout than before
-        # We can't wait for the user message to appear because confirmation dialogs
-        # may appear before the message is visible, causing test timeouts
-        await self.page.wait_for_timeout(500)
+        # Give time for the message to be processed and appear
+        await self.page.wait_for_timeout(3000)
 
     async def get_last_assistant_message(self, timeout: int = 15000) -> str:
         """Get the text content of the last assistant message, waiting for it to stabilize."""
@@ -446,12 +444,8 @@ class ChatPage(BasePage):
                 timeout=timeout,
             )
 
-        # Wait for streaming to properly complete instead of using fixed timeout
-        try:
-            await self.wait_for_streaming_complete(timeout=min(timeout, 10000))
-        except Exception:
-            # Fallback to shorter fixed wait if streaming detection fails
-            await self.page.wait_for_timeout(1000)
+        # Give time for streaming to complete and UI to stabilize
+        await self.page.wait_for_timeout(2000)
 
         # Also, wait for any loading indicators to disappear
         with contextlib.suppress(Exception):
