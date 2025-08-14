@@ -9,6 +9,19 @@
 # 5. Review the final staged changes
 # 6. Commit if approved, or restore stashed changes if not
 
+# Redirect ALL stdout to stderr by default (fail-safe for clean JSON output)
+# This ensures only explicit JSON responses go to stdout, preventing contamination
+exec 3>&1          # Save original stdout as file descriptor 3
+exec 1>&2          # Redirect all stdout to stderr
+
+# Temporary file to store JSON output (using mktemp for security)
+JSON_OUTPUT_FILE=$(mktemp)
+
+# Function to capture JSON for final output
+output_json() {
+    cat > "$JSON_OUTPUT_FILE"
+}
+
 # Color codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -22,6 +35,15 @@ NC='\033[0m' # No Color
 STASHED_CHANGES=false
 STASH_REF=""
 REPO_ROOT=""
+
+# Function to output final JSON to stdout at the very end
+final_json_output() {
+    if [[ -f "$JSON_OUTPUT_FILE" ]]; then
+        # Output JSON to saved stdout file descriptor 3
+        cat "$JSON_OUTPUT_FILE" >&3
+        rm -f "$JSON_OUTPUT_FILE" # Clean up temp file
+    fi
+}
 
 # Cleanup function
 cleanup() {
@@ -53,8 +75,14 @@ cleanup() {
     fi
 }
 
-# Set trap for cleanup
-trap cleanup EXIT
+# Set up trap to run cleanup first, then output JSON
+cleanup_and_output() {
+    cleanup
+    final_json_output
+}
+
+# Set trap for cleanup and final JSON output
+trap cleanup_and_output EXIT
 
 # Read JSON input from stdin
 JSON_INPUT=$(cat)
@@ -370,7 +398,7 @@ if [[ "$HAS_SENTINEL" == "true" ]]; then
         if [[ -n "$BYPASS_REASON" ]]; then
             REASON_MSG="MAJOR issues bypassed: $BYPASS_REASON"
         fi
-        cat << EOF
+        output_json << EOF
 {
   "decision": "approve",
   "reason": "$REASON_MSG"
@@ -386,7 +414,7 @@ EOF
         if [[ -n "$BYPASS_REASON" ]]; then
             REASON_MSG="Review bypassed: $BYPASS_REASON"
         fi
-        cat << EOF
+        output_json << EOF
 {
   "decision": "approve",
   "reason": "$REASON_MSG"
@@ -397,7 +425,7 @@ EOF
         echo "${GREEN}✅ No issues found - proceeding with commit${NC}" >&2
         
         # Return JSON for hooks - approve
-        cat << EOF
+        output_json << EOF
 {
   "decision": "approve",
   "reason": "No issues found"
@@ -413,7 +441,7 @@ if [[ $REVIEW_EXIT_CODE -eq 0 ]]; then
     echo "${GREEN}✅ All checks passed, ready to commit${NC}" >&2
     
     # Return JSON for hooks - approve
-    cat << EOF
+    output_json << EOF
 {
   "decision": "approve",
   "reason": "All checks passed"
@@ -437,11 +465,14 @@ else
         echo "" >&2
         echo "${CYAN}Your staged changes are ready. Fix issues or add the sentinel phrase and retry.${NC}" >&2
         
-        # Return JSON for hooks - block with helpful message
-        cat << EOF
+        # Extract the issues from review output for JSON response
+        ISSUES_FOUND=$(echo "$REVIEW_OUTPUT" | sed -n '/Issues Found:/,/^$/p' | grep -v "^$" || echo "Minor issues detected")
+        
+        # Return JSON for hooks - block with helpful message including actual issues
+        output_json << EOF
 {
   "decision": "block",
-  "reason": "Code review found minor issues that should be addressed:\n\nTo bypass with acknowledgment, add one of these to your commit message:\n• $SENTINEL_PHRASE\n• Bypass-Review: <your reason>\n\nThis confirms you've reviewed the warnings and decided to proceed."
+  "reason": "Code review found minor issues that should be addressed:\n\n$ISSUES_FOUND\n\nTo bypass with acknowledgment, add one of these to your commit message:\n• $SENTINEL_PHRASE\n• Bypass-Review: <your reason>\n\nThis confirms you've reviewed the warnings and decided to proceed."
 }
 EOF
     else
@@ -453,11 +484,14 @@ EOF
         echo "" >&2
         echo "${CYAN}Your staged changes are ready. Fix the issues and retry.${NC}" >&2
         
+        # Extract the issues from review output for JSON response
+        ISSUES_FOUND=$(echo "$REVIEW_OUTPUT" | sed -n '/Issues Found:/,/^$/p' | grep -v "^$" || echo "BLOCKING issues detected")
+        
         # Return JSON for hooks - block
-        cat << EOF
+        output_json << EOF
 {
   "decision": "block",
-  "reason": "Code review found BLOCKING issues that appear to be serious problems:\n• Potential build breaks\n• Runtime errors\n• Security risks\n\nThese should be fixed before committing.\n\nTo override (use with caution), add to your commit message:\n• $SENTINEL_PHRASE\n• Bypass-Review: <reason why this is safe>"
+  "reason": "Code review found BLOCKING issues that appear to be serious problems:\n\n$ISSUES_FOUND\n\nThese should be fixed before committing.\n\nTo override (use with caution), add to your commit message:\n• $SENTINEL_PHRASE\n• Bypass-Review: <reason why this is safe>"
 }
 EOF
     fi
