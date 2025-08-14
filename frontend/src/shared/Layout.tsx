@@ -23,6 +23,7 @@ import {
   NavigationMenuLink,
   NavigationMenuList,
   NavigationMenuTrigger,
+  NavigationMenuIndicator,
   navigationMenuTriggerStyle,
 } from '@/components/ui/navigation-menu';
 import NavigationSheet from './NavigationSheet';
@@ -40,6 +41,46 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   // Extract current page from pathname
   const currentPage = location.pathname.split('/')[1] || 'home';
+
+  // Function to handle NavigationMenu dropdown positioning
+  function onNavChange() {
+    setTimeout(() => {
+      // Select elements with the state "open"
+      const triggers = document.querySelectorAll('.submenu-trigger[data-state="open"]');
+      const viewports = document.querySelectorAll('.nav-viewport[data-state="open"]');
+
+      // Check if both triggers and viewports are present
+      if (!triggers.length || !viewports.length) {
+        return;
+      }
+
+      const trigger = triggers[0] as HTMLElement;
+      const viewport = viewports[0] as HTMLElement;
+
+      // Wait a bit for the viewport to fully render and get its dimensions
+      requestAnimationFrame(() => {
+        const { offsetLeft, offsetWidth } = trigger;
+        const menuWidth = viewport.offsetWidth || 200;
+
+        // Calculate position to center under trigger
+        let menuLeftPosition = offsetLeft + offsetWidth / 2 - menuWidth / 2;
+
+        // Prevent overflow on the left side
+        if (menuLeftPosition < 0) {
+          menuLeftPosition = 0;
+        }
+
+        // Prevent overflow on the right side
+        const windowWidth = window.innerWidth;
+        if (menuLeftPosition + menuWidth > windowWidth) {
+          menuLeftPosition = windowWidth - menuWidth - 16; // 16px margin
+        }
+
+        // Apply the calculated position
+        document.documentElement.style.setProperty('--menu-left-position', `${menuLeftPosition}px`);
+      });
+    }, 10);
+  }
 
   const NavLink = React.forwardRef<
     React.ElementRef<typeof Link>,
@@ -77,26 +118,30 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         {/* Desktop Navigation */}
         <div className="hidden md:block">
-          <NavigationMenu className="mx-auto max-w-full">
+          <NavigationMenu className="max-w-full" onValueChange={onNavChange}>
             <NavigationMenuList className="flex-nowrap justify-start gap-1 px-4 py-3 overflow-x-auto">
               {/* Assistant Data */}
               <NavigationMenuItem>
-                <NavigationMenuTrigger className="text-sm whitespace-nowrap">
+                <NavigationMenuTrigger className="submenu-trigger text-sm whitespace-nowrap">
                   <FileText className="mr-2 h-4 w-4 flex-shrink-0" />
                   <span className="whitespace-nowrap">Data</span>
                 </NavigationMenuTrigger>
                 <NavigationMenuContent>
-                  <div className="grid gap-3 p-4 w-[200px]">
+                  <div className="grid gap-3 p-4 min-w-[200px] w-max">
                     <NavigationMenuLink asChild>
-                      <ExternalNavLink href="/notes">
-                        <FileText className="mr-2 h-4 w-4" />
-                        Notes
+                      <ExternalNavLink href="/notes" className="whitespace-nowrap">
+                        <FileText className="mr-2 h-4 w-4 flex-shrink-0" />
+                        <span>Notes</span>
                       </ExternalNavLink>
                     </NavigationMenuLink>
                     <NavigationMenuLink asChild>
-                      <NavLink to="/context" isActive={currentPage === 'context'}>
-                        <FileText className="mr-2 h-4 w-4" />
-                        Context
+                      <NavLink
+                        to="/context"
+                        isActive={currentPage === 'context'}
+                        className="whitespace-nowrap"
+                      >
+                        <FileText className="mr-2 h-4 w-4 flex-shrink-0" />
+                        <span>Context</span>
                       </NavLink>
                     </NavigationMenuLink>
                   </div>
@@ -107,28 +152,28 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
               {/* Documents */}
               <NavigationMenuItem>
-                <NavigationMenuTrigger className="text-sm whitespace-nowrap">
+                <NavigationMenuTrigger className="submenu-trigger text-sm whitespace-nowrap">
                   <FolderOpen className="mr-2 h-4 w-4 flex-shrink-0" />
                   <span className="whitespace-nowrap">Documents</span>
                 </NavigationMenuTrigger>
                 <NavigationMenuContent>
-                  <div className="grid gap-3 p-4 w-[200px]">
+                  <div className="grid gap-3 p-4 min-w-[200px] w-max">
                     <NavigationMenuLink asChild>
-                      <ExternalNavLink href="/documents/">
-                        <FolderOpen className="mr-2 h-4 w-4" />
-                        List
+                      <ExternalNavLink href="/documents/" className="whitespace-nowrap">
+                        <FolderOpen className="mr-2 h-4 w-4 flex-shrink-0" />
+                        <span>List</span>
                       </ExternalNavLink>
                     </NavigationMenuLink>
                     <NavigationMenuLink asChild>
-                      <ExternalNavLink href="/documents/upload">
-                        <Upload className="mr-2 h-4 w-4" />
-                        Upload
+                      <ExternalNavLink href="/documents/upload" className="whitespace-nowrap">
+                        <Upload className="mr-2 h-4 w-4 flex-shrink-0" />
+                        <span>Upload</span>
                       </ExternalNavLink>
                     </NavigationMenuLink>
                     <NavigationMenuLink asChild>
-                      <ExternalNavLink href="/vector-search">
-                        <Search className="mr-2 h-4 w-4" />
-                        Search
+                      <ExternalNavLink href="/vector-search" className="whitespace-nowrap">
+                        <Search className="mr-2 h-4 w-4 flex-shrink-0" />
+                        <span>Search</span>
                       </ExternalNavLink>
                     </NavigationMenuLink>
                   </div>
@@ -164,22 +209,22 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
               {/* Automation */}
               <NavigationMenuItem>
-                <NavigationMenuTrigger className="text-sm whitespace-nowrap">
+                <NavigationMenuTrigger className="submenu-trigger text-sm whitespace-nowrap">
                   <Zap className="mr-2 h-4 w-4 flex-shrink-0" />
                   <span className="whitespace-nowrap">Automation</span>
                 </NavigationMenuTrigger>
                 <NavigationMenuContent>
-                  <div className="grid gap-3 p-4 w-[200px]">
+                  <div className="grid gap-3 p-4 min-w-[200px] w-max">
                     <NavigationMenuLink asChild>
-                      <ExternalNavLink href="/events">
-                        <Calendar className="mr-2 h-4 w-4" />
-                        Events
+                      <ExternalNavLink href="/events" className="whitespace-nowrap">
+                        <Calendar className="mr-2 h-4 w-4 flex-shrink-0" />
+                        <span>Events</span>
                       </ExternalNavLink>
                     </NavigationMenuLink>
                     <NavigationMenuLink asChild>
-                      <ExternalNavLink href="/event-listeners">
-                        <Settings className="mr-2 h-4 w-4" />
-                        Event Listeners
+                      <ExternalNavLink href="/event-listeners" className="whitespace-nowrap">
+                        <Settings className="mr-2 h-4 w-4 flex-shrink-0" />
+                        <span>Event Listeners</span>
                       </ExternalNavLink>
                     </NavigationMenuLink>
                   </div>
@@ -190,28 +235,36 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
               {/* Internal/Admin */}
               <NavigationMenuItem>
-                <NavigationMenuTrigger className="text-sm whitespace-nowrap">
+                <NavigationMenuTrigger className="submenu-trigger text-sm whitespace-nowrap">
                   <Cog className="mr-2 h-4 w-4 flex-shrink-0" />
                   <span className="whitespace-nowrap">Internal</span>
                 </NavigationMenuTrigger>
                 <NavigationMenuContent>
-                  <div className="grid gap-3 p-4 w-[200px]">
+                  <div className="grid gap-3 p-4 min-w-[200px] w-max">
                     <NavigationMenuLink asChild>
-                      <NavLink to="/tools" isActive={currentPage === 'tools'}>
-                        <Cog className="mr-2 h-4 w-4" />
-                        Tools
+                      <NavLink
+                        to="/tools"
+                        isActive={currentPage === 'tools'}
+                        className="whitespace-nowrap"
+                      >
+                        <Cog className="mr-2 h-4 w-4 flex-shrink-0" />
+                        <span>Tools</span>
                       </NavLink>
                     </NavigationMenuLink>
                     <NavigationMenuLink asChild>
-                      <ExternalNavLink href="/tasks">
-                        <Settings className="mr-2 h-4 w-4" />
-                        Task Queue
+                      <ExternalNavLink href="/tasks" className="whitespace-nowrap">
+                        <Settings className="mr-2 h-4 w-4 flex-shrink-0" />
+                        <span>Task Queue</span>
                       </ExternalNavLink>
                     </NavigationMenuLink>
                     <NavigationMenuLink asChild>
-                      <NavLink to="/errors" isActive={currentPage === 'errors'}>
-                        <AlertTriangle className="mr-2 h-4 w-4" />
-                        Error Logs
+                      <NavLink
+                        to="/errors"
+                        isActive={currentPage === 'errors'}
+                        className="whitespace-nowrap"
+                      >
+                        <AlertTriangle className="mr-2 h-4 w-4 flex-shrink-0" />
+                        <span>Error Logs</span>
                       </NavLink>
                     </NavigationMenuLink>
                   </div>
@@ -236,6 +289,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               <NavigationMenuItem>
                 <ThemeToggle />
               </NavigationMenuItem>
+
+              <NavigationMenuIndicator />
             </NavigationMenuList>
           </NavigationMenu>
         </div>
