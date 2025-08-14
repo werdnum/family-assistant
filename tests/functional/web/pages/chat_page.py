@@ -86,14 +86,10 @@ class ChatPage(BasePage):
         # Press Enter to send (this is more reliable than clicking the button)
         await chat_input.press("Enter")
 
-        # Wait for the user message to appear in the chat instead of fixed timeout
-        try:
-            await self.page.wait_for_selector(
-                self.MESSAGE_USER, state="visible", timeout=5000
-            )
-        except Exception:
-            # Fallback to shorter fixed wait if message detection fails
-            await self.page.wait_for_timeout(1000)
+        # Wait for the message to be processed, but use a shorter timeout than before
+        # We can't wait for the user message to appear because confirmation dialogs
+        # may appear before the message is visible, causing test timeouts
+        await self.page.wait_for_timeout(500)
 
     async def get_last_assistant_message(self, timeout: int = 15000) -> str:
         """Get the text content of the last assistant message, waiting for it to stabilize."""
