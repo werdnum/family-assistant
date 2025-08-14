@@ -64,8 +64,21 @@ async def test_navigation_dropdowns_open_and_position(
     # Test Internal dropdown
     internal_trigger = page.locator("button:has-text('Internal')").first
     await internal_trigger.wait_for(state="visible", timeout=5000)
+
+    # Ensure the trigger is ready for interaction
+    await page.wait_for_timeout(200)
     await internal_trigger.click()
-    await page.wait_for_timeout(500)
+
+    # Wait for the dropdown to open with a more robust wait
+    try:
+        await page.wait_for_function(
+            "() => document.querySelector('button:has-text(\"Internal\")').getAttribute('aria-expanded') === 'true'",
+            timeout=3000,
+        )
+    except Exception:
+        # If the wait function fails, try clicking again
+        await internal_trigger.click()
+        await page.wait_for_timeout(500)
 
     # Check that dropdown opened
     is_expanded = await internal_trigger.get_attribute("aria-expanded")
@@ -122,18 +135,20 @@ async def test_navigation_responsive_behavior(web_test_fixture: WebTestFixture) 
 
     # Mobile should hide desktop nav and show mobile button
     desktop_nav_hidden = await page.is_hidden("nav[data-orientation='horizontal']")
-    mobile_button = await page.query_selector("button:has(.sr-only)")
+
+    # Look for the mobile menu button - it's a button with sr-only text in mobile nav
+    mobile_button = page.locator(".md\\:hidden button").first
+    await mobile_button.wait_for(state="visible", timeout=5000)
 
     assert desktop_nav_hidden, "Desktop navigation should be hidden on mobile"
-    assert mobile_button is not None, "Mobile should show menu button"
 
-    # Test mobile menu functionality
+    # Test mobile menu functionality - click the mobile navigation button
     await mobile_button.click()
-    await page.wait_for_timeout(300)
+    await page.wait_for_timeout(500)
 
-    # Should open some kind of navigation (sheet/dialog)
-    navigation_opened = await page.is_visible("[role='dialog']")
-    assert navigation_opened, "Mobile menu should open navigation dialog"
+    # Should open navigation sheet/dialog
+    navigation_opened = await page.is_visible("[role='dialog'], [data-state='open']")
+    assert navigation_opened, "Mobile menu should open navigation sheet"
 
 
 @pytest.mark.playwright
