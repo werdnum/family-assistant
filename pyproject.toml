@@ -92,6 +92,7 @@ dependencies = [
     # For Home Assistant integration
     "janus>=1.0.0",
     # For thread-safe asyncio-aware queue
+    "llm>=0.27.1",
 ]
 
 [project.optional-dependencies]
@@ -347,5 +348,7 @@ typeCheckingMode = "basic"
 
 [tool.uv]
 dev-dependencies = [
+    "llm-fragments-github>=0.4",
+    "llm-fragments-reader>=0.1",
     "pytest-xdist>=3.7.0",
 ]
