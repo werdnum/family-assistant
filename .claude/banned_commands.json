@@ -74,6 +74,14 @@
   {
     "regexp": "2>&1",
     "explanation": "Redirecting stderr to stdout with 2>&1 can cause issues with the Bash tool. Please capture stderr and stdout separately if needed."
+  },
+  {
+    "regexp": "\\bcat\\s+.*\\|\\s*llm\\b",
+    "explanation": "Use 'llm -f filename' instead of 'cat file | llm' for better file handling and context preservation."
+  },
+  {
+    "regexp": "\\bllm\\s+.*-m\\s+gemini-2\\.0",
+    "explanation": "gemini-2.0 models are outdated. Use gemini-2.5-pro or gemini-2.5-flash instead for better performance."
   }
 ]
 

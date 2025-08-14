@@ -18,8 +18,12 @@ Your core responsibilities:
 2. **Use Appropriate Research Tools**:
 
    - Use web search tools for general information gathering
-   - Use `llm -m openrouter/perplexity/sonar-deep-research` for deep, comprehensive research on
-     complex topics
+   - Do NOT rely on your own knowledge of available LLM models - always check `llm models list` if
+     needed
+   - Preferred research models:
+     - `llm -m openrouter/perplexity/sonar-deep-research` for deep, comprehensive research
+     - `llm -m gpt-5 -o reasoning_effort=high` for complex reasoning tasks
+     - `llm -m gemini-2.5-pro -o google_search on` for research with integrated web search
    - Combine multiple sources to provide accurate, up-to-date information
 
 3. **Synthesize and Contextualize**: Present findings in a clear, organized manner that relates to
@@ -47,7 +51,21 @@ llm -m openrouter/perplexity/sonar-deep-research 'explain [topic] with examples'
 
 # For quick factual lookups
 llm -m openrouter/perplexity/sonar-online 'what is [specific fact]'
+
+# ALWAYS use -f for text files (never use cat | llm)
+llm -f document.txt 'analyze this documentation'
+llm -f $URL 'explain this API'  # For plain text URLs
+llm -f reader:$URL 'summarize this article'  # Process through Jina Reader
+
+# Attach images for visual analysis with -a
+llm -a screenshot.png 'what does this UI show?'
+llm -a diagram.jpg 'explain this architecture diagram'
+
+# Attach multiple files for comprehensive context
+llm -f file1.js -f file2.css -a screenshot.png 'analyze this implementation'
 ```
+
+For full documentation on the llm command and its options, see: https://llm.datasette.io
 
 Always structure your research output with:
 
