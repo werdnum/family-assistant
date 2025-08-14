@@ -290,8 +290,8 @@ async def test_tool_call_display(
     # Wait for assistant response (tool calls may be combined into one message)
     await chat_page.wait_for_assistant_response(timeout=15000)
 
-    # Give a bit more time for all messages to render
-    await page.wait_for_timeout(1000)
+    # Wait for all streaming to complete before verifying messages
+    await chat_page.wait_for_streaming_complete(timeout=10000)
 
     # Verify messages including tool responses
     all_messages = await chat_page.get_all_messages()
@@ -485,7 +485,7 @@ async def test_conversation_loading_with_tool_calls(
 
     # Wait for tool call to complete
     await chat_page.wait_for_assistant_response(timeout=15000)
-    await page.wait_for_timeout(1000)
+    await chat_page.wait_for_streaming_complete(timeout=10000)
 
     # Verify we have tool call messages
     messages = await chat_page.get_all_messages()
