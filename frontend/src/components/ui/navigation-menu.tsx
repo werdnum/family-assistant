@@ -74,7 +74,7 @@ const NavigationMenuLink = React.forwardRef<
     asChild
     ref={ref}
     className={cn(
-      'block select-none w-full rounded-md px-3 py-2 leading-none no-underline outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground',
+      'block select-none w-full rounded-md px-3 py-2 leading-none no-underline outline-none transition-colors hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground',
       className
     )}
     {...props}
