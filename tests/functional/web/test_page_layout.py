@@ -26,14 +26,28 @@ async def test_navigation_dropdowns_open_and_position(
     # Test Data dropdown
     data_trigger = page.locator("button:has-text('Data')").first
     await data_trigger.wait_for(state="visible", timeout=5000)
+
+    # Click and wait for dropdown to open
     await data_trigger.click()
-    await page.wait_for_timeout(500)
+
+    # Wait for dropdown to be fully open - both aria-expanded and content visible
+    await page.wait_for_function(
+        """() => {
+            const buttons = Array.from(document.querySelectorAll('button'));
+            const btn = buttons.find(b => b.textContent?.includes('Data'));
+            const links = Array.from(document.querySelectorAll('a'));
+            const notesLink = links.find(a => a.textContent?.includes('Notes'));
+            return btn?.getAttribute('aria-expanded') === 'true' && 
+                   notesLink && getComputedStyle(notesLink).visibility === 'visible';
+        }""",
+        timeout=5000,
+    )
 
     # Check that dropdown opened (button should be expanded)
     is_expanded = await data_trigger.get_attribute("aria-expanded")
     assert is_expanded == "true", "Data dropdown should be expanded after click"
 
-    # Check that dropdown content is visible (look for Notes link)
+    # Ensure dropdown content is visible (look for Notes link)
     notes_link = page.locator("a:has-text('Notes')")
     await notes_link.wait_for(state="visible", timeout=2000)
 
@@ -65,27 +79,34 @@ async def test_navigation_dropdowns_open_and_position(
     internal_trigger = page.locator("button:has-text('Internal')").first
     await internal_trigger.wait_for(state="visible", timeout=5000)
 
-    # Ensure the trigger is ready for interaction
-    await page.wait_for_timeout(200)
+    # Ensure page is stable before interaction
+    await page.wait_for_load_state("networkidle")
+
+    # Click and wait for the dropdown to open using Playwright's built-in waiting
     await internal_trigger.click()
 
-    # Wait for the dropdown to open with a more robust wait
-    try:
-        await page.wait_for_function(
-            "() => document.querySelector('button:has-text(\"Internal\")').getAttribute('aria-expanded') === 'true'",
-            timeout=3000,
-        )
-    except Exception:
-        # If the wait function fails, try clicking again
-        await internal_trigger.click()
-        await page.wait_for_timeout(500)
+    # Wait for the dropdown to be fully open - check both aria-expanded and content visibility
+    # Use Promise.race equivalent - wait for content to be visible which implies dropdown is open
+    tools_link = page.locator("a:has-text('Tools')")
 
-    # Check that dropdown opened
+    # Playwright will automatically retry the click if needed when using wait_for
+    await page.wait_for_function(
+        """() => {
+            const buttons = Array.from(document.querySelectorAll('button'));
+            const btn = buttons.find(b => b.textContent?.includes('Internal'));
+            const links = Array.from(document.querySelectorAll('a'));
+            const toolsLink = links.find(a => a.textContent?.includes('Tools'));
+            return btn?.getAttribute('aria-expanded') === 'true' && 
+                   toolsLink && getComputedStyle(toolsLink).visibility === 'visible';
+        }""",
+        timeout=5000,
+    )
+
+    # Verify dropdown is actually open
     is_expanded = await internal_trigger.get_attribute("aria-expanded")
     assert is_expanded == "true", "Internal dropdown should be expanded after click"
 
-    # Check that dropdown content is visible (look for Tools link)
-    tools_link = page.locator("a:has-text('Tools')")
+    # Ensure dropdown content is visible (look for Tools link)
     await tools_link.wait_for(state="visible", timeout=2000)
 
     # Get positions to verify positioning
@@ -169,7 +190,19 @@ async def test_navigation_hover_states(web_test_fixture: WebTestFixture) -> None
     # Open Internal dropdown to test hover states
     internal_trigger = page.locator("button:has-text('Internal')").first
     await internal_trigger.click()
-    await page.wait_for_timeout(500)
+
+    # Wait for dropdown to fully open
+    await page.wait_for_function(
+        """() => {
+            const buttons = Array.from(document.querySelectorAll('button'));
+            const btn = buttons.find(b => b.textContent?.includes('Internal'));
+            const links = Array.from(document.querySelectorAll('a'));
+            const toolsLink = links.find(a => a.textContent?.includes('Tools'));
+            return btn?.getAttribute('aria-expanded') === 'true' && 
+                   toolsLink && getComputedStyle(toolsLink).visibility === 'visible';
+        }""",
+        timeout=5000,
+    )
 
     # Find a dropdown menu item and test hover
     tools_link = page.locator("a:has-text('Tools')")
