@@ -23,10 +23,13 @@ services to respond or perform actions.
   typing `/browse` before your query activates a powerful web browsing mode for complex web tasks or
   research, while `/research` focuses the assistant on in-depth research questions.
 
-- **Web Interface (Secondary):** \*There's also a web page you can use for certain tasks: \*Managing
-  notes. \*Viewing message history and background tasks. \*Uploading documents for the assistant to
-  learn from. \*Managing API tokens for programmatic access. \*Searching indexed documents. \*Access
-  it here: `{{ SERVER_URL }}` (This link will be replaced with the actual URL).
+- **Web Interface (Secondary):** \*There's also a web interface for various tasks: \*Chat directly
+  with the assistant with real-time streaming responses. \*Managing notes. \*Viewing and filtering
+  conversation history across all interfaces (Telegram, Web, Email). \*Managing background tasks.
+  \*Uploading documents for the assistant to learn from. \*Managing API tokens for programmatic
+  access. \*Searching indexed documents. \*Supports dark mode for comfortable viewing. \*Access it
+  here: `{{ SERVER_URL }}` (This link will be replaced with the actual URL). The interface
+  automatically opens to the chat page for quick access.
 
 - **Email (Future):** \*Soon, you might be able to forward emails (like flight confirmations or
   event invitations) to a special address so the assistant can automatically store the information.
@@ -50,9 +53,9 @@ You can ask the assistant a wide variety of things:
     - **Search:**"Are there any events next Tuesday?", "Find the dentist appointment in June." (This
       helps find events before modifying/deleting).
     - **Modify:**"Change the 'Team Lunch' to 12:30 PM." (Requires finding the event first. You will
-      be asked to confirm the change.)
+      see a confirmation dialog to approve the change.)
     - **Delete:**"Delete the 'Dentist Appointment' on June 5th." (Requires finding the event first.
-      You will be asked to confirm the deletion.)
+      You will see a confirmation dialog to approve the deletion.)
   - **About the current time/date:**"What time is it?", "What day is it today?" (Uses its built-in
     time service.)
   - **About the weather:**"What's the weather like today?", "Will it rain tomorrow in London?"
@@ -209,14 +212,35 @@ The assistant learns and gets information from a few places:
   at 7 PM." \*The assistant will then send you a message in the chat at the scheduled time(s). This
   uses the same mechanism as the "Schedule Recurring Actions" feature mentioned earlier.
 
-## 6. Using the Web Interface
+## 6. Tool Confirmations
 
-While most interaction happens via Telegram, the web interface is useful for specific tasks. The
-interface has been reorganized for better navigation with grouped sections.
+When the assistant needs to perform important actions, you'll be asked to confirm them first:
 
-- **Accessing it:**`{{ SERVER_URL }}` (This link will be replaced with the actual URL).
-- \*\*Navigation:\*\*The web interface is now organized into clear sections:
-  - **Information**- View and manage your notes, documents, and conversation history
+- **What requires confirmation:** Calendar modifications, file operations, sending messages, and
+  other actions that could have significant effects
+- **How it works:**
+  - In Telegram: You'll see inline buttons to "Approve" or "Deny" the action
+  - In the Web Interface: A dialog box will appear with details about the action and options to
+    approve or deny
+  - The assistant will wait for your response before proceeding
+- **Why this matters:** This gives you full control over what the assistant does and prevents
+  unintended actions
+
+## 7. Using the Web Interface
+
+While most interaction happens via Telegram, the web interface provides a responsive experience for
+various tasks with dark mode support and mobile optimization.
+
+- **Accessing it:**`{{ SERVER_URL }}` (This link will be replaced with the actual URL). The
+  interface automatically opens to the chat page for immediate access.
+- \*\*Chat Features:\*\*
+  - Real-time streaming responses - see the assistant's replies as they're being generated
+  - Live tool usage display - watch what tools are being used during responses
+  - Easy conversation management and switching
+  - Clear message formatting and display
+- \*\*Navigation:\*\*The web interface features a dropdown menu organized into clear sections:
+  - **Information**- View and manage your notes, documents, and conversation history with enhanced
+    filtering
   - **Operations**- Access background tasks and tool testing
   - **Settings**- Manage API tokens and other configuration
 - **What it's for:**
@@ -225,12 +249,13 @@ interface has been reorganized for better navigation with grouped sections.
     notes are automatically included in conversations \*Delete notes that are no longer needed
     \*Search through notes quickly
 
-  - \*\*Document Management:\*\*The new Documents section provides: \*A comprehensive list of all
+  - \*\*Document Management:\*\*The Documents section provides: \*A comprehensive list of all
     indexed documents \*Document details including type, source, and metadata \*Direct links to view
     full document content \*Search capabilities across all document types
 
-  - \*\*Viewing History:\*\*Look back through past conversations the assistant has had (across
-    different chats, if configured).
+  - \*\*Viewing History:\*\*Look back through past conversations the assistant has had across all
+    interfaces (Telegram, Web, Email). Use enhanced filtering options to find specific conversations
+    or messages.
 
   - \*\*Viewing Background Tasks:\*\*See a log of tasks the assistant has performed automatically in
     the background (like fetching calendar updates or future scheduled actions). You can also
@@ -248,7 +273,7 @@ interface has been reorganized for better navigation with grouped sections.
   - \*\*Managing API Tokens:\*\*If you need programmatic access to the assistant, you can manage
     your API tokens on the "API Tokens" page under "Settings".
 
-  - \*\*Tool Testing:\*\*A new "Tools" page allows developers to test and debug tool interactions
+  - \*\*Tool Testing:\*\*A "Tools" page allows developers to test and debug tool interactions
     directly from the web interface.
 
   - \*\*Event Listeners Management:\*\*The Event Listeners page provides: \*A comprehensive list of
@@ -258,7 +283,7 @@ interface has been reorganized for better navigation with grouped sections.
     between LLM callback and script action types) \*Live script validation for script-based
     listeners \*Enable/disable and delete controls for managing listeners
 
-## 7. Tips for Best Results
+## 8. Tips for Best Results
 
 - \*\*Be Clear:\*\*The more specific your request, the better the assistant can understand and help.
 
@@ -302,11 +327,14 @@ interface has been reorganized for better navigation with grouped sections.
   `/research Tell me about the history of Python`), using the appropriate slash command can provide
   more focused and effective responses.
 
-## 8. Troubleshooting & Help
+- \*\*Mobile Experience:\*\*The web interface is fully optimized for mobile devices. All features
+  are accessible on phones and tablets with responsive design that adapts to your screen size.
+
+## 9. Troubleshooting & Help
 
 - \*\*Calendar Modifications:\*\*If you ask to modify or delete an event, the assistant might first
-  ask you to clarify which event using a search ("Find the dentist appointment") and will then ask
-  you to confirm the action via buttons in the chat.
+  ask you to clarify which event using a search ("Find the dentist appointment") and will then show
+  you a confirmation dialog (buttons in Telegram, dialog box in Web UI) to approve the action.
 
 - \*\*Unknown Commands:\*\*If you type a command the assistant doesn't recognize (e.g.,
   `/someunknowncommand`), it will now reply with a "command not recognized" message.
