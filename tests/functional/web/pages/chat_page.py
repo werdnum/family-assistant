@@ -223,7 +223,12 @@ class ChatPage(BasePage):
                             ".markdown-text"
                         )
                         if markdown_elem:
-                            content = await markdown_elem.text_content() or ""
+                            # For markdown elements, we need to get all text including from nested elements
+                            # ReactMarkdown can create multiple paragraph/element children
+                            content = await markdown_elem.inner_text() or ""
+                            # If inner_text doesn't work, fall back to text_content
+                            if not content:
+                                content = await markdown_elem.text_content() or ""
                         else:
                             content = await content_elem.text_content() or ""
 
@@ -619,9 +624,15 @@ class ChatPage(BasePage):
             timeout: Maximum time to wait in milliseconds
         """
         start_time = time.time()
+        last_messages = []
 
         while (time.time() - start_time) * 1000 < timeout:
             messages = await self.get_all_messages()
+
+            # Log if messages changed (for debugging)
+            if messages != last_messages:
+                print(f"DEBUG: Messages changed to: {messages}")
+                last_messages = messages.copy()
 
             # Check if all expected content is present
             all_found = True
