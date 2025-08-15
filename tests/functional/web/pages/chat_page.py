@@ -1,7 +1,6 @@
 """Chat Page Object Model for Playwright tests."""
 
 import contextlib
-import os
 import time
 from typing import Any
 
@@ -226,11 +225,6 @@ class ChatPage(BasePage):
                         if markdown_elem:
                             # For markdown elements, we need to get all text including from nested elements
                             # ReactMarkdown can create multiple paragraph/element children
-
-                            # Debug: log the inner HTML to understand structure
-                            inner_html = await markdown_elem.inner_html()
-                            if "DEBUG" in os.environ.get("CI", ""):
-                                print(f"DEBUG: Markdown inner HTML: {inner_html[:500]}")
 
                             # Try multiple methods to get complete text
                             # Method 1: Get all text nodes directly
@@ -648,15 +642,9 @@ class ChatPage(BasePage):
             timeout: Maximum time to wait in milliseconds (default increased to 30s)
         """
         start_time = time.time()
-        last_messages = []
 
         while (time.time() - start_time) * 1000 < timeout:
             messages = await self.get_all_messages()
-
-            # Log if messages changed (for debugging)
-            if messages != last_messages:
-                print(f"DEBUG: Messages changed to: {messages}")
-                last_messages = messages.copy()
 
             # Check if all expected content is present
             all_found = True
