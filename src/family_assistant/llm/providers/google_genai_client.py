@@ -103,7 +103,59 @@ class GoogleGenAIClient(LLMInterface):
                     "parts": [{"text": f"System: {content}"}],
                 })
             elif role == "user":
-                contents.append({"role": "user", "parts": [{"text": content}]})
+                # Handle both simple string content and multi-part content (text + images)
+                if isinstance(content, str):
+                    # Simple text content
+                    contents.append({"role": "user", "parts": [{"text": content}]})
+                elif isinstance(content, list):
+                    # Multi-part content (e.g., text + images)
+                    parts = []
+                    for part in content:
+                        if isinstance(part, dict):
+                            if part.get("type") == "text":
+                                parts.append({"text": part.get("text", "")})
+                            elif part.get("type") == "image_url":
+                                # Extract base64 image data
+                                image_url = part.get("image_url", {}).get("url", "")
+                                if image_url.startswith("data:"):
+                                    # Parse data URL: data:image/jpeg;base64,<base64_data>
+                                    try:
+                                        # Split on comma to separate metadata from data
+                                        header, base64_data = image_url.split(",", 1)
+                                        # Extract MIME type
+                                        mime_type = header.split(";")[0].split(":")[1]
+
+                                        # Decode base64 to bytes - the SDK will re-encode it
+                                        import base64
+
+                                        image_bytes = base64.b64decode(base64_data)
+
+                                        # Add as inline data part with raw bytes
+                                        parts.append({
+                                            "inline_data": {
+                                                "mime_type": mime_type,
+                                                "data": image_bytes,  # SDK expects bytes, not base64 string
+                                            }
+                                        })
+                                    except Exception as e:
+                                        logger.error(
+                                            f"Failed to parse image data URL: {e}"
+                                        )
+                                        # Skip this image part if parsing fails
+                                else:
+                                    # Handle regular URLs if needed
+                                    logger.warning(
+                                        f"Non-data URL images not yet supported: {image_url[:50]}..."
+                                    )
+                        elif isinstance(part, str):
+                            # Fallback for string parts
+                            parts.append({"text": part})
+
+                    if parts:
+                        contents.append({"role": "user", "parts": parts})
+                else:
+                    # Fallback for other content types - try to convert to string
+                    contents.append({"role": "user", "parts": [{"text": str(content)}]})
             elif role == "assistant":
                 parts = []
 

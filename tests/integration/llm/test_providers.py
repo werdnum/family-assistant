@@ -310,3 +310,111 @@ async def test_reasoning_info_included(
                 "total_token_count",
             ]
         )
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=sanitize_response)
+async def test_gemini_multipart_content_with_images(llm_client_factory: Any) -> None:
+    """Test that Gemini can handle multi-part content with text and images."""
+    if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
+        pytest.skip("Skipping Gemini image test in CI without API key")
+
+    client = await llm_client_factory("google", "gemini-2.5-flash-lite-preview-06-17")
+
+    # Generate a simple red square image
+    import base64
+    from io import BytesIO
+
+    from PIL import Image
+
+    # Create a 64x64 red image
+    img = Image.new("RGB", (64, 64), color="red")
+
+    # Convert to base64
+    buffer = BytesIO()
+    img.save(buffer, format="PNG")
+    buffer.seek(0)
+    img_bytes = buffer.getvalue()
+    test_image_base64 = base64.b64encode(img_bytes).decode("utf-8")
+
+    # Test multi-part content with text and image
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "What do you see in this image? Describe the color.",
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{test_image_base64}"},
+                },
+            ],
+        }
+    ]
+
+    response = await client.generate_response(messages)
+
+    # Validate response structure
+    assert isinstance(response, LLMOutput)
+    assert response.content is not None
+    assert isinstance(response.content, str)
+    assert len(response.content) > 0
+
+    # The model should mention red in the response
+    assert "red" in response.content.lower() or "color" in response.content.lower()
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=sanitize_response)
+async def test_gemini_system_message_with_multipart_content(
+    llm_client_factory: Any,
+) -> None:
+    """Test that Gemini can handle system messages with multi-part user content."""
+    if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
+        pytest.skip("Skipping Gemini system+image test in CI without API key")
+
+    client = await llm_client_factory("google", "gemini-2.5-flash-lite-preview-06-17")
+
+    # Create a valid blue square image
+    import base64
+    from io import BytesIO
+
+    from PIL import Image
+
+    # Create a 64x64 blue image
+    img = Image.new("RGB", (64, 64), color="blue")
+
+    # Convert to base64
+    buffer = BytesIO()
+    img.save(buffer, format="PNG")
+    buffer.seek(0)
+    img_bytes = buffer.getvalue()
+    test_image_base64 = base64.b64encode(img_bytes).decode("utf-8")
+
+    messages = [
+        {
+            "role": "system",
+            "content": "You are a color identification assistant. Always respond with just the color name.",
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "What color is this square?"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{test_image_base64}"},
+                },
+            ],
+        },
+    ]
+
+    response = await client.generate_response(messages)
+
+    assert isinstance(response, LLMOutput)
+    assert response.content is not None
+    # Should identify blue
+    assert "blue" in response.content.lower()
