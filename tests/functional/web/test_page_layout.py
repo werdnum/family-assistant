@@ -26,8 +26,21 @@ async def test_navigation_dropdowns_open_and_position(
         "nav[data-orientation='horizontal']", state="visible", timeout=10000
     )
 
-    # Wait for any initial animations to complete
-    await page.wait_for_timeout(500)
+    # Wait for navigation to be fully ready and interactive
+    await page.wait_for_function(
+        """() => {
+            const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('Data'));
+            if (!btn) return false;
+            const style = getComputedStyle(btn);
+            const rect = btn.getBoundingClientRect();
+            return style.visibility === 'visible' &&
+                   style.opacity === '1' &&
+                   rect.width > 0 &&
+                   rect.height > 0 &&
+                   !btn.disabled;
+        }""",
+        timeout=3000,
+    )
 
     # Test Data dropdown
     data_trigger = page.locator("button:has-text('Data')").first
@@ -113,8 +126,18 @@ async def test_navigation_dropdowns_open_and_position(
         timeout=3000,
     )
 
-    # Wait for any closing animations
-    await page.wait_for_timeout(300)
+    # Wait for dropdown to be fully closed
+    await page.wait_for_function(
+        """() => {
+            const buttons = Array.from(document.querySelectorAll('button'));
+            const dataBtn = buttons.find(b => b.textContent?.includes('Data'));
+            if (!dataBtn) return false;
+            // Check aria-expanded is false or not present
+            const expanded = dataBtn.getAttribute('aria-expanded');
+            return !expanded || expanded === 'false';
+        }""",
+        timeout=3000,
+    )
 
     # Test Internal dropdown with fresh state
     internal_trigger = page.locator("button:has-text('Internal')").first
@@ -165,7 +188,17 @@ async def test_navigation_dropdowns_open_and_position(
                 raise
             # Click outside to reset state
             await page.mouse.click(1, 1)
-            await page.wait_for_timeout(500)
+            # Wait for dropdown to close
+            await page.wait_for_function(
+                """() => {
+                    const buttons = Array.from(document.querySelectorAll('button'));
+                    const btn = buttons.find(b => b.textContent?.includes('Internal'));
+                    if (!btn) return true;
+                    const expanded = btn.getAttribute('aria-expanded');
+                    return !expanded || expanded === 'false';
+                }""",
+                timeout=2000,
+            )
 
     # Find the Tools link
     tools_link = page.locator("a:has-text('Tools')")
@@ -252,8 +285,23 @@ async def test_navigation_hover_states(web_test_fixture: WebTestFixture) -> None
         "nav[data-orientation='horizontal']", state="visible", timeout=10000
     )
 
-    # Wait for any initial animations
-    await page.wait_for_timeout(500)
+    # Wait for navigation to be fully ready (animations complete)
+    await page.wait_for_function(
+        """() => {
+            const nav = document.querySelector("nav[data-orientation='horizontal']");
+            if (!nav) return false;
+            const style = getComputedStyle(nav);
+            // Also check that Internal button exists and is ready
+            const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('Internal'));
+            if (!btn) return false;
+            const btnStyle = getComputedStyle(btn);
+            return style.visibility === 'visible' && 
+                   style.opacity === '1' &&
+                   btnStyle.visibility === 'visible' &&
+                   btnStyle.opacity === '1';
+        }""",
+        timeout=3000,
+    )
 
     # Open Internal dropdown to test hover states
     internal_trigger = page.locator("button:has-text('Internal')").first
@@ -296,7 +344,18 @@ async def test_navigation_hover_states(web_test_fixture: WebTestFixture) -> None
 
     # Hover over the tools link
     await tools_link.hover()
-    await page.wait_for_timeout(200)
+    # Wait for hover state to be applied
+    await page.wait_for_function(
+        """() => {
+            const links = Array.from(document.querySelectorAll('a'));
+            const toolsLink = links.find(a => a.textContent?.includes('Tools'));
+            if (!toolsLink) return false;
+            // Check that the element is in hover state (usually has background change)
+            const rect = toolsLink.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+        }""",
+        timeout=1000,
+    )
 
     # Check that hover state applies (the link should be visible and clickable)
     is_visible = await tools_link.is_visible()
