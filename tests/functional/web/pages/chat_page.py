@@ -4,6 +4,8 @@ import contextlib
 import time
 from typing import Any
 
+import httpx
+
 from .base_page import BasePage
 
 
@@ -520,26 +522,25 @@ class ChatPage(BasePage):
                 break
 
     async def wait_for_conversation_saved(self, timeout: int = 20000) -> None:
-        """Wait for conversation to be saved to backend by checking conversation list."""
+        """Wait for conversation to be saved to backend by polling the API directly."""
         start_time = time.time()
         current_conv_id = await self.get_current_conversation_id()
 
-        # First ensure streaming is complete before checking if saved
-        # This prevents the reload from interrupting message processing
-        await self.wait_for_streaming_complete(timeout=10000)
+        if not current_conv_id:
+            raise RuntimeError("No current conversation ID found")
 
+        # Give a small buffer for the database transaction to commit after message is sent
+        await self.page.wait_for_timeout(500)
+
+        # Poll the API directly to check if conversation exists
         while time.time() - start_time < timeout / 1000:
             try:
-                # Force a reload to ensure the conversation list is up-to-date
-                await self.page.reload(wait_until="networkidle")
+                if await self.conversation_exists_via_api(current_conv_id):
+                    return  # Conversation found via API
+            except Exception:
+                pass  # Continue polling on errors
 
-                conv_list = await self.get_conversation_list()
-                if any(c["id"] == current_conv_id for c in conv_list):
-                    return  # Conversation found
-            except Exception as e:
-                print(f"DEBUG: Error checking conversation list, will retry: {e}")
-
-            await self.page.wait_for_timeout(2000)  # Wait longer between reloads
+            await self.page.wait_for_timeout(200)  # Poll every 200ms
 
         raise TimeoutError(
             f"Conversation {current_conv_id} not saved within {timeout}ms"
@@ -702,3 +703,22 @@ class ChatPage(BasePage):
         if not reject_button:
             raise RuntimeError("Tool confirmation reject button not found")
         await reject_button.click()
+
+    async def conversation_exists_via_api(self, conversation_id: str) -> bool:
+        """Check if a conversation exists by querying the API directly."""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.base_url}/api/v1/chat/conversations"
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    conversations = data.get("conversations", [])
+                    return any(
+                        conv.get("conversation_id") == conversation_id
+                        for conv in conversations
+                    )
+                else:
+                    return False
+        except Exception:
+            return False

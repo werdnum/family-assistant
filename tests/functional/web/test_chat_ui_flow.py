@@ -450,9 +450,30 @@ async def test_conversation_loading_with_tool_calls(
 
     # Configure mock LLM for tool call
     tool_call_id = "call_load_test"
+
+    def initial_request_matcher(args: dict) -> bool:
+        """Match the initial user request for creating a note."""
+        messages = args.get("messages", [])
+        # Check if this is the initial request (no tool messages yet)
+        has_tool_messages = any(msg.get("role") == "tool" for msg in messages)
+        has_user_request = any(
+            msg.get("role") == "user"
+            and "create a note for testing" in str(msg.get("content", ""))
+            for msg in messages
+        )
+        return has_user_request and not has_tool_messages
+
+    def tool_result_matcher(args: dict) -> bool:
+        """Match when we have a tool result and should provide final response."""
+        messages = args.get("messages", [])
+        return any(
+            msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id
+            for msg in messages
+        )
+
     mock_llm_client.rules = [
         (
-            lambda args: "create a note for testing" in str(args.get("messages", [])),
+            initial_request_matcher,
             LLMOutput(
                 content="Creating a test note for you.",
                 tool_calls=[
@@ -471,10 +492,7 @@ async def test_conversation_loading_with_tool_calls(
             ),
         ),
         (
-            lambda args: any(
-                msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id
-                for msg in args.get("messages", [])
-            ),
+            tool_result_matcher,
             LLMOutput(content="Note created successfully!"),
         ),
     ]
@@ -483,8 +501,23 @@ async def test_conversation_loading_with_tool_calls(
     await chat_page.navigate_to_chat()
     await chat_page.send_message("Please create a note for testing tool call display")
 
+    # Get the conversation ID and wait for it to be saved immediately after sending
+    conv_id_with_tools = await chat_page.get_current_conversation_id()
+
+    # Wait for the conversation to be saved to the backend via API polling
+    # This should happen quickly since the user message is saved in its own transaction
+    await chat_page.wait_for_conversation_saved()
+
     # Wait for tool call to complete
     await chat_page.wait_for_assistant_response(timeout=15000)
+
+    # Handle tool confirmation if it appears
+    try:
+        await chat_page.wait_for_confirmation_dialog(timeout=5000)
+        await chat_page.approve_tool_confirmation()
+    except Exception:
+        pass  # No confirmation dialog appeared or approval failed
+
     await chat_page.wait_for_streaming_complete(timeout=10000)
 
     # Verify we have tool call messages
@@ -498,14 +531,10 @@ async def test_conversation_loading_with_tool_calls(
             "note" in m["content"].lower() for m in assistant_messages if m["content"]
         )
 
-    # Get the conversation ID
-    conv_id_with_tools = await chat_page.get_current_conversation_id()
-
     # Create a new chat to navigate away
     await chat_page.create_new_chat()
 
-    # SQLite transaction visibility workaround: reload the page to ensure conversation list updates
-    # This is more reliable than polling for the conversation to appear
+    # Refresh the page to load the updated conversation list since there are no live updates
     await page.reload()
     await chat_page.wait_for_load()
 
