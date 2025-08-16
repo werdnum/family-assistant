@@ -57,13 +57,20 @@ class ChatPage(BasePage):
         # The default wait_for_load only waits for DOM, not JavaScript modules
         await self.wait_for_load(wait_for_network=True)
 
-        # Wait for React app to initialize
-        await self.page.wait_for_timeout(1000)
-
-        # Also wait for the chat interface to be ready
+        # Wait for critical UI elements to be present and ready
+        # This ensures the React app has fully initialized
         await self.page.wait_for_selector(
-            self.CHAT_INPUT, state="visible", timeout=10000
+            "h1:has-text('Chat')", state="visible", timeout=15000
         )
+        await self.page.wait_for_selector(
+            self.SIDEBAR_TOGGLE, state="visible", timeout=15000
+        )
+        await self.page.wait_for_selector(
+            self.CHAT_INPUT, state="visible", timeout=15000
+        )
+
+        # Give a bit more time for any final initialization
+        await self.page.wait_for_timeout(500)
 
     async def send_message(self, message: str) -> None:
         """Send a message in the chat.
@@ -267,17 +274,72 @@ class ChatPage(BasePage):
 
     async def toggle_sidebar(self) -> None:
         """Toggle the conversation sidebar."""
-        # The toggle button is now always visible (removed lg:hidden)
-        # Try the aria-label selector first
-        toggle_button = await self.page.query_selector(self.SIDEBAR_TOGGLE)
-        if not toggle_button:
-            # Fallback to the hamburger text
-            toggle_button = await self.page.query_selector("button:has-text('☰')")
+        # Wait for the chat interface to be fully loaded before trying to find the toggle
+        await self.page.wait_for_selector(
+            "h1:has-text('Chat')", state="visible", timeout=10000
+        )
 
-        if toggle_button:
-            await toggle_button.click()
-        else:
-            raise RuntimeError("Could not find sidebar toggle button")
+        # The toggle button is now always visible and has a specific aria-label
+        # Wait for the specific sidebar toggle button to be available
+        try:
+            toggle_button = await self.page.wait_for_selector(
+                self.SIDEBAR_TOGGLE, state="visible", timeout=10000
+            )
+            if toggle_button:
+                await toggle_button.click()
+            else:
+                raise RuntimeError("Sidebar toggle button not found")
+        except Exception as e:
+            # If the aria-label selector fails, try a more specific fallback
+            # Look for the first Menu button (which should be the sidebar toggle)
+            # that's NOT inside the NavigationSheet (ml-auto div)
+            try:
+                toggle_button = await self.page.wait_for_selector(
+                    "button:not(.ml-auto button) svg[class*='lucide-menu'], button:not([class*='ml-auto'] *) svg[class*='lucide-menu']",
+                    state="visible",
+                    timeout=5000,
+                )
+                if toggle_button:
+                    # Click the parent button of the Menu icon
+                    parent_button = await toggle_button.evaluate(
+                        "element => element.parentElement"
+                    )
+                    if parent_button:
+                        await self.page.evaluate(
+                            "element => element.click()", parent_button
+                        )
+                    else:
+                        raise RuntimeError("Could not find parent button for menu icon")
+                else:
+                    raise RuntimeError("Could not find menu icon")
+            except Exception:
+                # Final fallback - look for any button with Menu icon that's the first one
+                try:
+                    all_menu_buttons = await self.page.query_selector_all(
+                        "button svg[class*='lucide-menu']"
+                    )
+                    if all_menu_buttons:
+                        # The sidebar toggle should be the first Menu button in the header
+                        first_menu_button = all_menu_buttons[0]
+                        parent_button = await first_menu_button.evaluate(
+                            "element => element.parentElement"
+                        )
+                        if parent_button:
+                            await self.page.evaluate(
+                                "element => element.click()", parent_button
+                            )
+                        else:
+                            raise RuntimeError(
+                                "Could not find parent button for first menu icon"
+                            )
+                    else:
+                        raise RuntimeError(
+                            f"Could not find sidebar toggle button. Original error: {e}"
+                        )
+                except Exception as final_e:
+                    raise RuntimeError(
+                        f"Could not find sidebar toggle button after all fallbacks. Errors: {e}, {final_e}"
+                    ) from final_e
 
         # Wait longer for Sheet animation on mobile
         viewport_size = self.page.viewport_size
