@@ -126,7 +126,7 @@ async def test_navigation_dropdowns_open_and_position(
         timeout=3000,
     )
 
-    # Wait for dropdown to be fully closed
+    # Wait for dropdown to be fully closed and animations complete
     await page.wait_for_function(
         """() => {
             const buttons = Array.from(document.querySelectorAll('button'));
@@ -134,10 +134,17 @@ async def test_navigation_dropdowns_open_and_position(
             if (!dataBtn) return false;
             // Check aria-expanded is false or not present
             const expanded = dataBtn.getAttribute('aria-expanded');
-            return !expanded || expanded === 'false';
+            // Also check that no dropdown content is visible
+            const dropdownContent = document.querySelector('[data-radix-navigation-menu-content]');
+            const isDropdownHidden = !dropdownContent || dropdownContent.style.display === 'none' || 
+                                     dropdownContent.getAttribute('data-state') === 'closed';
+            return (!expanded || expanded === 'false') && isDropdownHidden;
         }""",
         timeout=3000,
     )
+
+    # Add a small delay to ensure CSS transitions and state updates are complete
+    await page.wait_for_timeout(100)
 
     # Test Internal dropdown with fresh state
     internal_trigger = page.locator("button:has-text('Internal')").first
@@ -160,7 +167,7 @@ async def test_navigation_dropdowns_open_and_position(
         try:
             await internal_trigger.click()
 
-            # Wait for dropdown content to be fully visible and interactive
+            # Wait for dropdown content to be fully visible and properly positioned
             await page.wait_for_function(
                 """() => {
                     const buttons = Array.from(document.querySelectorAll('button'));
@@ -173,12 +180,18 @@ async def test_navigation_dropdowns_open_and_position(
                     
                     const rect = toolsLink.getBoundingClientRect();
                     const style = getComputedStyle(toolsLink);
+                    const btnRect = btn.getBoundingClientRect();
+                    
+                    // Check that dropdown is visible and positioned correctly (not at far left)
+                    // The dropdown should be positioned relative to its trigger button
+                    const isPositionedCorrectly = rect.x > 100; // Should not be at far left edge
                     
                     return rect.width > 0 && 
                            rect.height > 0 && 
                            style.visibility === 'visible' &&
                            style.opacity === '1' &&
-                           style.display !== 'none';
+                           style.display !== 'none' &&
+                           isPositionedCorrectly;
                 }""",
                 timeout=3000,
             )
@@ -188,17 +201,22 @@ async def test_navigation_dropdowns_open_and_position(
                 raise
             # Click outside to reset state
             await page.mouse.click(1, 1)
-            # Wait for dropdown to close
+            # Wait for dropdown to close and state to reset
             await page.wait_for_function(
                 """() => {
                     const buttons = Array.from(document.querySelectorAll('button'));
                     const btn = buttons.find(b => b.textContent?.includes('Internal'));
                     if (!btn) return true;
                     const expanded = btn.getAttribute('aria-expanded');
-                    return !expanded || expanded === 'false';
+                    const dropdownContent = document.querySelector('[data-radix-navigation-menu-content]');
+                    const isDropdownHidden = !dropdownContent || dropdownContent.style.display === 'none' || 
+                                           dropdownContent.getAttribute('data-state') === 'closed';
+                    return (!expanded || expanded === 'false') && isDropdownHidden;
                 }""",
                 timeout=2000,
             )
+            # Add delay before retry to ensure state is fully reset
+            await page.wait_for_timeout(200)
 
     # Find the Tools link
     tools_link = page.locator("a:has-text('Tools')")
