@@ -135,6 +135,15 @@ This script runs:
   have already tried with `-q` and you are sure there is information in the output of `-s` or `-v`
   that you need for debugging.
 
+- **Finding Flaky Tests**: When debugging test flakiness, use pytest's `--flake-finder` plugin:
+
+  ```bash
+  pytest tests/path/to/test.py --flake-finder --flake-runs=100 -x
+  ```
+
+  This is much more efficient than running tests in a loop. The `-x` flag stops on first failure.
+  Never use manual loops or shell scripts to repeatedly run tests.
+
 ```bash
 # Run all tests with verbose output
 poe test # Note: You will need a long timeout for this - something like 15 minutes

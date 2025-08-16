@@ -504,8 +504,21 @@ async def test_conversation_loading_with_tool_calls(
     # Create a new chat to navigate away
     await chat_page.create_new_chat()
 
-    # Navigate back to the conversation with tool calls
+    # SQLite transaction visibility workaround: reload the page to ensure conversation list updates
+    # This is more reliable than polling for the conversation to appear
+    await page.reload()
+    await chat_page.wait_for_load()
+
+    # Ensure sidebar is open after reload
+    if not await chat_page.is_sidebar_open():
+        await chat_page.toggle_sidebar()
+
+    # Now the conversation should be visible in the sidebar
     assert conv_id_with_tools is not None  # Type guard
+    conv_selector = f'[data-conversation-id="{conv_id_with_tools}"]'
+    await page.wait_for_selector(conv_selector, timeout=10000, state="visible")
+
+    # Navigate back to the conversation with tool calls
     await chat_page.select_conversation(conv_id_with_tools)
 
     # Verify the conversation loaded correctly

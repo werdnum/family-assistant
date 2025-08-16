@@ -43,9 +43,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const currentPage = location.pathname.split('/')[1] || 'home';
 
   // Function to handle NavigationMenu dropdown positioning
-  function onNavChange() {
+  function onNavChange(value: string) {
+    // Use the menu value to find the specific trigger
     setTimeout(() => {
-      // Select elements with the state "open"
+      // Find the specific trigger that was just opened using the menu value
       const triggers = document.querySelectorAll('.submenu-trigger[data-state="open"]');
       const viewports = document.querySelectorAll('.nav-viewport[data-state="open"]');
 
@@ -54,8 +55,23 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         return;
       }
 
-      const trigger = triggers[0] as HTMLElement;
-      const viewport = viewports[0] as HTMLElement;
+      // Find the trigger that matches the current menu value
+      let trigger: HTMLElement | null = null;
+      for (const t of triggers) {
+        const menuItem = t.closest('[data-value]');
+        const menuValue = menuItem?.getAttribute('data-value');
+        if (menuItem && menuValue === value) {
+          trigger = t as HTMLElement;
+          break;
+        }
+      }
+
+      // Fallback to last trigger if specific one not found
+      if (!trigger) {
+        trigger = triggers[triggers.length - 1] as HTMLElement;
+      }
+
+      const viewport = viewports[viewports.length - 1] as HTMLElement;
 
       // Wait a bit for the viewport to fully render and get its dimensions
       requestAnimationFrame(() => {
@@ -121,7 +137,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           <NavigationMenu className="max-w-full" onValueChange={onNavChange}>
             <NavigationMenuList className="flex-nowrap justify-start gap-1 px-4 py-3 overflow-x-auto">
               {/* Assistant Data */}
-              <NavigationMenuItem>
+              <NavigationMenuItem value="data">
                 <NavigationMenuTrigger className="submenu-trigger text-sm whitespace-nowrap">
                   <FileText className="mr-2 h-4 w-4 flex-shrink-0" />
                   <span className="whitespace-nowrap">Data</span>
@@ -151,7 +167,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               <Separator orientation="vertical" className="h-6" />
 
               {/* Documents */}
-              <NavigationMenuItem>
+              <NavigationMenuItem value="documents">
                 <NavigationMenuTrigger className="submenu-trigger text-sm whitespace-nowrap">
                   <FolderOpen className="mr-2 h-4 w-4 flex-shrink-0" />
                   <span className="whitespace-nowrap">Documents</span>
@@ -208,7 +224,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               <Separator orientation="vertical" className="h-6" />
 
               {/* Automation */}
-              <NavigationMenuItem>
+              <NavigationMenuItem value="automation">
                 <NavigationMenuTrigger className="submenu-trigger text-sm whitespace-nowrap">
                   <Zap className="mr-2 h-4 w-4 flex-shrink-0" />
                   <span className="whitespace-nowrap">Automation</span>
@@ -234,7 +250,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               <Separator orientation="vertical" className="h-6" />
 
               {/* Internal/Admin */}
-              <NavigationMenuItem>
+              <NavigationMenuItem value="internal">
                 <NavigationMenuTrigger className="submenu-trigger text-sm whitespace-nowrap">
                   <Cog className="mr-2 h-4 w-4 flex-shrink-0" />
                   <span className="whitespace-nowrap">Internal</span>

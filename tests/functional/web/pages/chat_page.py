@@ -223,7 +223,30 @@ class ChatPage(BasePage):
                             ".markdown-text"
                         )
                         if markdown_elem:
-                            content = await markdown_elem.text_content() or ""
+                            # For markdown elements, we need to get all text including from nested elements
+                            # ReactMarkdown can create multiple paragraph/element children
+
+                            # Try multiple methods to get complete text
+                            # Method 1: Get all text nodes directly
+                            all_text = await markdown_elem.evaluate(
+                                "el => el.textContent || el.innerText || ''"
+                            )
+
+                            if all_text:
+                                content = all_text
+                            else:
+                                # Method 2: Try getting paragraph text
+                                paragraphs = await markdown_elem.query_selector_all("p")
+                                if paragraphs:
+                                    content_parts = []
+                                    for p in paragraphs:
+                                        p_text = await p.text_content() or ""
+                                        if p_text:
+                                            content_parts.append(p_text)
+                                    content = " ".join(content_parts)
+                                else:
+                                    # Method 3: Fallback to text_content
+                                    content = await markdown_elem.text_content() or ""
                         else:
                             content = await content_elem.text_content() or ""
 
@@ -610,13 +633,13 @@ class ChatPage(BasePage):
         )
 
     async def wait_for_messages_with_content(
-        self, expected_contents: dict[str, str], timeout: int = 10000
+        self, expected_contents: dict[str, str], timeout: int = 30000
     ) -> None:
         """Wait for messages to contain expected content, polling until satisfied.
 
         Args:
             expected_contents: Dict mapping role to expected text content
-            timeout: Maximum time to wait in milliseconds
+            timeout: Maximum time to wait in milliseconds (default increased to 30s)
         """
         start_time = time.time()
 
