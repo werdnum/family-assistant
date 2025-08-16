@@ -1,11 +1,14 @@
 """Integration tests for LLM providers using VCR.py for record/replay."""
 
+import base64
 import os
 from collections.abc import Callable
+from io import BytesIO
 from typing import Any
 
 import pytest
 import pytest_asyncio
+from PIL import Image
 
 from family_assistant.llm import LLMOutput
 from family_assistant.llm.factory import LLMClientFactory
@@ -323,11 +326,6 @@ async def test_gemini_multipart_content_with_images(llm_client_factory: Any) -> 
     client = await llm_client_factory("google", "gemini-2.5-flash-lite-preview-06-17")
 
     # Generate a simple red square image
-    import base64
-    from io import BytesIO
-
-    from PIL import Image
-
     # Create a 64x64 red image
     img = Image.new("RGB", (64, 64), color="red")
 
@@ -380,11 +378,6 @@ async def test_gemini_system_message_with_multipart_content(
     client = await llm_client_factory("google", "gemini-2.5-flash-lite-preview-06-17")
 
     # Create a valid blue square image
-    import base64
-    from io import BytesIO
-
-    from PIL import Image
-
     # Create a 64x64 blue image
     img = Image.new("RGB", (64, 64), color="blue")
 
