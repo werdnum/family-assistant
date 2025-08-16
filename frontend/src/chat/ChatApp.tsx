@@ -35,18 +35,34 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const [isMobile, setIsMobile] = useState<boolean>(window.innerWidth <= 768);
   const streamingMessageIdRef = useRef<string | null>(null);
   const toolCallMessageIdRef = useRef<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const messagesAbortControllerRef = useRef<AbortController | null>(null);
 
   // Fetch conversations list
   const fetchConversations = useCallback(async () => {
     try {
+      // Cancel previous request if it exists
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+
+      // Create new abort controller
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
+
       setConversationsLoading(true);
-      const response = await fetch('/api/v1/chat/conversations');
+      const response = await fetch('/api/v1/chat/conversations', {
+        signal: abortController.signal,
+      });
       if (response.ok) {
         const data = await response.json();
         setConversations(data.conversations);
       }
     } catch (error) {
-      console.error('Error fetching conversations:', error);
+      // Don't log error if request was aborted (component unmounting)
+      if (error instanceof Error && error.name !== 'AbortError') {
+        console.error('Error fetching conversations:', error);
+      }
     } finally {
       setConversationsLoading(false);
     }
@@ -272,6 +288,19 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     onToolConfirmationResult: handleConfirmationResult,
   });
 
+  // Cleanup effect to abort fetch requests on unmount
+  useEffect(() => {
+    return () => {
+      // Cancel any pending fetch requests when component unmounts
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      if (messagesAbortControllerRef.current) {
+        messagesAbortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
   // Handle window resize
   useEffect(() => {
     const handleResize = () => {
@@ -311,8 +340,19 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // Load messages for a conversation
   const loadConversationMessages = async (convId: string) => {
     try {
+      // Cancel previous messages request if it exists
+      if (messagesAbortControllerRef.current) {
+        messagesAbortControllerRef.current.abort();
+      }
+
+      // Create new abort controller for messages
+      const messagesAbortController = new AbortController();
+      messagesAbortControllerRef.current = messagesAbortController;
+
       setIsLoading(true);
-      const response = await fetch(`/api/v1/chat/conversations/${convId}/messages`);
+      const response = await fetch(`/api/v1/chat/conversations/${convId}/messages`, {
+        signal: messagesAbortController.signal,
+      });
       if (response.ok) {
         const data = await response.json();
 
@@ -381,7 +421,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         setMessages(processedMessages);
       }
     } catch (error) {
-      console.error('Error loading conversation:', error);
+      // Don't log error if request was aborted (component unmounting)
+      if (error instanceof Error && error.name !== 'AbortError') {
+        console.error('Error loading conversation:', error);
+      }
     } finally {
       setIsLoading(false);
     }
