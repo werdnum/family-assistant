@@ -309,10 +309,12 @@ class ChatPage(BasePage):
                             "element => element.click()", parent_button
                         )
                     else:
-                        raise RuntimeError("Could not find parent button for menu icon")
+                        raise RuntimeError(
+                            "Could not find parent button for menu icon"
+                        ) from e
                 else:
-                    raise RuntimeError("Could not find menu icon")
-            except Exception:
+                    raise RuntimeError("Could not find menu icon") from e
+            except Exception as e:
                 # Final fallback - look for any button with Menu icon that's the first one
                 try:
                     all_menu_buttons = await self.page.query_selector_all(
@@ -331,11 +333,11 @@ class ChatPage(BasePage):
                         else:
                             raise RuntimeError(
                                 "Could not find parent button for first menu icon"
-                            )
+                            ) from e
                     else:
                         raise RuntimeError(
                             f"Could not find sidebar toggle button. Original error: {e}"
-                        )
+                        ) from e
                 except Exception as final_e:
                     raise RuntimeError(
                         f"Could not find sidebar toggle button after all fallbacks. Errors: {e}, {final_e}"

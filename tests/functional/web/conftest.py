@@ -278,7 +278,49 @@ async def web_only_assistant(
                 },
                 "chat_id_to_name_map": {},
                 "slash_commands": [],
-            }
+            },
+            {
+                "id": "test_browser",
+                "description": "Test browser profile for web UI",
+                "processing_config": {
+                    "prompts": {"system_prompt": "You are a test browser assistant."},
+                    "calendar_config": {},
+                    "timezone": "UTC",
+                    "max_history_messages": 5,
+                    "history_max_age_hours": 1,
+                    "llm_model": "mock-browser-model-for-testing",
+                    "delegation_security_level": "none",
+                },
+                "tools_config": {
+                    "enable_local_tools": ["search_documents"],
+                    "confirm_tools": [],
+                    "confirmation_timeout_seconds": 10.0,
+                    "mcp_initialization_timeout_seconds": 5,
+                },
+                "chat_id_to_name_map": {},
+                "slash_commands": ["/browse"],
+            },
+            {
+                "id": "test_research",
+                "description": "Test research profile for web UI",
+                "processing_config": {
+                    "prompts": {"system_prompt": "You are a test research assistant."},
+                    "calendar_config": {},
+                    "timezone": "UTC",
+                    "max_history_messages": 5,
+                    "history_max_age_hours": 1,
+                    "llm_model": "mock-research-model-for-testing",
+                    "delegation_security_level": "none",
+                },
+                "tools_config": {
+                    "enable_local_tools": [],
+                    "confirm_tools": [],
+                    "confirmation_timeout_seconds": 10.0,
+                    "mcp_initialization_timeout_seconds": 5,
+                },
+                "chat_id_to_name_map": {},
+                "slash_commands": ["/research"],
+            },
         ],
         "mcp_config": {"mcpServers": {}},
         "indexing_pipeline_config": {"processors": []},
@@ -289,7 +331,9 @@ async def web_only_assistant(
     assistant = Assistant(
         config=test_config,
         llm_client_overrides={
-            "default_assistant": mock_llm_client
+            "default_assistant": mock_llm_client,
+            "test_browser": mock_llm_client,
+            "test_research": mock_llm_client,
         },  # Key by profile ID, not model name
         database_engine=db_engine,  # Inject the test database engine
     )
