@@ -173,9 +173,61 @@ video of the test execution. These artifacts are invaluable for debugging.
 
 - **Screenshots:** A screenshot is taken at the point of failure.
 - **Videos:** A video of the entire test run is saved.
+- **Traces:** Comprehensive debugging data including network requests, console logs, DOM snapshots,
+  and action timeline.
 
 By default, these are saved to the `test-results` directory. You can also use the `--screenshot on`
 and `--video on` flags to capture these artifacts for passing tests as well.
+
+**Advanced Debugging Techniques:**
+
+1. **Analyzing Network Traffic:**
+
+   ```bash
+   # Extract and examine network requests from trace files
+   unzip -p test-results/*/trace.zip trace.network | strings | grep -A 5 -B 5 "send_message_stream"
+
+   # Look for specific API endpoints or error responses
+   unzip -p test-results/*/trace.zip trace.network | strings | grep "status.*[45][0-9][0-9]"
+   ```
+
+2. **Examining Server-Sent Events (SSE) Streams:**
+
+   ```bash
+   # Extract actual streaming response data to debug partial content issues
+   unzip -p test-results/*/trace.zip resources/*.dat | head -50
+
+   # This shows the actual SSE events and data sent by the server
+   # Useful for debugging streaming chat responses or real-time updates
+   ```
+
+3. **Console Log Analysis:**
+
+   ```bash
+   # Check for JavaScript errors or warnings
+   unzip -p test-results/*/trace.zip trace.trace | strings | grep -i "error\|warning\|exception"
+   ```
+
+4. **Interactive Trace Viewing:**
+
+   ```bash
+   # Open the full interactive trace viewer (requires Playwright CLI)
+   npx playwright show-trace test-results/*/trace.zip
+
+   # This provides a timeline view with:
+   # - Network requests and responses with full headers/body
+   # - Console messages with timestamps
+   # - DOM snapshots at each action
+   # - Screenshots at each step
+   ```
+
+5. **Debugging Common Issues:**
+
+   - **Partial content/streaming issues:** Check SSE data extraction (method 2) to verify server
+     sends complete data
+   - **Timing/race conditions:** Use trace timeline to see exact timing of actions vs. UI updates
+   - **Network failures:** Examine network requests for failed API calls or timeouts
+   - **DOM state issues:** Use DOM snapshots in trace viewer to see element state at failure point
 
 #### Database Backend Selection
 
