@@ -184,13 +184,40 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     }
   }, []);
 
-  const handleStreamingComplete = useCallback(() => {
-    // No need to do anything here - messages are already properly set up
-    // Just clean up the references
-    fetchConversations();
-    streamingMessageIdRef.current = null;
-    toolCallMessageIdRef.current = null;
-  }, [fetchConversations]);
+  const handleStreamingComplete = useCallback(
+    ({
+      content,
+      toolCalls: _toolCalls,
+    }: {
+      content: string;
+      toolCalls: Array<Record<string, unknown>>;
+    }) => {
+      // Do a final update with the complete content to ensure nothing was lost during rapid streaming
+      if (streamingMessageIdRef.current && content) {
+        setMessages((prev) =>
+          prev.map((msg) => {
+            if (msg.id === streamingMessageIdRef.current) {
+              // Preserve any existing tool calls
+              const existingToolCalls =
+                msg.content?.filter((part) => part.type === 'tool-call') || [];
+              return {
+                ...msg,
+                content: [{ type: 'text', text: content }, ...existingToolCalls],
+                status: 'done' as const,
+              };
+            }
+            return msg;
+          })
+        );
+      }
+
+      // Clean up the references and refresh conversations
+      fetchConversations();
+      streamingMessageIdRef.current = null;
+      toolCallMessageIdRef.current = null;
+    },
+    [fetchConversations]
+  );
 
   // Handle tool calls during streaming
   const handleStreamingToolCall = useCallback((toolCalls: Array<Record<string, unknown>>) => {
