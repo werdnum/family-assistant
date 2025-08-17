@@ -489,6 +489,28 @@ When Playwright tests fail, these artifacts are automatically generated:
 
 Open traces with: `npx playwright show-trace trace.zip`
 
+### Visual Documentation System
+
+The project includes a visual documentation system for quickly assessing design consistency across
+the web application. It captures screenshots of major user flows across different viewports
+(mobile/desktop) and themes (light/dark).
+
+**Basic Usage:**
+
+```bash
+# Generate all screenshots
+GENERATE_VISUAL_DOCS=1 pytest -m visual_documentation tests/functional/web/test_visual_documentation.py
+
+# Generate interactive dashboard
+python scripts/generate_visual_docs_dashboard.py
+```
+
+The system only runs when `GENERATE_VISUAL_DOCS=1` is set, ensuring zero impact on regular test
+performance. Screenshots are organized in `visual-docs/` with an HTML dashboard for easy review.
+
+For detailed information on implementation, flows covered, CI integration, and usage options, see
+[docs/design/visual-documentation-system.md](docs/design/visual-documentation-system.md).
+
 ### Running the Application
 
 ```bash

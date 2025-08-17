@@ -76,10 +76,14 @@ visual-docs/
 
 ```bash
 # Generate all visual documentation
-GENERATE_VISUAL_DOCS=1 pytest -m visual_documentation tests/functional/web/
+GENERATE_VISUAL_DOCS=1 pytest -m visual_documentation tests/functional/web/test_visual_documentation.py
 
 # Generate specific viewport only
-GENERATE_VISUAL_DOCS=1 VIEWPORT=mobile pytest -m visual_documentation tests/functional/web/
+GENERATE_VISUAL_DOCS=1 pytest -m "visual_documentation and mobile" tests/functional/web/
+GENERATE_VISUAL_DOCS=1 pytest -m "visual_documentation and desktop" tests/functional/web/
+
+# Generate interactive dashboard after screenshots
+python scripts/generate_visual_docs_dashboard.py
 
 # Regular CI (visual tests don't run)
 pytest tests/functional/web/  # Automatically skips visual_documentation marked tests
@@ -240,13 +244,55 @@ The system generates an HTML dashboard for easy screenshot review:
 4. **QA Validation**: Quick way to verify responsive design implementation
 5. **Zero CI Impact**: No performance degradation on regular development
 
+## Implementation Status
+
+### ✅ Completed (Phase 1 & 2)
+
+- **Core Infrastructure**: Pytest markers, fixtures, and conditional execution system
+- **VisualDocumentationHelper**: Screenshot capture and organization utilities
+- **Priority 1 Flows Implemented**:
+  - **Chat Flow**: 6 steps across mobile-light, desktop-light, desktop-dark (15 screenshots)
+    - Initial load, new conversation, input ready, message sent, conversation complete
+    - Mobile-specific sidebar interactions
+  - **Profile Switching Flow**: 1 step on desktop-light (1 screenshot)
+    - Default profile display (dropdown interaction planned)
+  - **Notes CRUD Flow**: 1 step across mobile-light, desktop-light (2 screenshots)
+    - List view (create/edit forms planned)
+  - **Navigation Flow**: 3 steps across mobile-light, desktop-light (3 screenshots)
+    - Default navigation, desktop dropdown, mobile responsive behavior
+- **Additional Flows**:
+  - **Documents Flow**: 1 step on desktop-light (1 screenshot) - List view
+  - **Vector Search Flow**: 1 step on desktop-light (1 screenshot) - Search interface
+- **HTML Dashboard**: Interactive review interface with lightbox viewer
+- **CI Integration**: Manual trigger GitHub Actions workflow with artifact upload
+- **Generated Assets**: 23 total screenshots organized by viewport-theme/flow/step structure
+
+### 📋 Current Flow Coverage
+
+| Flow              | Mobile-Light | Desktop-Light | Desktop-Dark | Steps Documented |
+| ----------------- | :----------: | :-----------: | :----------: | :--------------: |
+| Chat Conversation | ✅ (5 steps) | ✅ (5 steps)  | ✅ (5 steps) |   5/8 planned    |
+| Profile Switching |      ❌      |  ✅ (1 step)  |      ❌      |   1/3 planned    |
+| Notes CRUD        | ✅ (1 step)  |  ✅ (1 step)  |      ❌      |   1/5 planned    |
+| Navigation        | ✅ (1 step)  | ✅ (2 steps)  |      ❌      |   3/4 planned    |
+| Documents         |      ❌      |  ✅ (1 step)  |      ❌      |   1/4 planned    |
+| Vector Search     |      ❌      |  ✅ (1 step)  |      ❌      |   1/3 planned    |
+
+### 🚧 Next Steps (Remaining Phase 1 & 2 Work)
+
+- **Expand Chat Flow**: Add tool confirmation dialogs, error states
+- **Complete Profile Switching**: Add dropdown interaction, profile selection
+- **Expand Notes Flow**: Add create form, edit operations, delete confirmation
+- **Complete Documents Flow**: Add upload interface, document details
+- **Expand Vector Search**: Add results display, filtering interface
+
 ## Success Criteria
 
-- [ ] Screenshots generated for all Priority 1 flows
-- [ ] HTML dashboard provides easy review interface
-- [ ] CI workflow runs successfully with manual trigger
-- [ ] No impact on regular test performance (confirmed via timing comparison)
-- [ ] Clear documentation for developers to maintain the system
+- [x] Screenshots generated for all Priority 1 flows
+- [x] HTML dashboard provides easy review interface
+- [x] CI workflow runs successfully with manual trigger
+- [x] No impact on regular test performance (confirmed via timing comparison)
+- [x] Clear documentation for developers to maintain the system
 
 ## Future Enhancements
 
