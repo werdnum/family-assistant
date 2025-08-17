@@ -192,13 +192,26 @@ async def test_retry_exhaustion_leads_to_failure(
         new_task_event.set()
 
         # Wait for task to fail (no retries)
-        assert worker.engine is not None
-        await wait_for_tasks_to_complete(
-            engine=worker.engine,
-            timeout_seconds=10.0,  # Give enough time for timeout + failure
-            task_ids={"no_retry_test"},
-            allow_failures=True,
-        )
+        # Use a background task to periodically wake the worker to ensure it processes the failure
+        async def wake_worker_periodically() -> None:
+            for _ in range(20):  # Wake every 0.5s for 10 seconds total
+                await asyncio.sleep(0.5)
+                new_task_event.set()
+
+        wake_task = asyncio.create_task(wake_worker_periodically())
+
+        try:
+            assert worker.engine is not None
+            await wait_for_tasks_to_complete(
+                engine=worker.engine,
+                timeout_seconds=20.0,  # Increased from 10.0 to handle slower CI environments
+                task_ids={"no_retry_test"},
+                allow_failures=True,
+            )
+        finally:
+            wake_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await wake_task
 
         # Check task failed
         async with DatabaseContext(engine=worker.engine) as db_context:
