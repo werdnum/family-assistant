@@ -1259,8 +1259,14 @@ class ProcessingService:
         logger.info(
             f"Starting streaming chat interaction. Turn ID: {turn_id}, "
             f"Interface: {interface_type}, Conversation: {conversation_id}, "
-            f"User: {user_name}"
+            f"User: {user_name}, Content parts: {len(trigger_content_parts)}"
         )
+
+        # Debug log content parts
+        for i, part in enumerate(trigger_content_parts):
+            logger.info(
+                f"Processing content part {i}: type={part.get('type')}, size={len(str(part))}"
+            )
 
         try:
             # --- 1. Determine Thread Root ID & Save User Trigger Message ---

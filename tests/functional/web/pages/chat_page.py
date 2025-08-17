@@ -60,7 +60,7 @@ class ChatPage(BasePage):
         # Wait for critical UI elements to be present and ready
         # This ensures the React app has fully initialized
         await self.page.wait_for_selector(
-            "h1:has-text('Chat')", state="visible", timeout=15000
+            "h2:has-text('Family Assistant Chat')", state="visible", timeout=15000
         )
         await self.page.wait_for_selector(
             self.SIDEBAR_TOGGLE, state="visible", timeout=15000

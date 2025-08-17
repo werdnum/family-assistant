@@ -8,6 +8,7 @@ import ConversationSidebar from './ConversationSidebar';
 import { useStreamingResponse } from './useStreamingResponse';
 import { LOADING_MARKER } from './constants';
 import { generateUUID } from '../utils/uuid';
+import { defaultAttachmentAdapter } from './attachmentAdapter';
 import { ChatAppProps, Message, MessageContent, Conversation } from './types';
 import NavigationSheet from '../shared/NavigationSheet';
 import { ToolConfirmationProvider } from './ToolConfirmationContext';
@@ -511,11 +512,35 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
   // Handle new messages from the user
   const handleNew = useCallback(
-    async (message: { content: { text: string }[] }) => {
+    async (message: { content: { text: string }[]; attachments?: any[] }) => {
+      // Build content array starting with text
+      const content: MessageContent[] = [{ type: 'text', text: message.content[0].text }];
+
+      // Process attachments if present
+      const attachments: any[] = [];
+      if (message.attachments) {
+        for (const attachment of message.attachments) {
+          if (attachment.type === 'image' && attachment.content) {
+            // Add image content to display in UI
+            content.push({
+              type: 'image_url',
+              image_url: { url: attachment.content },
+            });
+
+            // Add to attachments array for API
+            attachments.push({
+              type: 'image',
+              content: attachment.content,
+              name: attachment.name,
+            });
+          }
+        }
+      }
+
       const userMessage: Message = {
         id: `msg_${Date.now()}`,
         role: 'user',
-        content: [{ type: 'text', text: message.content[0].text }],
+        content,
         createdAt: new Date(),
       };
 
@@ -538,6 +563,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         conversationId: conversationId || `web_conv_${generateUUID()}`,
         profileId: currentProfileId,
         interfaceType: 'web',
+        attachments: attachments.length > 0 ? attachments : undefined,
       });
     },
     [conversationId, sendStreamingMessage, currentProfileId]
@@ -552,6 +578,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     isRunning: isLoading || isStreaming,
     onNew: handleNew,
     convertMessage,
+    adapters: {
+      attachments: defaultAttachmentAdapter,
+    },
   });
 
   return (
@@ -566,7 +595,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         >
           <Menu className="h-4 w-4" />
         </Button>
-        <h1 className="text-xl font-semibold">Chat</h1>
+        <h2 className="text-xl font-semibold">Chat</h2>
 
         {/* Profile Selector */}
         <div className="flex items-center">
