@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visual Documentation Dashboard - Family Assistant</title>
+    <style>
+        * { box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            line-height: 1.6;
+        }
+        
+        .header {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            margin: 0 0 10px 0;
+            color: #333;
+        }
+        
+        .header .meta {
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .navigation {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .nav-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        
+        .nav-link {
+            background: #007acc;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 4px;
+            text-decoration: none;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+        
+        .nav-link:hover {
+            background: #005a9e;
+        }
+        
+        .flow-section {
+            background: white;
+            margin-bottom: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .flow-header {
+            background: #f8f9fa;
+            padding: 20px;
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .flow-title {
+            margin: 0;
+            color: #333;
+            text-transform: capitalize;
+        }
+        
+        .viewport-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            padding: 20px;
+        }
+        
+        .viewport-column {
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        
+        .viewport-header {
+            background: #007acc;
+            color: white;
+            padding: 15px;
+            font-weight: 600;
+            text-transform: capitalize;
+        }
+        
+        .screenshot-list {
+            padding: 15px;
+        }
+        
+        .screenshot-item {
+            margin-bottom: 20px;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        
+        .screenshot-item:last-child {
+            margin-bottom: 0;
+        }
+        
+        .screenshot-meta {
+            background: #f8f9fa;
+            padding: 10px;
+            font-size: 12px;
+            color: #666;
+            border-bottom: 1px solid #dee2e6;
+        }
+        
+        .screenshot-image {
+            width: 100%;
+            height: auto;
+            display: block;
+            cursor: pointer;
+        }
+        
+        .screenshot-image:hover {
+            opacity: 0.9;
+        }
+        
+        .no-screenshots {
+            color: #999;
+            font-style: italic;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .stats {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+        }
+        
+        .stat-item {
+            text-align: center;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+        
+        .stat-number {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007acc;
+        }
+        
+        .stat-label {
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .lightbox {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.9);
+            cursor: pointer;
+        }
+        
+        .lightbox img {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            max-width: 95%;
+            max-height: 95%;
+            border-radius: 4px;
+        }
+        
+        @media (max-width: 768px) {
+            .viewport-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .nav-links {
+                flex-direction: column;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Visual Documentation Dashboard</h1>
+        <div class="meta">
+            Generated on 2025-08-17 06:17:55 • 
+            Family Assistant UI Screenshots
+        </div>
+    </div>
+    
+    <div class="stats">
+        <div class="stats-grid">
+            <div class="stat-item">
+                <div class="stat-number">6</div>
+                <div class="stat-label">Flows Documented</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">3</div>
+                <div class="stat-label">Viewport Combinations</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">23</div>
+                <div class="stat-label">Total Screenshots</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="navigation">
+        <div class="nav-links">
+            <a href="#chat" class="nav-link">Chat</a>\n            <a href="#documents" class="nav-link">Documents</a>\n            <a href="#navigation" class="nav-link">Navigation</a>\n            <a href="#notes" class="nav-link">Notes</a>\n            <a href="#profile-switching" class="nav-link">Profile Switching</a>\n            <a href="#vector-search" class="nav-link">Vector Search</a>\n        </div>
+    </div>
+
+    <div class="flow-section" id="chat">
+        <div class="flow-header">
+            <h2 class="flow-title">Chat</h2>
+        </div>
+        <div class="viewport-grid">
+
+            <div class="viewport-column">
+                <div class="viewport-header">Desktop Dark</div>
+                <div class="screenshot-list">
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            01-initial-load.png • 
+                            51,409 bytes • 
+                            06:17:31
+                        </div>
+                        <img src="desktop-dark/chat/01-initial-load.png" 
+                             alt="01-initial-load.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            02-new-conversation.png • 
+                            50,791 bytes • 
+                            06:17:33
+                        </div>
+                        <img src="desktop-dark/chat/02-new-conversation.png" 
+                             alt="02-new-conversation.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            03-input-ready.png • 
+                            50,791 bytes • 
+                            06:17:34
+                        </div>
+                        <img src="desktop-dark/chat/03-input-ready.png" 
+                             alt="03-input-ready.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            04-message-sent.png • 
+                            34,914 bytes • 
+                            06:17:39
+                        </div>
+                        <img src="desktop-dark/chat/04-message-sent.png" 
+                             alt="04-message-sent.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            05-conversation-complete.png • 
+                            34,914 bytes • 
+                            06:17:39
+                        </div>
+                        <img src="desktop-dark/chat/05-conversation-complete.png" 
+                             alt="05-conversation-complete.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+                </div>
+            </div>
+
+            <div class="viewport-column">
+                <div class="viewport-header">Desktop Light</div>
+                <div class="screenshot-list">
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            01-initial-load.png • 
+                            60,175 bytes • 
+                            06:17:30
+                        </div>
+                        <img src="desktop-light/chat/01-initial-load.png" 
+                             alt="01-initial-load.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            02-new-conversation.png • 
+                            49,933 bytes • 
+                            06:17:32
+                        </div>
+                        <img src="desktop-light/chat/02-new-conversation.png" 
+                             alt="02-new-conversation.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            03-input-ready.png • 
+                            49,909 bytes • 
+                            06:17:32
+                        </div>
+                        <img src="desktop-light/chat/03-input-ready.png" 
+                             alt="03-input-ready.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            04-message-sent.png • 
+                            34,585 bytes • 
+                            06:17:37
+                        </div>
+                        <img src="desktop-light/chat/04-message-sent.png" 
+                             alt="04-message-sent.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            05-conversation-complete.png • 
+                            34,585 bytes • 
+                            06:17:37
+                        </div>
+                        <img src="desktop-light/chat/05-conversation-complete.png" 
+                             alt="05-conversation-complete.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+                </div>
+            </div>
+
+            <div class="viewport-column">
+                <div class="viewport-header">Mobile Light</div>
+                <div class="screenshot-list">
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            01-initial-load.png • 
+                            48,791 bytes • 
+                            06:17:29
+                        </div>
+                        <img src="mobile-light/chat/01-initial-load.png" 
+                             alt="01-initial-load.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            02-new-conversation.png • 
+                            48,854 bytes • 
+                            06:17:33
+                        </div>
+                        <img src="mobile-light/chat/02-new-conversation.png" 
+                             alt="02-new-conversation.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            03-input-ready.png • 
+                            48,863 bytes • 
+                            06:17:33
+                        </div>
+                        <img src="mobile-light/chat/03-input-ready.png" 
+                             alt="03-input-ready.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            04-message-sent.png • 
+                            31,192 bytes • 
+                            06:17:38
+                        </div>
+                        <img src="mobile-light/chat/04-message-sent.png" 
+                             alt="04-message-sent.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            05-conversation-complete.png • 
+                            31,192 bytes • 
+                            06:17:38
+                        </div>
+                        <img src="mobile-light/chat/05-conversation-complete.png" 
+                             alt="05-conversation-complete.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="flow-section" id="documents">
+        <div class="flow-header">
+            <h2 class="flow-title">Documents</h2>
+        </div>
+        <div class="viewport-grid">
+
+            <div class="viewport-column">
+                <div class="viewport-header">Desktop Dark</div>
+                <div class="screenshot-list">
+                    <div class="no-screenshots">No screenshots available</div>\n                </div>
+            </div>
+
+            <div class="viewport-column">
+                <div class="viewport-header">Desktop Light</div>
+                <div class="screenshot-list">
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            01-list-view.png • 
+                            37,192 bytes • 
+                            06:17:10
+                        </div>
+                        <img src="desktop-light/documents/01-list-view.png" 
+                             alt="01-list-view.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+                </div>
+            </div>
+
+            <div class="viewport-column">
+                <div class="viewport-header">Mobile Light</div>
+                <div class="screenshot-list">
+                    <div class="no-screenshots">No screenshots available</div>\n                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="flow-section" id="navigation">
+        <div class="flow-header">
+            <h2 class="flow-title">Navigation</h2>
+        </div>
+        <div class="viewport-grid">
+
+            <div class="viewport-column">
+                <div class="viewport-header">Desktop Dark</div>
+                <div class="screenshot-list">
+                    <div class="no-screenshots">No screenshots available</div>\n                </div>
+            </div>
+
+            <div class="viewport-column">
+                <div class="viewport-header">Desktop Light</div>
+                <div class="screenshot-list">
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            01-desktop-default.png • 
+                            33,488 bytes • 
+                            06:17:20
+                        </div>
+                        <img src="desktop-light/navigation/01-desktop-default.png" 
+                             alt="01-desktop-default.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            02-desktop-data-dropdown.png • 
+                            33,047 bytes • 
+                            06:17:21
+                        </div>
+                        <img src="desktop-light/navigation/02-desktop-data-dropdown.png" 
+                             alt="02-desktop-data-dropdown.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+                </div>
+            </div>
+
+            <div class="viewport-column">
+                <div class="viewport-header">Mobile Light</div>
+                <div class="screenshot-list">
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            01-mobile-default.png • 
+                            24,742 bytes • 
+                            06:17:18
+                        </div>
+                        <img src="mobile-light/navigation/01-mobile-default.png" 
+                             alt="01-mobile-default.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="flow-section" id="notes">
+        <div class="flow-header">
+            <h2 class="flow-title">Notes</h2>
+        </div>
+        <div class="viewport-grid">
+
+            <div class="viewport-column">
+                <div class="viewport-header">Desktop Dark</div>
+                <div class="screenshot-list">
+                    <div class="no-screenshots">No screenshots available</div>\n                </div>
+            </div>
+
+            <div class="viewport-column">
+                <div class="viewport-header">Desktop Light</div>
+                <div class="screenshot-list">
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            01-list-view.png • 
+                            33,488 bytes • 
+                            06:17:20
+                        </div>
+                        <img src="desktop-light/notes/01-list-view.png" 
+                             alt="01-list-view.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+                </div>
+            </div>
+
+            <div class="viewport-column">
+                <div class="viewport-header">Mobile Light</div>
+                <div class="screenshot-list">
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            01-list-view.png • 
+                            24,742 bytes • 
+                            06:17:10
+                        </div>
+                        <img src="mobile-light/notes/01-list-view.png" 
+                             alt="01-list-view.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="flow-section" id="profile-switching">
+        <div class="flow-header">
+            <h2 class="flow-title">Profile Switching</h2>
+        </div>
+        <div class="viewport-grid">
+
+            <div class="viewport-column">
+                <div class="viewport-header">Desktop Dark</div>
+                <div class="screenshot-list">
+                    <div class="no-screenshots">No screenshots available</div>\n                </div>
+            </div>
+
+            <div class="viewport-column">
+                <div class="viewport-header">Desktop Light</div>
+                <div class="screenshot-list">
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            01-default-profile.png • 
+                            50,105 bytes • 
+                            06:17:01
+                        </div>
+                        <img src="desktop-light/profile-switching/01-default-profile.png" 
+                             alt="01-default-profile.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+                </div>
+            </div>
+
+            <div class="viewport-column">
+                <div class="viewport-header">Mobile Light</div>
+                <div class="screenshot-list">
+                    <div class="no-screenshots">No screenshots available</div>\n                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="flow-section" id="vector-search">
+        <div class="flow-header">
+            <h2 class="flow-title">Vector Search</h2>
+        </div>
+        <div class="viewport-grid">
+
+            <div class="viewport-column">
+                <div class="viewport-header">Desktop Dark</div>
+                <div class="screenshot-list">
+                    <div class="no-screenshots">No screenshots available</div>\n                </div>
+            </div>
+
+            <div class="viewport-column">
+                <div class="viewport-header">Desktop Light</div>
+                <div class="screenshot-list">
+
+                    <div class="screenshot-item">
+                        <div class="screenshot-meta">
+                            01-initial-view.png • 
+                            45,836 bytes • 
+                            06:17:08
+                        </div>
+                        <img src="desktop-light/vector-search/01-initial-view.png" 
+                             alt="01-initial-view.png" 
+                             class="screenshot-image"
+                             onclick="showLightbox(this.src)">
+                    </div>
+                </div>
+            </div>
+
+            <div class="viewport-column">
+                <div class="viewport-header">Mobile Light</div>
+                <div class="screenshot-list">
+                    <div class="no-screenshots">No screenshots available</div>\n                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="lightbox" id="lightbox" onclick="hideLightbox()">
+        <img id="lightbox-image" src="" alt="">
+    </div>
+    
+    <script>
+        function showLightbox(src) {
+            document.getElementById('lightbox-image').src = src;
+            document.getElementById('lightbox').style.display = 'block';
+        }
+        
+        function hideLightbox() {
+            document.getElementById('lightbox').style.display = 'none';
+        }
+        
+        // Close lightbox on escape key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                hideLightbox();
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,179 @@
+{
+  "generated_at": "2025-08-17T06:17:55.412210",
+  "flows": {
+    "vector-search": {
+      "desktop-light": [
+        {
+          "filename": "01-initial-view.png",
+          "path": "desktop-light/vector-search/01-initial-view.png",
+          "size": 45836,
+          "modified": "2025-08-17 06:17:08.680317"
+        }
+      ]
+    },
+    "documents": {
+      "desktop-light": [
+        {
+          "filename": "01-list-view.png",
+          "path": "desktop-light/documents/01-list-view.png",
+          "size": 37192,
+          "modified": "2025-08-17 06:17:10.301327"
+        }
+      ]
+    },
+    "notes": {
+      "desktop-light": [
+        {
+          "filename": "01-list-view.png",
+          "path": "desktop-light/notes/01-list-view.png",
+          "size": 33488,
+          "modified": "2025-08-17 06:17:20.237389"
+        }
+      ],
+      "mobile-light": [
+        {
+          "filename": "01-list-view.png",
+          "path": "mobile-light/notes/01-list-view.png",
+          "size": 24742,
+          "modified": "2025-08-17 06:17:10.888331"
+        }
+      ]
+    },
+    "chat": {
+      "desktop-light": [
+        {
+          "filename": "01-initial-load.png",
+          "path": "desktop-light/chat/01-initial-load.png",
+          "size": 60175,
+          "modified": "2025-08-17 06:17:30.619454"
+        },
+        {
+          "filename": "02-new-conversation.png",
+          "path": "desktop-light/chat/02-new-conversation.png",
+          "size": 49933,
+          "modified": "2025-08-17 06:17:32.216464"
+        },
+        {
+          "filename": "03-input-ready.png",
+          "path": "desktop-light/chat/03-input-ready.png",
+          "size": 49909,
+          "modified": "2025-08-17 06:17:32.323464"
+        },
+        {
+          "filename": "04-message-sent.png",
+          "path": "desktop-light/chat/04-message-sent.png",
+          "size": 34585,
+          "modified": "2025-08-17 06:17:37.247495"
+        },
+        {
+          "filename": "05-conversation-complete.png",
+          "path": "desktop-light/chat/05-conversation-complete.png",
+          "size": 34585,
+          "modified": "2025-08-17 06:17:37.528497"
+        }
+      ],
+      "desktop-dark": [
+        {
+          "filename": "01-initial-load.png",
+          "path": "desktop-dark/chat/01-initial-load.png",
+          "size": 51409,
+          "modified": "2025-08-17 06:17:31.932462"
+        },
+        {
+          "filename": "02-new-conversation.png",
+          "path": "desktop-dark/chat/02-new-conversation.png",
+          "size": 50791,
+          "modified": "2025-08-17 06:17:33.985475"
+        },
+        {
+          "filename": "03-input-ready.png",
+          "path": "desktop-dark/chat/03-input-ready.png",
+          "size": 50791,
+          "modified": "2025-08-17 06:17:34.134476"
+        },
+        {
+          "filename": "04-message-sent.png",
+          "path": "desktop-dark/chat/04-message-sent.png",
+          "size": 34914,
+          "modified": "2025-08-17 06:17:39.016506"
+        },
+        {
+          "filename": "05-conversation-complete.png",
+          "path": "desktop-dark/chat/05-conversation-complete.png",
+          "size": 34914,
+          "modified": "2025-08-17 06:17:39.298508"
+        }
+      ],
+      "mobile-light": [
+        {
+          "filename": "01-initial-load.png",
+          "path": "mobile-light/chat/01-initial-load.png",
+          "size": 48791,
+          "modified": "2025-08-17 06:17:29.849449"
+        },
+        {
+          "filename": "02-new-conversation.png",
+          "path": "mobile-light/chat/02-new-conversation.png",
+          "size": 48854,
+          "modified": "2025-08-17 06:17:33.049469"
+        },
+        {
+          "filename": "03-input-ready.png",
+          "path": "mobile-light/chat/03-input-ready.png",
+          "size": 48863,
+          "modified": "2025-08-17 06:17:33.147470"
+        },
+        {
+          "filename": "04-message-sent.png",
+          "path": "mobile-light/chat/04-message-sent.png",
+          "size": 31192,
+          "modified": "2025-08-17 06:17:38.020500"
+        },
+        {
+          "filename": "05-conversation-complete.png",
+          "path": "mobile-light/chat/05-conversation-complete.png",
+          "size": 31192,
+          "modified": "2025-08-17 06:17:38.289502"
+        }
+      ]
+    },
+    "navigation": {
+      "desktop-light": [
+        {
+          "filename": "01-desktop-default.png",
+          "path": "desktop-light/navigation/01-desktop-default.png",
+          "size": 33488,
+          "modified": "2025-08-17 06:17:20.746392"
+        },
+        {
+          "filename": "02-desktop-data-dropdown.png",
+          "path": "desktop-light/navigation/02-desktop-data-dropdown.png",
+          "size": 33047,
+          "modified": "2025-08-17 06:17:21.460397"
+        }
+      ],
+      "mobile-light": [
+        {
+          "filename": "01-mobile-default.png",
+          "path": "mobile-light/navigation/01-mobile-default.png",
+          "size": 24742,
+          "modified": "2025-08-17 06:17:18.803380"
+        }
+      ]
+    },
+    "profile-switching": {
+      "desktop-light": [
+        {
+          "filename": "01-default-profile.png",
+          "path": "desktop-light/profile-switching/01-default-profile.png",
+          "size": 50105,
+          "modified": "2025-08-17 06:17:01.320271"
+        }
+      ]
+    }
+  },
+  "summary": {
+    "total_flows": 6,
+    "total_screenshots": 23
+  }
+}

@@ -1,0 +1,97 @@
+name: Generate Visual Documentation
+on:
+  workflow_dispatch:
+    inputs:
+      viewport:
+        description: 'Viewport to generate (mobile, desktop, or all)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - mobile
+          - desktop
+      theme:
+        description: 'Theme to generate (light, dark, or all)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - light
+          - dark
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/devcontainer
+jobs:
+  generate-visual-docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Get latest devcontainer image
+        id: get-image
+        run: |
+          # Try to get the latest devcontainer image
+          # First try main branch tag, then fall back to latest
+          IMAGE_TAG="main"
+          FULL_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
+
+          if docker manifest inspect "$FULL_IMAGE" >/dev/null 2>&1; then
+            echo "image-name=$FULL_IMAGE" >> $GITHUB_OUTPUT
+            echo "Using image: $FULL_IMAGE"
+          else
+            # Fallback to latest
+            FULL_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+            echo "image-name=$FULL_IMAGE" >> $GITHUB_OUTPUT
+            echo "Using fallback image: $FULL_IMAGE"
+          fi
+      - name: Generate Visual Documentation
+        run: "# Determine pytest markers based on inputs\nMARKERS=\"visual_documentation\"\n\nif [[ \"${{ github.event.inputs.viewport }}\" == \"mobile\" ]]; then\n  MARKERS=\"$MARKERS and mobile\"\nelif [[ \"${{ github.event.inputs.viewport }}\" == \"desktop\" ]]; then\n  MARKERS=\"$MARKERS and desktop\"\nfi\n\necho \"Running tests with markers: $MARKERS\"\n\ndocker run \\\n  --rm \\\n  -v ${{ github.workspace }}:/workspace \\\n  -e GENERATE_VISUAL_DOCS=1 \\\n  -e VIEWPORT=\"${{ github.event.inputs.viewport }}\" \\\n  -e THEME=\"${{ github.event.inputs.theme }}\" \\\n  -e CLAUDE_PROJECT_REPO=\"\" \\\n  -e UV_CACHE_DIR=/opt/uv-cache \\\n  -e CI=true \\\n  -u claude \\\n  ${{ steps.get-image.outputs.image-name }} \\\n  bash -c '\n    cd /workspace\n    \n    # Ensure frontend assets are available\n    if [ -d \"/opt/frontend-dist\" ]; then\n      echo \"Copying pre-built frontend assets...\"\n      mkdir -p /workspace/src/family_assistant/static/dist\n      cp -r /opt/frontend-dist/* /workspace/src/family_assistant/static/dist/\n      [ -d \"/opt/frontend-dist/.vite\" ] && cp -r /opt/frontend-dist/.vite /workspace/src/family_assistant/static/dist/.vite\n      echo \"Frontend assets copied successfully\"\n    else\n      echo \"No pre-built frontend assets found, building...\"\n      npm run build --prefix frontend\n    fi\n    \n    # Create visual-docs directory\n    mkdir -p visual-docs\n    \n    # Run visual documentation tests\n    .venv/bin/pytest \\\n      -m \"'\"$MARKERS\"'\" \\\n      --timeout=600 \\\n      --screenshot=on \\\n      --video=retain-on-failure \\\n      --tracing=retain-on-failure \\\n      --output=visual-docs \\\n      tests/functional/web/test_visual_documentation.py\n    \n    # Generate dashboard\n    .venv/bin/python scripts/generate_visual_docs_dashboard.py\n    \n    # List generated files for debugging\n    echo \"Generated files:\"\n    find visual-docs -type f -name \"*.png\" | head -20\n    echo \"Dashboard files:\"\n    ls -la visual-docs/*.html visual-docs/*.json 2>/dev/null || echo \"No dashboard files found\"\n  '\n  \n"
+      - name: Upload Visual Documentation
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visual-documentation-${{ github.run_id }}
+          path: |
+            visual-docs/
+            test-results/
+          retention-days: 30
+          if-no-files-found: warn
+      - name: Generate Summary
+        if: always()
+        run: |
+          echo "## Visual Documentation Generated 📱🖥️" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Configuration:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Viewport: ${{ github.event.inputs.viewport || 'all' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Theme: ${{ github.event.inputs.theme || 'all' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f "visual-docs/metadata.json" ]; then
+            echo "**Results:**" >> $GITHUB_STEP_SUMMARY
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            cat visual-docs/metadata.json | jq '.summary' >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "**Download Artifacts:**" >> $GITHUB_STEP_SUMMARY
+          echo "- 📦 [visual-documentation-${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Next Steps:**" >> $GITHUB_STEP_SUMMARY
+          echo "1. Download the artifacts above" >> $GITHUB_STEP_SUMMARY
+          echo "2. Extract and open \`visual-docs/index.html\` in your browser" >> $GITHUB_STEP_SUMMARY
+          echo "3. Review screenshots for all documented flows" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "💡 **Tip:** Use the command below to download artifacts:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "gh run download ${{ github.run_id }} --name visual-documentation-${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

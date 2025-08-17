@@ -654,3 +654,131 @@ async def playwright() -> AsyncGenerator[Any, None]:
         print("\n=== Playwright stopped successfully ===")
     except asyncio.TimeoutError:
         print("\n=== WARNING: Playwright stop timed out after 10s, forcing cleanup ===")
+
+
+# Visual Documentation System Fixtures
+
+
+class VisualDocumentationHelper:
+    """Helper class for managing screenshot capture and organization."""
+
+    def __init__(self, page: Page, viewport: str, theme: str) -> None:
+        self.page = page
+        self.viewport = viewport
+        self.theme = theme
+        self.step_counter = 1
+        self.screenshot_metadata: list[dict[str, Any]] = []
+
+    async def capture_step(
+        self,
+        flow_name: str,
+        step_name: str,
+        description: str | None = None,
+        full_page: bool = True,
+    ) -> str:
+        """Capture a screenshot for a specific step in a flow."""
+        filename = f"{self.step_counter:02d}-{step_name}.png"
+        directory = Path(f"visual-docs/{self.viewport}-{self.theme}/{flow_name}")
+        directory.mkdir(parents=True, exist_ok=True)
+
+        filepath = directory / filename
+
+        await self.page.screenshot(path=str(filepath), full_page=full_page)
+
+        # Record metadata for dashboard generation
+        self.record_screenshot_metadata(flow_name, step_name, filename, description)
+        self.step_counter += 1
+
+        return str(filepath)
+
+    def record_screenshot_metadata(
+        self,
+        flow_name: str,
+        step_name: str,
+        filename: str,
+        description: str | None = None,
+    ) -> None:
+        """Record metadata about a screenshot for dashboard generation."""
+        self.screenshot_metadata.append({
+            "flow_name": flow_name,
+            "step_name": step_name,
+            "filename": filename,
+            "description": description,
+            "viewport": self.viewport,
+            "theme": self.theme,
+            "step_number": self.step_counter,
+        })
+
+    async def set_theme(self, theme: str) -> None:
+        """Set the application theme."""
+        # Implementation depends on how theme switching works in the app
+        # This is a placeholder - may need to click theme toggle or set localStorage
+        await self.page.evaluate(f"""
+            localStorage.setItem('family-assistant-theme', '{theme}');
+            // Trigger theme change event if needed
+            window.dispatchEvent(new Event('storage'));
+        """)
+        # Wait for theme to apply
+        await self.page.wait_for_timeout(500)
+
+
+@pytest.fixture
+def visual_documentation_config() -> dict[str, Any]:
+    """Configuration for visual documentation generation."""
+    viewport_configs = {
+        "mobile": {"width": 375, "height": 667},
+        "tablet": {"width": 768, "height": 1024},
+        "desktop": {"width": 1280, "height": 720},
+    }
+
+    # Selective combinations to avoid test explosion
+    return {
+        "combinations": [
+            ("mobile", "light"),
+            ("desktop", "light"),
+            ("desktop", "dark"),
+        ],
+        "viewport_configs": viewport_configs,
+        "output_directory": "visual-docs",
+        "enabled": bool(os.getenv("GENERATE_VISUAL_DOCS")),
+    }
+
+
+@pytest.fixture
+async def visual_documentation_helper(
+    web_test_fixture: WebTestFixture,
+    request: pytest.FixtureRequest,
+    visual_documentation_config: dict[str, Any],
+) -> AsyncGenerator[VisualDocumentationHelper | None, None]:
+    """Create visual documentation helper if visual documentation is enabled."""
+
+    if not visual_documentation_config["enabled"]:
+        yield None
+        return
+
+    # Extract viewport and theme from test parameters
+    viewport = getattr(request, "param", {}).get("viewport", "desktop")
+    theme = getattr(request, "param", {}).get("theme", "light")
+
+    # Set viewport size
+    viewport_config = visual_documentation_config["viewport_configs"][viewport]
+    await web_test_fixture.page.set_viewport_size(viewport_config)
+
+    helper = VisualDocumentationHelper(web_test_fixture.page, viewport, theme)
+
+    # Set theme
+    await helper.set_theme(theme)
+
+    yield helper
+
+
+# Pytest markers for visual documentation
+def pytest_configure(config: pytest.Config) -> None:
+    """Configure pytest markers for visual documentation."""
+    config.addinivalue_line(
+        "markers",
+        "visual_documentation: mark test as part of visual documentation suite",
+    )
+    config.addinivalue_line("markers", "mobile: mark test for mobile viewport")
+    config.addinivalue_line("markers", "tablet: mark test for tablet viewport")
+    config.addinivalue_line("markers", "desktop: mark test for desktop viewport")
