@@ -77,6 +77,29 @@ class ToolConfirmationResponse(BaseModel):
     message: str | None = Field(None, description="Optional status message")
 
 
+class ServiceProfile(BaseModel):
+    """Information about an available service profile."""
+
+    id: str = Field(..., description="Profile identifier")
+    description: str = Field(..., description="Profile description")
+    llm_model: str | None = Field(None, description="LLM model used by this profile")
+    available_tools: list[str] = Field(
+        default_factory=list, description="Available tools for this profile"
+    )
+    enabled_mcp_servers: list[str] = Field(
+        default_factory=list, description="Enabled MCP servers"
+    )
+
+
+class ProfilesResponse(BaseModel):
+    """Response containing available service profiles."""
+
+    profiles: list[ServiceProfile] = Field(
+        ..., description="List of available service profiles"
+    )
+    default_profile_id: str = Field(..., description="ID of the default profile")
+
+
 @chat_api_router.post("/v1/chat/send_message")  # Path relative to the prefix in api.py
 async def api_chat_send_message(
     payload: ChatPromptRequest,
@@ -631,4 +654,79 @@ async def confirm_tool_execution(
     return ToolConfirmationResponse(
         success=success,
         message=message,
+    )
+
+
+@chat_api_router.get("/v1/profiles")
+async def get_available_profiles(
+    request: Request,
+    default_processing_service: Annotated[
+        ProcessingService, Depends(get_processing_service)
+    ],
+) -> ProfilesResponse:
+    """
+    Get a list of available service profiles for the chat interface.
+
+    Returns information about each profile including ID, description,
+    LLM model, and available tools/capabilities.
+    """
+    processing_services_registry = getattr(request.app.state, "processing_services", {})
+
+    profiles = []
+
+    # Add all profiles from the registry
+    for profile_id, service in processing_services_registry.items():
+        # Get service configuration
+        service_config = service.service_config
+
+        # Extract available tools from tools provider
+        available_tools = []
+        enabled_mcp_servers = []
+
+        if hasattr(service, "tools_provider") and service.tools_provider:
+            # Get local tools
+            if hasattr(service.tools_provider, "local_tools_provider"):
+                local_provider = service.tools_provider.local_tools_provider
+                if local_provider and hasattr(local_provider, "available_functions"):
+                    available_tools.extend(local_provider.available_functions.keys())
+
+            # Get MCP server tools
+            if hasattr(service.tools_provider, "mcp_tools_provider"):
+                mcp_provider = service.tools_provider.mcp_tools_provider
+                if mcp_provider and hasattr(mcp_provider, "server_configs"):
+                    enabled_mcp_servers.extend(mcp_provider.server_configs.keys())
+
+        # Get description from service config or generate a fallback
+        description = getattr(service_config, "description", None)
+        if not description:
+            # Generate a user-friendly description based on profile ID
+            if profile_id == "default_assistant":
+                description = "General-purpose AI assistant with access to your notes, calendar, and tools"
+            elif profile_id == "browser":
+                description = "Web browsing assistant with internet search and page interaction capabilities"
+            elif profile_id == "research":
+                description = "Research specialist using advanced models for deep information gathering"
+            elif profile_id == "event_handler":
+                description = (
+                    "Automated event handler for script and system integration"
+                )
+            else:
+                description = f"AI assistant profile: {profile_id}"
+
+        profiles.append(
+            ServiceProfile(
+                id=profile_id,
+                description=description,
+                llm_model=getattr(service_config, "llm_model", None),
+                available_tools=sorted(available_tools),
+                enabled_mcp_servers=sorted(enabled_mcp_servers),
+            )
+        )
+
+    # Sort profiles by ID for consistent ordering
+    profiles.sort(key=lambda p: p.id)
+
+    return ProfilesResponse(
+        profiles=profiles,
+        default_profile_id=default_processing_service.service_config.id,
     )

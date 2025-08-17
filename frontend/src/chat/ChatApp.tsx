@@ -11,6 +11,7 @@ import { generateUUID } from '../utils/uuid';
 import { ChatAppProps, Message, MessageContent, Conversation } from './types';
 import NavigationSheet from '../shared/NavigationSheet';
 import { ToolConfirmationProvider } from './ToolConfirmationContext';
+import ProfileSelector from './ProfileSelector';
 
 // Helper function to parse tool arguments
 const parseToolArguments = (args: unknown): Record<string, unknown> => {
@@ -33,6 +34,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState<boolean>(true);
   const [isMobile, setIsMobile] = useState<boolean>(window.innerWidth <= 768);
+  const [currentProfileId, setCurrentProfileId] = useState<string>(() => {
+    // Load saved profile from localStorage, fallback to prop
+    return localStorage.getItem('selectedProfileId') || profileId;
+  });
   const streamingMessageIdRef = useRef<string | null>(null);
   const toolCallMessageIdRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -446,7 +451,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   };
 
   // Handle new chat creation
-  const handleNewChat = () => {
+  const handleNewChat = useCallback(() => {
     // Cancel any active streaming before creating a new chat
     cancelStream();
 
@@ -459,7 +464,23 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     if (window.innerWidth <= 768) {
       setSidebarOpen(false);
     }
-  };
+  }, [cancelStream]);
+
+  // Handle profile changes
+  const handleProfileChange = useCallback(
+    (newProfileId: string) => {
+      setCurrentProfileId(newProfileId);
+      // Persist selection to localStorage
+      localStorage.setItem('selectedProfileId', newProfileId);
+
+      // Optionally start a new conversation when switching profiles
+      // to maintain clear context separation
+      if (currentProfileId !== newProfileId && conversationId) {
+        handleNewChat();
+      }
+    },
+    [currentProfileId, conversationId, handleNewChat]
+  );
 
   // Handle new messages from the user
   const handleNew = useCallback(
@@ -488,11 +509,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       await sendStreamingMessage({
         prompt: message.content[0].text,
         conversationId: conversationId || `web_conv_${generateUUID()}`,
-        profileId: profileId,
+        profileId: currentProfileId,
         interfaceType: 'web',
       });
     },
-    [conversationId, sendStreamingMessage, profileId]
+    [conversationId, sendStreamingMessage, currentProfileId]
   );
 
   const convertMessage = useCallback((message: Message) => {
@@ -519,6 +540,15 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           <Menu className="h-4 w-4" />
         </Button>
         <h1 className="text-xl font-semibold">Chat</h1>
+
+        {/* Profile Selector */}
+        <div className="flex items-center">
+          <ProfileSelector
+            selectedProfileId={currentProfileId}
+            onProfileChange={handleProfileChange}
+            disabled={isLoading}
+          />
+        </div>
 
         {/* Main Navigation Menu */}
         <div className="ml-auto">
