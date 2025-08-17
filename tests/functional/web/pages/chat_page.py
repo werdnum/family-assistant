@@ -289,7 +289,7 @@ class ChatPage(BasePage):
                 await toggle_button.click()
             else:
                 raise RuntimeError("Sidebar toggle button not found")
-        except Exception as e:
+        except Exception:
             # If the aria-label selector fails, try a more specific fallback
             # Look for the first Menu button (which should be the sidebar toggle)
             # that's NOT inside the NavigationSheet (ml-auto div)
@@ -309,11 +309,9 @@ class ChatPage(BasePage):
                             "element => element.click()", parent_button
                         )
                     else:
-                        raise RuntimeError(
-                            "Could not find parent button for menu icon"
-                        ) from e
+                        raise RuntimeError("Could not find parent button for menu icon")
                 else:
-                    raise RuntimeError("Could not find menu icon") from e
+                    raise RuntimeError("Could not find menu icon")
             except Exception as e:
                 # Final fallback - look for any button with Menu icon that's the first one
                 try:
@@ -333,11 +331,11 @@ class ChatPage(BasePage):
                         else:
                             raise RuntimeError(
                                 "Could not find parent button for first menu icon"
-                            ) from e
+                            )
                     else:
                         raise RuntimeError(
                             f"Could not find sidebar toggle button. Original error: {e}"
-                        ) from e
+                        )
                 except Exception as final_e:
                     raise RuntimeError(
                         f"Could not find sidebar toggle button after all fallbacks. Errors: {e}, {final_e}"
