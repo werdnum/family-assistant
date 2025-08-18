@@ -38,6 +38,7 @@ class MessageHistoryRepository(BaseRepository):
             str | None
         ) = None,  # Added: ID linking tool response to assistant request
         processing_profile_id: str | None = None,  # Added: Profile ID
+        attachments: list[dict[str, Any]] | None = None,  # Attachment metadata
     ) -> dict[str, Any] | None:  # Changed to return Optional[Dict]
         """
         Stores a message in the history table.
@@ -56,6 +57,7 @@ class MessageHistoryRepository(BaseRepository):
             error_traceback: Error traceback if applicable
             tool_call_id: ID linking tool response to request
             processing_profile_id: Processing profile used
+            attachments: Attachment metadata list
 
         Returns:
             The stored message data including generated internal_id, or None on error
@@ -78,6 +80,7 @@ class MessageHistoryRepository(BaseRepository):
             "tool_call_id": tool_call_id,
             "error_traceback": error_traceback,
             "processing_profile_id": processing_profile_id,
+            "attachments": attachments,
         }
 
         # Remove None values except for fields that explicitly allow None

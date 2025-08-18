@@ -407,8 +407,12 @@ async def api_chat_send_message_stream(
         {"type": "text", "text": payload.prompt}
     ]
 
+    # Prepare attachment metadata for message history
+    attachment_metadata: list[dict[str, Any]] | None = None
+
     # Add attachments if present
     if payload.attachments:
+        attachment_metadata = []
         for attachment in payload.attachments:
             if attachment.get("type") == "image" and attachment.get("content"):
                 # Add image content in same format as Telegram interface
@@ -416,6 +420,18 @@ async def api_chat_send_message_stream(
                     "type": "image_url",
                     "image_url": {"url": attachment["content"]},
                 })
+                # Store attachment metadata for message history
+                attachment_metadata.append({
+                    "type": attachment["type"],
+                    "content_url": attachment["content"],
+                    # Include other metadata if available
+                    **{
+                        k: v
+                        for k, v in attachment.items()
+                        if k not in ["type", "content"]
+                    },
+                })
+
     interface_type = payload.interface_type or "api"
     user_name_for_api = "API User"
 
@@ -514,6 +530,7 @@ async def api_chat_send_message_stream(
                         replied_to_interface_id=None,
                         chat_interface=None,
                         request_confirmation_callback=web_confirmation_callback,
+                        trigger_attachments=attachment_metadata,  # Pass attachment metadata
                     ):
                         logger.debug(f"Received stream event: {event.type}")
                         if event.type == "error":

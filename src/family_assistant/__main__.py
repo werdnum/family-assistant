@@ -86,6 +86,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         "server_url": "http://localhost:8000",
         "document_storage_path": "/mnt/data/files",
         "attachment_storage_path": "/mnt/data/mailbox/attachments",
+        "chat_attachment_storage_path": "/mnt/data/chat_attachments",
         "willyweather_api_key": None,  # Added for Weather Provider
         "willyweather_location_id": None,  # Added for Weather Provider
         "calendar_config": {},  # Calendar configuration - populated from CALDAV_*/ICAL_URLS env vars
@@ -376,6 +377,11 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
     )
     config_data["attachment_storage_path"] = os.getenv(  # Load ATTACHMENT_STORAGE_PATH
         "ATTACHMENT_STORAGE_PATH", config_data["attachment_storage_path"]
+    )
+    config_data["chat_attachment_storage_path"] = (
+        os.getenv(  # Load CHAT_ATTACHMENT_STORAGE_PATH
+            "CHAT_ATTACHMENT_STORAGE_PATH", config_data["chat_attachment_storage_path"]
+        )
     )
     config_data["litellm_debug"] = os.getenv(
         "LITELLM_DEBUG", str(config_data["litellm_debug"])

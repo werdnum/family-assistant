@@ -1242,6 +1242,7 @@ class ProcessingService:
             ]
             | None
         ) = None,
+        trigger_attachments: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """
         Streaming version of handle_chat_interaction.
@@ -1326,6 +1327,7 @@ class ProcessingService:
                     error_traceback=None,
                     tool_call_id=None,
                     processing_profile_id=self.service_config.id,
+                    attachments=trigger_attachments,
                 )
 
             if saved_user_msg_record and not thread_root_id_for_turn:
