@@ -50,8 +50,11 @@ poe dev
 ```
 
 This command starts both the FastAPI backend and the Vite frontend development server. The frontend
-is served on `http://localhost:5173` (or `http://devcontainer-backend-1:5173` in the dev container),
+is served on `http://localhost:5173`,
 and all API requests are proxied to the backend running on port 8000.
+
+Note that in the dev container this step is unnecessary. The Vite dev server is already running at
+`devcontainer-backend-1:5173` with HMR and the backend uses `hupper`.
 
 ### Building for Production
 
