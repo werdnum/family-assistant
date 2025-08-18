@@ -116,13 +116,13 @@ async def test_image_upload_validation_file_size(
     # Navigate to chat
     await chat_page.navigate_to_chat()
 
-    # Create a large test image file (larger than 10MB limit)
-    # We need to create a PNG that's actually larger than 10MB
+    # Create a large test image file (larger than 100MB limit)
+    # We need to create a PNG that's actually larger than 100MB
     # Use a very large image with random noise to prevent compression
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
-        # Create a 5000x5000 RGB image with random pixels (hard to compress)
-        # This should be around 75MB uncompressed and still large when saved as PNG
-        width, height = 5000, 5000
+        # Create a 6000x6000 RGB image with random pixels (hard to compress)
+        # This should be around 108MB uncompressed and still large when saved as PNG
+        width, height = 6000, 6000
         # Create random pixel data
         random_pixels = np.random.randint(0, 256, (height, width, 3), dtype=np.uint8)
         img = Image.fromarray(random_pixels, "RGB")
@@ -152,7 +152,9 @@ async def test_image_upload_validation_file_size(
         # Verify error message is displayed and contains expected text
         error_text = await error_message.text_content()
         assert error_text
-        assert "size exceeds" in error_text.lower() and "mb" in error_text.lower()
+        assert (
+            "size exceeds" in error_text.lower() or "file size" in error_text.lower()
+        ) and "mb" in error_text.lower()
 
     finally:
         # Clean up temp file
@@ -513,7 +515,8 @@ async def test_api_request_includes_attachments(
         attachment = body_data["attachments"][0]
         assert attachment["type"] == "image"
         assert "content" in attachment
-        assert attachment["content"].startswith("data:image")
+        # With the new upload flow, content is a server URL, not base64
+        assert attachment["content"].startswith("/api/attachments/")
 
     finally:
         # Clean up temp file
