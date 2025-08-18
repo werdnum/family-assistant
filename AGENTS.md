@@ -117,11 +117,11 @@ This script runs:
 
 ### Using the `llm` CLI
 
-- `cat myscript.py | llm 'explain this code'` - Analyze a script
+- `llm -f myscript.py 'explain this code'` - Analyze a script
 - `git diff | llm -s 'Describe these changes'` - Understand code changes
 - `llm -f error.log 'debug this error'` - Debug from log files
-- `cat file1.py file2.py | llm 'how do these interact?'` - Analyze multiple files
-- Use `llm chat` for multi-line inputs (paste errors/tracebacks with `!multi` and `!end`)
+- `llm -f file1.py -f file2.py 'how do these interact?'` - Analyze multiple files
+- `llm -f https://raw.githubusercontent.com/assistant-ui/assistant-ui/refs/heads/main/README.md "How does this library work?"`
 
 ### Testing
 
