@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 from PIL import Image
 
@@ -118,8 +119,6 @@ async def test_image_upload_validation_file_size(
     # Create a large test image file (larger than 10MB limit)
     # We need to create a PNG that's actually larger than 10MB
     # Use a very large image with random noise to prevent compression
-    import numpy as np
-
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
         # Create a 5000x5000 RGB image with random pixels (hard to compress)
         # This should be around 75MB uncompressed and still large when saved as PNG

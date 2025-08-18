@@ -5,7 +5,11 @@
 
 import { generateUUID } from '../utils/uuid.js';
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB limit
+// MAX_FILE_SIZE can be configured via the VITE_MAX_FILE_SIZE environment variable (in bytes). Defaults to 10MB.
+const MAX_FILE_SIZE =
+  typeof import.meta.env !== 'undefined' && import.meta.env.VITE_MAX_FILE_SIZE
+    ? Number(import.meta.env.VITE_MAX_FILE_SIZE)
+    : 10 * 1024 * 1024; // 10MB default
 const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
 /**

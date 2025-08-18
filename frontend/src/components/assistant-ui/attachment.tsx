@@ -251,7 +251,7 @@ export const ComposerAddAttachment: FC = () => {
     <>
       <input
         type="file"
-        accept="image/*"
+        accept="image/png,image/jpeg,image/gif,image/webp"
         multiple
         className="hidden"
         id="composer-file-input"
