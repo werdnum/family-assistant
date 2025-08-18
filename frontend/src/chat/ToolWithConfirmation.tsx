@@ -5,10 +5,15 @@ import { ToolConfirmationContext } from './ToolConfirmationContext';
 interface ToolWithConfirmationProps {
   toolName: string;
   toolCallId?: string;
-  args: any;
-  result?: any;
-  status?: any;
-  ToolComponent: React.ComponentType<any>;
+  args: Record<string, unknown>;
+  result?: string | Record<string, unknown>;
+  status?: { type: string };
+  ToolComponent: React.ComponentType<{
+    toolName: string;
+    args: Record<string, unknown>;
+    result?: string | Record<string, unknown>;
+    status?: { type: string };
+  }>;
 }
 
 export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({

@@ -29,6 +29,13 @@ export interface Message {
   status?: {
     type: 'running' | 'complete';
   };
+  attachments?: Array<{
+    id: string;
+    type: 'image' | 'document' | 'file';
+    name: string;
+    content?: string;
+    file?: File;
+  }>;
 }
 
 export interface MessageContent {

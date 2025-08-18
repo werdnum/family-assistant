@@ -122,6 +122,19 @@ export class SimpleImageAttachmentAdapter {
       };
     }
   }
+
+  /**
+   * Remove an attachment
+   * @param {Object} attachment - The attachment to remove
+   * @returns {Promise<void>}
+   */
+  async remove(attachment) {
+    // Since the file is only stored in memory on the client-side,
+    // there's no need to make a server call.
+    // The runtime will remove the attachment from its internal state.
+    console.log(`Removing attachment: ${attachment.name}`);
+    return Promise.resolve();
+  }
 }
 
 /**
@@ -198,6 +211,22 @@ export class CompositeAttachmentAdapter {
     }
 
     return adapter.send(attachment);
+  }
+
+  /**
+   * Remove an attachment using its original adapter
+   * @param {Object} attachment - The attachment to remove
+   * @returns {Promise<void>}
+   */
+  async remove(attachment) {
+    const adapter = this.getAdapterForType(attachment.file?.type || 'image/jpeg');
+
+    if (!adapter) {
+      console.error('No adapter available for this file type');
+      return;
+    }
+
+    return adapter.remove(attachment);
   }
 }
 

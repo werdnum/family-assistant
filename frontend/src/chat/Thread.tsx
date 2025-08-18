@@ -273,7 +273,7 @@ const AssistantMessage: React.FC = () => {
 
   // Check if message is loading by checking for our special marker
   // The assistant-ui library might not pass through our custom isLoading property
-  const isLoading = message?.content?.[0]?.text === LOADING_MARKER;
+  const isLoading = Array.isArray(message?.content) && message.content[0]?.text === LOADING_MARKER;
 
   return (
     <MessagePrimitive.Root
@@ -301,7 +301,9 @@ const AssistantMessage: React.FC = () => {
                 <div className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce"></div>
               </div>
             ) : (
-              <MessagePrimitive.Content components={messageContentComponents} />
+              Array.isArray(message.content) && (
+                <MessagePrimitive.Content components={messageContentComponents} />
+              )
             )}
           </div>
         </div>

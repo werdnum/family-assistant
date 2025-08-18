@@ -421,13 +421,6 @@ async def api_chat_send_message_stream(
 
     async def event_generator() -> AsyncGenerator[str, None]:
         """Generate SSE formatted events from the processing stream."""
-        logger.info(
-            f"Starting event generator for conversation {conversation_id} with {len(trigger_content_parts)} content parts"
-        )
-        for i, part in enumerate(trigger_content_parts):
-            logger.info(
-                f"Content part {i}: type={part.get('type')}, keys={list(part.keys())}"
-            )
 
         # Queue for confirmation events
         confirmation_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
