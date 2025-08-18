@@ -86,7 +86,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         "server_url": "http://localhost:8000",
         "document_storage_path": "/mnt/data/files",
         "attachment_storage_path": "/mnt/data/mailbox/attachments",
-        "chat_attachment_storage_path": "/mnt/data/chat_attachments",
+        "chat_attachment_storage_path": "/tmp/chat_attachments",
         "willyweather_api_key": None,  # Added for Weather Provider
         "willyweather_location_id": None,  # Added for Weather Provider
         "calendar_config": {},  # Calendar configuration - populated from CALDAV_*/ICAL_URLS env vars

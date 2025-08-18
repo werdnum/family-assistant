@@ -48,6 +48,9 @@ class ConversationMessage(BaseModel):
     tool_calls: list[dict] | None = Field(None, description="Tool calls if any")
     tool_call_id: str | None = Field(None, description="Tool call ID for tool messages")
     error_traceback: str | None = Field(None, description="Error traceback if any")
+    attachments: list[dict] | None = Field(
+        None, description="Attachment metadata if any"
+    )
 
 
 class ConversationMessagesResponse(BaseModel):
@@ -341,6 +344,7 @@ async def get_conversation_messages(
                 tool_calls=msg.get("tool_calls"),
                 tool_call_id=msg.get("tool_call_id"),
                 error_traceback=msg.get("error_traceback"),
+                attachments=msg.get("attachments"),
             )
         )
 

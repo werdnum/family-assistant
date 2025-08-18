@@ -99,6 +99,7 @@ class MessageHistoryRepository(BaseRepository):
                 "tool_call_id",
                 "error_traceback",
                 "processing_profile_id",
+                "attachments",
             ]
         }
 
@@ -386,6 +387,15 @@ class MessageHistoryRepository(BaseRepository):
                     f"Failed to parse reasoning_info JSON for message {msg.get('internal_id')}"
                 )
                 msg["reasoning_info"] = None
+
+        if isinstance(msg.get("attachments"), str):
+            try:
+                msg["attachments"] = json.loads(msg["attachments"])
+            except json.JSONDecodeError:
+                self._logger.warning(
+                    f"Failed to parse attachments JSON for message {msg.get('internal_id')}"
+                )
+                msg["attachments"] = None
 
         return msg
 

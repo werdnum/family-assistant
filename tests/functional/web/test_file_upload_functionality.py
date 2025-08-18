@@ -171,9 +171,9 @@ async def test_image_upload_validation_file_type(
     # Navigate to chat
     await chat_page.navigate_to_chat()
 
-    # Create a non-image file
-    with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as temp_file:
-        temp_file.write(b"This is not an image file")
+    # Create an unsupported file type (docx is not in SUPPORTED_FILE_TYPES)
+    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as temp_file:
+        temp_file.write(b"This is an unsupported file type")
         temp_path = temp_file.name
 
     try:
@@ -525,7 +525,7 @@ async def test_api_request_includes_attachments(
 async def test_attachment_display_in_message_history(
     web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
 ) -> None:
-    """Test that attachments are properly displayed in message history."""
+    """Test that attachments are properly displayed in message history and persist across page refresh."""
     page = web_test_fixture.page
     chat_page = ChatPage(page, web_test_fixture.base_url)
 
@@ -561,27 +561,41 @@ async def test_attachment_display_in_message_history(
         user_message = page.locator('[data-testid="user-message"]').last
         await user_message.wait_for(state="visible", timeout=5000)
 
-        # Look for attachment display in the user message
-        # Check for attachment preview in the message
-        attachment_in_message = user_message.locator(
-            '[data-testid="attachment-preview"]'
-        ).first
+        # Look for attachment display in the user message BEFORE refresh
+        image_in_message_before = user_message.locator("img").first
+        await image_in_message_before.wait_for(state="visible", timeout=5000)
 
-        # If using the standard attachment UI, check for that
-        if not await attachment_in_message.is_visible():
-            # Fallback to looking for the attachment container
-            attachment_container = user_message.locator(
-                ".flex.w-full.flex-row.gap-3"
-            ).first
-            if await attachment_container.is_visible():
-                # Found the container
-                pass
-            else:
-                # Check for image elements as last resort
-                image_in_message = user_message.locator("img").first
-                assert await image_in_message.is_visible(), (
-                    "No attachment found in user message"
-                )
+        # Get the image src URL before refresh
+        image_src_before = await image_in_message_before.get_attribute("src")
+        assert image_src_before, "Image should have a src attribute before refresh"
+        assert "/api/attachments/" in image_src_before, "Image should use server URL"
+
+        # **TEST PERSISTENCE: REFRESH THE PAGE**
+        await page.reload()
+        await page.wait_for_load_state("networkidle")
+
+        # Wait for messages to reload after refresh
+        await page.wait_for_selector('[data-testid="user-message"]', timeout=10000)
+
+        # Verify attachment STILL appears in user message AFTER refresh
+        user_message_after = page.locator('[data-testid="user-message"]').last
+        await user_message_after.wait_for(state="visible", timeout=5000)
+
+        # Look for image element in the user message after refresh
+        image_in_message_after = user_message_after.locator("img").first
+        await image_in_message_after.wait_for(state="visible", timeout=5000)
+
+        # Get the image src after refresh
+        image_src_after = await image_in_message_after.get_attribute("src")
+        assert image_src_after, "Image should have a src attribute after refresh"
+        assert "/api/attachments/" in image_src_after, (
+            "Image should still use server URL after refresh"
+        )
+
+        # The src should be the same (attachment persistence verification)
+        assert image_src_before == image_src_after, (
+            "Image src should be identical before and after refresh - this verifies attachment persistence"
+        )
 
     finally:
         # Clean up temp file

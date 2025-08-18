@@ -43,7 +43,7 @@ def get_attachment_service(request: Request) -> AttachmentService:
         # Initialize attachment service if not already done
         config = getattr(request.app.state, "config", {})
         attachment_storage_path = config.get(
-            "chat_attachment_storage_path", "/mnt/data/chat_attachments"
+            "chat_attachment_storage_path", "/tmp/chat_attachments"
         )
         request.app.state.attachment_service = AttachmentService(
             attachment_storage_path
@@ -72,7 +72,7 @@ async def upload_attachment(
         attachment_metadata = await attachment_service.store_attachment(file)
 
         # Create response with serving URL
-        attachment_url = f"/api/v1/attachments/{attachment_metadata['id']}"
+        attachment_url = f"/api/attachments/{attachment_metadata['id']}"
 
         return AttachmentUploadResponse(
             attachment_id=attachment_metadata["id"],

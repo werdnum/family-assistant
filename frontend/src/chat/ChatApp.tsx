@@ -486,6 +486,18 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             }
           }
 
+          // Handle attachments from the dedicated attachments field (new format)
+          if (msg.attachments && Array.isArray(msg.attachments)) {
+            for (const attachment of msg.attachments) {
+              attachments.push({
+                id: `att_${msg.internal_id}_${attachments.length}`,
+                type: attachment.type || 'file',
+                name: attachment.name || `Attachment ${attachments.length + 1}`,
+                content: attachment.content_url,
+              });
+            }
+          }
+
           processedMessages.push({
             id: `msg_${msg.internal_id}`,
             role: msg.role,

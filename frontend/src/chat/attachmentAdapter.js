@@ -5,41 +5,57 @@
 
 import { generateUUID } from '../utils/uuid.js';
 
-// MAX_FILE_SIZE can be configured via the VITE_MAX_FILE_SIZE environment variable (in bytes). Defaults to 10MB.
+// MAX_FILE_SIZE can be configured via the VITE_MAX_FILE_SIZE environment variable (in bytes). Defaults to 100MB to match backend.
 const MAX_FILE_SIZE =
   typeof import.meta.env !== 'undefined' && import.meta.env.VITE_MAX_FILE_SIZE
     ? Number(import.meta.env.VITE_MAX_FILE_SIZE)
-    : 10 * 1024 * 1024; // 10MB default
+    : 100 * 1024 * 1024; // 100MB default - matches backend AttachmentService
 const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
+// Additional supported file types from backend AttachmentService
+const SUPPORTED_FILE_TYPES = [
+  ...SUPPORTED_IMAGE_TYPES,
+  'text/plain',
+  'text/markdown',
+  'application/pdf',
+];
+
 /**
- * Converts a File object to a base64 data URL
- * @param {File} file - The file to convert
- * @returns {Promise<string>} Base64 data URL
+ * Uploads a file to the attachment service
+ * @param {File} file - The file to upload
+ * @returns {Promise<Object>} Upload response with attachment metadata
  */
-const fileToBase64DataURL = (file) => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error('Failed to read file'));
-    reader.readAsDataURL(file);
+const uploadFileToService = async (file) => {
+  const formData = new globalThis.FormData();
+  formData.append('file', file);
+
+  const response = await fetch('/api/attachments/upload', {
+    method: 'POST',
+    body: formData,
   });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ detail: 'Upload failed' }));
+    throw new Error(errorData.detail || `Upload failed with status ${response.status}`);
+  }
+
+  return await response.json();
 };
 
 /**
- * Validates an image file against size and type constraints
+ * Validates a file against size and type constraints
  * @param {File} file - The file to validate
  * @throws {Error} If validation fails
  */
-const validateImageFile = (file) => {
+const validateFile = (file) => {
   // Check file size
   if (file.size > MAX_FILE_SIZE) {
     throw new Error(`File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)}MB limit`);
   }
 
   // Check file type
-  if (!SUPPORTED_IMAGE_TYPES.includes(file.type)) {
-    throw new Error(`Unsupported file type. Supported types: ${SUPPORTED_IMAGE_TYPES.join(', ')}`);
+  if (!SUPPORTED_FILE_TYPES.includes(file.type)) {
+    throw new Error(`Unsupported file type. Supported types: ${SUPPORTED_FILE_TYPES.join(', ')}`);
   }
 
   // Basic file name validation
@@ -49,12 +65,13 @@ const validateImageFile = (file) => {
 };
 
 /**
- * Simple Image Attachment Adapter for assistant-ui
- * Handles image file validation, processing, and conversion to base64
+ * File Attachment Adapter for assistant-ui
+ * Handles file validation, processing, and upload to backend service
  */
-export class SimpleImageAttachmentAdapter {
+export class FileAttachmentAdapter {
   constructor() {
-    this.accept = 'image/*';
+    // Accept all supported file types
+    this.accept = SUPPORTED_FILE_TYPES.join(',');
   }
 
   /**
@@ -66,12 +83,20 @@ export class SimpleImageAttachmentAdapter {
   async add({ file }) {
     try {
       // Validate the file
-      validateImageFile(file);
+      validateFile(file);
+
+      // Determine attachment type based on file MIME type
+      let attachmentType = 'file';
+      if (SUPPORTED_IMAGE_TYPES.includes(file.type)) {
+        attachmentType = 'image';
+      } else if (file.type === 'application/pdf' || file.type.startsWith('text/')) {
+        attachmentType = 'document';
+      }
 
       // Create initial attachment object
       const attachment = {
         id: generateUUID(),
-        type: 'image',
+        type: attachmentType,
         name: file.name,
         file,
         status: { type: 'running' },
@@ -82,7 +107,7 @@ export class SimpleImageAttachmentAdapter {
       // Return attachment with error status
       return {
         id: generateUUID(),
-        type: 'image',
+        type: 'file',
         name: file.name,
         file,
         status: {
@@ -94,21 +119,22 @@ export class SimpleImageAttachmentAdapter {
   }
 
   /**
-   * Process attachment for sending (convert to base64)
+   * Process attachment for sending (upload to service)
    * @param {Object} attachment - The attachment to process
-   * @returns {Promise<Object>} Processed attachment with content
+   * @returns {Promise<Object>} Processed attachment with content URL
    */
   async send(attachment) {
     try {
-      // Convert file to base64 data URL
-      const base64DataURL = await fileToBase64DataURL(attachment.file);
+      // Upload file to attachment service
+      const uploadResponse = await uploadFileToService(attachment.file);
 
-      // Return completed attachment with content
+      // Return completed attachment with served URL
       return {
         id: attachment.id,
-        type: 'image',
+        type: attachment.type, // Use the type determined during add()
         name: attachment.name,
-        content: base64DataURL, // This will be sent to the backend
+        content: uploadResponse.url, // URL to serve the file from backend
+        uploadedId: uploadResponse.attachment_id, // Store server-side ID for potential cleanup
         status: { type: 'complete' },
       };
     } catch (error) {
@@ -117,11 +143,11 @@ export class SimpleImageAttachmentAdapter {
       // Return attachment with error status
       return {
         id: attachment.id,
-        type: 'image',
+        type: attachment.type || 'file',
         name: attachment.name,
         status: {
           type: 'error',
-          error: `Failed to process image: ${error.message}`,
+          error: `Failed to upload file: ${error.message}`,
         },
       };
     }
@@ -133,11 +159,25 @@ export class SimpleImageAttachmentAdapter {
    * @returns {Promise<void>}
    */
   async remove(attachment) {
-    // Since the file is only stored in memory on the client-side,
-    // there's no need to make a server call.
-    // The runtime will remove the attachment from its internal state.
-    console.log(`Removing attachment: ${attachment.name}`);
-    return Promise.resolve();
+    try {
+      // If the attachment was successfully uploaded, clean it up from the server
+      if (attachment.uploadedId && attachment.status?.type === 'complete') {
+        const response = await fetch(`/api/attachments/${attachment.uploadedId}`, {
+          method: 'DELETE',
+        });
+
+        if (!response.ok) {
+          console.warn(`Failed to delete attachment ${attachment.uploadedId} from server`);
+        } else {
+          console.warn(`Successfully deleted attachment ${attachment.uploadedId} from server`);
+        }
+      }
+    } catch (error) {
+      console.warn(`Error removing attachment from server: ${error.message}`);
+    }
+
+    // The runtime will remove the attachment from its internal state
+    console.warn(`Removing attachment: ${attachment.name}`);
   }
 }
 
@@ -158,6 +198,23 @@ export class CompositeAttachmentAdapter {
     return this.adapters.find((adapter) => {
       // Check if adapter's accept pattern matches the type
       const acceptPattern = adapter.accept;
+
+      // Handle comma-separated types
+      if (acceptPattern.includes(',')) {
+        const acceptedTypes = acceptPattern.split(',').map((t) => t.trim());
+        return acceptedTypes.some((acceptType) => {
+          if (acceptType === type) {
+            return true;
+          }
+          if (acceptType.endsWith('/*')) {
+            const prefix = acceptType.slice(0, -2);
+            return type.startsWith(prefix);
+          }
+          return false;
+        });
+      }
+
+      // Handle single type or wildcard
       if (acceptPattern === type) {
         return true;
       }
@@ -200,9 +257,8 @@ export class CompositeAttachmentAdapter {
    * @returns {Promise<Object>} Processed attachment
    */
   async send(attachment) {
-    // For now, assume it's an image since we only have the image adapter
-    // In the future, we could store adapter info in the attachment
-    const adapter = this.getAdapterForType(attachment.file?.type || 'image/jpeg');
+    // Find adapter that can handle this file type
+    const adapter = this.getAdapterForType(attachment.file?.type || 'application/octet-stream');
 
     if (!adapter) {
       return {
@@ -223,7 +279,7 @@ export class CompositeAttachmentAdapter {
    * @returns {Promise<void>}
    */
   async remove(attachment) {
-    const adapter = this.getAdapterForType(attachment.file?.type || 'image/jpeg');
+    const adapter = this.getAdapterForType(attachment.file?.type || 'application/octet-stream');
 
     if (!adapter) {
       console.error('No adapter available for this file type');
@@ -234,7 +290,7 @@ export class CompositeAttachmentAdapter {
   }
 }
 
-// Export a pre-configured composite adapter with image support
+// Export a pre-configured composite adapter with file support
 export const defaultAttachmentAdapter = new CompositeAttachmentAdapter([
-  new SimpleImageAttachmentAdapter(),
+  new FileAttachmentAdapter(),
 ]);

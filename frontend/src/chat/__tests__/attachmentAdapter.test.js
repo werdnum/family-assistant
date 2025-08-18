@@ -4,7 +4,7 @@
 
 import { vi } from 'vitest';
 import {
-  SimpleImageAttachmentAdapter,
+  FileAttachmentAdapter,
   CompositeAttachmentAdapter,
   defaultAttachmentAdapter,
 } from '../attachmentAdapter';
@@ -16,7 +16,7 @@ Object.defineProperty(global, 'crypto', {
   },
 });
 
-// Mock FileReader
+// Mock FileReader (still used as fallback)
 global.FileReader = class {
   constructor() {
     this.result = null;
@@ -35,6 +35,9 @@ global.FileReader = class {
   }
 };
 
+// Mock fetch API
+global.fetch = vi.fn();
+
 // Create mock file helper
 function createMockFile(name, type, size, content = 'test content') {
   const file = new File([content], name, { type });
@@ -42,16 +45,20 @@ function createMockFile(name, type, size, content = 'test content') {
   return file;
 }
 
-describe('SimpleImageAttachmentAdapter', () => {
+describe('FileAttachmentAdapter', () => {
   let adapter;
 
   beforeEach(() => {
-    adapter = new SimpleImageAttachmentAdapter();
+    adapter = new FileAttachmentAdapter();
+    // Reset fetch mock
+    global.fetch.mockClear();
   });
 
   describe('constructor', () => {
     test('sets correct accept pattern', () => {
-      expect(adapter.accept).toBe('image/*');
+      expect(adapter.accept).toBe(
+        'image/jpeg,image/png,image/gif,image/webp,text/plain,text/markdown,application/pdf'
+      );
     });
   });
 
@@ -68,24 +75,52 @@ describe('SimpleImageAttachmentAdapter', () => {
       expect(result.status.type).toBe('running');
     });
 
-    test('returns error for oversized file', async () => {
-      const file = createMockFile('large.png', 'image/png', 15 * 1024 * 1024); // 15MB
+    test('successfully adds valid text file', async () => {
+      const file = createMockFile('document.txt', 'text/plain', 1024);
 
       const result = await adapter.add({ file });
 
-      expect(result.type).toBe('image');
+      expect(result.id).toBe('test-uuid-123');
+      expect(result.type).toBe('document');
+      expect(result.name).toBe('document.txt');
+      expect(result.file).toBe(file);
+      expect(result.status.type).toBe('running');
+    });
+
+    test('successfully adds valid PDF file', async () => {
+      const file = createMockFile('document.pdf', 'application/pdf', 1024);
+
+      const result = await adapter.add({ file });
+
+      expect(result.id).toBe('test-uuid-123');
+      expect(result.type).toBe('document');
+      expect(result.name).toBe('document.pdf');
+      expect(result.file).toBe(file);
+      expect(result.status.type).toBe('running');
+    });
+
+    test('returns error for oversized file', async () => {
+      const file = createMockFile('large.png', 'image/png', 150 * 1024 * 1024); // 150MB (exceeds 100MB limit)
+
+      const result = await adapter.add({ file });
+
+      expect(result.type).toBe('file');
       expect(result.name).toBe('large.png');
       expect(result.status.type).toBe('error');
       expect(result.status.error).toContain('size exceeds');
     });
 
     test('returns error for invalid file type', async () => {
-      const file = createMockFile('document.txt', 'text/plain', 1024);
+      const file = createMockFile(
+        'document.docx',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        1024
+      );
 
       const result = await adapter.add({ file });
 
-      expect(result.type).toBe('image');
-      expect(result.name).toBe('document.txt');
+      expect(result.type).toBe('file');
+      expect(result.name).toBe('document.docx');
       expect(result.status.type).toBe('error');
       expect(result.status.error).toContain('Unsupported file type');
     });
@@ -111,28 +146,36 @@ describe('SimpleImageAttachmentAdapter', () => {
         status: { type: 'running' },
       };
 
+      // Mock successful upload response
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            attachment_id: 'server-uuid-456',
+            filename: 'test.png',
+            content_type: 'image/png',
+            size: 1024,
+            url: '/api/attachments/server-uuid-456',
+          }),
+      });
+
       const result = await adapter.send(attachment);
 
       expect(result.id).toBe('test-id');
       expect(result.type).toBe('image');
       expect(result.name).toBe('test.png');
-      expect(result.content).toContain('data:image/png;base64,');
+      expect(result.content).toBe('/api/attachments/server-uuid-456');
+      expect(result.uploadedId).toBe('server-uuid-456');
       expect(result.status.type).toBe('complete');
+
+      // Verify fetch was called correctly
+      expect(global.fetch).toHaveBeenCalledWith('/api/attachments/upload', {
+        method: 'POST',
+        body: expect.any(globalThis.FormData),
+      });
     });
 
-    test('handles FileReader error gracefully', async () => {
-      // Mock FileReader to throw error
-      const originalFileReader = global.FileReader;
-      global.FileReader = class {
-        readAsDataURL() {
-          setTimeout(() => {
-            if (this.onerror) {
-              this.onerror(new Error('Read failed'));
-            }
-          }, 0);
-        }
-      };
-
+    test('handles upload failure gracefully', async () => {
       const file = createMockFile('test.png', 'image/png', 1024);
       const attachment = {
         id: 'test-id',
@@ -142,14 +185,96 @@ describe('SimpleImageAttachmentAdapter', () => {
         status: { type: 'running' },
       };
 
+      // Mock failed upload response
+      global.fetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: () => Promise.resolve({ detail: 'Server error' }),
+      });
+
       const result = await adapter.send(attachment);
 
       expect(result.id).toBe('test-id');
       expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('Failed to process image');
+      expect(result.status.error).toContain('Server error');
+    });
 
-      // Restore original FileReader
-      global.FileReader = originalFileReader;
+    test('handles network error gracefully', async () => {
+      const file = createMockFile('test.png', 'image/png', 1024);
+      const attachment = {
+        id: 'test-id',
+        type: 'image',
+        name: 'test.png',
+        file,
+        status: { type: 'running' },
+      };
+
+      // Mock network error
+      global.fetch.mockRejectedValueOnce(new Error('Network error'));
+
+      const result = await adapter.send(attachment);
+
+      expect(result.id).toBe('test-id');
+      expect(result.status.type).toBe('error');
+      expect(result.status.error).toContain('Network error');
+    });
+  });
+
+  describe('remove method', () => {
+    test('successfully removes uploaded attachment', async () => {
+      const attachment = {
+        id: 'test-id',
+        type: 'image',
+        name: 'test.png',
+        uploadedId: 'server-uuid-456',
+        status: { type: 'complete' },
+      };
+
+      // Mock successful delete response
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ message: 'Attachment deleted successfully' }),
+      });
+
+      await adapter.remove(attachment);
+
+      // Verify delete was called correctly
+      expect(global.fetch).toHaveBeenCalledWith('/api/attachments/server-uuid-456', {
+        method: 'DELETE',
+      });
+    });
+
+    test('handles server deletion failure gracefully', async () => {
+      const attachment = {
+        id: 'test-id',
+        type: 'image',
+        name: 'test.png',
+        uploadedId: 'server-uuid-456',
+        status: { type: 'complete' },
+      };
+
+      // Mock failed delete response
+      global.fetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+      });
+
+      // Should not throw - just logs warning
+      await expect(adapter.remove(attachment)).resolves.toBeUndefined();
+    });
+
+    test('skips server deletion for non-uploaded attachment', async () => {
+      const attachment = {
+        id: 'test-id',
+        type: 'image',
+        name: 'test.png',
+        status: { type: 'error' },
+      };
+
+      await adapter.remove(attachment);
+
+      // Should not call fetch
+      expect(global.fetch).not.toHaveBeenCalled();
     });
   });
 });
@@ -163,6 +288,7 @@ describe('CompositeAttachmentAdapter', () => {
       accept: 'image/*',
       add: vi.fn(),
       send: vi.fn(),
+      remove: vi.fn(),
     };
     compositeAdapter = new CompositeAttachmentAdapter([mockImageAdapter]);
   });
@@ -173,13 +299,16 @@ describe('CompositeAttachmentAdapter', () => {
       expect(result).toBe(mockImageAdapter);
     });
 
-    test('finds adapter for wildcard match', () => {
-      const result = compositeAdapter.getAdapterForType('image/jpeg');
+    test('finds adapter for comma-separated types', () => {
+      mockImageAdapter.accept = 'image/jpeg,image/png,text/plain';
+      const result = compositeAdapter.getAdapterForType('text/plain');
       expect(result).toBe(mockImageAdapter);
     });
 
     test('returns null for no match', () => {
-      const result = compositeAdapter.getAdapterForType('text/plain');
+      const result = compositeAdapter.getAdapterForType(
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      );
       expect(result).toBeUndefined();
     });
   });
@@ -197,12 +326,16 @@ describe('CompositeAttachmentAdapter', () => {
     });
 
     test('returns error for unsupported file type', async () => {
-      const file = createMockFile('document.txt', 'text/plain', 1024);
+      const file = createMockFile(
+        'document.docx',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        1024
+      );
 
       const result = await compositeAdapter.add({ file });
 
       expect(result.type).toBe('file');
-      expect(result.name).toBe('document.txt');
+      expect(result.name).toBe('document.docx');
       expect(result.status.type).toBe('error');
       expect(result.status.error).toContain('Unsupported file type');
     });
@@ -228,7 +361,11 @@ describe('CompositeAttachmentAdapter', () => {
       const attachment = {
         id: 'test',
         type: 'document',
-        file: createMockFile('doc.txt', 'text/plain', 1024),
+        file: createMockFile(
+          'doc.docx',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          1024
+        ),
       };
 
       const result = await compositeAdapter.send(attachment);
@@ -244,7 +381,7 @@ describe('defaultAttachmentAdapter', () => {
   test('exports a pre-configured composite adapter', () => {
     expect(defaultAttachmentAdapter).toBeInstanceOf(CompositeAttachmentAdapter);
     expect(defaultAttachmentAdapter.adapters).toHaveLength(1);
-    expect(defaultAttachmentAdapter.adapters[0]).toBeInstanceOf(SimpleImageAttachmentAdapter);
+    expect(defaultAttachmentAdapter.adapters[0]).toBeInstanceOf(FileAttachmentAdapter);
   });
 
   test('supports image files', async () => {
@@ -253,6 +390,24 @@ describe('defaultAttachmentAdapter', () => {
     const result = await defaultAttachmentAdapter.add({ file });
 
     expect(result.type).toBe('image');
+    expect(result.status.type).toBe('running');
+  });
+
+  test('supports text files', async () => {
+    const file = createMockFile('readme.txt', 'text/plain', 1024);
+
+    const result = await defaultAttachmentAdapter.add({ file });
+
+    expect(result.type).toBe('document');
+    expect(result.status.type).toBe('running');
+  });
+
+  test('supports PDF files', async () => {
+    const file = createMockFile('document.pdf', 'application/pdf', 1024);
+
+    const result = await defaultAttachmentAdapter.add({ file });
+
+    expect(result.type).toBe('document');
     expect(result.status.type).toBe('running');
   });
 });
