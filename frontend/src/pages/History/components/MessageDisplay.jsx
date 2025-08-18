@@ -128,6 +128,56 @@ const MessageDisplay = ({ message }) => {
           </div>
         )}
 
+        {message.attachments && message.attachments.length > 0 && (
+          <div className={styles.attachments}>
+            <h4 className={styles.attachmentsHeader}>Attachments:</h4>
+            <div className={styles.attachmentsList}>
+              {message.attachments.map((attachment, index) => (
+                <div key={attachment.attachment_id || index} className={styles.attachment}>
+                  {attachment.type === 'image' && attachment.content_url ? (
+                    <div className={styles.imageAttachment}>
+                      <img
+                        src={attachment.content_url}
+                        alt={attachment.name || 'Attached image'}
+                        className={styles.attachmentImage}
+                      />
+                      <div className={styles.attachmentInfo}>
+                        <span className={styles.attachmentName}>
+                          {attachment.name || 'image.jpg'}
+                        </span>
+                        {attachment.size && (
+                          <span className={styles.attachmentSize}>
+                            ({Math.round(attachment.size / 1024)} KB)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className={styles.fileAttachment}>
+                      <div className={styles.attachmentIcon}>📎</div>
+                      <div className={styles.attachmentInfo}>
+                        <a
+                          href={attachment.content_url || attachment.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={styles.attachmentLink}
+                        >
+                          {attachment.name || attachment.filename || 'Unknown file'}
+                        </a>
+                        {attachment.size && (
+                          <span className={styles.attachmentSize}>
+                            ({Math.round(attachment.size / 1024)} KB)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {message.error_traceback && (
           <div className={styles.errorSection}>
             <div className={styles.errorHeader}>

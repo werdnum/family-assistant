@@ -764,11 +764,50 @@ class ProcessingService:
                     "content": error_content,
                 })
             else:
-                # Append other messages directly
-                messages.append({
-                    "role": role,
-                    "content": content or "",
-                })  # Ensure content is string
+                # Handle user messages with potential attachments
+                if role == "user":
+                    user_message_content = content or ""
+                    attachments = msg.get("attachments")
+
+                    if attachments and len(attachments) > 0:
+                        # Format user message with attachments as content parts
+                        content_parts = []
+
+                        # Add text content if present
+                        if user_message_content:
+                            content_parts.append({
+                                "type": "text",
+                                "text": user_message_content,
+                            })
+
+                        # Add image attachments as image_url content parts
+                        for attachment in attachments:
+                            if attachment.get("type") == "image" and attachment.get(
+                                "content_url"
+                            ):
+                                content_parts.append({
+                                    "type": "image_url",
+                                    "image_url": {"url": attachment["content_url"]},
+                                })
+
+                        messages.append({
+                            "role": "user",
+                            "content": content_parts
+                            if content_parts
+                            else user_message_content,
+                        })
+                    else:
+                        # User message without attachments
+                        messages.append({
+                            "role": "user",
+                            "content": user_message_content,
+                        })
+                else:
+                    # Append other non-user messages directly
+                    messages.append({
+                        "role": role,
+                        "content": content or "",
+                    })  # Ensure content is string
 
         logger.debug(
             f"Formatted {len(history_messages)} DB history messages into {len(messages)} LLM messages."
@@ -792,6 +831,7 @@ class ProcessingService:
             ]
             | None
         ) = None,
+        trigger_attachments: list[dict[str, Any]] | None = None,
     ) -> tuple[str | None, int | None, dict[str, Any] | None, str | None]:
         """
         Handles a complete chat interaction turn.
@@ -891,6 +931,7 @@ class ProcessingService:
                 tool_calls=None,
                 reasoning_info=None,
                 error_traceback=None,
+                attachments=trigger_attachments,
                 tool_call_id=None,
                 processing_profile_id=self.service_config.id,  # Record profile ID
             )

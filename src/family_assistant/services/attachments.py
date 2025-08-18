@@ -128,6 +128,76 @@ class AttachmentService:
 
         return filename
 
+    def store_bytes_as_attachment(
+        self,
+        file_content: bytes,
+        filename: str,
+        content_type: str = "image/jpeg",
+    ) -> dict[str, Any]:
+        """
+        Store raw bytes as an attachment file (synchronous version for compatibility).
+
+        Args:
+            file_content: Raw file content bytes
+            filename: Original filename
+            content_type: MIME type of the file
+
+        Returns:
+            Dictionary containing attachment metadata
+
+        Raises:
+            ValueError: If file validation fails
+        """
+        # Basic validation
+        if len(file_content) > MAX_FILE_SIZE:
+            raise ValueError(
+                f"File size {len(file_content)} bytes exceeds maximum allowed size of {MAX_FILE_SIZE} bytes"
+            )
+
+        if content_type not in ALLOWED_MIME_TYPES:
+            raise ValueError(
+                f"File type '{content_type}' not allowed. Allowed types: {', '.join(ALLOWED_MIME_TYPES)}"
+            )
+
+        # Generate unique attachment ID
+        attachment_id = str(uuid.uuid4())
+
+        # Sanitize filename
+        safe_filename = self._sanitize_filename(filename)
+
+        try:
+            # Calculate content hash
+            content_hash = self._calculate_content_hash(file_content)
+
+            # Get storage path
+            file_path = self._get_file_path(attachment_id, safe_filename)
+
+            # Write file to disk
+            with open(file_path, "wb") as f:
+                f.write(file_content)
+
+            # Create attachment metadata
+            attachment_metadata = {
+                "attachment_id": attachment_id,
+                "filename": safe_filename,
+                "content_type": content_type,
+                "size": len(file_content),
+                "url": f"/api/attachments/{attachment_id}",
+                "hash": f"sha256:{content_hash}",
+                "storage_path": str(file_path.relative_to(self.storage_path)),
+                "uploaded_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+            logger.info(
+                f"Successfully stored attachment {attachment_id}: {safe_filename} ({len(file_content)} bytes)"
+            )
+
+            return attachment_metadata
+
+        except Exception as e:
+            logger.error(f"Failed to store attachment: {e}")
+            raise ValueError(f"Failed to store attachment: {e}") from e
+
     async def store_attachment(self, file: UploadFile) -> dict[str, Any]:
         """
         Store an uploaded attachment file.
@@ -166,10 +236,11 @@ class AttachmentService:
 
             # Create attachment metadata
             attachment_metadata = {
-                "id": attachment_id,
-                "name": safe_filename,
-                "type": file.content_type,
+                "attachment_id": attachment_id,
+                "filename": safe_filename,
+                "content_type": file.content_type,
                 "size": len(file_content),
+                "url": f"/api/attachments/{attachment_id}",
                 "hash": f"sha256:{content_hash}",
                 "storage_path": str(file_path.relative_to(self.storage_path)),
                 "uploaded_at": datetime.now(timezone.utc).isoformat(),

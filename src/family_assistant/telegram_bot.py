@@ -48,6 +48,7 @@ from telegram.ext import (
 from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.interfaces import ChatInterface  # Import the new interface
 from family_assistant.processing import ProcessingService
+from family_assistant.services.attachments import AttachmentService
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.message_history import (
     message_history_table,  # For error handling db update
@@ -521,19 +522,41 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             "text": formatted_user_text_content,
         }
         trigger_content_parts: list[dict[str, Any]] = [text_content_part]
+        trigger_attachments: list[dict[str, Any]] | None = None
 
         if first_photo_bytes:
             try:
-                base64_image = base64.b64encode(first_photo_bytes).decode("utf-8")
-                mime_type = "image/jpeg"
+                # Store photo using attachment service instead of base64 encoding
+                attachment_metadata = self.telegram_service.attachment_service.store_bytes_as_attachment(
+                    file_content=first_photo_bytes,
+                    filename=f"telegram_photo_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg",
+                    content_type="image/jpeg",
+                )
+
+                # Add as image_url content part for LLM using server URL
                 trigger_content_parts.append({
                     "type": "image_url",
-                    "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
+                    "image_url": {"url": attachment_metadata["url"]},
                 })
-                logger.info("Added first photo from batch to trigger content.")
+
+                # Store attachment metadata for message history
+                trigger_attachments = [
+                    {
+                        "type": "image",
+                        "content_url": attachment_metadata["url"],
+                        "name": attachment_metadata["filename"],
+                        "size": attachment_metadata["size"],
+                        "content_type": attachment_metadata["content_type"],
+                        "attachment_id": attachment_metadata["attachment_id"],
+                    }
+                ]
+
+                logger.info(
+                    f"Stored Telegram photo as attachment: {attachment_metadata['attachment_id']}"
+                )
             except Exception as img_err:
                 logger.error(
-                    f"Error encoding photo from batch: {img_err}", exc_info=True
+                    f"Error storing photo from batch: {img_err}", exc_info=True
                 )
                 await context.bot.send_message(
                     chat_id, "Error processing image in batch."
@@ -726,6 +749,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         replied_to_interface_id=replied_to_interface_id,
                         chat_interface=self.telegram_service.chat_interface,
                         request_confirmation_callback=confirmation_callback_wrapper,
+                        trigger_attachments=trigger_attachments,
                     )
                     # Message saving is now handled within handle_chat_interaction.
                     # We only need to send the final reply and update its interface_id.
@@ -1164,6 +1188,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         replied_to_interface_id=reply_to_interface_id_str,
                         chat_interface=self.telegram_service.chat_interface,
                         request_confirmation_callback=confirmation_callback_wrapper,
+                        trigger_attachments=None,  # TODO: Update slash command photo handling to use AttachmentService
                     )
 
                 # --- Sending and Updating Logic ---
@@ -1621,6 +1646,15 @@ class TelegramService:
         self._was_started: bool = False
         self._last_error: Exception | None = None
         self.chat_interface = TelegramChatInterface(self.application)
+
+        # Initialize AttachmentService for storing photos/files
+        attachment_storage_path = app_config.get(
+            "chat_attachment_storage_path", "/tmp/chat_attachments"
+        )
+        self.attachment_service = AttachmentService(attachment_storage_path)
+        logger.info(
+            f"Initialized AttachmentService with path: {attachment_storage_path}"
+        )
 
         self.processing_service = processing_service  # Store default service
         self.processing_services_registry = (
