@@ -453,6 +453,8 @@ The project includes `tests/mocks/mock_llm.py` with:
 
 When CI tests fail, use these tools and techniques to debug issues efficiently.
 
+Do not use `CI=true` when debugging locally - it is used in CI as a shortcut to skip rebuilding the frontend.
+
 #### CI Status Monitoring
 
 ```bash
@@ -972,6 +974,21 @@ modular architecture built with Python, FastAPI, and SQLAlchemy.
   whether they prefer the tactical pragmatic fix or the "proper" long term fix. Look out for design
   or code smells. Refactoring is relatively cheap in this project - cheaper than leaving something
   broken.
+- IMPORTANT: You NEVER leave tests broken. We do not commit changes that cause tests to break. You
+  NEVER make excuses like saying that test failures are 'unrelated' or 'separate issues'. You ALWAYS
+  fix ALL test failures, even if you don't think you caused them.
+
+#### Debugging and change verification
+
+Once you've implemented a change, you ALWAYS go through the following algorithm:
+
+1. Run scripts/format-and-lint.sh to check for linter errors.
+2. Make sure that you have tests covering the new functionality, and that they pass.
+3. Run a broad subset of tests related to your fixes.
+4. Run `poe test` for final verification - this is what runs in CI and it runs all tests and linters.
+
+You NEVER push new changes or make a PR if `poe test` does not pass. We do not merge PRs with failing
+tests or linter errors.
 
 ### Planning guidelines
 
@@ -1059,8 +1076,6 @@ create React components in the `frontend/` directory rather than server-side end
       tasks = await db.tasks.get_pending_tasks()
       await db.email.store_email(email_data)
   ```
-
-  Avoid using the old module-level functions directly.
 
 - **SQLAlchemy Count Queries**: When using `func.count()` in SQLAlchemy queries, always use
   `.label("count")` to give the column an alias:
