@@ -15,9 +15,21 @@ if [ "$stop_hook_active" = "false" ]; then
     echo "Before stopping, please consider:" >&2
     echo >&2
     
-    # Suggest running tests
-    echo "• Have you run tests to verify any changes? You MUST run 'poe test' if you have made any changes that could possibly affect the test result." >&2
-    echo "• Are all tests passing? It's OK if you are waiting for the user's advice on how to fix the tests, but you MUST NOT say you are done unless all tests are passing." >&2
+    # Check test status using the core verification logic
+    source .claude/test-verification-core.sh
+    TRANSCRIPT_PATH=$(echo "$json_input" | jq -r '.transcript_path // empty')
+    
+    if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
+        if check_test_status "$TRANSCRIPT_PATH"; then
+            echo "• ✓ Tests have been run and are passing" >&2
+        else
+            echo "• ❌ Tests need attention:" >&2
+            echo "  You MUST fix this before finishing" >&2
+        fi
+    else
+        # Fallback to generic message if no transcript available
+        echo "• Have you run tests to verify any changes? You MUST run 'poe test' if you have made any changes that could possibly affect the test result." >&2
+    fi
     echo >&2
     
     # Check for uncommitted changes

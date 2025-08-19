@@ -26,6 +26,11 @@
           },
           {
             "type": "command",
+            "command": "/bin/bash .claude/test-verification-hook.sh",
+            "timeout": 60
+          },
+          {
+            "type": "command",
             "command": "/bin/bash .claude/review-hook.sh",
             "timeout": 300
           }
