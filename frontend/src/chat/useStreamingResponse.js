@@ -23,7 +23,13 @@ export const useStreamingResponse = ({
   const abortControllerRef = useRef(null);
 
   const sendStreamingMessage = useCallback(
-    async ({ prompt, conversationId, profileId = 'default_assistant', interfaceType = 'web' }) => {
+    async ({
+      prompt,
+      conversationId,
+      profileId = 'default_assistant',
+      interfaceType = 'web',
+      attachments = undefined,
+    }) => {
       setIsStreaming(true);
       abortControllerRef.current = new AbortController();
 
@@ -42,6 +48,7 @@ export const useStreamingResponse = ({
             conversation_id: conversationId,
             profile_id: profileId,
             interface_type: interfaceType,
+            attachments: attachments,
           }),
           signal: abortControllerRef.current.signal,
         });

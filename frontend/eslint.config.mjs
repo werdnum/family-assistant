@@ -18,8 +18,21 @@ export default tseslint.config(
         URLSearchParams: 'readonly',
         AbortController: 'readonly',
         TextDecoder: 'readonly',
+        FileReader: 'readonly',
+        File: 'readonly',
+        setTimeout: 'readonly',
+        global: 'readonly',
         // React globals (for JSX)
         React: 'readonly',
+        // Test globals (Vitest)
+        describe: 'readonly',
+        test: 'readonly',
+        expect: 'readonly',
+        beforeEach: 'readonly',
+        afterEach: 'readonly',
+        beforeAll: 'readonly',
+        afterAll: 'readonly',
+        vi: 'readonly',
       },
       parserOptions: {
         project: false, // Use non-type-aware mode for now

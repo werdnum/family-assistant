@@ -28,6 +28,11 @@ import { MarkdownText } from './MarkdownText';
 import { TooltipIconButton } from './TooltipIconButton';
 import { LOADING_MARKER } from './constants';
 import { DynamicToolUI } from './DynamicToolUI';
+import {
+  ComposerAttachments,
+  ComposerAddAttachment,
+  UserMessageAttachments,
+} from '@/components/assistant-ui/attachment';
 
 const messageContentComponents = {
   Text: MarkdownText,
@@ -146,15 +151,19 @@ const ThreadWelcomeSuggestions: React.FC = () => {
 
 const Composer: React.FC = () => {
   return (
-    <ComposerPrimitive.Root className="flex gap-3 items-end max-w-4xl mx-auto">
-      <ComposerPrimitive.Input
-        rows={1}
-        autoFocus
-        placeholder="Write a message..."
-        className="flex-1 min-h-12 max-h-48 px-4 py-3 text-base border rounded-xl bg-muted/50 border-border resize-none focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all duration-200"
-        data-testid="chat-input"
-      />
-      <ComposerAction />
+    <ComposerPrimitive.Root className="flex flex-col gap-3 max-w-4xl mx-auto">
+      <ComposerAttachments />
+      <div className="flex gap-3 items-end">
+        <ComposerAddAttachment />
+        <ComposerPrimitive.Input
+          rows={1}
+          autoFocus
+          placeholder="Write a message..."
+          className="flex-1 min-h-12 max-h-48 px-4 py-3 text-base border rounded-xl bg-muted/50 border-border resize-none focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-all duration-200"
+          data-testid="chat-input"
+        />
+        <ComposerAction />
+      </div>
     </ComposerPrimitive.Root>
   );
 };
@@ -199,6 +208,7 @@ const UserMessage: React.FC = () => {
         <div className="flex items-center justify-end mb-2 h-5">
           <MessageTimestamp />
         </div>
+        <UserMessageAttachments />
         <div className="flex items-end gap-3 justify-end">
           <div
             className="max-w-[70%] p-4 bg-primary text-primary-foreground rounded-2xl rounded-br-md shadow-sm"
@@ -263,7 +273,10 @@ const AssistantMessage: React.FC = () => {
 
   // Check if message is loading by checking for our special marker
   // The assistant-ui library might not pass through our custom isLoading property
-  const isLoading = message?.content?.[0]?.text === LOADING_MARKER;
+  const isLoading =
+    Array.isArray(message?.content) &&
+    message.content.length > 0 &&
+    message.content[0]?.text === LOADING_MARKER;
 
   return (
     <MessagePrimitive.Root
@@ -291,7 +304,17 @@ const AssistantMessage: React.FC = () => {
                 <div className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce"></div>
               </div>
             ) : (
-              <MessagePrimitive.Content components={messageContentComponents} />
+              <>
+                {Array.isArray(message.content) ? (
+                  <MessagePrimitive.Content components={messageContentComponents} />
+                ) : typeof message.content === 'string' ? (
+                  <MarkdownText>{message.content}</MarkdownText>
+                ) : message.content ? (
+                  <MarkdownText>{String(message.content)}</MarkdownText>
+                ) : (
+                  <div className="text-muted-foreground italic">No content</div>
+                )}
+              </>
             )}
           </div>
         </div>

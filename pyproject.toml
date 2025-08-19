@@ -20,9 +20,9 @@ classifiers = [
 dependencies = [
     "python-telegram-bot[ext]>=21.0,<22.0",
     # Use [ext] instead of [job-queue] for v21+
-    "litellm>=1.38.1,<1.67.3",
+    "litellm>=1.75.0",
     # Direct provider SDKs
-    "openai>=1.0.0",
+    "openai>=1.0.0,<1.93.0",
     # OpenAI SDK for direct API access
     "google-genai>=0.4.0",
     # Google Gemini SDK for direct API access
@@ -352,3 +352,4 @@ dev-dependencies = [
     "llm-fragments-reader>=0.1",
     "pytest-xdist>=3.7.0",
 ]
+

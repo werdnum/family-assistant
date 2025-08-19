@@ -58,6 +58,7 @@ class ChatPromptRequest(BaseModel):
     conversation_id: str | None = None
     profile_id: str | None = None  # Added to specify processing profile
     interface_type: str | None = None  # Interface type (e.g., 'web', 'api', 'mobile')
+    attachments: list[dict[str, Any]] | None = None  # File attachments (base64 encoded)
 
 
 class ChatMessageResponse(BaseModel):

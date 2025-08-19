@@ -8,6 +8,7 @@ import ConversationSidebar from './ConversationSidebar';
 import { useStreamingResponse } from './useStreamingResponse';
 import { LOADING_MARKER } from './constants';
 import { generateUUID } from '../utils/uuid';
+import { defaultAttachmentAdapter } from './attachmentAdapter';
 import { ChatAppProps, Message, MessageContent, Conversation } from './types';
 import NavigationSheet from '../shared/NavigationSheet';
 import { ToolConfirmationProvider } from './ToolConfirmationContext';
@@ -74,34 +75,40 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   }, []);
 
   // Track pending confirmations by tool call ID
-  const [pendingConfirmations, setPendingConfirmations] = useState<Map<string, any>>(new Map());
+  const [pendingConfirmations, setPendingConfirmations] = useState<
+    Map<string, { request_id: string; [key: string]: unknown }>
+  >(new Map());
 
-  const handleConfirmationRequest = useCallback((request: any) => {
-    console.log('Received confirmation request:', request);
-    // Add to pending confirmations map
-    setPendingConfirmations((prev) => {
-      const newMap = new Map(prev);
-      // Store by tool_call_id for matching
-      newMap.set(request.tool_call_id, request);
-      return newMap;
-    });
-  }, []);
+  const handleConfirmationRequest = useCallback(
+    (request: { tool_call_id: string; request_id: string; [key: string]: unknown }) => {
+      // Add to pending confirmations map
+      setPendingConfirmations((prev) => {
+        const newMap = new Map(prev);
+        // Store by tool_call_id for matching
+        newMap.set(request.tool_call_id, request);
+        return newMap;
+      });
+    },
+    []
+  );
 
-  const handleConfirmationResult = useCallback((result: any) => {
-    console.log('Received confirmation result:', result);
-    // Remove from pending confirmations
-    setPendingConfirmations((prev) => {
-      const newMap = new Map(prev);
-      // Find and remove the confirmation by matching request_id
-      for (const [key, value] of newMap.entries()) {
-        if (value.request_id === result.request_id) {
-          newMap.delete(key);
-          break;
+  const handleConfirmationResult = useCallback(
+    (result: { request_id: string; [key: string]: unknown }) => {
+      // Remove from pending confirmations
+      setPendingConfirmations((prev) => {
+        const newMap = new Map(prev);
+        // Find and remove the confirmation by matching request_id
+        for (const [key, value] of newMap.entries()) {
+          if (value.request_id === result.request_id) {
+            newMap.delete(key);
+            break;
+          }
         }
-      }
-      return newMap;
-    });
-  }, []);
+        return newMap;
+      });
+    },
+    []
+  );
 
   const handleConfirmation = useCallback(
     async (toolCallId: string, requestId: string, approved: boolean) => {
@@ -118,11 +125,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           }),
         });
 
-        if (response.ok) {
-          const data = await response.json();
-          console.log('Confirmation response:', data);
-          // The result will come through SSE
-        } else {
+        if (!response.ok) {
           console.error('Failed to send confirmation:', response.status);
         }
       } catch (error) {
@@ -192,11 +195,14 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       content: string;
       toolCalls: Array<Record<string, unknown>>;
     }) => {
-      // Do a final update with the complete content to ensure nothing was lost during rapid streaming
-      if (streamingMessageIdRef.current && content) {
+      // Capture ref values locally to avoid race conditions
+      const messageId = streamingMessageIdRef.current;
+      const toolCallMessageId = toolCallMessageIdRef.current;
+
+      if (messageId && content) {
         setMessages((prev) =>
           prev.map((msg) => {
-            if (msg.id === streamingMessageIdRef.current) {
+            if (msg.id === messageId) {
               // Preserve any existing tool calls
               const existingToolCalls =
                 msg.content?.filter((part) => part.type === 'tool-call') || [];
@@ -204,17 +210,25 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
                 ...msg,
                 content: [{ type: 'text', text: content }, ...existingToolCalls],
                 status: 'done' as const,
+                isLoading: false, // Ensure loading state is cleared
               };
             }
             return msg;
           })
         );
-      }
 
-      // Clean up the references and refresh conversations
-      fetchConversations();
-      streamingMessageIdRef.current = null;
-      toolCallMessageIdRef.current = null;
+        // Clean up the references immediately after state update
+        // Only clear if the IDs haven't changed (avoiding race with new streaming)
+        if (streamingMessageIdRef.current === messageId) {
+          streamingMessageIdRef.current = null;
+        }
+        if (toolCallMessageIdRef.current === toolCallMessageId) {
+          toolCallMessageIdRef.current = null;
+        }
+
+        // Refresh conversations after state is updated
+        fetchConversations();
+      }
     },
     [fetchConversations]
   );
@@ -237,12 +251,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
                 const args = parseToolArguments(tc.arguments);
                 return {
                   type: 'tool-call',
-                  toolCallId: tc.id,
-                  toolName: tc.name,
+                  toolCallId: tc.id as string,
+                  toolName: tc.name as string,
                   args: args,
                   argsText:
                     typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments),
-                  ...(tc.result && { result: tc.result }),
+                  ...(tc.result && { result: tc.result as string }),
                   // Note: status is on the message level, not on individual tool calls
                 };
               });
@@ -281,12 +295,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
                 const args = parseToolArguments(tc.arguments);
                 return {
                   type: 'tool-call',
-                  toolCallId: tc.id,
-                  toolName: tc.name,
+                  toolCallId: tc.id as string,
+                  toolName: tc.name as string,
                   args: args,
                   argsText:
                     typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments),
-                  ...(tc.result && { result: tc.result }),
+                  ...(tc.result && { result: tc.result as string }),
                   // Note: status is on the message level, not on individual tool calls
                 };
               });
@@ -386,20 +400,19 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         signal: messagesAbortController.signal,
       });
       if (response.ok) {
-        const data = await response.json();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data: { messages: any[] } = await response.json();
 
         const processedMessages: Message[] = [];
         const toolResponses = new Map<string, string>();
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        data.messages.forEach((msg: any) => {
+        data.messages.forEach((msg) => {
           if (msg.role === 'tool' && msg.tool_call_id) {
             toolResponses.set(msg.tool_call_id, msg.content || 'Tool executed successfully');
           }
         });
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        data.messages.forEach((msg: any) => {
+        data.messages.forEach((msg) => {
           if (msg.role === 'tool') {
             return;
           }
@@ -407,7 +420,17 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
             const content: MessageContent[] = [];
             if (msg.content) {
-              content.push({ type: 'text', text: msg.content });
+              // Handle content - filter out image_url if present
+              if (typeof msg.content === 'string') {
+                content.push({ type: 'text', text: msg.content });
+              } else if (Array.isArray(msg.content)) {
+                for (const part of msg.content) {
+                  if (part.type === 'text') {
+                    content.push({ type: 'text', text: part.text });
+                  }
+                  // Skip image_url content types
+                }
+              }
             }
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -442,15 +465,60 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             return;
           }
 
+          // For user messages with potential attachments
+          const messageContent: MessageContent[] = [];
+          const attachments: Message['attachments'] = [];
+
+          // Handle content - if it's a string, it's just text
+          if (msg.content) {
+            if (typeof msg.content === 'string') {
+              messageContent.push({ type: 'text', text: msg.content });
+            } else if (Array.isArray(msg.content)) {
+              // If content is an array, process both text and image_url types
+              for (const part of msg.content) {
+                if (part.type === 'text') {
+                  messageContent.push({ type: 'text', text: part.text });
+                } else if (part.type === 'image_url' && part.image_url) {
+                  // Convert image_url to attachment for display
+                  attachments.push({
+                    id: `att_${msg.internal_id}_${attachments.length}`,
+                    type: 'image',
+                    name: `Image ${attachments.length + 1}`,
+                    content: part.image_url.url,
+                  });
+                }
+              }
+            }
+          }
+
+          // Handle attachments from the dedicated attachments field (new format)
+          if (msg.attachments && Array.isArray(msg.attachments)) {
+            for (const attachment of msg.attachments) {
+              attachments.push({
+                id: `att_${msg.internal_id}_${attachments.length}`,
+                type: attachment.type || 'file',
+                name: attachment.name || `Attachment ${attachments.length + 1}`,
+                content: attachment.content_url,
+              });
+            }
+          }
+
           processedMessages.push({
             id: `msg_${msg.internal_id}`,
             role: msg.role,
-            content: msg.content ? [{ type: 'text', text: msg.content }] : [],
+            content: messageContent.length > 0 ? messageContent : [{ type: 'text', text: '' }],
             createdAt: new Date(msg.timestamp),
+            attachments: attachments.length > 0 ? attachments : undefined,
           });
         });
 
-        setMessages(processedMessages);
+        // Ensure all messages have content as arrays before setting
+        const messagesWithArrayContent = processedMessages.map((msg) => ({
+          ...msg,
+          content: Array.isArray(msg.content) ? msg.content : msg.content ? [msg.content] : [],
+        }));
+
+        setMessages(messagesWithArrayContent);
       }
     } catch (error) {
       // Don't log error if request was aborted (component unmounting)
@@ -511,21 +579,38 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
   // Handle new messages from the user
   const handleNew = useCallback(
-    async (message: { content: { text: string }[] }) => {
+    async (message: {
+      content: { text: string }[];
+      attachments?: Array<{
+        id?: string;
+        type?: string;
+        name: string;
+        content?: string;
+        file?: File;
+      }>;
+    }) => {
+      // Process attachments - they might come from the runtime with different properties
+      const processedAttachments = message.attachments?.map((att) => ({
+        id: att.id || `att_${Date.now()}_${Math.random()}`,
+        type: (att.type || 'image') as 'image',
+        name: att.name,
+        content: att.content || '', // Content might be base64 or empty if still processing
+      }));
+
       const userMessage: Message = {
         id: `msg_${Date.now()}`,
         role: 'user',
-        content: [{ type: 'text', text: message.content[0].text }],
+        content: message.content,
         createdAt: new Date(),
+        attachments: processedAttachments,
       };
 
       const assistantMessageId = `msg_${Date.now()}_assistant`;
-      // Add both user message and a loading assistant message
       const loadingAssistantMessage: Message = {
         id: assistantMessageId,
         role: 'assistant',
-        content: [{ type: 'text', text: LOADING_MARKER }], // Special marker for loading state
-        isLoading: true, // Custom flag to indicate loading state
+        content: [{ type: 'text', text: LOADING_MARKER }],
+        isLoading: true,
         createdAt: new Date(),
       };
 
@@ -538,13 +623,34 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         conversationId: conversationId || `web_conv_${generateUUID()}`,
         profileId: currentProfileId,
         interfaceType: 'web',
+        attachments: processedAttachments,
       });
     },
     [conversationId, sendStreamingMessage, currentProfileId]
   );
 
   const convertMessage = useCallback((message: Message) => {
-    return message;
+    // Ensure content is always an array for assistant-ui compatibility
+    const converted = {
+      ...message,
+      content: Array.isArray(message.content)
+        ? message.content
+        : message.content
+          ? [message.content]
+          : [{ type: 'text', text: '' }],
+      // Pass through attachments if they exist
+      attachments: message.attachments,
+    };
+
+    // Ensure each content item has the right structure
+    if (Array.isArray(converted.content)) {
+      converted.content = converted.content.filter((item) => item && typeof item === 'object');
+      if (converted.content.length === 0) {
+        converted.content = [{ type: 'text', text: '' }];
+      }
+    }
+
+    return converted;
   }, []);
 
   const runtime = useExternalStoreRuntime({
@@ -552,6 +658,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     isRunning: isLoading || isStreaming,
     onNew: handleNew,
     convertMessage,
+    adapters: {
+      attachments: defaultAttachmentAdapter,
+    },
   });
 
   return (
@@ -566,7 +675,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         >
           <Menu className="h-4 w-4" />
         </Button>
-        <h1 className="text-xl font-semibold">Chat</h1>
+        <h2 className="text-xl font-semibold">Chat</h2>
 
         {/* Profile Selector */}
         <div className="flex items-center">

@@ -74,6 +74,9 @@ message_history_table = Table(
     Column(
         "processing_profile_id", String(255), nullable=True, index=True
     ),  # ID of the processing profile used
+    Column(
+        "attachments", JSON().with_variant(JSONB, "postgresql"), nullable=True
+    ),  # Attachment metadata for files associated with this message
 )
 
 
@@ -97,6 +100,7 @@ async def add_message_to_history(
         str | None
     ) = None,  # Added: ID linking tool response to assistant request
     processing_profile_id: str | None = None,  # Added: Profile ID
+    attachments: list[dict[str, Any]] | None = None,  # Attachment metadata
 ) -> dict[str, Any] | None:  # Changed to return Optional[Dict]
     """Adds a message to the history table, including optional fields."""
     # Note: The return type was previously Optional[int], changed to Optional[Dict] to return ID in a dict
@@ -105,6 +109,7 @@ async def add_message_to_history(
     json_fields_to_check = {
         "tool_calls": tool_calls,
         "reasoning_info": reasoning_info,
+        "attachments": attachments,
     }
     for field_name, field_value in json_fields_to_check.items():
         if field_value is not None:
@@ -139,6 +144,7 @@ async def add_message_to_history(
                 error_traceback=error_traceback,
                 tool_call_id=tool_call_id,
                 processing_profile_id=processing_profile_id,  # Store profile ID
+                attachments=attachments,  # Store attachment metadata
             )  # Close .values()
             .returning(message_history_table.c.internal_id)  # Specify returning clause
         )  # Close statement assignment parenthesis

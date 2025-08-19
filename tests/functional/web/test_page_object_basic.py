@@ -16,7 +16,7 @@ async def test_base_page_navigation(web_test_fixture: Any) -> None:
     # Navigate to homepage (which shows notes)
     await page.navigate_to("/")
     # Check that we're on the notes page (homepage)
-    assert await page.is_element_visible("h1") or await page.is_element_visible("nav")
+    assert await page.is_element_visible('h2:has-text("Family Assistant Chat")')
 
     # Navigate to notes page
     await page.navigate_to("/notes")
