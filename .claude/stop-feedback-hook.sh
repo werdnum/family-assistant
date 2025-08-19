@@ -53,3 +53,4 @@ else
     # Return 0 to allow normal stop when stop_hook_active is true
     exit 0
 fi
+
