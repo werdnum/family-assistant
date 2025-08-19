@@ -168,6 +168,94 @@
   color: var(--text);
 }
 
+/* Attachments section */
+.attachments {
+  margin-top: 1rem;
+  padding: 1rem;
+  background-color: var(--bg-secondary);
+  border-radius: 6px;
+  border: 1px solid hsl(var(--border));
+}
+
+.attachmentsHeader {
+  margin: 0 0 1rem 0;
+  font-size: 1em;
+  color: var(--text);
+}
+
+.attachmentsList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.attachment {
+  border: 1px solid hsl(var(--border));
+  border-radius: 4px;
+  background-color: var(--bg);
+  overflow: hidden;
+}
+
+.imageAttachment {
+  display: flex;
+  flex-direction: column;
+}
+
+.attachmentImage {
+  max-width: 100%;
+  max-height: 300px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
+.fileAttachment {
+  display: flex;
+  align-items: center;
+  padding: 0.75rem;
+  gap: 0.5rem;
+}
+
+.attachmentIcon {
+  font-size: 1.2em;
+  flex-shrink: 0;
+}
+
+.attachmentInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0; /* Allow text to wrap */
+}
+
+.attachmentName {
+  font-weight: 500;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.attachmentLink {
+  font-weight: 500;
+  color: var(--accent);
+  text-decoration: none;
+  word-break: break-word;
+}
+
+.attachmentLink:hover {
+  text-decoration: underline;
+}
+
+.attachmentSize {
+  font-size: 0.8em;
+  color: var(--text-light);
+}
+
+.imageAttachment .attachmentInfo {
+  padding: 0.75rem;
+  border-top: 1px solid hsl(var(--border));
+}
+
 /* Error section */
 .errorSection {
   margin-top: 1rem;
@@ -245,3 +333,4 @@
     align-self: flex-end;
   }
 }
+

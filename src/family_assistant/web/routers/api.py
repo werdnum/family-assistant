@@ -2,6 +2,7 @@ import logging
 
 from fastapi import APIRouter
 
+from .attachments_api import attachments_api_router
 from .chat_api import chat_api_router
 from .context_viewer import context_viewer_router
 from .documents_api import documents_api_router
@@ -35,3 +36,6 @@ api_router.include_router(
     vector_search_api_router, prefix="/vector-search", tags=["Vector Search"]
 )
 api_router.include_router(context_viewer_router, tags=["Context API"])
+api_router.include_router(
+    attachments_api_router, prefix="/attachments", tags=["Attachments"]
+)

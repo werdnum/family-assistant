@@ -194,7 +194,9 @@ async def test_retry_exhaustion_leads_to_failure(
         # Wait for task to fail (no retries)
         # Use a background task to periodically wake the worker to ensure it processes the failure
         async def wake_worker_periodically() -> None:
-            for _ in range(40):  # Wake every 0.5s for 20 seconds total (matches main timeout)
+            for _ in range(
+                40
+            ):  # Wake every 0.5s for 20 seconds total (matches main timeout)
                 await asyncio.sleep(0.5)
                 new_task_event.set()
 

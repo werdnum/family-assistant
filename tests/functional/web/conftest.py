@@ -8,15 +8,40 @@ import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any, NamedTuple
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 import pytest_asyncio
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 from playwright.async_api import Page
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.context_providers import (
+    CalendarContextProvider,
+    KnownUsersContextProvider,
+    NotesContextProvider,
+)
+from family_assistant.llm import LLMInterface
+from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.storage import init_db
+from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.tools import (
+    AVAILABLE_FUNCTIONS as local_tool_implementations,
+)
+from family_assistant.tools import (
+    TOOLS_DEFINITION as local_tools_definition,
+)
+from family_assistant.tools import (
+    CompositeToolsProvider,
+    ConfirmingToolsProvider,
+    LocalToolsProvider,
+    MCPToolsProvider,
+    ToolsProvider,
+)
+from family_assistant.web.app_creator import app as actual_app
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
@@ -654,3 +679,183 @@ async def playwright() -> AsyncGenerator[Any, None]:
         print("\n=== Playwright stopped successfully ===")
     except asyncio.TimeoutError:
         print("\n=== WARNING: Playwright stop timed out after 10s, forcing cleanup ===")
+
+
+# --- Shared API Test Fixtures ---
+
+
+@pytest_asyncio.fixture(scope="function")
+async def api_db_context(
+    db_engine: AsyncEngine,
+) -> AsyncGenerator[DatabaseContext, None]:
+    """Provides a DatabaseContext for API tests."""
+    async with get_db_context(engine=db_engine) as ctx:
+        yield ctx
+
+
+@pytest.fixture(scope="function")
+def api_mock_processing_service_config() -> ProcessingServiceConfig:
+    """Provides a mock ProcessingServiceConfig for API tests."""
+    return ProcessingServiceConfig(
+        prompts={
+            "system_prompt": (
+                "You are a test assistant. Current time: {current_time}. "
+                "Server URL: {server_url}. "
+                "Context: {aggregated_other_context}"
+            )
+        },
+        timezone_str="UTC",
+        max_history_messages=5,
+        history_max_age_hours=24,
+        tools_config={
+            "enable_local_tools": [
+                "add_or_update_note"
+            ],  # Ensure our target tool is enabled
+            "enable_mcp_server_ids": [],
+            "confirm_tools": [],  # Ensure add_or_update_note is NOT here for API test
+        },
+        delegation_security_level="confirm",
+        id="chat_api_test_profile",
+    )
+
+
+@pytest.fixture(scope="function")
+def api_mock_llm_client() -> RuleBasedMockLLMClient:
+    """Provides a RuleBasedMockLLMClient for API tests."""
+    return RuleBasedMockLLMClient(rules=[])  # Rules will be set per-test
+
+
+@pytest_asyncio.fixture(scope="function")
+async def api_test_tools_provider(
+    api_mock_processing_service_config: ProcessingServiceConfig,
+) -> ToolsProvider:
+    """
+    Provides a ToolsProvider stack (Local, MCP, Composite, Confirming)
+    configured for testing.
+    """
+    local_provider = LocalToolsProvider(
+        definitions=local_tools_definition,  # Use actual definitions
+        implementations=local_tool_implementations,  # Use actual implementations
+        embedding_generator=None,  # Not needed for add_note
+        calendar_config={},  # Empty calendar config for tests
+    )
+    # Mock MCP provider as it's not the focus here
+    mock_mcp_provider = AsyncMock(spec=MCPToolsProvider)
+    mock_mcp_provider.get_tool_definitions.return_value = []
+    mock_mcp_provider.execute_tool.return_value = "MCP tool executed (mock)."
+    mock_mcp_provider.close.return_value = None
+
+    composite_provider = CompositeToolsProvider(
+        providers=[local_provider, mock_mcp_provider]
+    )
+    await composite_provider.get_tool_definitions()  # Initialize
+
+    confirming_provider = ConfirmingToolsProvider(
+        wrapped_provider=composite_provider,
+        tools_requiring_confirmation=set(
+            api_mock_processing_service_config.tools_config.get("confirm_tools", [])
+        ),
+    )
+    await confirming_provider.get_tool_definitions()  # Initialize
+    return confirming_provider
+
+
+@pytest.fixture(scope="function")
+def api_test_processing_service(
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    api_test_tools_provider: ToolsProvider,
+    api_mock_processing_service_config: ProcessingServiceConfig,
+    api_db_context: DatabaseContext,
+) -> ProcessingService:
+    """Creates a ProcessingService instance with mock/test components."""
+
+    # NotesContextProvider expects get_db_context_func to be Callable[[], Awaitable[DatabaseContext]]
+    # This means it wants a function that, when called and awaited, returns an *entered* DatabaseContext.
+    # The db_context fixture provides an already entered DatabaseContext instance.
+    # We need its engine to create new contexts for the provider if it manages its own lifecycle.
+    captured_engine = api_db_context.engine
+
+    async def get_entered_db_context_for_provider() -> DatabaseContext:
+        """
+        Returns an awaitable that resolves to an entered DatabaseContext.
+        This matches the expected type for NotesContextProvider's get_db_context_func.
+        """
+        async with get_db_context(engine=captured_engine) as new_ctx:
+            return new_ctx
+
+    # Create mock context providers
+    notes_provider = NotesContextProvider(
+        get_db_context_func=get_entered_db_context_for_provider,
+        prompts=api_mock_processing_service_config.prompts,
+    )
+    calendar_provider = CalendarContextProvider(
+        calendar_config={},  # Empty calendar config for tests
+        timezone_str=api_mock_processing_service_config.timezone_str,
+        prompts=api_mock_processing_service_config.prompts,
+    )
+    known_users_provider = KnownUsersContextProvider(
+        chat_id_to_name_map={}, prompts=api_mock_processing_service_config.prompts
+    )
+    context_providers = [notes_provider, calendar_provider, known_users_provider]
+
+    return ProcessingService(
+        llm_client=api_mock_llm_client,
+        tools_provider=api_test_tools_provider,
+        service_config=api_mock_processing_service_config,
+        context_providers=context_providers,
+        server_url="http://testserver",
+        app_config={},  # Minimal app_config for this test
+    )
+
+
+@pytest_asyncio.fixture(scope="function")
+async def app_fixture(
+    db_engine: AsyncEngine,  # Use the main db_engine fixture
+    api_test_processing_service: ProcessingService,
+    api_test_tools_provider: ToolsProvider,
+    api_mock_llm_client: LLMInterface,
+) -> FastAPI:
+    """
+    Creates a FastAPI application instance for testing, with a mock
+    ProcessingService.
+    """
+    # Make a copy of the actual app to avoid modifying it globally
+    app = FastAPI(
+        title=actual_app.title,
+        docs_url=actual_app.docs_url,
+        redoc_url=actual_app.redoc_url,
+        middleware=actual_app.user_middleware,  # Use actual middleware
+    )
+    app.include_router(actual_app.router)  # Include actual routers
+
+    # Override dependencies in app.state
+    app.state.processing_service = api_test_processing_service
+    app.state.tools_provider = (
+        api_test_tools_provider  # For /api/tools/execute if needed
+    )
+    app.state.database_engine = db_engine  # For get_db dependency
+    app.state.config = {  # Minimal config for dependencies
+        "auth_enabled": False,  # Authentication is OFF for tests
+        "database_url": str(db_engine.url),
+        "default_profile_settings": {  # For KnownUsersContextProvider
+            "chat_id_to_name_map": {},
+            "processing_config": {"prompts": {}},
+        },
+    }
+    app.state.llm_client = api_mock_llm_client  # For other parts that might use it
+    app.state.debug_mode = False  # Explicitly set for tests
+
+    # Ensure database is initialized for this app instance
+    async with get_db_context(engine=db_engine) as temp_db_ctx:
+        await init_db(db_engine)  # Initialize main schema
+        await temp_db_ctx.init_vector_db()  # Initialize vector schema
+
+    return app
+
+
+@pytest_asyncio.fixture(scope="function")
+async def api_test_client(app_fixture: FastAPI) -> AsyncGenerator[AsyncClient, None]:
+    """Provides an HTTPX AsyncClient for the test FastAPI app."""
+    transport = ASGITransport(app=app_fixture)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        yield client

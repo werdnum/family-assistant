@@ -48,6 +48,9 @@ class ConversationMessage(BaseModel):
     tool_calls: list[dict] | None = Field(None, description="Tool calls if any")
     tool_call_id: str | None = Field(None, description="Tool call ID for tool messages")
     error_traceback: str | None = Field(None, description="Error traceback if any")
+    attachments: list[dict] | None = Field(
+        None, description="Attachment metadata if any"
+    )
 
 
 class ConversationMessagesResponse(BaseModel):
@@ -341,6 +344,7 @@ async def get_conversation_messages(
                 tool_calls=msg.get("tool_calls"),
                 tool_call_id=msg.get("tool_call_id"),
                 error_traceback=msg.get("error_traceback"),
+                attachments=msg.get("attachments"),
             )
         )
 
@@ -403,12 +407,41 @@ async def api_chat_send_message_stream(
         )
 
     # Prepare trigger content for processing
-    trigger_content_parts = [{"type": "text", "text": payload.prompt}]
+    trigger_content_parts: list[dict[str, Any]] = [
+        {"type": "text", "text": payload.prompt}
+    ]
+
+    # Prepare attachment metadata for message history
+    attachment_metadata: list[dict[str, Any]] | None = None
+
+    # Add attachments if present
+    if payload.attachments:
+        attachment_metadata = []
+        for attachment in payload.attachments:
+            if attachment.get("type") == "image" and attachment.get("content"):
+                # Add image content in same format as Telegram interface
+                trigger_content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": attachment["content"]},
+                })
+                # Store attachment metadata for message history
+                attachment_metadata.append({
+                    "type": attachment["type"],
+                    "content_url": attachment["content"],
+                    # Include other metadata if available
+                    **{
+                        k: v
+                        for k, v in attachment.items()
+                        if k not in ["type", "content"]
+                    },
+                })
+
     interface_type = payload.interface_type or "api"
     user_name_for_api = "API User"
 
     async def event_generator() -> AsyncGenerator[str, None]:
         """Generate SSE formatted events from the processing stream."""
+
         # Queue for confirmation events
         confirmation_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
@@ -476,7 +509,6 @@ async def api_chat_send_message_stream(
                     return approved
                 except asyncio.CancelledError:
                     # Handle cancellation
-                    logger.info(f"Confirmation request {request_id} was cancelled")
                     return False
                 except Exception as e:
                     # Handle any other exceptions
@@ -498,7 +530,10 @@ async def api_chat_send_message_stream(
                         replied_to_interface_id=None,
                         chat_interface=None,
                         request_confirmation_callback=web_confirmation_callback,
+                        trigger_attachments=attachment_metadata,  # Pass attachment metadata
                     ):
+                        if event.type == "error":
+                            logger.error(f"Stream event error: {event.error}")
                         # Add events to queue
                         await confirmation_queue.put({
                             "type": "stream_event",
@@ -509,6 +544,7 @@ async def api_chat_send_message_stream(
                     await confirmation_queue.put({"type": "stream_end"})
                 except Exception as e:
                     # Queue error event
+                    logger.error(f"Error in process_stream: {e}", exc_info=True)
                     await confirmation_queue.put({"type": "error", "error": str(e)})
 
             # Start the stream processing task
@@ -525,7 +561,11 @@ async def api_chat_send_message_stream(
                     except asyncio.TimeoutError:
                         # Check if stream task is done
                         if stream_task.done():
-                            break
+                            # Check if there are still events in the queue before breaking
+                            if confirmation_queue.empty():
+                                break
+                            else:
+                                continue
                         continue
 
                     if queue_event["type"] == "confirmation_request":
@@ -610,7 +650,7 @@ async def api_chat_send_message_stream(
                 # Send a final close event to ensure client knows stream is done
                 yield f"event: close\ndata: {json.dumps({})}\n\n"
 
-    return StreamingResponse(
+    response = StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
         headers={
@@ -618,6 +658,34 @@ async def api_chat_send_message_stream(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",  # Disable Nginx buffering
             "Access-Control-Allow-Origin": "*",  # CORS support
+        },
+    )
+    return response
+
+
+@chat_api_router.get("/v1/debug/test_stream")
+async def debug_test_stream() -> StreamingResponse:
+    """Simple test endpoint to verify SSE streaming works."""
+    import asyncio
+
+    async def simple_event_generator() -> AsyncGenerator[str, None]:
+        logger.info("Starting simple stream test")
+        for i in range(5):
+            logger.info(f"Yielding test event {i}")
+            yield f"event: test\ndata: {json.dumps({'message': f'Test event {i}'})}\n\n"
+            await asyncio.sleep(0.1)
+        logger.info("Yielding end event")
+        yield f"event: end\ndata: {json.dumps({'done': True})}\n\n"
+        logger.info("Simple stream test completed")
+
+    return StreamingResponse(
+        simple_event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Access-Control-Allow-Origin": "*",
         },
     )
 

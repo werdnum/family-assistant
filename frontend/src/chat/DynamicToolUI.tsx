@@ -9,9 +9,9 @@ import { ToolWithConfirmation } from './ToolWithConfirmation';
 export const DynamicToolUI: React.FC<{
   toolName: string;
   toolCallId?: string;
-  args: any;
-  result?: any;
-  status?: any;
+  args: Record<string, unknown>;
+  result?: string | Record<string, unknown>;
+  status?: { type: string };
 }> = (props) => {
   const { toolName } = props;
 

@@ -897,6 +897,7 @@ class Assistant:
             event_sources=self.event_processor.sources
             if self.event_processor
             else None,
+            engine=self.database_engine,  # Pass the database engine
         )
         self.task_worker_instance.register_task_handler(
             "log_message", task_wrapper_handle_log_message

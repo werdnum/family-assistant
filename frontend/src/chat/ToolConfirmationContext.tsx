@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react';
 
 interface ToolConfirmationContextType {
-  pendingConfirmations: Map<string, any>;
+  pendingConfirmations: Map<string, { request_id: string; [key: string]: unknown }>;
   handleConfirmation: (toolCallId: string, requestId: string, approved: boolean) => Promise<void>;
 }
 
