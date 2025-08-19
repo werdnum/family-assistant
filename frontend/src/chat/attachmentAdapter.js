@@ -167,17 +167,14 @@ export class FileAttachmentAdapter {
         });
 
         if (!response.ok) {
-          console.warn(`Failed to delete attachment ${attachment.uploadedId} from server`);
-        } else {
-          console.warn(`Successfully deleted attachment ${attachment.uploadedId} from server`);
+          console.error(`Failed to delete attachment ${attachment.uploadedId} from server`);
         }
       }
     } catch (error) {
-      console.warn(`Error removing attachment from server: ${error.message}`);
+      console.error(`Error removing attachment from server: ${error.message}`);
     }
 
     // The runtime will remove the attachment from its internal state
-    console.warn(`Removing attachment: ${attachment.name}`);
   }
 }
 

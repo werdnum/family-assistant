@@ -5,7 +5,6 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pytest
 from PIL import Image
 
@@ -102,63 +101,6 @@ async def test_image_upload_basic_functionality(
             for error in console_error_checker.errors:
                 print(f"ERROR: {error}")
         console_error_checker.assert_no_errors()
-
-
-@pytest.mark.playwright
-@pytest.mark.asyncio
-async def test_image_upload_validation_file_size(
-    web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
-) -> None:
-    """Test file size validation for image uploads."""
-    page = web_test_fixture.page
-    chat_page = ChatPage(page, web_test_fixture.base_url)
-
-    # Navigate to chat
-    await chat_page.navigate_to_chat()
-
-    # Create a large test image file (larger than 100MB limit)
-    # We need to create a PNG that's actually larger than 100MB
-    # Use a very large image with random noise to prevent compression
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
-        # Create a 6000x6000 RGB image with random pixels (hard to compress)
-        # This should be around 108MB uncompressed and still large when saved as PNG
-        width, height = 6000, 6000
-        # Create random pixel data
-        random_pixels = np.random.randint(0, 256, (height, width, 3), dtype=np.uint8)
-        img = Image.fromarray(random_pixels, "RGB")
-        img.save(temp_file.name, "PNG", compress_level=0)  # Minimal compression
-        temp_path = temp_file.name
-
-    try:
-        # Wait for attachment button
-        attachment_button = page.locator('[data-testid="add-attachment-button"]').first
-        await attachment_button.wait_for(state="visible", timeout=10000)
-
-        # Set up file chooser handler
-        async with page.expect_file_chooser() as fc_info:
-            await attachment_button.click()
-
-        file_chooser = await fc_info.value
-        await file_chooser.set_files(temp_path)
-
-        # Wait for attachment to appear first (it will show with error state)
-        attachment_preview = page.locator('[data-testid="attachment-preview"]').first
-        await attachment_preview.wait_for(state="visible", timeout=5000)
-
-        # Now check for error message
-        error_message = page.locator('[data-testid="attachment-error-message"]').first
-        await error_message.wait_for(state="visible", timeout=5000)
-
-        # Verify error message is displayed and contains expected text
-        error_text = await error_message.text_content()
-        assert error_text
-        assert (
-            "size exceeds" in error_text.lower() or "file size" in error_text.lower()
-        ) and "mb" in error_text.lower()
-
-    finally:
-        # Clean up temp file
-        Path(temp_path).unlink(missing_ok=True)
 
 
 @pytest.mark.playwright

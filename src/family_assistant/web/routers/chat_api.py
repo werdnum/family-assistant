@@ -509,7 +509,6 @@ async def api_chat_send_message_stream(
                     return approved
                 except asyncio.CancelledError:
                     # Handle cancellation
-                    logger.debug(f"Confirmation request {request_id} was cancelled")
                     return False
                 except Exception as e:
                     # Handle any other exceptions
@@ -519,9 +518,6 @@ async def api_chat_send_message_stream(
             # Create task to process the interaction stream
             async def process_stream() -> None:
                 try:
-                    logger.debug(
-                        f"Starting processing stream for conversation {conversation_id}"
-                    )
                     async for (
                         event
                     ) in selected_processing_service.handle_chat_interaction_stream(
@@ -536,21 +532,15 @@ async def api_chat_send_message_stream(
                         request_confirmation_callback=web_confirmation_callback,
                         trigger_attachments=attachment_metadata,  # Pass attachment metadata
                     ):
-                        logger.debug(f"Received stream event: {event.type}")
                         if event.type == "error":
                             logger.error(f"Stream event error: {event.error}")
                         # Add events to queue
-                        logger.debug(f"Adding {event.type} event to queue")
                         await confirmation_queue.put({
                             "type": "stream_event",
                             "event": event,
                         })
-                        logger.debug(f"Successfully added {event.type} event to queue")
 
                     # Signal end of stream
-                    logger.debug(
-                        f"Processing stream completed for conversation {conversation_id}"
-                    )
                     await confirmation_queue.put({"type": "stream_end"})
                 except Exception as e:
                     # Queue error event
@@ -565,28 +555,16 @@ async def api_chat_send_message_stream(
                 while True:
                     try:
                         # Get next event from queue with timeout
-                        logger.debug("Waiting for event from queue (timeout=0.1s)")
                         queue_event = await asyncio.wait_for(
                             confirmation_queue.get(), timeout=0.1
                         )
-                        logger.debug(f"Received queue event: {queue_event['type']}")
-
-                        # DEBUG: Log the exact event content
-                        logger.debug(f"Full queue event: {queue_event}")
                     except asyncio.TimeoutError:
                         # Check if stream task is done
                         if stream_task.done():
-                            logger.debug(
-                                "Stream task is done, checking if queue is empty"
-                            )
                             # Check if there are still events in the queue before breaking
                             if confirmation_queue.empty():
-                                logger.debug("Queue is empty, breaking from main loop")
                                 break
                             else:
-                                logger.debug(
-                                    "Queue still has events, continuing to process"
-                                )
                                 continue
                         continue
 
@@ -612,15 +590,10 @@ async def api_chat_send_message_stream(
 
                     elif queue_event["type"] == "stream_event":
                         event = queue_event["event"]
-                        logger.debug(f"Processing stream event: {event.type}")
                         # Process normal stream events
                         if event.type == "content":
                             # Send text content chunks
-                            logger.debug(
-                                f"Yielding content event: {event.content[:50]}..."
-                            )
                             yield f"event: text\ndata: {json.dumps({'content': event.content})}\n\n"
-                            logger.debug("SSE content event yielded successfully")
 
                         elif event.type == "tool_call":
                             # Convert tool_call to dict for JSON serialization
@@ -640,17 +613,12 @@ async def api_chat_send_message_stream(
 
                         elif event.type == "done":
                             # Send completion event with optional metadata
-                            logger.debug(
-                                f"Processing done event with metadata: {event.metadata}"
-                            )
                             done_data: dict[str, Any] = {}
                             if event.metadata and event.metadata.get("reasoning_info"):
                                 done_data["reasoning_info"] = event.metadata[
                                     "reasoning_info"
                                 ]
-                            logger.debug("Yielding end event")
                             yield f"event: end\ndata: {json.dumps(done_data)}\n\n"
-                            logger.debug("SSE end event yielded successfully")
 
                         elif event.type == "error":
                             # Send error event
@@ -660,7 +628,6 @@ async def api_chat_send_message_stream(
                             yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
 
                     elif queue_event["type"] == "stream_end":
-                        logger.debug("Received stream_end event, breaking main loop")
                         break
 
                     elif queue_event["type"] == "error":
@@ -681,15 +648,8 @@ async def api_chat_send_message_stream(
                 yield f"event: error\ndata: {json.dumps({'error': error_msg, 'error_id': error_id})}\n\n"
             finally:
                 # Send a final close event to ensure client knows stream is done
-                logger.debug(
-                    f"Sending final close event for conversation {conversation_id}"
-                )
                 yield f"event: close\ndata: {json.dumps({})}\n\n"
-                logger.debug(
-                    f"SSE stream completely finished for conversation {conversation_id}"
-                )
 
-    logger.debug(f"Creating StreamingResponse for conversation {conversation_id}")
     response = StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -700,7 +660,6 @@ async def api_chat_send_message_stream(
             "Access-Control-Allow-Origin": "*",  # CORS support
         },
     )
-    logger.debug(f"StreamingResponse created for conversation {conversation_id}")
     return response
 
 

@@ -55,15 +55,17 @@ class AttachmentService:
         """
         Generate file storage path for an attachment.
 
-        Uses date-based directory structure: YYYY/MM/attachment_id.ext
+        Uses hash-based directory structure: XX/attachment_id.ext
+        where XX is the first 2 characters of the attachment_id (provides 256 buckets).
         """
-        now = datetime.now(timezone.utc)
-        year_month_dir = self.storage_path / str(now.year) / f"{now.month:02d}"
-        year_month_dir.mkdir(parents=True, exist_ok=True)
+        # Use first 2 characters of attachment_id for directory sharding
+        hash_prefix = attachment_id[:2]
+        hash_dir = self.storage_path / hash_prefix
+        hash_dir.mkdir(parents=True, exist_ok=True)
 
         # Use attachment_id as filename with original extension
         file_ext = Path(filename).suffix.lower()
-        return year_month_dir / f"{attachment_id}{file_ext}"
+        return hash_dir / f"{attachment_id}{file_ext}"
 
     def _validate_file(self, file: UploadFile) -> None:
         """
@@ -267,8 +269,6 @@ class AttachmentService:
         Returns:
             Path to the attachment file, or None if not found
         """
-        # Search for the file in the directory structure
-        # Since we don't store the exact path mapping, we need to search
         try:
             # Parse as UUID to validate format
             uuid.UUID(attachment_id)
@@ -276,19 +276,20 @@ class AttachmentService:
             logger.warning(f"Invalid attachment ID format: {attachment_id}")
             return None
 
-        # Search in year/month subdirectories
-        for year_dir in self.storage_path.glob("*/"):
-            if not year_dir.is_dir():
-                continue
-            for month_dir in year_dir.glob("*/"):
-                if not month_dir.is_dir():
-                    continue
-                # Look for files starting with the attachment ID
-                for file_path in month_dir.glob(f"{attachment_id}.*"):
-                    if file_path.is_file():
-                        return file_path
+        # Use hash prefix to directly locate the file
+        hash_prefix = attachment_id[:2]
+        hash_dir = self.storage_path / hash_prefix
 
-        logger.warning(f"Attachment file not found: {attachment_id}")
+        if not hash_dir.is_dir():
+            logger.info(f"Attachment file not found: {attachment_id}")
+            return None
+
+        # Look for files starting with the attachment ID in the hash directory
+        for file_path in hash_dir.glob(f"{attachment_id}.*"):
+            if file_path.is_file():
+                return file_path
+
+        logger.info(f"Attachment file not found: {attachment_id}")
         return None
 
     def get_content_type(self, file_path: Path) -> str:
@@ -337,29 +338,28 @@ class AttachmentService:
         """
         deleted_count = 0
 
-        for year_dir in self.storage_path.glob("*/"):
-            if not year_dir.is_dir():
+        # Iterate through hash-prefixed directories (00-ff)
+        for hash_dir in self.storage_path.glob("*/"):
+            if not hash_dir.is_dir():
                 continue
-            for month_dir in year_dir.glob("*/"):
-                if not month_dir.is_dir():
-                    continue
-                for file_path in month_dir.glob("*.*"):
-                    if not file_path.is_file():
-                        continue
 
-                    # Extract attachment ID from filename
-                    file_stem = file_path.stem
-                    try:
-                        uuid.UUID(file_stem)  # Validate it's a UUID
-                        if file_stem not in referenced_attachment_ids:
-                            file_path.unlink()
-                            deleted_count += 1
-                            logger.info(f"Deleted orphaned attachment: {file_stem}")
-                    except (ValueError, OSError) as e:
-                        logger.warning(
-                            f"Skipping non-UUID file or deletion error: {file_path}: {e}"
-                        )
-                        continue
+            for file_path in hash_dir.glob("*.*"):
+                if not file_path.is_file():
+                    continue
+
+                # Extract attachment ID from filename
+                file_stem = file_path.stem
+                try:
+                    uuid.UUID(file_stem)  # Validate it's a UUID
+                    if file_stem not in referenced_attachment_ids:
+                        file_path.unlink()
+                        deleted_count += 1
+                        logger.info(f"Deleted orphaned attachment: {file_stem}")
+                except (ValueError, OSError) as e:
+                    logger.warning(
+                        f"Skipping non-UUID file or deletion error: {file_path}: {e}"
+                    )
+                    continue
 
         logger.info(f"Cleaned up {deleted_count} orphaned attachment files")
         return deleted_count

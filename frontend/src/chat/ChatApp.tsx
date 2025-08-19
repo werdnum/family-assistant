@@ -195,9 +195,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       content: string;
       toolCalls: Array<Record<string, unknown>>;
     }) => {
-      // Do a final update with the complete content to ensure nothing was lost during rapid streaming
-      // Use a local copy of the ref to avoid race conditions
+      // Capture ref values locally to avoid race conditions
       const messageId = streamingMessageIdRef.current;
+      const toolCallMessageId = toolCallMessageIdRef.current;
+
       if (messageId && content) {
         setMessages((prev) =>
           prev.map((msg) => {
@@ -215,15 +216,19 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             return msg;
           })
         );
-      }
 
-      // Clean up the references and refresh conversations
-      // Use setTimeout to ensure state updates are processed before clearing
-      setTimeout(() => {
-        streamingMessageIdRef.current = null;
-        toolCallMessageIdRef.current = null;
+        // Clean up the references immediately after state update
+        // Only clear if the IDs haven't changed (avoiding race with new streaming)
+        if (streamingMessageIdRef.current === messageId) {
+          streamingMessageIdRef.current = null;
+        }
+        if (toolCallMessageIdRef.current === toolCallMessageId) {
+          toolCallMessageIdRef.current = null;
+        }
+
+        // Refresh conversations after state is updated
         fetchConversations();
-      }, 0);
+      }
     },
     [fetchConversations]
   );
