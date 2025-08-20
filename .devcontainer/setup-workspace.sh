@@ -183,6 +183,119 @@ if [ -f "/home/claude/.claude/CLAUDE.local.md" ]; then
     cp /home/claude/.claude/CLAUDE.local.md .claude/
 fi
 
+# One Shot Mode Configuration
+if [ "$ONESHOT_MODE" = "true" ]; then
+    echo "🎯 ONE SHOT MODE ACTIVE"
+    
+    # Merge oneshot settings with existing settings
+    mkdir -p .claude
+    
+    # Determine base settings file
+    if [ -f "/home/claude/.claude/settings.local.json" ]; then
+        BASE_SETTINGS="/home/claude/.claude/settings.local.json"
+    elif [ -f "/opt/claude-settings/settings.local.json" ]; then
+        BASE_SETTINGS="/opt/claude-settings/settings.local.json"
+    else
+        echo '{}' > /tmp/empty_settings.json
+        BASE_SETTINGS="/tmp/empty_settings.json"
+    fi
+    
+    # Merge settings using yq - this will properly concatenate arrays
+    if [ -f "/opt/oneshot-config/settings-oneshot.json" ]; then
+        cp "$BASE_SETTINGS" .claude/settings.local.json
+        yq eval-all '. as $item ireduce ({}; . *= $item)' .claude/settings.local.json "/opt/oneshot-config/settings-oneshot.json" > .claude/settings.tmp.json
+        mv .claude/settings.tmp.json .claude/settings.local.json
+    else
+        cp "$BASE_SETTINGS" .claude/settings.local.json
+    fi
+    
+    # Add oneshot instructions to CLAUDE.local.md
+    if [ -f "/opt/oneshot-config/CLAUDE.oneshot.md" ]; then
+        echo "" >> CLAUDE.local.md
+        cat "/opt/oneshot-config/CLAUDE.oneshot.md" >> CLAUDE.local.md
+    fi
+    
+    # Install strict stop hook for oneshot mode
+    if [ "$ONESHOT_STRICT_EXIT" = "true" ]; then
+        cat > .claude/stop-feedback-hook.sh <<'STOPEOF'
+#!/bin/bash
+
+# Read JSON from stdin
+json_input=$(cat)
+stop_hook_active=$(echo "$json_input" | jq -r '.stop_hook_active // false')
+
+# In oneshot mode, we're very strict
+if [ "$ONESHOT_MODE" = "true" ] && [ "$stop_hook_active" = "false" ]; then
+    echo "🎯 ONE SHOT MODE - Checking completion status..." >&2
+    echo >&2
+    
+    # First check if we're in a git repository
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "❌ BLOCKED: Not inside a git repository" >&2
+        echo "   You MUST initialize git and commit all work" >&2
+        exit 1  # Block exit
+    fi
+    
+    # Check for uncommitted changes - MUST be clean
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "❌ BLOCKED: There are uncommitted changes" >&2
+        echo "   You MUST commit all changes before stopping" >&2
+        git status --short >&2
+        exit 1  # Block exit
+    fi
+    
+    # Check for unpushed commits - MUST be pushed
+    upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null)
+    if [ -n "$upstream" ]; then
+        unpushed=$(git log --oneline "$upstream"..HEAD)
+        if [ -n "$unpushed" ]; then
+            echo "❌ BLOCKED: There are unpushed commits" >&2
+            echo "   You MUST push all commits before stopping" >&2
+            echo "$unpushed" | head -5 >&2
+            exit 1  # Block exit
+        fi
+    elif [ -n "$(git log --oneline | head -1)" ]; then
+        # Has commits but no upstream
+        echo "❌ BLOCKED: No upstream branch set" >&2
+        echo "   You MUST push to a remote branch before stopping" >&2
+        exit 1  # Block exit
+    fi
+    
+    # Check test status
+    if [ -f ".claude/test-verification-core.sh" ]; then
+        source .claude/test-verification-core.sh
+        TRANSCRIPT_PATH=$(echo "$json_input" | jq -r '.transcript_path // empty')
+        
+        if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
+            if ! check_test_status "$TRANSCRIPT_PATH"; then
+                echo "❌ BLOCKED: Tests have not passed" >&2
+                echo "   You MUST run 'poe test' and fix any failures" >&2
+                exit 1  # Block exit
+            fi
+        fi
+    fi
+    
+    echo "✅ All requirements met for one shot mode:" >&2
+    echo "   • Working directory is clean" >&2
+    echo "   • All commits pushed to remote" >&2
+    echo "   • Tests are passing" >&2
+    echo >&2
+    echo "🎯 ONE SHOT TASK COMPLETE - You may now exit" >&2
+fi
+
+# For normal mode or when requirements are met
+exit 0
+STOPEOF
+        chmod +x .claude/stop-feedback-hook.sh
+    fi
+    
+    echo "One shot mode configuration complete"
+    echo "  • Settings merged with oneshot permissions"
+    echo "  • Instructions added to CLAUDE.local.md"
+    echo "  • Strict stop hook installed"
+    echo ""
+fi
+
 # Configure MCP servers for Claude
 echo "Configuring MCP servers..."
 cd /workspace
@@ -216,3 +329,4 @@ echo "Workspace setup complete!"
 
 # Execute the command passed to the container
 exec "$@"
+
