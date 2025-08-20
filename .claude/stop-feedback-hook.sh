@@ -1,5 +1,14 @@
 #!/bin/bash
 
+# Debug: Show environment and execution info
+echo "🔍 STOP HOOK DEBUG:" >&2
+echo "   PWD: $(pwd)" >&2
+echo "   USER: $(whoami)" >&2
+echo "   ONESHOT_MODE: '$ONESHOT_MODE'" >&2
+echo "   ONESHOT_STRICT_EXIT: '$ONESHOT_STRICT_EXIT'" >&2
+echo "   Script: $(realpath "$0" 2>/dev/null || echo "$0")" >&2
+echo >&2
+
 # Read JSON from stdin and extract stop_hook_active
 json_input=$(cat)
 stop_hook_active=$(echo "$json_input" | jq -r '.stop_hook_active // false')
