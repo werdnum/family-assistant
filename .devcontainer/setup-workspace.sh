@@ -268,48 +268,37 @@ if [ "$ONESHOT_MODE" = "true" ]; then
         exit 0  # Allow exit with acknowledged failure
     fi
     
-    echo "   💡 If you cannot complete this task, write .claude/FAILURE_REASON" >&2
-    echo "      explaining why (e.g., missing permissions, dependencies, etc.)" >&2
-    echo >&2
+    # Collect all issues instead of exiting on first failure
+    issues=()
     
-    # First check if we're in a git repository
+    # Check if we're in a git repository
     if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        echo "❌ BLOCKED: Not inside a git repository" >&2
-        echo "   You MUST initialize git and commit all work" >&2
-        exit 2  # Block exit - continue Claude
-    fi
-    
-    # Check current branch - suggest feature branch if on main/master
-    current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
-    if [ "$current_branch" = "main" ] || [ "$current_branch" = "master" ]; then
-        echo "❌ BLOCKED: You're on the $current_branch branch" >&2
-        echo "   Create a feature branch first: git checkout -b feature/..." >&2
-        exit 2  # Block exit - continue Claude
-    fi
-    
-    # Check for uncommitted changes - MUST be clean
-    if [ -n "$(git status --porcelain)" ]; then
-        echo "❌ BLOCKED: There are uncommitted changes" >&2
-        echo "   You MUST commit all changes before stopping" >&2
-        git status --short >&2
-        exit 2  # Block exit - continue Claude
-    fi
-    
-    # Check for unpushed commits - MUST be pushed
-    upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null)
-    if [ -n "$upstream" ]; then
-        unpushed=$(git log --oneline "$upstream"..HEAD)
-        if [ -n "$unpushed" ]; then
-            echo "❌ BLOCKED: There are unpushed commits" >&2
-            echo "   You MUST push all commits before stopping" >&2
-            echo "$unpushed" | head -5 >&2
-            exit 2  # Block exit - continue Claude
+        issues+=("❌ Not inside a git repository - You MUST initialize git and commit all work")
+    else
+        # Only do git-related checks if we're in a repository
+        
+        # Check current branch - suggest feature branch if on main/master
+        current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+        if [ "$current_branch" = "main" ] || [ "$current_branch" = "master" ]; then
+            issues+=("❌ You're on the $current_branch branch - Create a feature branch first: git checkout -b feature/...")
         fi
-    elif [ -n "$(git log --oneline | head -1)" ]; then
-        # Has commits but no upstream
-        echo "❌ BLOCKED: No upstream branch set" >&2
-        echo "   You MUST push to a remote branch before stopping" >&2
-        exit 2  # Block exit - continue Claude
+        
+        # Check for uncommitted changes - MUST be clean
+        if [ -n "$(git status --porcelain)" ]; then
+            issues+=("❌ There are uncommitted changes - You MUST commit all changes before stopping")
+        fi
+        
+        # Check for unpushed commits - MUST be pushed
+        upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null)
+        if [ -n "$upstream" ]; then
+            unpushed=$(git log --oneline "$upstream"..HEAD)
+            if [ -n "$unpushed" ]; then
+                issues+=("❌ There are unpushed commits - You MUST push all commits before stopping")
+            fi
+        elif [ -n "$(git log --oneline | head -1)" ]; then
+            # Has commits but no upstream
+            issues+=("❌ No upstream branch set - You MUST push to a remote branch before stopping")
+        fi
     fi
     
     # Check test status
@@ -319,13 +308,25 @@ if [ "$ONESHOT_MODE" = "true" ]; then
         
         if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
             if ! check_test_status "$TRANSCRIPT_PATH"; then
-                echo "❌ BLOCKED: Tests have not passed" >&2
-                echo "   You MUST run 'poe test' and fix any failures" >&2
-                exit 2  # Block exit - continue Claude
+                issues+=("❌ Tests have not passed - You MUST run 'poe test' and fix any failures")
             fi
         fi
     fi
     
+    # Show all issues at once if any exist
+    if [ ${#issues[@]} -gt 0 ]; then
+        echo "🎯 ONE SHOT MODE - Multiple issues must be resolved:" >&2
+        echo >&2
+        for issue in "${issues[@]}"; do
+            echo "   $issue" >&2
+        done
+        echo >&2
+        echo "   💡 Fix ALL issues above, or write .claude/FAILURE_REASON if impossible" >&2
+        echo "      explaining why (e.g., missing permissions, dependencies, etc.)" >&2
+        exit 2  # Block exit with all feedback
+    fi
+    
+    # Success case - all requirements met
     echo "✅ All requirements met for one shot mode:" >&2
     echo "   • Working directory is clean" >&2
     echo "   • All commits pushed to remote" >&2
