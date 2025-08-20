@@ -40,6 +40,7 @@ services:
       - HOME=/home/claude
       # Pass through any additional environment variables
       - CLAUDE_PROJECT_REPO=${CLAUDE_PROJECT_REPO:-https://github.com/werdnum/family-assistant.git}
+      - CLAUDE_PROJECT_BRANCH=${CLAUDE_PROJECT_BRANCH:-}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
