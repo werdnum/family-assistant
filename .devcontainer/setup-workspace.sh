@@ -186,6 +186,12 @@ fi
 # One Shot Mode Configuration
 if [ "$ONESHOT_MODE" = "true" ]; then
     echo "🎯 ONE SHOT MODE ACTIVE"
+    echo "🔍 Debug: Container environment:"
+    echo "   HOME=$HOME"
+    echo "   CLAUDE_HOME_DIR=$CLAUDE_HOME_DIR"
+    echo "   WORKSPACE_DIR=$WORKSPACE_DIR"
+    echo "   PWD=$(pwd)"
+    echo "   User: $(whoami) ($(id))"
     
     # Merge oneshot settings with existing settings
     mkdir -p .claude
