@@ -70,33 +70,23 @@ fi
 # Change to workspace directory
 cd /workspace
 
-# Debug: Show git repository setup status
-echo "🔍 Git repository setup:"
-echo "   CLAUDE_PROJECT_REPO: '$CLAUDE_PROJECT_REPO'"
-echo "   .git directory exists: $([ -d ".git" ] && echo "YES" || echo "NO")"
-echo "   Current directory: $(pwd)"
-echo "   Directory contents: $(ls -la)"
-
 # Clone repository if CLAUDE_PROJECT_REPO is set and .git doesn't exist
 if [ -n "$CLAUDE_PROJECT_REPO" ] && [ ! -d ".git" ]; then
-    echo "Cloning repository from $CLAUDE_PROJECT_REPO..."
+    echo "Cloning repository from $CLAUDE_PROJECT_REPO (branch: ${CLAUDE_PROJECT_BRANCH:-main})..."
     
     # Use GitHub token if available
     if [ -n "$GITHUB_TOKEN" ]; then
         # Extract repo path from URL
         REPO_PATH=$(echo "$CLAUDE_PROJECT_REPO" | sed -E 's|https://github.com/||; s|\.git$||')
         AUTHED_URL="https://${GITHUB_TOKEN}@github.com/${REPO_PATH}.git"
-        echo "   Using authenticated URL for: $REPO_PATH"
-        git clone "$AUTHED_URL" .
+        git clone --branch "${CLAUDE_PROJECT_BRANCH:-main}" "$AUTHED_URL" .
     else
-        echo "   Using unauthenticated clone"
-        git clone "$CLAUDE_PROJECT_REPO" .
+        git clone --branch "${CLAUDE_PROJECT_BRANCH:-main}" "$CLAUDE_PROJECT_REPO" .
     fi
     
     # Verify clone was successful
     if [ -d ".git" ]; then
-        echo "   ✅ Repository cloned successfully"
-        echo "   New directory contents: $(ls -la)"
+        echo "   ✅ Repository cloned successfully on branch $(git rev-parse --abbrev-ref HEAD)"
     else
         echo "   ❌ Repository clone failed"
         if [ "$ONESHOT_MODE" = "true" ]; then
@@ -247,8 +237,8 @@ if [ "$ONESHOT_MODE" = "true" ]; then
         cat "/opt/oneshot-config/CLAUDE.oneshot.md" >> CLAUDE.local.md
     fi
     
-    # Note: Oneshot stop hook logic is now in .claude/stop-feedback-hook.sh 
-    # which checks ONESHOT_MODE environment variable
+    # Note: Oneshot stop hook behavior is handled in .claude/stop-feedback-hook.sh 
+    # by checking ONESHOT_MODE environment variable
     
     echo "One shot mode configuration complete"
     echo "  • Settings merged with oneshot permissions"

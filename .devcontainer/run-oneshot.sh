@@ -3,26 +3,53 @@
 
 set -e
 
+# Parse command line arguments
+BRANCH="main"
+TASK=""
+WORKSPACE_ID=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --branch|-b)
+            BRANCH="$2"
+            shift 2
+            ;;
+        --workspace-id)
+            WORKSPACE_ID="$2"
+            shift 2
+            ;;
+        *)
+            if [ -z "$TASK" ]; then
+                TASK="$1"
+            else
+                # Second positional argument is workspace ID (for backward compatibility)
+                WORKSPACE_ID="$1"
+            fi
+            shift
+            ;;
+    esac
+done
+
 # Check if task/prompt provided
-if [ $# -eq 0 ]; then
+if [ -z "$TASK" ]; then
     echo "❌ Error: No task provided for oneshot mode" >&2
     echo "" >&2
     echo "Usage:" >&2
-    echo "  $0 \"<task description>\"" >&2
-    echo "  $0 \"<task>\" [workspace-id]" >&2
+    echo "  $0 \"<task description>\" [workspace-id]" >&2
+    echo "  $0 --branch <branch> \"<task description>\"" >&2
+    echo "  $0 --workspace-id <id> \"<task description>\"" >&2
     echo "" >&2
     echo "Examples:" >&2
     echo "  $0 \"Fix the failing tests in test_api.py\"" >&2
-    echo "  $0 \"Add user authentication to the web interface\" auth-feature" >&2
-    echo "  $0 \"Investigate the memory leak in the processing service\"" >&2
+    echo "  $0 --branch feature/oneshot-mode \"Add user authentication\"" >&2
+    echo "  $0 \"Investigate memory leak\" custom-workspace" >&2
     exit 1
 fi
 
-# First argument is the task
-TASK="$1"
-
-# Second argument is optional workspace ID
-WORKSPACE_ID=${2:-$(date +%Y%m%d_%H%M%S)_$$}
+# Set default workspace ID if not provided
+if [ -z "$WORKSPACE_ID" ]; then
+    WORKSPACE_ID=$(date +%Y%m%d_%H%M%S)_$$
+fi
 
 # Load environment variables from .env file if it exists
 if [ -f ".env" ]; then
@@ -54,14 +81,11 @@ fi
 # For oneshot mode, we want to clone the current repo into the isolated workspace
 DETECTED_REPO_URL=$(git remote get-url origin 2>/dev/null || echo "")
 export CLAUDE_PROJECT_REPO="${CLAUDE_PROJECT_REPO:-"$DETECTED_REPO_URL"}"
+export CLAUDE_PROJECT_BRANCH="$BRANCH"
 export GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 export GEMINI_API_KEY="${GEMINI_API_KEY:-}"
 export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
 export OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
-
-echo "🔍 Debug: Git repository detection:"
-echo "   Detected repo URL: '$DETECTED_REPO_URL'"
-echo "   Final CLAUDE_PROJECT_REPO: '$CLAUDE_PROJECT_REPO'"
 
 echo "🎯 Starting One Shot Mode"
 echo "   Task: $TASK"

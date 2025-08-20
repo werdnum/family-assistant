@@ -75,6 +75,7 @@ services:
       - ONESHOT_STRICT_EXIT=${ONESHOT_STRICT_EXIT:-}
       - ONESHOT_TASK=${ONESHOT_TASK:-}
       - CLAUDE_PROJECT_REPO=${CLAUDE_PROJECT_REPO:-}
+      - CLAUDE_PROJECT_BRANCH=${CLAUDE_PROJECT_BRANCH:-}
       # MCP server API keys - passed through from host environment
       - BRAVE_API_KEY=${BRAVE_API_KEY:-}
       - HOMEASSISTANT_API_KEY=${HOMEASSISTANT_API_KEY:-}
