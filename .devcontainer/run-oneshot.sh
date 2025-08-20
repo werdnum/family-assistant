@@ -51,7 +51,8 @@ if [ -z "$CLAUDE_HOME_DIR" ]; then
 fi
 
 # Pass through other environment variables that might be needed
-export CLAUDE_PROJECT_REPO="${CLAUDE_PROJECT_REPO:-}"
+# For oneshot mode, we want to clone the current repo into the isolated workspace
+export CLAUDE_PROJECT_REPO="${CLAUDE_PROJECT_REPO:-$(git remote get-url origin 2>/dev/null || echo "")}"
 export GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 export GEMINI_API_KEY="${GEMINI_API_KEY:-}"
 export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
