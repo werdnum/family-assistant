@@ -256,15 +256,34 @@ if [ "$ONESHOT_MODE" = "true" ]; then
 json_input=$(cat)
 stop_hook_active=$(echo "$json_input" | jq -r '.stop_hook_active // false')
 
-# In oneshot mode, we're very strict
-if [ "$ONESHOT_MODE" = "true" ] && [ "$stop_hook_active" = "false" ]; then
+# In oneshot mode, we're very strict - ignore stop_hook_active to always enforce
+if [ "$ONESHOT_MODE" = "true" ]; then
     echo "🎯 ONE SHOT MODE - Checking completion status..." >&2
+    echo >&2
+    
+    # Check for failure acknowledgment first
+    if [ -f ".claude/FAILURE_REASON" ]; then
+        echo "❌ TASK MARKED AS FAILED" >&2
+        echo "   Reason: $(cat .claude/FAILURE_REASON)" >&2
+        exit 0  # Allow exit with acknowledged failure
+    fi
+    
+    echo "   💡 If you cannot complete this task, write .claude/FAILURE_REASON" >&2
+    echo "      explaining why (e.g., missing permissions, dependencies, etc.)" >&2
     echo >&2
     
     # First check if we're in a git repository
     if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         echo "❌ BLOCKED: Not inside a git repository" >&2
         echo "   You MUST initialize git and commit all work" >&2
+        exit 1  # Block exit
+    fi
+    
+    # Check current branch - suggest feature branch if on main/master
+    current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    if [ "$current_branch" = "main" ] || [ "$current_branch" = "master" ]; then
+        echo "❌ BLOCKED: You're on the $current_branch branch" >&2
+        echo "   Create a feature branch first: git checkout -b feature/..." >&2
         exit 1  # Block exit
     fi
     

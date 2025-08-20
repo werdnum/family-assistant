@@ -16,6 +16,23 @@ You are running in ONE SHOT MODE - NON-INTERACTIVE AUTONOMOUS EXECUTION. This me
 - ✅ Tests passing (`poe test` succeeds)
 - ✅ Task fully completed
 
+## If you cannot complete the task:
+
+If you encounter blockers that make the task impossible to complete (missing permissions,
+dependencies, external service failures, etc.), you can acknowledge this by writing:
+
+```bash
+echo "Cannot complete task: [reason]" > .claude/FAILURE_REASON
+```
+
+Examples:
+
+- `echo "Missing API key for external service" > .claude/FAILURE_REASON`
+- `echo "Required dependency not available in environment" > .claude/FAILURE_REASON`
+- `echo "Tests require manual intervention that cannot be automated" > .claude/FAILURE_REASON`
+
+This will allow the oneshot mode to exit gracefully while documenting why the task failed.
+
 ## Auto-approved tools in oneshot mode:
 
 - `git push` - Push commits to remote
@@ -23,4 +40,5 @@ You are running in ONE SHOT MODE - NON-INTERACTIVE AUTONOMOUS EXECUTION. This me
 - `git commit -m` - Commit changes
 - All standard approved tools from normal mode
 
-Remember: The stop hook will BLOCK your exit if these conditions aren't met.
+Remember: The stop hook will BLOCK your exit unless requirements are met OR you acknowledge failure
+with FAILURE_REASON.
