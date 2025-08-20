@@ -115,9 +115,9 @@ RUN npm install -g playwright && \
 # Switch back to root for remaining system-level operations
 USER root
 
-# Install Python dependencies for scraper MCP (contrib/scrape_mcp.py)
+# Install Python dependencies for scraper MCP and jsonmerge for oneshot config
 RUN uv venv /venv && \
-    uv pip install -p /venv/bin/python --system "playwright>=1.0" "markitdown[html]>=0.1.0" && \
+    uv pip install -p /venv/bin/python --system "playwright>=1.0" "markitdown[html]>=0.1.0" "jsonmerge>=1.9.0" && \
     /venv/bin/playwright install chromium && \
     chown -R claude:claude /venv
 

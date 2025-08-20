@@ -238,13 +238,40 @@ if [ "$ONESHOT_MODE" = "true" ]; then
         BASE_SETTINGS="/tmp/empty_settings.json"
     fi
     
-    # Merge settings using yq - this will properly concatenate arrays
+    # Merge settings using jsonmerge Python library for proper array concatenation
     if [ -f "/opt/oneshot-config/settings-oneshot.json" ]; then
         cp "$BASE_SETTINGS" .claude/settings.local.json
-        yq eval-all '. as $item ireduce ({}; . *= $item)' .claude/settings.local.json "/opt/oneshot-config/settings-oneshot.json" > .claude/settings.tmp.json
+        # Use jsonmerge to properly merge settings with array concatenation
+        /venv/bin/python -c '
+import json
+from jsonmerge import merge
+
+with open(".claude/settings.local.json") as f1:
+    base = json.load(f1)
+    
+with open("/opt/oneshot-config/settings-oneshot.json") as f2:
+    oneshot = json.load(f2)
+
+# Merge with append strategy for arrays (specifically permissions.allow)
+merged = merge(base, oneshot, schema={
+    "properties": {
+        "permissions": {
+            "properties": {
+                "allow": {
+                    "mergeStrategy": "append"
+                }
+            }
+        }
+    }
+})
+
+print(json.dumps(merged, indent=2))
+' > .claude/settings.tmp.json
         mv .claude/settings.tmp.json .claude/settings.local.json
+        echo "   Settings merged using jsonmerge - permissions arrays concatenated"
     else
         cp "$BASE_SETTINGS" .claude/settings.local.json
+        echo "   No oneshot settings found, using base settings only"
     fi
     
     # Add oneshot instructions to CLAUDE.local.md

@@ -4,8 +4,8 @@
       "Bash(git push:*)",
       "Bash(git push --set-upstream:*)",
       "Bash(gh pr create:*)",
-      "Bash(git commit -m:*)",
-      "Bash(git add .:*)",
+      "Bash(git commit:*)",
+      "Bash(git add:*)",
       "Bash(git checkout -b:*)"
     ]
   }
