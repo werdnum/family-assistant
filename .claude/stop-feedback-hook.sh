@@ -89,6 +89,15 @@ if [ "$ONESHOT_MODE" = "true" ]; then
     echo "   • All commits pushed to remote" >&2
     echo "   • Tests are passing" >&2
     echo >&2
+    
+    # Check if we're on a feature branch and suggest creating a PR
+    current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    if [ "$current_branch" != "main" ] && [ "$current_branch" != "master" ]; then
+        echo "💡 Consider creating a pull request:" >&2
+        echo "   gh pr create --title \"Brief description\" --body \"Description of changes\"" >&2
+        echo >&2
+    fi
+    
     echo "🎯 ONE SHOT TASK COMPLETE - You may now exit" >&2
     exit 0  # Allow exit
 
