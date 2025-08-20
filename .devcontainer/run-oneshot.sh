@@ -24,6 +24,15 @@ TASK="$1"
 # Second argument is optional workspace ID
 WORKSPACE_ID=${2:-$(date +%Y%m%d_%H%M%S)_$$}
 
+# Load environment variables from .env file if it exists
+if [ -f ".env" ]; then
+    echo "Loading environment from .env file..."
+    # Safely load .env file without command injection risk
+    set -a
+    source .env
+    set +a
+fi
+
 # Create isolated workspace directory on host
 WORKSPACE_HOST_DIR="./workspace-oneshot/${WORKSPACE_ID}"
 mkdir -p "$WORKSPACE_HOST_DIR"
@@ -32,8 +41,12 @@ mkdir -p "$WORKSPACE_HOST_DIR"
 export ONESHOT_MODE=true
 export ONESHOT_STRICT_EXIT=true
 export ONESHOT_TASK="$TASK"
+# For oneshot mode, always use isolated workspace regardless of .env
 export WORKSPACE_DIR="$WORKSPACE_HOST_DIR"
-export CLAUDE_HOME_DIR="${CLAUDE_HOME_DIR:-./claude-home}"  # Shared home
+# CLAUDE_HOME_DIR should already be set from .env if it exists, don't override it
+if [ -z "$CLAUDE_HOME_DIR" ]; then
+    export CLAUDE_HOME_DIR="./claude-home"
+fi
 
 # Pass through other environment variables that might be needed
 export CLAUDE_PROJECT_REPO="${CLAUDE_PROJECT_REPO:-}"
