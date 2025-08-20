@@ -1,9 +1,6 @@
 {
   "permissions": {
     "allow": [
-      "Write(*)",
-      "Edit(*)",
-      "MultiEdit(*)",
       "Bash(git push:*)",
       "Bash(git push --set-upstream:*)",
       "Bash(gh pr create:*)",

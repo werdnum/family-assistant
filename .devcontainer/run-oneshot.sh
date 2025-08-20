@@ -103,7 +103,8 @@ echo "Claude will work on: $TASK"
 echo ""
 
 # Run claude with the task as argument - this makes it non-interactive
-$DOCKER_COMPOSE_CMD -f .devcontainer/docker-compose.yml run --rm claude claude "$TASK"
+# Use --permission-mode acceptEdits to auto-approve all edits in oneshot mode
+$DOCKER_COMPOSE_CMD -f .devcontainer/docker-compose.yml run --rm claude claude --permission-mode acceptEdits "$TASK"
 
 echo ""
 echo "🎯 One shot session ended"
