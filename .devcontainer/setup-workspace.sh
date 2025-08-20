@@ -276,7 +276,7 @@ if [ "$ONESHOT_MODE" = "true" ]; then
     if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         echo "❌ BLOCKED: Not inside a git repository" >&2
         echo "   You MUST initialize git and commit all work" >&2
-        exit 1  # Block exit
+        exit 2  # Block exit - continue Claude
     fi
     
     # Check current branch - suggest feature branch if on main/master
@@ -284,7 +284,7 @@ if [ "$ONESHOT_MODE" = "true" ]; then
     if [ "$current_branch" = "main" ] || [ "$current_branch" = "master" ]; then
         echo "❌ BLOCKED: You're on the $current_branch branch" >&2
         echo "   Create a feature branch first: git checkout -b feature/..." >&2
-        exit 1  # Block exit
+        exit 2  # Block exit - continue Claude
     fi
     
     # Check for uncommitted changes - MUST be clean
@@ -292,7 +292,7 @@ if [ "$ONESHOT_MODE" = "true" ]; then
         echo "❌ BLOCKED: There are uncommitted changes" >&2
         echo "   You MUST commit all changes before stopping" >&2
         git status --short >&2
-        exit 1  # Block exit
+        exit 2  # Block exit - continue Claude
     fi
     
     # Check for unpushed commits - MUST be pushed
@@ -303,13 +303,13 @@ if [ "$ONESHOT_MODE" = "true" ]; then
             echo "❌ BLOCKED: There are unpushed commits" >&2
             echo "   You MUST push all commits before stopping" >&2
             echo "$unpushed" | head -5 >&2
-            exit 1  # Block exit
+            exit 2  # Block exit - continue Claude
         fi
     elif [ -n "$(git log --oneline | head -1)" ]; then
         # Has commits but no upstream
         echo "❌ BLOCKED: No upstream branch set" >&2
         echo "   You MUST push to a remote branch before stopping" >&2
-        exit 1  # Block exit
+        exit 2  # Block exit - continue Claude
     fi
     
     # Check test status
@@ -321,7 +321,7 @@ if [ "$ONESHOT_MODE" = "true" ]; then
             if ! check_test_status "$TRANSCRIPT_PATH"; then
                 echo "❌ BLOCKED: Tests have not passed" >&2
                 echo "   You MUST run 'poe test' and fix any failures" >&2
-                exit 1  # Block exit
+                exit 2  # Block exit - continue Claude
             fi
         fi
     fi
