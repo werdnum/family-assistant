@@ -138,7 +138,8 @@ COPY oneshot-config /opt/oneshot-config/
 COPY setup-workspace.sh /usr/local/bin/
 COPY claude-wrapper.sh /usr/local/bin/claude-wrapper
 COPY throttle_backspaces.py /usr/local/bin/
-RUN chmod +x /usr/local/bin/setup-workspace.sh /usr/local/bin/claude-wrapper /usr/local/bin/throttle_backspaces.py
+COPY merge-settings.py /usr/local/bin/
+RUN chmod +x /usr/local/bin/setup-workspace.sh /usr/local/bin/claude-wrapper /usr/local/bin/throttle_backspaces.py /usr/local/bin/merge-settings.py
 
 # Create symlink for claude command that uses the wrapper
 RUN ln -sf /usr/local/bin/claude-wrapper /usr/local/bin/claude
