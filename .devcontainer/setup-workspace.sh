@@ -72,6 +72,12 @@ cd /workspace
 
 # Clone repository if CLAUDE_PROJECT_REPO is set and .git doesn't exist
 if [ -n "$CLAUDE_PROJECT_REPO" ] && [ ! -d ".git" ]; then
+    echo "🔍 Git clone debug:"
+    echo "   CLAUDE_PROJECT_REPO: '$CLAUDE_PROJECT_REPO'"
+    echo "   CLAUDE_PROJECT_BRANCH: '${CLAUDE_PROJECT_BRANCH:-main}'"
+    echo "   Target branch: '${CLAUDE_PROJECT_BRANCH:-main}'"
+    echo
+    
     echo "Cloning repository from $CLAUDE_PROJECT_REPO (branch: ${CLAUDE_PROJECT_BRANCH:-main})..."
     
     # Use GitHub token if available
@@ -79,14 +85,24 @@ if [ -n "$CLAUDE_PROJECT_REPO" ] && [ ! -d ".git" ]; then
         # Extract repo path from URL
         REPO_PATH=$(echo "$CLAUDE_PROJECT_REPO" | sed -E 's|https://github.com/||; s|\.git$||')
         AUTHED_URL="https://${GITHUB_TOKEN}@github.com/${REPO_PATH}.git"
+        echo "   Running: git clone --branch '${CLAUDE_PROJECT_BRANCH:-main}' [AUTHED_URL] ."
         git clone --branch "${CLAUDE_PROJECT_BRANCH:-main}" "$AUTHED_URL" .
     else
+        echo "   Running: git clone --branch '${CLAUDE_PROJECT_BRANCH:-main}' '$CLAUDE_PROJECT_REPO' ."
         git clone --branch "${CLAUDE_PROJECT_BRANCH:-main}" "$CLAUDE_PROJECT_REPO" .
     fi
     
-    # Verify clone was successful
+    # Verify clone was successful and show actual branch
     if [ -d ".git" ]; then
-        echo "   ✅ Repository cloned successfully on branch $(git rev-parse --abbrev-ref HEAD)"
+        ACTUAL_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        echo "   ✅ Repository cloned successfully"
+        echo "   📋 Requested branch: '${CLAUDE_PROJECT_BRANCH:-main}'"
+        echo "   📋 Actual branch: '$ACTUAL_BRANCH'"
+        
+        # Check if we got the right branch
+        if [ "$ACTUAL_BRANCH" != "${CLAUDE_PROJECT_BRANCH:-main}" ]; then
+            echo "   ⚠️  WARNING: Cloned branch '$ACTUAL_BRANCH' differs from requested '${CLAUDE_PROJECT_BRANCH:-main}'"
+        fi
     else
         echo "   ❌ Repository clone failed"
         if [ "$ONESHOT_MODE" = "true" ]; then
