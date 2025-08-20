@@ -70,6 +70,13 @@ fi
 # Change to workspace directory
 cd /workspace
 
+# Debug: Show git repository setup status
+echo "🔍 Git repository setup:"
+echo "   CLAUDE_PROJECT_REPO: '$CLAUDE_PROJECT_REPO'"
+echo "   .git directory exists: $([ -d ".git" ] && echo "YES" || echo "NO")"
+echo "   Current directory: $(pwd)"
+echo "   Directory contents: $(ls -la)"
+
 # Clone repository if CLAUDE_PROJECT_REPO is set and .git doesn't exist
 if [ -n "$CLAUDE_PROJECT_REPO" ] && [ ! -d ".git" ]; then
     echo "Cloning repository from $CLAUDE_PROJECT_REPO..."
@@ -79,9 +86,23 @@ if [ -n "$CLAUDE_PROJECT_REPO" ] && [ ! -d ".git" ]; then
         # Extract repo path from URL
         REPO_PATH=$(echo "$CLAUDE_PROJECT_REPO" | sed -E 's|https://github.com/||; s|\.git$||')
         AUTHED_URL="https://${GITHUB_TOKEN}@github.com/${REPO_PATH}.git"
+        echo "   Using authenticated URL for: $REPO_PATH"
         git clone "$AUTHED_URL" .
     else
+        echo "   Using unauthenticated clone"
         git clone "$CLAUDE_PROJECT_REPO" .
+    fi
+    
+    # Verify clone was successful
+    if [ -d ".git" ]; then
+        echo "   ✅ Repository cloned successfully"
+        echo "   New directory contents: $(ls -la)"
+    else
+        echo "   ❌ Repository clone failed"
+        if [ "$ONESHOT_MODE" = "true" ]; then
+            echo "   ONESHOT MODE: Cannot continue without repository"
+            exit 1
+        fi
     fi
     
     # Ensure claude owns the workspace if running as root
@@ -90,6 +111,11 @@ if [ -n "$CLAUDE_PROJECT_REPO" ] && [ ! -d ".git" ]; then
     fi
 elif [ -d ".git" ]; then
     echo "Workspace already exists, updating dependencies..."
+elif [ "$ONESHOT_MODE" = "true" ]; then
+    echo "❌ ONESHOT MODE: No repository available and CLAUDE_PROJECT_REPO not set"
+    echo "   Cannot run oneshot mode without a git repository"
+    echo "   Please ensure the source directory contains a git repository"
+    exit 1
 fi
 
 # Check if we're in a Python project

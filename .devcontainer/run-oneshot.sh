@@ -52,11 +52,16 @@ fi
 
 # Pass through other environment variables that might be needed
 # For oneshot mode, we want to clone the current repo into the isolated workspace
-export CLAUDE_PROJECT_REPO="${CLAUDE_PROJECT_REPO:-$(git remote get-url origin 2>/dev/null || echo "")}"
+DETECTED_REPO_URL=$(git remote get-url origin 2>/dev/null || echo "")
+export CLAUDE_PROJECT_REPO="${CLAUDE_PROJECT_REPO:-"$DETECTED_REPO_URL"}"
 export GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 export GEMINI_API_KEY="${GEMINI_API_KEY:-}"
 export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
 export OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
+
+echo "🔍 Debug: Git repository detection:"
+echo "   Detected repo URL: '$DETECTED_REPO_URL'"
+echo "   Final CLAUDE_PROJECT_REPO: '$CLAUDE_PROJECT_REPO'"
 
 echo "🎯 Starting One Shot Mode"
 echo "   Task: $TASK"
