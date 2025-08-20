@@ -34,7 +34,9 @@ if [ -f ".env" ]; then
 fi
 
 # Create isolated workspace directory on host
-WORKSPACE_HOST_DIR="./workspace-oneshot/${WORKSPACE_ID}"
+# Allow customization of oneshot workspaces directory via env var
+ONESHOT_WORKSPACES_DIR="${ONESHOT_WORKSPACES_DIR:-./workspace-oneshot}"
+WORKSPACE_HOST_DIR="${ONESHOT_WORKSPACES_DIR}/${WORKSPACE_ID}"
 mkdir -p "$WORKSPACE_HOST_DIR"
 
 # Set environment for oneshot mode
@@ -63,6 +65,7 @@ echo "   Shared home: $CLAUDE_HOME_DIR"
 echo ""
 echo "🔍 Debug: Environment variables being passed to container:"
 echo "   ONESHOT_MODE=$ONESHOT_MODE"
+echo "   ONESHOT_WORKSPACES_DIR=$ONESHOT_WORKSPACES_DIR"
 echo "   WORKSPACE_DIR=$WORKSPACE_DIR"
 echo "   CLAUDE_HOME_DIR=$CLAUDE_HOME_DIR"
 echo ""
@@ -109,5 +112,5 @@ echo "To clean up this workspace later:"
 echo "   rm -rf $WORKSPACE_HOST_DIR"
 echo ""
 echo "To view all oneshot workspaces:"
-echo "   ls -la workspace-oneshot/"
+echo "   ls -la $ONESHOT_WORKSPACES_DIR/"
 
