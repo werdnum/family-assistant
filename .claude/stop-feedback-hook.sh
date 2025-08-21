@@ -10,7 +10,7 @@ echo "   Script: $(realpath "$0" 2>/dev/null || echo "$0")" >&2
 echo >&2
 
 # Read JSON from stdin and extract stop_hook_active
-json_input=$(cat)
+stop_hook_active=$(jq -r '.stop_hook_active // false')
 stop_hook_active=$(echo "$json_input" | jq -r '.stop_hook_active // false')
 
 # Check for oneshot mode first - it has different behavior entirely
