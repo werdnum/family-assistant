@@ -7,6 +7,7 @@ set -e
 BRANCH="main"
 TASK=""
 WORKSPACE_ID=""
+NONINTERACTIVE=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -17,6 +18,10 @@ while [[ $# -gt 0 ]]; do
         --workspace-id)
             WORKSPACE_ID="$2"
             shift 2
+            ;;
+        --noninteractive|-p)
+            NONINTERACTIVE=true
+            shift
             ;;
         *)
             if [ -z "$TASK" ]; then
@@ -35,14 +40,19 @@ if [ -z "$TASK" ]; then
     echo "❌ Error: No task provided for oneshot mode" >&2
     echo "" >&2
     echo "Usage:" >&2
-    echo "  $0 \"<task description>\" [workspace-id]" >&2
-    echo "  $0 --branch <branch> \"<task description>\"" >&2
-    echo "  $0 --workspace-id <id> \"<task description>\"" >&2
+    echo "  $0 [OPTIONS] \"<task description>\" [workspace-id]" >&2
+    echo "" >&2
+    echo "Options:" >&2
+    echo "  --branch, -b <branch>        Clone specific git branch (default: main)" >&2
+    echo "  --workspace-id <id>          Use specific workspace ID" >&2
+    echo "  --noninteractive, -p         Use claude -p for truly non-interactive mode" >&2
     echo "" >&2
     echo "Examples:" >&2
     echo "  $0 \"Fix the failing tests in test_api.py\"" >&2
     echo "  $0 --branch feature/oneshot-mode \"Add user authentication\"" >&2
-    echo "  $0 \"Investigate memory leak\" custom-workspace" >&2
+    echo "  $0 --noninteractive \"Investigate memory leak\"" >&2
+    echo "  $0 -p --branch main \"Refactor API endpoints\"" >&2
+    echo "  $0 \"Debug performance issue\" custom-workspace" >&2
     exit 1
 fi
 
@@ -92,6 +102,11 @@ echo "   Task: $TASK"
 echo "   Workspace ID: $WORKSPACE_ID"
 echo "   Host workspace: $WORKSPACE_HOST_DIR"
 echo "   Shared home: $CLAUDE_HOME_DIR"
+if [ "$NONINTERACTIVE" = "true" ]; then
+    echo "   Mode: Non-interactive (claude -p)"
+else
+    echo "   Mode: Interactive with auto-approval (claude --permission-mode acceptEdits)"
+fi
 echo ""
 echo "🔍 Debug: Environment variables being passed to container:"
 echo "   ONESHOT_MODE=$ONESHOT_MODE"
@@ -104,7 +119,11 @@ echo "  • Isolated workspace (changes won't affect other instances)"
 echo "  • Strict exit controls (must complete work before stopping)"
 echo "  • Auto-approved git/GitHub tools for autonomous operation"
 echo "  • Shared Claude home directory for settings and cache"
-echo "  • Non-interactive autonomous execution"
+if [ "$NONINTERACTIVE" = "true" ]; then
+    echo "  • Truly non-interactive mode (claude -p, no prompts at all)"
+else
+    echo "  • Interactive mode with auto-approval (claude --permission-mode acceptEdits)"
+fi
 echo ""
 
 # Check if docker compose (v2) or docker-compose (v1) is available
@@ -132,8 +151,13 @@ echo "Claude will work on: $TASK"
 echo ""
 
 # Run claude with the task as argument - this makes it non-interactive
-# Use --permission-mode acceptEdits to auto-approve all edits in oneshot mode
-$DOCKER_COMPOSE_CMD -f .devcontainer/docker-compose.yml run --rm claude claude --permission-mode acceptEdits "$TASK"
+if [ "$NONINTERACTIVE" = "true" ]; then
+    # Use -p for truly non-interactive mode (no prompts at all)
+    $DOCKER_COMPOSE_CMD -f .devcontainer/docker-compose.yml run --rm claude claude -p "$TASK"
+else
+    # Use --permission-mode acceptEdits to auto-approve all edits in oneshot mode
+    $DOCKER_COMPOSE_CMD -f .devcontainer/docker-compose.yml run --rm claude claude --permission-mode acceptEdits "$TASK"
+fi
 
 echo ""
 echo "🎯 One shot session ended"
