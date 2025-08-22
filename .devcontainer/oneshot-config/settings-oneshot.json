@@ -1,6 +1,7 @@
 {
   "permissions": {
     "allow": [
+      "ExitPlanMode",
       "Bash(git push:*)",
       "Bash(git push --set-upstream:*)",
       "Bash(gh pr create:*)",

@@ -8,6 +8,8 @@ BRANCH="main"
 TASK=""
 WORKSPACE_ID=""
 NONINTERACTIVE=false
+PLAN_MODE=false
+MODEL=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -22,6 +24,14 @@ while [[ $# -gt 0 ]]; do
         --noninteractive|-p)
             NONINTERACTIVE=true
             shift
+            ;;
+        --plan)
+            PLAN_MODE=true
+            shift
+            ;;
+        --model|-m)
+            MODEL="$2"
+            shift 2
             ;;
         *)
             if [ -z "$TASK" ]; then
@@ -46,13 +56,15 @@ if [ -z "$TASK" ]; then
     echo "  --branch, -b <branch>        Clone specific git branch (default: main)" >&2
     echo "  --workspace-id <id>          Use specific workspace ID" >&2
     echo "  --noninteractive, -p         Use claude -p for truly non-interactive mode" >&2
+    echo "  --plan                       Start in planning mode (create plan before implementation)" >&2
+    echo "  --model, -m <model>          Claude model (default: opusplan)" >&2
     echo "" >&2
     echo "Examples:" >&2
     echo "  $0 \"Fix the failing tests in test_api.py\"" >&2
-    echo "  $0 --branch feature/oneshot-mode \"Add user authentication\"" >&2
-    echo "  $0 --noninteractive \"Investigate memory leak\"" >&2
-    echo "  $0 -p --branch main \"Refactor API endpoints\"" >&2
-    echo "  $0 \"Debug performance issue\" custom-workspace" >&2
+    echo "  $0 --plan \"Add user authentication\"" >&2
+    echo "  $0 --model sonnet \"Investigate memory leak\"" >&2
+    echo "  $0 --plan --model sonnet \"Refactor API endpoints\"" >&2
+    echo "  $0 --branch feature/new-api \"Debug performance issue\"" >&2
     exit 1
 fi
 
@@ -102,10 +114,13 @@ echo "   Task: $TASK"
 echo "   Workspace ID: $WORKSPACE_ID"
 echo "   Host workspace: $WORKSPACE_HOST_DIR"
 echo "   Shared home: $CLAUDE_HOME_DIR"
-if [ "$NONINTERACTIVE" = "true" ]; then
+echo "   Model: ${MODEL:-opusplan}"
+if [ "$PLAN_MODE" = "true" ]; then
+    echo "   Mode: Planning mode (create plan before implementation)"
+elif [ "$NONINTERACTIVE" = "true" ]; then
     echo "   Mode: Non-interactive (claude -p)"
 else
-    echo "   Mode: Interactive with auto-approval (claude --permission-mode acceptEdits)"
+    echo "   Mode: Interactive with auto-approval"
 fi
 echo ""
 echo "🔍 Debug: Environment variables being passed to container:"
@@ -119,10 +134,13 @@ echo "  • Isolated workspace (changes won't affect other instances)"
 echo "  • Strict exit controls (must complete work before stopping)"
 echo "  • Auto-approved git/GitHub tools for autonomous operation"
 echo "  • Shared Claude home directory for settings and cache"
-if [ "$NONINTERACTIVE" = "true" ]; then
+echo "  • Default opusplan model (opus for planning, sonnet for implementation)"
+if [ "$PLAN_MODE" = "true" ]; then
+    echo "  • Planning mode (create comprehensive plan before implementation)"
+elif [ "$NONINTERACTIVE" = "true" ]; then
     echo "  • Truly non-interactive mode (claude -p, no prompts at all)"
 else
-    echo "  • Interactive mode with auto-approval (claude --permission-mode acceptEdits)"
+    echo "  • Interactive mode with auto-approval"
 fi
 echo ""
 
@@ -151,12 +169,19 @@ echo "Claude will work on: $TASK"
 echo ""
 
 # Run claude with the task as argument - this makes it non-interactive
-if [ "$NONINTERACTIVE" = "true" ]; then
-    # Use -p for truly non-interactive mode (no prompts at all)
-    $DOCKER_COMPOSE_CMD -f .devcontainer/docker-compose.yml run --rm claude claude -p "$TASK"
+# Set default model to opusplan
+MODEL="${MODEL:-opusplan}"
+
+# Build the Claude command based on mode
+if [ "$PLAN_MODE" = "true" ]; then
+    # Planning mode
+    $DOCKER_COMPOSE_CMD -f .devcontainer/docker-compose.yml run --rm claude claude --permission-mode plan --model "$MODEL" "$TASK"
+elif [ "$NONINTERACTIVE" = "true" ]; then
+    # Non-interactive mode
+    $DOCKER_COMPOSE_CMD -f .devcontainer/docker-compose.yml run --rm claude claude -p --model "$MODEL" "$TASK"
 else
-    # Use --permission-mode acceptEdits to auto-approve all edits in oneshot mode
-    $DOCKER_COMPOSE_CMD -f .devcontainer/docker-compose.yml run --rm claude claude --permission-mode acceptEdits "$TASK"
+    # Default: Interactive with auto-approval
+    $DOCKER_COMPOSE_CMD -f .devcontainer/docker-compose.yml run --rm claude claude --permission-mode acceptEdits --model "$MODEL" "$TASK"
 fi
 
 echo ""
