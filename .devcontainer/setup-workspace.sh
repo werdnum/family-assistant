@@ -72,16 +72,43 @@ cd /workspace
 
 # Clone repository if CLAUDE_PROJECT_REPO is set and .git doesn't exist
 if [ -n "$CLAUDE_PROJECT_REPO" ] && [ ! -d ".git" ]; then
-    echo "Cloning repository from $CLAUDE_PROJECT_REPO..."
+    echo "🔍 Git clone debug:"
+    echo "   CLAUDE_PROJECT_REPO: '$CLAUDE_PROJECT_REPO'"
+    echo "   CLAUDE_PROJECT_BRANCH: '${CLAUDE_PROJECT_BRANCH:-main}'"
+    echo "   Target branch: '${CLAUDE_PROJECT_BRANCH:-main}'"
+    echo
+    
+    echo "Cloning repository from $CLAUDE_PROJECT_REPO (branch: ${CLAUDE_PROJECT_BRANCH:-main})..."
     
     # Use GitHub token if available
     if [ -n "$GITHUB_TOKEN" ]; then
         # Extract repo path from URL
         REPO_PATH=$(echo "$CLAUDE_PROJECT_REPO" | sed -E 's|https://github.com/||; s|\.git$||')
         AUTHED_URL="https://${GITHUB_TOKEN}@github.com/${REPO_PATH}.git"
-        git clone "$AUTHED_URL" .
+        echo "   Running: git clone --branch '${CLAUDE_PROJECT_BRANCH:-main}' [AUTHED_URL] ."
+        git clone --branch "${CLAUDE_PROJECT_BRANCH:-main}" "$AUTHED_URL" .
     else
-        git clone "$CLAUDE_PROJECT_REPO" .
+        echo "   Running: git clone --branch '${CLAUDE_PROJECT_BRANCH:-main}' '$CLAUDE_PROJECT_REPO' ."
+        git clone --branch "${CLAUDE_PROJECT_BRANCH:-main}" "$CLAUDE_PROJECT_REPO" .
+    fi
+    
+    # Verify clone was successful and show actual branch
+    if [ -d ".git" ]; then
+        ACTUAL_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        echo "   ✅ Repository cloned successfully"
+        echo "   📋 Requested branch: '${CLAUDE_PROJECT_BRANCH:-main}'"
+        echo "   📋 Actual branch: '$ACTUAL_BRANCH'"
+        
+        # Check if we got the right branch
+        if [ "$ACTUAL_BRANCH" != "${CLAUDE_PROJECT_BRANCH:-main}" ]; then
+            echo "   ⚠️  WARNING: Cloned branch '$ACTUAL_BRANCH' differs from requested '${CLAUDE_PROJECT_BRANCH:-main}'"
+        fi
+    else
+        echo "   ❌ Repository clone failed"
+        if [ "$ONESHOT_MODE" = "true" ]; then
+            echo "   ONESHOT MODE: Cannot continue without repository"
+            exit 1
+        fi
     fi
     
     # Ensure claude owns the workspace if running as root
@@ -90,6 +117,11 @@ if [ -n "$CLAUDE_PROJECT_REPO" ] && [ ! -d ".git" ]; then
     fi
 elif [ -d ".git" ]; then
     echo "Workspace already exists, updating dependencies..."
+elif [ "$ONESHOT_MODE" = "true" ]; then
+    echo "❌ ONESHOT MODE: No repository available and CLAUDE_PROJECT_REPO not set"
+    echo "   Cannot run oneshot mode without a git repository"
+    echo "   Please ensure the source directory contains a git repository"
+    exit 1
 fi
 
 # Check if we're in a Python project
@@ -183,6 +215,62 @@ if [ -f "/home/claude/.claude/CLAUDE.local.md" ]; then
     cp /home/claude/.claude/CLAUDE.local.md .claude/
 fi
 
+# One Shot Mode Configuration
+if [ "$ONESHOT_MODE" = "true" ]; then
+    echo "🎯 ONE SHOT MODE ACTIVE"
+    echo "🔍 Debug: Container environment:"
+    echo "   HOME=$HOME"
+    echo "   CLAUDE_HOME_DIR=$CLAUDE_HOME_DIR"
+    echo "   WORKSPACE_DIR=$WORKSPACE_DIR"
+    echo "   PWD=$(pwd)"
+    echo "   User: $(whoami) ($(id))"
+    
+    # Merge oneshot settings with existing settings
+    mkdir -p .claude
+    
+    # Determine base settings file
+    if [ -f "/home/claude/.claude/settings.local.json" ]; then
+        BASE_SETTINGS="/home/claude/.claude/settings.local.json"
+    elif [ -f "/opt/claude-settings/settings.local.json" ]; then
+        BASE_SETTINGS="/opt/claude-settings/settings.local.json"
+    else
+        echo '{}' > /tmp/empty_settings.json
+        BASE_SETTINGS="/tmp/empty_settings.json"
+    fi
+    
+    # Merge settings using jsonmerge Python library for proper array concatenation
+    if [ -f "/opt/oneshot-config/settings-oneshot.json" ]; then
+        # Use dedicated merge script for clean, maintainable JSON merging
+        if /venv/bin/python /usr/local/bin/merge-settings.py "$BASE_SETTINGS" "/opt/oneshot-config/settings-oneshot.json" > .claude/settings.local.json; then
+            echo "   Settings merged using jsonmerge - permissions arrays concatenated"
+        else
+            echo "   ❌ Settings merge failed, falling back to base settings only"
+            cp "$BASE_SETTINGS" .claude/settings.local.json
+        fi
+    else
+        cp "$BASE_SETTINGS" .claude/settings.local.json
+        echo "   No oneshot settings found, using base settings only"
+    fi
+    
+    # Add oneshot instructions to CLAUDE.local.md
+    if [ -f "/opt/oneshot-config/CLAUDE.oneshot.md" ]; then
+        echo "" >> CLAUDE.local.md
+        cat "/opt/oneshot-config/CLAUDE.oneshot.md" >> CLAUDE.local.md
+    fi
+    
+    # Export oneshot environment variables so they're available to all subprocesses
+    # including the stop hook which runs in a separate shell
+    echo "export ONESHOT_MODE='$ONESHOT_MODE'" >> /home/claude/.bashrc
+    echo "export ONESHOT_STRICT_EXIT='$ONESHOT_STRICT_EXIT'" >> /home/claude/.bashrc
+    echo "   Exported oneshot environment variables to shell profile"
+    
+    echo "One shot mode configuration complete"
+    echo "  • Settings merged with oneshot permissions"
+    echo "  • Instructions added to CLAUDE.local.md"
+    echo "  • Strict stop hook installed"
+    echo ""
+fi
+
 # Configure MCP servers for Claude
 echo "Configuring MCP servers..."
 cd /workspace
@@ -216,3 +304,4 @@ echo "Workspace setup complete!"
 
 # Execute the command passed to the container
 exec "$@"
+
