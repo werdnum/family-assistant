@@ -31,6 +31,7 @@ class EventListenerResponse(BaseModel):
     daily_executions: int
     conversation_id: str
     interface_type: str
+    condition_script: str | None
 
 
 class EventListenersListResponse(BaseModel):
@@ -60,6 +61,10 @@ class CreateEventListenerRequest(BaseModel):
     enabled: bool = Field(True, description="Whether the listener is enabled")
     one_time: bool = Field(False, description="Auto-disable after first trigger")
     conversation_id: str = Field(..., description="Conversation ID for the listener")
+    condition_script: str | None = Field(
+        None,
+        description="Optional Starlark script for condition matching (executed in sandboxed environment)",
+    )
 
 
 class UpdateEventListenerRequest(BaseModel):
@@ -71,6 +76,7 @@ class UpdateEventListenerRequest(BaseModel):
     description: str | None = None
     enabled: bool | None = None
     one_time: bool | None = None
+    condition_script: str | None = None
 
 
 @listeners_api_router.get("")
@@ -126,6 +132,7 @@ async def list_event_listeners(
                 daily_executions=listener["daily_executions"],
                 conversation_id=listener["conversation_id"],
                 interface_type=listener["interface_type"],
+                condition_script=listener["condition_script"],
             )
         )
 
@@ -170,6 +177,7 @@ async def get_event_listener(
         daily_executions=listener["daily_executions"],
         conversation_id=listener["conversation_id"],
         interface_type=listener["interface_type"],
+        condition_script=listener["condition_script"],
     )
 
 
@@ -212,6 +220,7 @@ async def create_event_listener(
             action_type=request.action_type,
             action_config=request.action_config,
             description=request.description,
+            condition_script=request.condition_script,
             one_time=request.one_time,
             enabled=request.enabled,
         )
@@ -250,6 +259,7 @@ async def create_event_listener(
         daily_executions=0,
         conversation_id=listener["conversation_id"],
         interface_type=listener["interface_type"],
+        condition_script=listener["condition_script"],
     )
 
 
@@ -286,6 +296,9 @@ async def update_event_listener(
         if request.one_time is not None
         else existing["one_time"],
         enabled=request.enabled if request.enabled is not None else existing["enabled"],
+        condition_script=request.condition_script
+        if request.condition_script is not None
+        else existing["condition_script"],
     )
 
     if not success:
@@ -315,6 +328,7 @@ async def update_event_listener(
         daily_executions=listener["daily_executions"],
         conversation_id=listener["conversation_id"],
         interface_type=listener["interface_type"],
+        condition_script=listener["condition_script"],
     )
 
 
