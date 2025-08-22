@@ -596,13 +596,17 @@ class TaskWorker:
                         f"Converting scheduled time from {last_scheduled_at} UTC to {last_scheduled_in_user_tz} {self.timezone_str} for recurrence calculation"
                     )
 
-                    # Calculate the next occurrence *after* the last scheduled time
-                    # Use the user timezone time as dtstart so BYHOUR is interpreted correctly
+                    # Get current time in user timezone to avoid scheduling in the past
+                    current_time_in_user_tz = self.clock.now().astimezone(user_tz)
+
+                    # Calculate the next occurrence *after* the current time (not last scheduled time)
+                    # This prevents "catch up" behavior when the task runner restarts after downtime
+                    # Use the last scheduled time as dtstart so BYHOUR is interpreted correctly
                     rule = rrule.rrulestr(
                         recurrence_rule_str,
                         dtstart=last_scheduled_in_user_tz,
                     )
-                    next_scheduled_dt = rule.after(last_scheduled_in_user_tz)
+                    next_scheduled_dt = rule.after(current_time_in_user_tz)
 
                     # Convert the result back to UTC for storage
                     if next_scheduled_dt:
