@@ -49,7 +49,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 # Install uv for fast Python package management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Install PostgreSQL 17 with pgvector extension and jq for JSON processing
+# Install PostgreSQL 17 with pgvector extension and jq/yq for JSON/YAML processing
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     wget -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /etc/apt/keyrings/postgres.gpg && \
     sh -c 'echo "deb [signed-by=/etc/apt/keyrings/postgres.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list' && \
@@ -59,7 +59,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         postgresql-client-17 \
         postgresql-17 \
         postgresql-17-pgvector \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* && \
+    # Install yq for YAML/JSON processing
+    ARCH=$(dpkg --print-architecture) && \
+    YQ_VERSION="v4.47.1" && \
+    curl -sSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${ARCH}" -o /usr/local/bin/yq && \
+    chmod +x /usr/local/bin/yq
 
 # Create claude user with UID 1001 to match Kubernetes deployment
 RUN useradd -m -s /bin/bash -u 1001 claude && \
@@ -110,9 +115,9 @@ RUN npm install -g playwright && \
 # Switch back to root for remaining system-level operations
 USER root
 
-# Install Python dependencies for scraper MCP (contrib/scrape_mcp.py)
+# Install Python dependencies for scraper MCP and jsonmerge for oneshot config
 RUN uv venv /venv && \
-    uv pip install -p /venv/bin/python --system "playwright>=1.0" "markitdown[html]>=0.1.0" && \
+    uv pip install -p /venv/bin/python --system "playwright>=1.0" "markitdown[html]>=0.1.0" "jsonmerge>=1.9.0" && \
     /venv/bin/playwright install chromium && \
     chown -R claude:claude /venv
 
@@ -126,11 +131,15 @@ WORKDIR /workspace
 RUN mkdir -p /opt/claude-settings
 COPY settings.local.json /opt/claude-settings/
 
+# Copy oneshot configuration
+COPY oneshot-config /opt/oneshot-config/
+
 # Create setup script and claude wrapper
 COPY setup-workspace.sh /usr/local/bin/
 COPY claude-wrapper.sh /usr/local/bin/claude-wrapper
 COPY throttle_backspaces.py /usr/local/bin/
-RUN chmod +x /usr/local/bin/setup-workspace.sh /usr/local/bin/claude-wrapper /usr/local/bin/throttle_backspaces.py
+COPY merge-settings.py /usr/local/bin/
+RUN chmod +x /usr/local/bin/setup-workspace.sh /usr/local/bin/claude-wrapper /usr/local/bin/throttle_backspaces.py /usr/local/bin/merge-settings.py
 
 # Create symlink for claude command that uses the wrapper
 RUN ln -sf /usr/local/bin/claude-wrapper /usr/local/bin/claude

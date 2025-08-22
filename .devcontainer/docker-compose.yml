@@ -40,6 +40,7 @@ services:
       - HOME=/home/claude
       # Pass through any additional environment variables
       - CLAUDE_PROJECT_REPO=${CLAUDE_PROJECT_REPO:-https://github.com/werdnum/family-assistant.git}
+      - CLAUDE_PROJECT_BRANCH=${CLAUDE_PROJECT_BRANCH:-}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -70,12 +71,21 @@ services:
       - DEV_MODE=true
       - HOME=/home/claude
       - PYTEST_PARALLELISM=auto
+      # Oneshot mode environment variables
+      - ONESHOT_MODE=${ONESHOT_MODE:-}
+      - ONESHOT_STRICT_EXIT=${ONESHOT_STRICT_EXIT:-}
+      - ONESHOT_TASK=${ONESHOT_TASK:-}
+      - CLAUDE_PROJECT_REPO=${CLAUDE_PROJECT_REPO:-}
+      - CLAUDE_PROJECT_BRANCH=${CLAUDE_PROJECT_BRANCH:-}
       # MCP server API keys - passed through from host environment
       - BRAVE_API_KEY=${BRAVE_API_KEY:-}
       - HOMEASSISTANT_API_KEY=${HOMEASSISTANT_API_KEY:-}
       - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY:-}
       # Additional environment variables for family-assistant
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
     volumes:
       # Mount workspace - same as backend container
       - ${WORKSPACE_DIR:-./workspace}:/workspace

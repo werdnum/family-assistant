@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "ExitPlanMode",
+      "Bash(git push:*)",
+      "Bash(git push --set-upstream:*)",
+      "Bash(gh pr create:*)",
+      "Bash(git commit:*)",
+      "Bash(git add:*)",
+      "Bash(git checkout -b:*)"
+    ]
+  }
+}
+
