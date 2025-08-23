@@ -1,1 +1,0 @@
-.devcontainer/CLAUDE.devcontainer.md

@@ -61,10 +61,21 @@ minimum_timeouts = {
     r"^poe\s+test\b": 900000,  # 15 minutes = 900,000 ms
 }
 
+# Default timeout constant
+DEFAULT_TIMEOUT_MS = 120000
+
+# Get default timeout from environment variable
+timeout_str = os.environ.get("BASH_DEFAULT_TIMEOUT_MS", str(DEFAULT_TIMEOUT_MS))
+try:
+    default_timeout_ms = int(timeout_str)
+except ValueError:
+    # Fallback to default if environment variable is malformed
+    default_timeout_ms = DEFAULT_TIMEOUT_MS
+
 for pattern, min_timeout_ms in minimum_timeouts.items():
     if re.search(pattern, command):
-        # Convert timeout to milliseconds if it exists
-        current_timeout_ms = timeout if timeout else 0
+        # If no timeout is specified, use the default timeout from environment
+        current_timeout_ms = timeout if timeout is not None else default_timeout_ms
 
         if current_timeout_ms < min_timeout_ms:
             min_timeout_minutes = min_timeout_ms / 60000
@@ -80,9 +91,9 @@ for pattern, min_timeout_ms in minimum_timeouts.items():
                 f"• Command '{cleaned_pattern}' requires a minimum timeout of {min_timeout_minutes:.0f} minutes. ",
                 file=sys.stderr,
             )
-            if current_timeout_ms == 0:
+            if timeout is None:
                 print(
-                    f"  No timeout was specified. Please add 'timeout: {min_timeout_ms}' to your Bash tool call.",
+                    f"  No timeout was specified, using default timeout of {(current_timeout_ms / 60000):.1f} minutes. Please add 'timeout: {min_timeout_ms}' to your Bash tool call.",
                     file=sys.stderr,
                 )
             else:
