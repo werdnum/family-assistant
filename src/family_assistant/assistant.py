@@ -693,6 +693,9 @@ class Assistant:
                     "delegation_security_level", "confirm"
                 ),
                 id=profile_id,
+                description=profile_conf.get(
+                    "description", f"Processing profile: {profile_id}"
+                ),
             )
 
             processing_service_instance = ProcessingService(

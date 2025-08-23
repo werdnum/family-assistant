@@ -98,7 +98,9 @@ async def view_context_page(
 
 
 async def _get_context_data(
-    processing_service: ProcessingService, profile_id: str | None = None
+    request: Request,
+    processing_service: ProcessingService,
+    profile_id: str | None = None,
 ) -> dict:
     """
     Common implementation for context API endpoints.
@@ -107,11 +109,18 @@ async def _get_context_data(
         # If profile_id is specified, try to get that specific processing service
         target_service = processing_service
         if profile_id:
-            # Access the processing services registry from app state
-            # This would need to be injected or accessed differently in a real implementation
-            logger.info(
-                f"Profile ID '{profile_id}' requested, using default service for now"
+            processing_services_registry = getattr(
+                request.app.state, "processing_services", {}
             )
+            if profile_id in processing_services_registry:
+                target_service = processing_services_registry[profile_id]
+                logger.info(f"Using ProcessingService for profile_id: '{profile_id}'")
+            else:
+                logger.warning(
+                    f"Profile ID '{profile_id}' not found, using default service"
+                )
+        else:
+            logger.info("Using default processing service")
 
         # Get aggregated context
         aggregated_context = await target_service._aggregate_context_from_providers()
@@ -160,21 +169,58 @@ async def _get_context_data(
 
 @context_viewer_router.get("/api/context")
 async def get_context_api(
+    request: Request,
     processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
     profile_id: str | None = None,
 ) -> dict:
     """
     API endpoint to get context data in JSON format.
     """
-    return await _get_context_data(processing_service, profile_id)
+    return await _get_context_data(request, processing_service, profile_id)
+
+
+@context_viewer_router.get("/v1/context/profiles")
+async def get_processing_profiles(request: Request) -> list[dict]:
+    """
+    API endpoint to list all available processing profiles.
+    """
+    try:
+        processing_services_registry = getattr(
+            request.app.state, "processing_services", {}
+        )
+
+        profiles = []
+        for profile_id, service in processing_services_registry.items():
+            service_config = service.service_config
+
+            profiles.append({
+                "id": profile_id,
+                "description": service_config.description,
+                "llm_model": getattr(service.llm_client, "model", "unknown"),
+                "provider": getattr(service.llm_client, "provider", "unknown"),
+                "tools_count": len(await service.tools_provider.get_tool_definitions())
+                if service.tools_provider
+                else 0,
+                "context_providers": [
+                    provider.name for provider in service.context_providers
+                ],
+            })
+
+        return profiles
+    except Exception as e:
+        logger.error(f"Error getting processing profiles: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail=f"Error getting profiles: {str(e)}"
+        ) from e
 
 
 @context_viewer_router.get("/v1/context")
 async def get_context_api_v1(
+    request: Request,
     processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
     profile_id: str | None = None,
 ) -> dict:
     """
     API v1 endpoint to get context data in JSON format.
     """
-    return await _get_context_data(processing_service, profile_id)
+    return await _get_context_data(request, processing_service, profile_id)

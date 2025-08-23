@@ -1,0 +1,361 @@
+/* Context Page Styling */
+.context-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+}
+
+.context-page h1 {
+  color: #1f2937;
+  margin-bottom: 24px;
+  font-size: 2rem;
+  font-weight: 600;
+}
+
+/* Profile Selector */
+.profile-selector {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 24px;
+}
+
+.profile-selector label {
+  display: block;
+  font-weight: 500;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.profile-select {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: white;
+  font-size: 14px;
+  color: #374151;
+}
+
+.profile-select:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* Error and Loading States */
+.error-message {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 24px;
+}
+
+.error-message p {
+  color: #dc2626;
+  margin: 0;
+}
+
+.loading {
+  text-align: center;
+  padding: 40px;
+  color: #6b7280;
+  font-size: 16px;
+}
+
+/* Context Content */
+.context-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Context Sections */
+.context-section {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+}
+
+.section-header {
+  width: 100%;
+  padding: 16px;
+  background: #f9fafb;
+  border: none;
+  border-bottom: 1px solid #e5e7eb;
+  text-align: left;
+  font-weight: 500;
+  font-size: 16px;
+  color: #374151;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background-color 0.2s;
+}
+
+.section-header:hover {
+  background: #f3f4f6;
+}
+
+.toggle-icon {
+  font-size: 12px;
+  color: #6b7280;
+  min-width: 12px;
+}
+
+.fragment-count {
+  margin-left: auto;
+  font-size: 14px;
+  color: #6b7280;
+  font-weight: normal;
+}
+
+.error-indicator {
+  margin-left: 8px;
+  font-size: 16px;
+}
+
+.section-content {
+  padding: 20px;
+}
+
+/* Profile Information */
+.profile-info {
+  display: grid;
+  gap: 8px;
+}
+
+.profile-info p {
+  margin: 0;
+  padding: 8px 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.profile-info p:last-child {
+  border-bottom: none;
+}
+
+.profile-info strong {
+  color: #374151;
+  min-width: 180px;
+  display: inline-block;
+}
+
+.error-info {
+  color: #dc2626 !important;
+}
+
+/* System Prompt */
+.system-prompt {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 16px;
+}
+
+.system-prompt-code {
+  display: block;
+  font-family: 'Monaco', 'Consolas', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #334155;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Aggregated Context */
+.aggregated-context {
+  background: #fefefe;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 16px;
+}
+
+.no-context {
+  color: #6b7280;
+  font-style: italic;
+  margin: 0;
+}
+
+/* Provider Fragments */
+.provider-fragments {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.fragment {
+  background: #fefefe;
+  border: 1px solid #f3f4f6;
+  border-radius: 6px;
+  padding: 16px;
+}
+
+.fragment-separator {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 0;
+}
+
+.provider-error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  padding: 16px;
+}
+
+.provider-error p {
+  color: #dc2626;
+  margin: 0;
+}
+
+.no-fragments {
+  color: #6b7280;
+  font-style: italic;
+  margin: 0;
+  text-align: center;
+  padding: 20px;
+}
+
+/* Markdown Content Styling */
+.context-section .markdown-text {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.context-section .markdown-text h1,
+.context-section .markdown-text h2,
+.context-section .markdown-text h3,
+.context-section .markdown-text h4,
+.context-section .markdown-text h5,
+.context-section .markdown-text h6 {
+  margin-top: 0;
+  margin-bottom: 12px;
+  color: #374151;
+}
+
+.context-section .markdown-text p {
+  margin-bottom: 12px;
+}
+
+.context-section .markdown-text ul,
+.context-section .markdown-text ol {
+  margin-bottom: 12px;
+  padding-left: 20px;
+}
+
+.context-section .markdown-text li {
+  margin-bottom: 4px;
+}
+
+.context-section .markdown-text .inline-code {
+  background: #f3f4f6;
+  color: #374151;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-family: 'Monaco', 'Consolas', 'Courier New', monospace;
+}
+
+.context-section .markdown-text .code-block {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 12px;
+  overflow-x: auto;
+}
+
+.context-section .markdown-text .code-block code {
+  font-family: 'Monaco', 'Consolas', 'Courier New', monospace;
+  font-size: 13px;
+  color: #334155;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .context-page {
+    padding: 16px;
+  }
+  
+  .context-page h1 {
+    font-size: 1.5rem;
+  }
+  
+  .section-header {
+    padding: 12px;
+  }
+  
+  .section-content {
+    padding: 16px;
+  }
+  
+  .profile-info strong {
+    min-width: auto;
+    display: block;
+    margin-bottom: 4px;
+  }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .context-page {
+    background: #111827;
+    color: #f9fafb;
+  }
+  
+  .context-page h1 {
+    color: #f9fafb;
+  }
+  
+  .profile-selector {
+    background: #1f2937;
+    border-color: #374151;
+  }
+  
+  .profile-selector label {
+    color: #f3f4f6;
+  }
+  
+  .profile-select {
+    background: #1f2937;
+    border-color: #374151;
+    color: #f3f4f6;
+  }
+  
+  .context-section {
+    background: #1f2937;
+    border-color: #374151;
+  }
+  
+  .section-header {
+    background: #111827;
+    border-color: #374151;
+    color: #f3f4f6;
+  }
+  
+  .section-header:hover {
+    background: #1f2937;
+  }
+  
+  .system-prompt {
+    background: #111827;
+    border-color: #374151;
+  }
+  
+  .system-prompt-code {
+    color: #f3f4f6;
+  }
+  
+  .aggregated-context,
+  .fragment {
+    background: #111827;
+    border-color: #374151;
+  }
+}
