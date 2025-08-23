@@ -6,7 +6,7 @@ const Layout = lazy(() => import('./Layout.tsx'));
 const ChatPage = lazy(() => import('../chat/ChatApp'));
 const ToolsApp = lazy(() => import('../tools/ToolsApp'));
 const ErrorsApp = lazy(() => import('../errors/ErrorsApp'));
-const ContextPage = lazy(() => import('./ContextPage'));
+const ContextPage = lazy(() => import('./ContextPage.tsx'));
 const NotesApp = lazy(() => import('../notes/NotesApp'));
 const TasksApp = lazy(() => import('../tasks/TasksApp'));
 const EventListenersApp = lazy(() => import('../pages/EventListeners/EventListenersApp'));
