@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import MessageDisplay from './MessageDisplay';
@@ -10,37 +10,112 @@ const ConversationView = ({ onBackToList }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [totalMessages, setTotalMessages] = useState(0);
+  const [hasMoreBefore, setHasMoreBefore] = useState(false);
+  const [hasMoreAfter, setHasMoreAfter] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const hasInitiallyLoadedRef = useRef(false);
 
-  // Pagination removed - all messages shown at once
-
-  const fetchMessages = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch(
-        `/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/messages`
-      );
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch messages: ${response.statusText}`);
+  const fetchMessages = useCallback(
+    async (before = null, after = null, append = false) => {
+      if (!append) {
+        setLoading(true);
+        setError(null);
+      } else {
+        setLoadingMore(true);
       }
 
-      const data = await response.json();
-      setMessages(data.messages || []);
-      setTotalMessages(data.total || 0);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [conversationId]);
+      try {
+        // Build query parameters
+        const params = new URLSearchParams();
+        params.set('limit', '50'); // Load 50 messages at a time
+
+        if (before) {
+          params.set('before', before);
+        }
+        if (after) {
+          params.set('after', after);
+        }
+
+        const response = await fetch(
+          `/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/messages?${params}`
+        );
+
+        if (!response.ok) {
+          throw new Error(`Failed to fetch messages: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        const newMessages = data.messages || [];
+
+        if (append) {
+          if (before) {
+            // Prepend older messages
+            setMessages((prev) => [...newMessages, ...prev]);
+          } else if (after) {
+            // Append newer messages
+            setMessages((prev) => [...prev, ...newMessages]);
+          }
+        } else {
+          // Initial load or replace
+          setMessages(newMessages);
+        }
+
+        setTotalMessages(data.total_messages || 0);
+        setHasMoreBefore(data.has_more_before || false);
+        setHasMoreAfter(data.has_more_after || false);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    },
+    [conversationId]
+  );
 
   useEffect(() => {
     if (conversationId) {
       fetchMessages();
     }
   }, [conversationId, fetchMessages]);
+
+  // Auto-scroll to bottom on initial load only
+  useEffect(() => {
+    if (!loading && messages.length > 0 && !hasInitiallyLoadedRef.current) {
+      hasInitiallyLoadedRef.current = true;
+      // Scroll to bottom with a small delay to ensure DOM is updated
+      setTimeout(() => {
+        window.scrollTo(0, document.body.scrollHeight);
+      }, 100);
+    }
+  }, [loading, messages.length]);
+
+  // Load more messages before current batch
+  const loadMoreBefore = useCallback(() => {
+    if (messages.length === 0 || loadingMore) {
+      return;
+    }
+
+    const oldestMessage = messages[0];
+    const beforeTimestamp = oldestMessage.timestamp;
+    fetchMessages(beforeTimestamp, null, true);
+  }, [messages, loadingMore, fetchMessages]);
+
+  // Load more messages after current batch
+  const loadMoreAfter = useCallback(() => {
+    if (messages.length === 0 || loadingMore) {
+      return;
+    }
+
+    const newestMessage = messages[messages.length - 1];
+    const afterTimestamp = newestMessage.timestamp;
+    fetchMessages(null, afterTimestamp, true);
+  }, [messages, loadingMore, fetchMessages]);
+
+  // Jump to latest messages
+  const jumpToLatest = useCallback(() => {
+    fetchMessages(); // Reload from the beginning (most recent)
+  }, [fetchMessages]);
 
   const groupMessagesByTurn = (messages) => {
     const turns = [];
@@ -134,6 +209,20 @@ const ConversationView = ({ onBackToList }) => {
         </div>
       ) : (
         <>
+          {/* Load more earlier messages button */}
+          {hasMoreBefore && (
+            <div className={styles.loadMoreContainer}>
+              <Button
+                onClick={loadMoreBefore}
+                disabled={loadingMore}
+                variant="outline"
+                className={styles.loadMoreButton}
+              >
+                {loadingMore ? 'Loading...' : 'Load earlier messages'}
+              </Button>
+            </div>
+          )}
+
           <div className={styles.messagesContainer}>
             {messageTurns.map((turn, turnIndex) => (
               <div key={turnIndex} className={styles.messageTurn}>
@@ -147,7 +236,33 @@ const ConversationView = ({ onBackToList }) => {
             ))}
           </div>
 
-          {/* Note: Message pagination not implemented - all messages are shown */}
+          {/* Load more recent messages button */}
+          {hasMoreAfter && (
+            <div className={styles.loadMoreContainer}>
+              <Button
+                onClick={loadMoreAfter}
+                disabled={loadingMore}
+                variant="outline"
+                className={styles.loadMoreButton}
+              >
+                {loadingMore ? 'Loading...' : 'Load newer messages'}
+              </Button>
+            </div>
+          )}
+
+          {/* Floating jump to latest button - only show when user is not viewing the latest messages */}
+          {hasMoreAfter && (
+            <div className={styles.floatingButton}>
+              <Button
+                onClick={jumpToLatest}
+                disabled={loading}
+                variant="default"
+                className={styles.jumpToLatestButton}
+              >
+                ↓ Jump to latest
+              </Button>
+            </div>
+          )}
         </>
       )}
     </div>
