@@ -195,6 +195,42 @@
   }
 }
 
+/* Load more buttons */
+.loadMoreContainer {
+  display: flex;
+  justify-content: center;
+  margin: 2rem 0;
+}
+
+.loadMoreButton {
+  padding: 0.75rem 1.5rem;
+  font-size: 0.9em;
+  min-width: 140px;
+}
+
+/* Floating jump to latest button */
+.floatingButton {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  z-index: 100;
+}
+
+.jumpToLatestButton {
+  padding: 0.75rem 1rem;
+  font-size: 0.9em;
+  font-weight: 500;
+  border-radius: 25px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transition: all 0.2s ease;
+}
+
+.jumpToLatestButton:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+}
+
+
 /* Tablet adjustments */
 @media (min-width: 768px) and (max-width: 1023px) {
   .conversationMeta {
@@ -211,4 +247,29 @@
   .metaLabel::after {
     content: ':';
   }
+  
+  .floatingButton {
+    bottom: 1.5rem;
+    right: 1.5rem;
+  }
 }
+
+/* Mobile adjustments for navigation */
+@media (max-width: 767px) {
+  .floatingButton {
+    bottom: 1rem;
+    right: 1rem;
+  }
+  
+  .jumpToLatestButton {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8em;
+  }
+  
+  .loadMoreButton {
+    padding: 0.5rem 1rem;
+    font-size: 0.85em;
+    min-width: 120px;
+  }
+}
+

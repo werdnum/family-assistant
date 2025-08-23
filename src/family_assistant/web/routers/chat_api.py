@@ -35,7 +35,7 @@ class ConversationListResponse(BaseModel):
     conversations: list[ConversationSummary] = Field(
         ..., description="List of conversation summaries"
     )
-    total: int = Field(..., description="Total number of conversations")
+    count: int = Field(..., description="Total number of conversations")
 
 
 class ConversationMessage(BaseModel):
@@ -58,7 +58,18 @@ class ConversationMessagesResponse(BaseModel):
 
     conversation_id: str = Field(..., description="Conversation identifier")
     messages: list[ConversationMessage] = Field(..., description="List of messages")
-    total: int = Field(..., description="Total number of messages")
+    count: int = Field(..., description="Number of messages in current batch")
+    total_messages: int = Field(
+        ..., description="Total number of messages in conversation"
+    )
+    has_more_before: bool = Field(
+        default=False,
+        description="Whether there are more messages before the current batch",
+    )
+    has_more_after: bool = Field(
+        default=False,
+        description="Whether there are more messages after the current batch",
+    )
 
 
 class ToolConfirmationRequest(BaseModel):
@@ -293,7 +304,7 @@ async def get_conversations(
 
     return ConversationListResponse(
         conversations=conversations,
-        total=total,
+        count=total,
     )
 
 
@@ -301,32 +312,74 @@ async def get_conversations(
 async def get_conversation_messages(
     conversation_id: str,
     db_context: Annotated[DatabaseContext, Depends(get_db)],
+    before: str | None = None,  # ISO timestamp string
+    after: str | None = None,  # ISO timestamp string
+    limit: int = 50,
 ) -> ConversationMessagesResponse:
     """
-    Get all messages for a specific conversation.
+    Get messages for a specific conversation with timestamp-based pagination.
 
     Args:
         conversation_id: The conversation identifier
+        before: Get messages before this timestamp (ISO format)
+        after: Get messages after this timestamp (ISO format)
+        limit: Maximum number of messages to return (default: 50, use 0 for all)
 
     Returns:
-        List of messages in the conversation
+        Paginated list of messages in the conversation
     """
-    # Get messages for this specific conversation across all interfaces
-    # Since conversation_id should be unique, we don't need to filter by interface_type
-    history_by_chat = await db_context.message_history.get_all_grouped(
-        interface_type=None, conversation_id=conversation_id
-    )
+    # Parse timestamp parameters
+    before_dt = None
+    after_dt = None
 
-    # Collect messages from all interfaces for this conversation ID
-    messages = []
-    for (_interface_type, conv_id), conv_messages in history_by_chat.items():
-        if conv_id == conversation_id:
-            messages.extend(conv_messages)
+    try:
+        if before:
+            before_dt = datetime.fromisoformat(before.replace("Z", "+00:00"))
+        if after:
+            after_dt = datetime.fromisoformat(after.replace("Z", "+00:00"))
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid timestamp format. Use ISO format (e.g., 2024-01-15T10:30:00Z): {e}",
+        ) from e
 
-    # Sort messages by timestamp to maintain chronological order across interfaces
-    messages.sort(
-        key=lambda msg: msg.get("timestamp", datetime.min.replace(tzinfo=timezone.utc))
-    )
+    # Handle backward compatibility: limit=0 means no limit (get all)
+    actual_limit = None if limit == 0 else limit
+
+    # Use new paginated method
+    if actual_limit is None:
+        # Legacy behavior: get all messages
+        history_by_chat = await db_context.message_history.get_all_grouped(
+            interface_type=None, conversation_id=conversation_id
+        )
+
+        # Collect messages from all interfaces for this conversation ID
+        messages = []
+        for (_interface_type, conv_id), conv_messages in history_by_chat.items():
+            if conv_id == conversation_id:
+                messages.extend(conv_messages)
+
+        # Sort messages by timestamp to maintain chronological order
+        messages.sort(
+            key=lambda msg: msg.get(
+                "timestamp", datetime.min.replace(tzinfo=timezone.utc)
+            )
+        )
+
+        has_more_before = False
+        has_more_after = False
+    else:
+        # Use paginated method
+        (
+            messages,
+            has_more_before,
+            has_more_after,
+        ) = await db_context.message_history.get_conversation_messages_paginated(
+            conversation_id=conversation_id,
+            before=before_dt,
+            after=after_dt,
+            limit=actual_limit,
+        )
 
     # Convert to response format
     response_messages = []
@@ -348,10 +401,18 @@ async def get_conversation_messages(
             )
         )
 
+    # Get total message count for the conversation
+    total_message_count = (
+        await db_context.message_history.get_conversation_message_count(conversation_id)
+    )
+
     return ConversationMessagesResponse(
         conversation_id=conversation_id,
         messages=response_messages,
-        total=len(response_messages),
+        count=len(response_messages),
+        total_messages=total_message_count,
+        has_more_before=has_more_before,
+        has_more_after=has_more_after,
     )
 
 
