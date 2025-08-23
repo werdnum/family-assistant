@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy import insert, select, update
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.base import BaseRepository
@@ -356,6 +357,102 @@ class MessageHistoryRepository(BaseRepository):
             self._logger.warning(
                 f"No message found with internal_id {internal_id} to update error traceback"
             )
+
+    async def get_conversation_messages_paginated(
+        self,
+        conversation_id: str,
+        before: datetime | None = None,
+        after: datetime | None = None,
+        limit: int = 50,
+    ) -> tuple[list[dict[str, Any]], bool, bool]:
+        """
+        Get messages for a conversation with timestamp-based pagination.
+
+        Args:
+            conversation_id: The conversation identifier
+            before: Get messages before this timestamp (for loading earlier)
+            after: Get messages after this timestamp (for loading newer)
+            limit: Maximum number of messages to return
+
+        Returns:
+            Tuple of (messages, has_more_before, has_more_after)
+        """
+        conditions = [message_history_table.c.conversation_id == conversation_id]
+
+        # Add timestamp conditions
+        if before:
+            conditions.append(message_history_table.c.timestamp < before)
+            order = message_history_table.c.timestamp.desc()
+        elif after:
+            conditions.append(message_history_table.c.timestamp > after)
+            order = message_history_table.c.timestamp.asc()
+        else:
+            # Default: most recent messages
+            order = message_history_table.c.timestamp.desc()
+
+        # Fetch one extra message to determine if there are more
+        stmt = (
+            select(message_history_table)
+            .where(*conditions)
+            .order_by(
+                order, message_history_table.c.internal_id
+            )  # Add internal_id for stable sort
+            .limit(limit + 1)
+        )
+
+        rows = await self._db.fetch_all(stmt)
+        messages = [self._process_message_row(row) for row in rows]
+
+        # Check if we have more messages
+        has_more = len(messages) > limit
+        if has_more:
+            messages = messages[:limit]
+
+        # If we fetched in DESC order (before or default), reverse for chronological display
+        if before or not after:
+            messages.reverse()
+
+        # Determine has_more_before and has_more_after flags
+        if before:
+            has_more_before = has_more
+            # If we're loading "before", there are newer messages only if we found any messages
+            has_more_after = len(messages) > 0
+        elif after:
+            # Check if there are actually messages before the 'after' timestamp
+            check_before_stmt = (
+                select(message_history_table.c.internal_id)
+                .where(
+                    message_history_table.c.conversation_id == conversation_id,
+                    message_history_table.c.timestamp < after,
+                )
+                .limit(1)
+            )
+            before_rows = await self._db.fetch_all(check_before_stmt)
+            has_more_before = len(before_rows) > 0
+            has_more_after = has_more
+        else:
+            # Default case: loading most recent
+            has_more_before = has_more
+            has_more_after = False
+
+        return messages, has_more_before, has_more_after
+
+    async def get_conversation_message_count(self, conversation_id: str) -> int:
+        """
+        Get the total number of messages in a conversation.
+
+        Args:
+            conversation_id: The conversation identifier
+
+        Returns:
+            Total number of messages in the conversation
+        """
+        stmt = select(
+            func.count(message_history_table.c.internal_id).label("count")
+        ).where(message_history_table.c.conversation_id == conversation_id)
+
+        row = await self._db.fetch_one(stmt)
+        return row["count"] if row else 0
 
     def _process_message_row(self, row: dict[str, Any]) -> dict[str, Any]:
         """

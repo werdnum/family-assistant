@@ -1,7 +1,7 @@
 """Test conversation history endpoints for the chat API."""
 
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -26,7 +26,7 @@ async def test_get_conversations_empty(web_only_assistant: Assistant) -> None:
         assert response.status_code == 200
         data = response.json()
         assert data["conversations"] == []
-        assert data["total"] == 0
+        assert data["count"] == 0
 
 
 @pytest.mark.asyncio
@@ -81,7 +81,7 @@ async def test_get_conversations_with_data(
         assert response.status_code == 200
         data = response.json()
         assert len(data["conversations"]) == 3
-        assert data["total"] == 3
+        assert data["count"] == 3
 
         # Check conversation summaries
         for conv in data["conversations"]:
@@ -125,21 +125,21 @@ async def test_get_conversations_pagination(
         assert response.status_code == 200
         data = response.json()
         assert len(data["conversations"]) == 2
-        assert data["total"] == 5
+        assert data["count"] == 5
 
         # Get second page
         response = await client.get("/api/v1/chat/conversations?limit=2&offset=2")
         assert response.status_code == 200
         data = response.json()
         assert len(data["conversations"]) == 2
-        assert data["total"] == 5
+        assert data["count"] == 5
 
         # Get third page
         response = await client.get("/api/v1/chat/conversations?limit=2&offset=4")
         assert response.status_code == 200
         data = response.json()
         assert len(data["conversations"]) == 1
-        assert data["total"] == 5
+        assert data["count"] == 5
 
 
 @pytest.mark.asyncio
@@ -157,7 +157,8 @@ async def test_get_conversation_messages_empty(web_only_assistant: Assistant) ->
         data = response.json()
         assert data["conversation_id"] == conv_id
         assert data["messages"] == []
-        assert data["total"] == 0
+        assert data["count"] == 0
+        assert data["total_messages"] == 0
 
 
 @pytest.mark.asyncio
@@ -228,7 +229,7 @@ async def test_get_conversation_messages_with_data(
         assert data["conversation_id"] == conv_id
         # Should have at least 4 messages: user, assistant with tool call, tool response, final assistant
         assert len(data["messages"]) >= 4
-        assert data["total"] >= 4
+        assert data["count"] >= 4
 
         # Verify message roles and content
         messages = data["messages"]
@@ -300,7 +301,8 @@ async def test_get_conversation_messages_cross_interface_retrieval(
         data = response.json()
         # Should now return messages from both interfaces
         assert len(data["messages"]) == 2
-        assert data["total"] == 2
+        assert data["count"] == 2
+        assert data["total_messages"] == 2
 
         # Check that we have messages from both interfaces
         contents = [msg["content"] for msg in data["messages"]]
@@ -368,7 +370,7 @@ async def test_get_conversations_interface_filter(
         response = await client.get("/api/v1/chat/conversations")
         assert response.status_code == 200
         data = response.json()
-        assert data["total"] == 2
+        assert data["count"] == 2
         conversation_ids = [conv["conversation_id"] for conv in data["conversations"]]
         assert "web_conv_filter_test" in conversation_ids
         assert "tg_conv_filter_test" in conversation_ids
@@ -377,7 +379,7 @@ async def test_get_conversations_interface_filter(
         response = await client.get("/api/v1/chat/conversations?interface_type=web")
         assert response.status_code == 200
         data = response.json()
-        assert data["total"] == 1
+        assert data["count"] == 1
         assert data["conversations"][0]["conversation_id"] == "web_conv_filter_test"
 
         # Test telegram filter (should return only telegram)
@@ -386,14 +388,14 @@ async def test_get_conversations_interface_filter(
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["total"] == 1
+        assert data["count"] == 1
         assert data["conversations"][0]["conversation_id"] == "tg_conv_filter_test"
 
         # Test non-existent interface filter (should return empty)
         response = await client.get("/api/v1/chat/conversations?interface_type=api")
         assert response.status_code == 200
         data = response.json()
-        assert data["total"] == 0
+        assert data["count"] == 0
         assert data["conversations"] == []
 
 
@@ -428,7 +430,7 @@ async def test_get_conversations_conversation_id_filter(
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["total"] == 1
+        assert data["count"] == 1
         assert data["conversations"][0]["conversation_id"] == "conv_id_filter_test_1"
 
         # Test non-existent conversation ID
@@ -437,7 +439,7 @@ async def test_get_conversations_conversation_id_filter(
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["total"] == 0
+        assert data["count"] == 0
         assert data["conversations"] == []
 
 
@@ -496,7 +498,7 @@ async def test_get_conversations_date_filters(
         response = await client.get(f"/api/v1/chat/conversations?date_from={date_from}")
         assert response.status_code == 200
         data = response.json()
-        assert data["total"] == 2
+        assert data["count"] == 2
         conversation_ids = [conv["conversation_id"] for conv in data["conversations"]]
         assert "recent_conv" in conversation_ids
         assert "today_conv" in conversation_ids
@@ -507,7 +509,7 @@ async def test_get_conversations_date_filters(
         response = await client.get(f"/api/v1/chat/conversations?date_to={date_to}")
         assert response.status_code == 200
         data = response.json()
-        assert data["total"] == 1
+        assert data["count"] == 1
         assert data["conversations"][0]["conversation_id"] == "old_conv"
 
         # Test date range (yesterday only)
@@ -517,7 +519,7 @@ async def test_get_conversations_date_filters(
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["total"] == 1
+        assert data["count"] == 1
         assert data["conversations"][0]["conversation_id"] == "recent_conv"
 
 
@@ -605,5 +607,257 @@ async def test_get_conversations_combined_filters(
         data = response.json()
 
         # Should only return the matching conversation
-        assert data["total"] == 1
+        assert data["count"] == 1
         assert data["conversations"][0]["conversation_id"] == "matching_conv"
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_messages_pagination_default(
+    web_only_assistant: Assistant,
+    db_engine: AsyncEngine,
+) -> None:
+    """Test default behavior of message pagination (loads recent messages)."""
+    conv_id = "test_pagination_default"
+
+    # Create 100 messages with distinct timestamps
+    async with get_db_context(db_engine) as db_context:
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        for i in range(100):
+            timestamp = base_time + timedelta(minutes=i)  # Each message 1 minute apart
+            await db_context.message_history.add_message(
+                interface_type="web",
+                conversation_id=conv_id,
+                interface_message_id=f"msg_{i}",
+                turn_id=f"turn_{i}",
+                thread_root_id=None,
+                timestamp=timestamp,
+                role="user",
+                content=f"Message {i}",
+            )
+
+    transport = httpx.ASGITransport(app=fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        # Default request (should get 50 most recent messages)
+        response = await client.get(f"/api/v1/chat/conversations/{conv_id}/messages")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Should get 50 most recent messages (50-99)
+        assert len(data["messages"]) == 50
+        assert data["count"] == 50  # This is the count in current batch
+        assert data["total_messages"] == 100  # Total messages in conversation
+        assert data["has_more_before"] is True  # More older messages available
+        assert data["has_more_after"] is False  # These are the most recent
+
+        # Messages should be in chronological order (oldest to newest in batch)
+        messages = data["messages"]
+        assert "Message 50" in messages[0]["content"]  # Oldest in batch
+        assert "Message 99" in messages[-1]["content"]  # Newest in batch
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_messages_pagination_before(
+    web_only_assistant: Assistant,
+    db_engine: AsyncEngine,
+) -> None:
+    """Test loading messages before a specific timestamp."""
+    conv_id = "test_pagination_before"
+
+    # Create messages with known timestamps
+    async with get_db_context(db_engine) as db_context:
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        for i in range(20):
+            timestamp = base_time.replace(minute=i)
+            await db_context.message_history.add_message(
+                interface_type="web",
+                conversation_id=conv_id,
+                interface_message_id=f"msg_{i}",
+                turn_id=f"turn_{i}",
+                thread_root_id=None,
+                timestamp=timestamp,
+                role="user",
+                content=f"Message {i}",
+            )
+
+    transport = httpx.ASGITransport(app=fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        # Get messages before minute 15 (should get messages 0-14, but limited to 10)
+        before_timestamp = (
+            base_time.replace(minute=15).isoformat().replace("+00:00", "Z")
+        )
+        response = await client.get(
+            f"/api/v1/chat/conversations/{conv_id}/messages?before={before_timestamp}&limit=10"
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Should get 10 messages before timestamp (messages 5-14 since we get newest first)
+        assert len(data["messages"]) == 10
+        assert data["has_more_before"] is True  # More messages 0-4 available
+        assert data["has_more_after"] is True  # Messages 15-19 are newer
+
+        # Verify content - should be messages 5-14 in chronological order
+        messages = data["messages"]
+        assert "Message 5" in messages[0]["content"]  # Oldest in this batch
+        assert "Message 14" in messages[-1]["content"]  # Newest in this batch
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_messages_pagination_after(
+    web_only_assistant: Assistant,
+    db_engine: AsyncEngine,
+) -> None:
+    """Test loading messages after a specific timestamp."""
+    conv_id = "test_pagination_after"
+
+    # Create messages with known timestamps
+    async with get_db_context(db_engine) as db_context:
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        for i in range(20):
+            timestamp = base_time.replace(minute=i)
+            await db_context.message_history.add_message(
+                interface_type="web",
+                conversation_id=conv_id,
+                interface_message_id=f"msg_{i}",
+                turn_id=f"turn_{i}",
+                thread_root_id=None,
+                timestamp=timestamp,
+                role="user",
+                content=f"Message {i}",
+            )
+
+    transport = httpx.ASGITransport(app=fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        # Get messages after minute 5 (should get messages 6-19, but limited to 10)
+        after_timestamp = base_time.replace(minute=5).isoformat().replace("+00:00", "Z")
+        response = await client.get(
+            f"/api/v1/chat/conversations/{conv_id}/messages?after={after_timestamp}&limit=10"
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Should get 10 messages after timestamp (messages 6-15)
+        assert len(data["messages"]) == 10
+        assert data["has_more_before"] is True  # Messages 0-5 are older
+        assert data["has_more_after"] is True  # Messages 16-19 are newer
+
+        # Verify content - should be messages 6-15 in chronological order
+        messages = data["messages"]
+        assert "Message 6" in messages[0]["content"]  # Oldest in this batch
+        assert "Message 15" in messages[-1]["content"]  # Newest in this batch
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_messages_pagination_limit_zero(
+    web_only_assistant: Assistant,
+    db_engine: AsyncEngine,
+) -> None:
+    """Test backward compatibility with limit=0 (get all messages)."""
+    conv_id = "test_pagination_limit_zero"
+
+    # Create 10 messages
+    async with get_db_context(db_engine) as db_context:
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        for i in range(10):
+            timestamp = base_time.replace(minute=i)
+            await db_context.message_history.add_message(
+                interface_type="web",
+                conversation_id=conv_id,
+                interface_message_id=f"msg_{i}",
+                turn_id=f"turn_{i}",
+                thread_root_id=None,
+                timestamp=timestamp,
+                role="user",
+                content=f"Message {i}",
+            )
+
+    transport = httpx.ASGITransport(app=fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        # Request with limit=0 should return all messages
+        response = await client.get(
+            f"/api/v1/chat/conversations/{conv_id}/messages?limit=0"
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Should get all 10 messages
+        assert len(data["messages"]) == 10
+        assert data["count"] == 10
+        assert data["total_messages"] == 10
+        assert data["has_more_before"] is False  # No pagination with limit=0
+        assert data["has_more_after"] is False
+
+        # Messages should be in chronological order
+        messages = data["messages"]
+        assert "Message 0" in messages[0]["content"]
+        assert "Message 9" in messages[-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_messages_invalid_timestamp(
+    web_only_assistant: Assistant,
+) -> None:
+    """Test error handling for invalid timestamp formats."""
+    conv_id = "test_invalid_timestamps"
+
+    transport = httpx.ASGITransport(app=fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        # Test invalid before timestamp
+        response = await client.get(
+            f"/api/v1/chat/conversations/{conv_id}/messages?before=invalid-timestamp"
+        )
+        assert response.status_code == 400
+        assert "Invalid timestamp format" in response.json()["detail"]
+
+        # Test invalid after timestamp
+        response = await client.get(
+            f"/api/v1/chat/conversations/{conv_id}/messages?after=not-a-date"
+        )
+        assert response.status_code == 400
+        assert "Invalid timestamp format" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_messages_empty_results(
+    web_only_assistant: Assistant,
+) -> None:
+    """Test pagination with no messages matching criteria."""
+    conv_id = "test_empty_pagination"
+
+    transport = httpx.ASGITransport(app=fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        # Request messages before a timestamp when no messages exist
+        before_timestamp = (
+            datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+        response = await client.get(
+            f"/api/v1/chat/conversations/{conv_id}/messages?before={before_timestamp}"
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Should return empty results
+        assert len(data["messages"]) == 0
+        assert data["count"] == 0
+        assert data["total_messages"] == 0
+        assert data["has_more_before"] is False
+        assert data["has_more_after"] is False
