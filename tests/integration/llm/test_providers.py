@@ -411,3 +411,165 @@ async def test_gemini_system_message_with_multipart_content(
     assert response.content is not None
     # Should identify blue
     assert "blue" in response.content.lower()
+
+
+# Tests for multimodal tool result handling
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=sanitize_response)
+@pytest.mark.parametrize(
+    "provider,model",
+    [
+        ("openai", "gpt-4.1-nano"),
+        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+    ],
+)
+async def test_tool_message_with_image_attachment(
+    provider: str, model: str, llm_client_factory: Any
+) -> None:
+    """Test that providers handle tool messages with image attachments."""
+    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
+        pytest.skip(f"Skipping {provider} test in CI without API key")
+
+    client = await llm_client_factory(provider, model)
+
+    # Import here to avoid circular imports
+    from family_assistant.tools.types import ToolAttachment
+
+    # Create a small test image (1x1 red pixel PNG)
+    png_data = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+
+    attachment = ToolAttachment(
+        mime_type="image/png", content=png_data, description="A small test image"
+    )
+
+    # Simulate a conversation where a tool has returned an image
+    messages = [
+        {"role": "user", "content": "Generate a simple image for me"},
+        {
+            "role": "assistant",
+            "content": "I'll generate a simple image for you.",
+            "tool_calls": [
+                {
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {
+                        "name": "generate_image",
+                        "arguments": '{"prompt": "simple"}',
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_123",
+            "content": "Generated a simple red pixel image",
+            "_attachment": attachment,
+        },
+        {"role": "user", "content": "What do you see in the image?"},
+    ]
+
+    # This should work without errors - the provider should handle the attachment
+    response = await client.generate_response(messages)
+
+    assert isinstance(response, LLMOutput)
+    assert response.content is not None
+    assert isinstance(response.content, str)
+    assert len(response.content) > 0
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=sanitize_response)
+@pytest.mark.parametrize(
+    "provider,model",
+    [
+        ("openai", "gpt-4.1-nano"),
+        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+    ],
+)
+async def test_tool_message_with_pdf_attachment(
+    provider: str, model: str, llm_client_factory: Any
+) -> None:
+    """Test that providers handle tool messages with PDF attachments and can read the content.
+
+    This test uses the actual PDF file about software updates to verify that LLMs
+    can read and understand PDF content when sent via the appropriate API format.
+    """
+    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
+        pytest.skip(f"Skipping {provider} test in CI without API key")
+
+    client = await llm_client_factory(provider, model)
+
+    # Import here to avoid circular imports
+    # Read the actual test PDF file about software updates
+    import pathlib
+
+    from family_assistant.tools.types import ToolAttachment
+
+    pdf_path = pathlib.Path(__file__).parent.parent.parent / "data" / "test_doc.pdf"
+    pdf_data = pdf_path.read_bytes()
+
+    attachment = ToolAttachment(
+        mime_type="application/pdf",
+        content=pdf_data,
+        description="Document from search results",
+    )
+
+    # Simulate a conversation where a tool has returned a PDF about software updates
+    messages = [
+        {"role": "user", "content": "Find me a document about software management"},
+        {
+            "role": "assistant",
+            "content": "I'll search for a document about software management.",
+            "tool_calls": [
+                {
+                    "id": "call_456",
+                    "type": "function",
+                    "function": {
+                        "name": "search_documents",
+                        "arguments": '{"query": "software management"}',
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_456",
+            "content": "Found a PDF document about software management practices",
+            "_attachment": attachment,
+        },
+        {
+            "role": "user",
+            "content": "What is this document about? What are the main topics it covers?",
+        },
+    ]
+
+    # This should work without errors - the provider should handle the attachment
+    response = await client.generate_response(messages)
+
+    assert isinstance(response, LLMOutput)
+    assert response.content is not None
+    assert isinstance(response.content, str)
+    assert len(response.content) > 0
+
+    # The response should indicate the document is about software updates
+    # since the PDF actually contains content about the importance of software updates
+    response_lower = response.content.lower()
+    assert any(
+        keyword in response_lower
+        for keyword in [
+            "update",
+            "software",
+            "security",
+            "performance",
+            "patch",
+            "vulnerability",
+        ]
+    ), (
+        f"Response should mention software update topics from the PDF content, got: {response.content}"
+    )

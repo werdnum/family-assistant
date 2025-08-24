@@ -31,6 +31,7 @@ from .storage.context import DatabaseContext, get_db_context
 
 # Import ToolsProvider interface and context
 from .tools import ToolExecutionContext, ToolNotFoundError, ToolsProvider
+from .tools.types import ToolResult
 from .utils.clock import Clock, SystemClock
 
 logger = logging.getLogger(__name__)
@@ -617,24 +618,53 @@ class ProcessingService:
             )
             logger.info(f"Tool '{function_name}' executed successfully.")
 
-            tool_response_message = {
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": result,
-                "error_traceback": None,
-            }
+            # Handle both string and ToolResult
+            if isinstance(result, ToolResult):
+                # Extract attachment for provider handling
+                tool_response_message = {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": result.text,
+                    "error_traceback": None,
+                }
+
+                # Add attachment metadata for provider to handle
+                if result.attachment:
+                    tool_response_message["_attachment"] = result.attachment
+
+                    # Store in history metadata
+                    tool_response_message["attachments"] = [
+                        {
+                            "type": "tool_result",
+                            "mime_type": result.attachment.mime_type,
+                            "description": result.attachment.description,
+                        }
+                    ]
+
+                content_for_stream = result.text
+            else:
+                # Backward compatible string handling
+                content_for_stream = str(result)
+                tool_response_message = {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": content_for_stream,
+                    "error_traceback": None,
+                }
+
+            # Create history message from tool_response_message but remove _attachment
+            history_message = tool_response_message.copy()
+            history_message.pop("_attachment", None)  # Remove raw attachment data
+            history_message["name"] = function_name  # Ensure tool name is included
 
             return (
                 LLMStreamEvent(
-                    type="tool_result", tool_call_id=call_id, tool_result=result
+                    type="tool_result",
+                    tool_call_id=call_id,
+                    tool_result=content_for_stream,
                 ),
                 tool_response_message,
-                {
-                    "tool_call_id": call_id,
-                    "role": "tool",
-                    "name": function_name,
-                    "content": result,
-                },
+                history_message,
             )
 
         except ToolNotFoundError:

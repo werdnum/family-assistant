@@ -5,13 +5,16 @@ Direct OpenAI API implementation for LLM interactions.
 import base64
 import logging
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from family_assistant.tools.types import ToolAttachment
 
 import aiofiles
 from openai import AsyncOpenAI
 
 from family_assistant.llm import (
-    LLMInterface,
+    BaseLLMClient,
     LLMOutput,
     LLMStreamEvent,
     ToolCallFunction,
@@ -32,7 +35,7 @@ from ..base import (
 logger = logging.getLogger(__name__)
 
 
-class OpenAIClient(LLMInterface):
+class OpenAIClient(BaseLLMClient):
     """Direct OpenAI API implementation."""
 
     def __init__(
@@ -60,6 +63,54 @@ class OpenAIClient(LLMInterface):
             f"model-specific parameters: {model_parameters}"
         )
 
+    def _supports_multimodal_tools(self) -> bool:
+        """OpenAI doesn't support multimodal tool responses"""
+        return False
+
+    def _create_attachment_injection(
+        self, attachment: "ToolAttachment"
+    ) -> dict[str, Any]:
+        """Create user message with attachment for OpenAI"""
+        content: list[dict[str, Any]] = [
+            {"type": "text", "text": "[System: File from previous tool response]"}
+        ]
+
+        if attachment.content and attachment.mime_type.startswith("image/"):
+            # Use image_url format for images
+            b64_data = attachment.get_content_as_base64()
+            if b64_data:
+                content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{attachment.mime_type};base64,{b64_data}"
+                    },
+                })
+        elif attachment.content and attachment.mime_type == "application/pdf":
+            # OpenAI models don't officially support PDF attachments in chat completions
+            # Fall back to describing the PDF to the model
+            size_mb = len(attachment.content) / (1024 * 1024)
+            content.append({
+                "type": "text",
+                "text": f"[PDF Document: {attachment.description or 'document.pdf'} "
+                f"({size_mb:.1f}MB) - Content cannot be displayed but was provided "
+                f"as context from the previous tool response]",
+            })
+        elif attachment.content:
+            # Other binary content with data - describe what we have
+            size_mb = len(attachment.content) / (1024 * 1024)
+            content.append({
+                "type": "text",
+                "text": f"[File content: {attachment.mime_type}, {size_mb:.1f}MB - {attachment.description}. Note: Binary content not accessible to model, text extraction may be needed]",
+            })
+        elif attachment.file_path:
+            # File path reference without content
+            content.append({
+                "type": "text",
+                "text": f"[File: {attachment.file_path} - Note: File content not accessible to model]",
+            })
+
+        return {"role": "user", "content": content}
+
     def _get_model_specific_params(self, model: str) -> dict[str, Any]:
         """Get parameters for a specific model based on pattern matching."""
         params = {}
@@ -79,6 +130,9 @@ class OpenAIClient(LLMInterface):
     ) -> LLMOutput:
         """Generate response using OpenAI API."""
         try:
+            # Process tool attachments before sending
+            messages = self._process_tool_messages(messages)
+
             # Build parameters with defaults, then model-specific overrides
             params = {
                 "model": self.model,
@@ -251,6 +305,9 @@ class OpenAIClient(LLMInterface):
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses."""
         try:
+            # Process tool attachments before sending
+            messages = self._process_tool_messages(messages)
+
             # Build parameters with defaults, then model-specific overrides
             params = {
                 "model": self.model,
