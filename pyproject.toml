@@ -230,11 +230,11 @@ shell = "npm run --prefix frontend build"
 
 [tool.poe.tasks.serve]
 help = "Run the full application (without Telegram)"
-shell = "DEV_MODE=false TELEGRAM_ENABLED=false DATABASE_URL=sqlite+aiosqlite:///dev_family_assistant.db GEMINI_API_KEY=${GEMINI_API_KEY:-dev-key} python -m family_assistant"
+shell = "DEV_MODE=false TELEGRAM_ENABLED=false GEMINI_API_KEY=${GEMINI_API_KEY:-dev-key} python -m family_assistant"
 
 [tool.poe.tasks.serve-reload]
 help = "Run the full application with auto-reload using hupper"
-shell = "DEV_MODE=false TELEGRAM_ENABLED=false DATABASE_URL=sqlite+aiosqlite:///dev_family_assistant.db GEMINI_API_KEY=${GEMINI_API_KEY:-dev-key} hupper -m family_assistant -w config.yaml -w prompts.yaml"
+shell = "DEV_MODE=false TELEGRAM_ENABLED=false GEMINI_API_KEY=${GEMINI_API_KEY:-dev-key} hupper -m family_assistant -w config.yaml -w prompts.yaml"
 
 [tool.poe.tasks.dev]
 help = "Run backend and frontend servers concurrently (access app at http://localhost:5173 or http://<your-ip>:5173)"
