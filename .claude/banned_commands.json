@@ -68,8 +68,16 @@
     "explanation": "Use devcontainer-backend-1:5173 instead of localhost:5173. The app is running in a container."
   },
   {
-    "regexp": "ss\\s+-tuln.*5173",
-    "explanation": "The frontend dev server is running on http://devcontainer-backend-1:5173, not localhost. Use that address for testing."
+    "regexp": "\\bss\\s+-[tlnp]+",
+    "explanation": "Port checking is unnecessary. Frontend runs on devcontainer-backend-1:5173 and backend on devcontainer-backend-1:8000. Use these addresses directly."
+  },
+  {
+    "regexp": "localhost:(8000|5173)",
+    "explanation": "Use devcontainer-backend-1:8000 for backend API and devcontainer-backend-1:5173 for frontend instead of localhost. The services run in containers."
+  },
+  {
+    "regexp": "127\\.0\\.0\\.1:(8000|5173)",
+    "explanation": "Use devcontainer-backend-1:8000 for backend API and devcontainer-backend-1:5173 for frontend instead of 127.0.0.1. The services run in containers."
   },
   {
     "regexp": "2>&1",

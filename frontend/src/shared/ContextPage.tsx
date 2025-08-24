@@ -25,6 +25,7 @@ interface ContextData {
   total_fragments: number;
   providers_with_errors: string[];
   system_prompt_template: string;
+  formatted_system_prompt: string;
 }
 
 const ContextPage: React.FC = () => {
@@ -56,7 +57,7 @@ const ContextPage: React.FC = () => {
     };
 
     fetchProfiles();
-  }, [selectedProfileId]);
+  }, []);
 
   // Fetch context data for selected profile
   useEffect(() => {
@@ -76,9 +77,8 @@ const ContextPage: React.FC = () => {
         if (response.ok) {
           const data = await response.json();
           setContextData(data);
-          // Expand all sections by default
-          const sectionNames = data.context_providers.map((p: ContextProvider) => p.provider_name);
-          setExpandedSections(new Set(['profile-info', 'system-prompt', ...sectionNames]));
+          // Only expand the formatted system prompt by default
+          setExpandedSections(new Set(['formatted-system-prompt']));
         } else {
           setError(`Failed to load context: ${response.status}`);
         }
@@ -182,7 +182,27 @@ const ContextPage: React.FC = () => {
             )}
           </div>
 
-          {/* System Prompt Section */}
+          {/* Formatted System Prompt Section */}
+          <div className={styles['context-section']}>
+            <button
+              className={styles['section-header']}
+              onClick={() => toggleSection('formatted-system-prompt')}
+            >
+              <span className={styles['toggle-icon']}>
+                {expandedSections.has('formatted-system-prompt') ? '▼' : '▶'}
+              </span>
+              System Prompt (Formatted)
+            </button>
+            {expandedSections.has('formatted-system-prompt') && (
+              <div className={styles['section-content']}>
+                <div className={styles['system-prompt']}>
+                  <MarkdownText text={contextData.formatted_system_prompt} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* System Prompt Template Section */}
           <div className={styles['context-section']}>
             <button
               className={styles['section-header']}
@@ -191,7 +211,7 @@ const ContextPage: React.FC = () => {
               <span className={styles['toggle-icon']}>
                 {expandedSections.has('system-prompt') ? '▼' : '▶'}
               </span>
-              System Prompt Template
+              System Prompt Template (Raw)
             </button>
             {expandedSections.has('system-prompt') && (
               <div className={styles['section-content']}>
