@@ -31,6 +31,7 @@
       "mcp__context7__get-library-docs",
       "Bash(pip show:*)",
       "Bash(poe test)",
+      "Bash(npm run:*)",
       "Bash(pre-commit run:*)",
       "Bash(npx markdownlint:*)",
       "Bash(echo .*)",
