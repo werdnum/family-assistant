@@ -36,6 +36,7 @@ export interface Message {
     content?: string;
     file?: File;
   }>;
+  processing_profile_id?: string;
 }
 
 export interface MessageContent {

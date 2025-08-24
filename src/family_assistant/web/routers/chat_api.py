@@ -51,6 +51,9 @@ class ConversationMessage(BaseModel):
     attachments: list[dict] | None = Field(
         None, description="Attachment metadata if any"
     )
+    processing_profile_id: str | None = Field(
+        None, description="ID of the processing profile that generated this message"
+    )
 
 
 class ConversationMessagesResponse(BaseModel):
@@ -398,6 +401,7 @@ async def get_conversation_messages(
                 tool_call_id=msg.get("tool_call_id"),
                 error_traceback=msg.get("error_traceback"),
                 attachments=msg.get("attachments"),
+                processing_profile_id=msg.get("processing_profile_id"),
             )
         )
 
