@@ -399,6 +399,11 @@
   }
 
   /* System Prompt Dark Mode */
+  .system-prompt {
+    background: #0f172a;
+    border-color: #334155;
+  }
+
   .system-prompt-code {
     background: #0f172a;
     color: #e2e8f0;
