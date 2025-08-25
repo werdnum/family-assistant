@@ -25,6 +25,10 @@ from litellm.exceptions import (
 
 from .factory import LLMClientFactory
 
+# Import for multimodal tool results
+if TYPE_CHECKING:
+    from family_assistant.tools.types import ToolAttachment
+
 # Removed ChatCompletionToolParam as it's causing ImportError and not explicitly used
 
 if TYPE_CHECKING:
@@ -37,6 +41,53 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+
+class BaseLLMClient:
+    """Base class providing common functionality for LLM clients"""
+
+    def _supports_multimodal_tools(self) -> bool:
+        """Check if this LLM client supports multimodal tool responses natively"""
+        # Default implementation - override in subclasses
+        return False
+
+    def _create_attachment_injection(
+        self, attachment: "ToolAttachment"
+    ) -> dict[str, Any]:
+        """Create a message to inject attachment content after tool response
+
+        Override in subclasses to handle provider-specific formats.
+        """
+        return {
+            "role": "user",
+            "content": f"[System: File from previous tool response - {attachment.description}]",
+        }
+
+    def _process_tool_messages(
+        self, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Process messages, handling tool attachments"""
+        processed = []
+        pending_attachment = None
+
+        for original_msg in messages:
+            msg = original_msg.copy()  # Create copy to avoid side effects
+            if msg.get("role") == "tool" and msg.get("_attachment"):
+                # Store attachment for injection
+                pending_attachment = msg.pop("_attachment")
+                msg["content"] = (
+                    msg.get("content", "") + "\n[File content in following message]"
+                )
+
+            processed.append(msg)
+
+            # Inject attachment after tool message if needed
+            if pending_attachment and not self._supports_multimodal_tools():
+                injection_msg = self._create_attachment_injection(pending_attachment)
+                processed.append(injection_msg)
+                pending_attachment = None
+
+        return processed
 
 
 # --- Conditionally Enable LiteLLM Debug Logging ---
@@ -205,7 +256,7 @@ class LLMInterface(Protocol):
         ...
 
 
-class LiteLLMClient:
+class LiteLLMClient(BaseLLMClient):
     """LLM client implementation using the LiteLLM library."""
 
     def __init__(
@@ -246,6 +297,74 @@ class LiteLLMClient:
             f"fallback params: {self.fallback_model_parameters}"
         )
 
+    def _supports_multimodal_tools(self) -> bool:
+        """Check if model supports multimodal tool responses"""
+        return self.model.startswith("claude")
+
+    def _process_tool_messages(
+        self, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Process messages, using native support when available"""
+        if not self._supports_multimodal_tools():
+            return super()._process_tool_messages(messages)
+
+        # Claude supports multimodal natively
+        processed = []
+        for msg in messages:
+            if msg.get("role") == "tool" and msg.get("_attachment"):
+                attachment = msg.pop("_attachment")
+                # Convert to Claude's format
+                content = [
+                    {"type": "text", "text": msg.get("content", "")},
+                ]
+                injection_msg = None
+                if attachment.content and attachment.mime_type.startswith("image/"):
+                    # Use helper method for base64 encoding
+                    b64_data = attachment.get_content_as_base64()
+                    if b64_data:
+                        content.append({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": attachment.mime_type,
+                                "data": b64_data,
+                            },
+                        })
+                elif attachment.content and attachment.mime_type == "application/pdf":
+                    # Claude supports PDFs via document format
+                    b64_data = attachment.get_content_as_base64()
+                    if b64_data:
+                        content.append({
+                            "type": "document",
+                            "source": {
+                                "type": "base64",
+                                "media_type": attachment.mime_type,
+                                "data": b64_data,
+                            },
+                        })
+                elif attachment.content or attachment.file_path:
+                    # Unsupported attachment type or file-path-only attachment - log warning and fall back to base class behavior
+                    if attachment.content:
+                        logger.warning(
+                            f"Unsupported attachment type {attachment.mime_type} for Claude model, falling back to text description"
+                        )
+                    else:
+                        logger.warning(
+                            f"File-path-only attachment {attachment.file_path} for Claude model, falling back to text description"
+                        )
+                    # Update the text content to indicate file content follows in next message
+                    content[0]["text"] += "\n[File content in following message]"
+                    # Fall back to base class injection method
+                    injection_msg = self._create_attachment_injection(attachment)
+                msg["content"] = content
+                processed.append(msg)
+                # Add injection message after the tool message if needed
+                if injection_msg:
+                    processed.append(injection_msg)
+            else:
+                processed.append(msg)
+        return processed
+
     async def _attempt_completion(
         self,
         model_id: str,
@@ -255,6 +374,9 @@ class LiteLLMClient:
         specific_model_params: dict[str, dict[str, Any]],  # Corrected type
     ) -> LLMOutput:
         """Internal method to make a single attempt at LLM completion."""
+        # Process tool attachments before sending
+        messages = self._process_tool_messages(messages)
+
         completion_params = self.default_kwargs.copy()
 
         # Find and merge model-specific parameters from config for the current model_id
@@ -1229,6 +1351,7 @@ __all__ = [
     "LLMStreamEvent",
     "ToolCallFunction",
     "ToolCallItem",
+    "BaseLLMClient",
     "LiteLLMClient",
     "RecordingLLMClient",
     "PlaybackLLMClient",

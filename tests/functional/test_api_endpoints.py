@@ -94,6 +94,7 @@ async def test_documents_api_list_and_detail(
             title="Doc One",
             created_at=datetime.now(timezone.utc),
             metadata=None,
+            file_path=None,
         )
         doc_id = await db.vector.add_document(doc)
 
@@ -154,6 +155,7 @@ async def test_vector_search_api_search(
             title="Doc Two",
             created_at=datetime.now(timezone.utc),
             metadata=None,
+            file_path=None,
         )
         doc_id = await db.vector.add_document(doc)
         # Use correct dimensions and model name
@@ -201,6 +203,7 @@ async def test_vector_search_api_with_limit(
                 title=f"Document {i}",
                 created_at=datetime.now(timezone.utc),
                 metadata=None,
+                file_path=None,
             )
             doc_id = await db.vector.add_document(doc)
             doc_ids.append(doc_id)
@@ -237,6 +240,7 @@ async def test_vector_search_api_document_detail(
             title="Test PDF Document",
             created_at=datetime.now(timezone.utc),
             metadata={"author": "Test User", "pages": 10},
+            file_path=None,
         )
         doc_id = await db.vector.add_document(doc)
 

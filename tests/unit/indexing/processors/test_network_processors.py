@@ -79,6 +79,10 @@ class MockDocumentImpl:  # Copied from tests/functional/indexing/test_indexing_p
     def metadata(self) -> dict[str, Any] | None:
         return self._metadata
 
+    @property
+    def file_path(self) -> str | None:
+        return None  # Mock documents don't have file paths by default
+
 
 @pytest.fixture
 def mock_document() -> MockDocumentImpl:  # Changed return type

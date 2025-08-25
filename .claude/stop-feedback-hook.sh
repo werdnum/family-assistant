@@ -1,5 +1,22 @@
 #!/bin/bash
 
+# Read JSON from stdin once and store it
+json_input=$(cat)
+
+# Extract transcript path to check for API error loop
+# This is to prevent a feedback loop when usage limits are hit.
+TRANSCRIPT_PATH_FOR_ERROR_CHECK=$(echo "$json_input" | jq -r '.transcript_path // empty')
+
+if [ -n "$TRANSCRIPT_PATH_FOR_ERROR_CHECK" ] && [ -f "$TRANSCRIPT_PATH_FOR_ERROR_CHECK" ]; then
+    last_message=$(tail -n 1 "$TRANSCRIPT_PATH_FOR_ERROR_CHECK")
+    is_api_error=$(echo "$last_message" | jq -r '.isApiErrorMessage // false')
+    
+    if [ "$is_api_error" = "true" ]; then
+        echo "API error message detected. Exiting gracefully to prevent loop." >&2
+        exit 0
+    fi
+fi
+
 # Debug: Show environment and execution info
 echo "🔍 STOP HOOK DEBUG:" >&2
 echo "   PWD: $(pwd)" >&2
@@ -9,8 +26,7 @@ echo "   ONESHOT_STRICT_EXIT: '$ONESHOT_STRICT_EXIT'" >&2
 echo "   Script: $(realpath "$0" 2>/dev/null || echo "$0")" >&2
 echo >&2
 
-# Read JSON from stdin and extract stop_hook_active
-stop_hook_active=$(jq -r '.stop_hook_active // false')
+# Extract stop_hook_active from the JSON input we read earlier
 stop_hook_active=$(echo "$json_input" | jq -r '.stop_hook_active // false')
 
 # Check for oneshot mode first - it has different behavior entirely
@@ -96,7 +112,7 @@ if [ "$ONESHOT_MODE" = "true" ]; then
     current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
     if [ "$current_branch" != "main" ] && [ "$current_branch" != "master" ]; then
         echo "💡 Consider creating a pull request:" >&2
-        echo "   gh pr create --title \"Brief description\" --body \"Description of changes\"" >&2
+        echo "   gh pr create --title "Brief description" --body "Description of changes"" >&2
         echo >&2
     fi
     
@@ -166,4 +182,3 @@ else
     # Return 0 to allow normal stop when stop_hook_active is true
     exit 0
 fi
-
