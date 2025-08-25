@@ -66,6 +66,8 @@ if [ "$ONESHOT_MODE" = "true" ]; then
         if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
             if ! check_test_status "$TRANSCRIPT_PATH"; then
                 issues+=("❌ Tests have not passed - You MUST run 'poe test' and fix any failures")
+                issues+=("Reminder: We do not merge PRs with failing tests. If the tests are flaky, you can rerun poe test until you get a passing result.")
+                issues+=("DO NOT assume that test failures are unrelated unless you can prove it by stashing your changes and showing that they fail on main.")
             fi
         fi
     fi
@@ -122,6 +124,8 @@ elif [ "$stop_hook_active" = "false" ]; then
         else
             echo "• ❌ Tests need attention:" >&2
             echo "  You MUST fix this before finishing" >&2
+            echo "  Reminder: We do not merge PRs with failing tests. If the tests are flaky, you can rerun poe test until you get a passing result."
+            echo "  Reminder: DO NOT assume that test failures are unrelated unless you can prove it by stashing your changes and showing that they fail on main." >&2
         fi
     else
         # Fallback to generic message if no transcript available
