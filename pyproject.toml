@@ -127,6 +127,7 @@ dev = [
     "symbex>=2.0",
     "pytest-timeout",
     "pytest-json-report",
+    "pytest-alembic>=0.11.0",
     "ruff",
     "pre-commit>=4.2.0",
     "basedpyright",

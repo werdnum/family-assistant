@@ -455,24 +455,24 @@ async def web_test_fixture(
     # This ensures the router and its import resolution is ready.
     print("Pre-loading router to initialize dynamic import resolution...")
     await page.goto(base_url)
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await page.wait_for_load_state("networkidle", timeout=15000)
 
     # Pre-load critical dynamic imports that tests frequently navigate to
     # This prevents "Failed to fetch" errors on first navigation
-    critical_routes = ["/docs", "/history", "/notes"]
+    critical_routes = ["/docs", "/history", "/notes", "/events"]
     for route in critical_routes:
         print(f"Pre-loading route: {route}")
         try:
             await page.goto(f"{base_url}{route}")
             # Wait for the route to load - use networkidle to ensure all resources are fetched
-            await page.wait_for_load_state("networkidle", timeout=10000)
+            await page.wait_for_load_state("networkidle", timeout=15000)
         except Exception as e:
             print(f"Warning: Failed to pre-load {route}: {e}")
             # Continue with other routes even if one fails
 
     # Return to root for a clean start
     await page.goto(base_url)
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await page.wait_for_load_state("networkidle", timeout=15000)
 
     # TODO: Replace this sleep with a more deterministic wait condition
     # The sleep is a workaround for dynamic import race conditions in Vite.
