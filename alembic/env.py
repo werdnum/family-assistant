@@ -59,7 +59,13 @@ def include_object(
     object: Any, name: str | None, type_: str, reflected: bool, compare_to: Any
 ) -> bool:
     """Filter objects based on the current database dialect."""
-    dialect_name = object.bind.dialect.name if hasattr(object, "bind") else None
+    # Get dialect from Alembic context instead of relying on object.bind
+    # which may not be available during certain operations
+    try:
+        dialect_name = context.get_bind().dialect.name
+    except Exception:
+        # Fallback to object.bind if context bind is not available
+        dialect_name = object.bind.dialect.name if hasattr(object, "bind") else None
 
     # For non-PostgreSQL databases, exclude vector-related elements
     if dialect_name != "postgresql":
