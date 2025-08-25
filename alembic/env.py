@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from logging.config import fileConfig
+from typing import Any
 
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
@@ -54,6 +55,38 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def include_object(
+    object: Any, name: str | None, type_: str, reflected: bool, compare_to: Any
+) -> bool:
+    """Filter objects based on the current database dialect."""
+    dialect_name = object.bind.dialect.name if hasattr(object, "bind") else None
+
+    # For non-PostgreSQL databases, exclude vector-related elements
+    if dialect_name != "postgresql":
+        # Skip vector-related tables
+        if type_ == "table" and name in ["document_embeddings"]:
+            return False
+
+        # Skip vector-related columns
+        if type_ == "column" and hasattr(object, "type"):
+            # Check if it's a Vector column type
+            type_str = str(object.type)
+            if "VECTOR" in type_str or "pgvector" in type_str:
+                return False
+
+        # Skip PostgreSQL-specific indexes
+        if (
+            type_ == "index"
+            and name
+            and any(
+                pg_specific in name.lower() for pg_specific in ["hnsw", "gin", "gist"]
+            )
+        ):
+            return False
+
+    return True
+
+
 def do_run_migrations(connection: Connection) -> None:
     # Pass the script location from the main config object
     # This is necessary when env.py is run via run_sync, as the context
@@ -73,6 +106,7 @@ def do_run_migrations(connection: Connection) -> None:
         version_table_schema=target_metadata.schema,
         include_schemas=True,
         script_location=script_location,
+        include_object=include_object,
     )
 
     # Safely get revision argument for logging
@@ -159,9 +193,17 @@ def run_migrations_online() -> None:
         asyncio.run(run_async_migrations())
     else:
         logger.info("Running migrations in 'online' mode using provided connection.")
-        # Invoked via run_sync: Connection provided.
-        # Run migrations synchronously using the existing connection.
-        do_run_migrations(connectable)
+        # Invoked via run_sync: Connection or Engine provided.
+        # Handle both Connection and Engine objects
+        from sqlalchemy.engine import Engine
+
+        if isinstance(connectable, Engine):
+            # Engine provided (e.g., by pytest-alembic)
+            with connectable.connect() as connection:
+                do_run_migrations(connection)
+        else:
+            # Connection provided (standard run_sync case)
+            do_run_migrations(connectable)
         logger.info("Migrations finished using provided connection.")
 
 
