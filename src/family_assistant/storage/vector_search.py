@@ -223,6 +223,7 @@ async def query_vector_store(
         "d.source_id",
         "d.source_uri",
         "d.doc_metadata",
+        "d.file_path",
         "de.chunk_index",
     ]
     final_joins = []

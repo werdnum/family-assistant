@@ -106,6 +106,10 @@ class MockDocumentImpl(DocumentProtocol):
     def metadata(self) -> dict[str, Any] | None:
         return self._metadata
 
+    @property
+    def file_path(self) -> str | None:
+        return None  # Mock documents don't have file paths by default
+
 
 @pytest_asyncio.fixture(scope="function")
 async def mock_pipeline_embedding_generator() -> (

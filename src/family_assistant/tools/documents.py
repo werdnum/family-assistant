@@ -13,10 +13,14 @@ import pathlib
 from typing import TYPE_CHECKING, Any
 
 import aiofiles
+import filetype  # type: ignore[import-untyped]
 from sqlalchemy import text
+
+from family_assistant.tools.types import ToolAttachment, ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.embeddings import EmbeddingGenerator
+    from family_assistant.storage.context import DatabaseContext
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -31,7 +35,8 @@ DOCUMENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
             "description": (
                 "Search previously stored documents (emails, notes, files) using semantic and keyword matching. Returns titles and snippets of the most relevant documents.\n\n"
                 "Returns: A formatted string containing search results. "
-                "On success, returns 'Found relevant documents:' followed by numbered results with Title, Source, Document ID, optional Metadata, and Snippet. "
+                "On success, returns 'Found relevant documents:' followed by numbered results with Title, Source, Document ID, optional original file availability (📎), Metadata, and Snippet. "
+                "When original files (PDFs, images) are available, they are indicated with 📎 symbol and file info. Use get_full_document_content to retrieve the actual file. "
                 "If no results found, returns 'No relevant documents found matching the query and filters.'. "
                 "On error, returns 'Error: Failed to execute document search. [error details]' or 'Error: Query text cannot be empty.' or 'Error: Failed to generate embedding for the query.'."
             ),
@@ -75,12 +80,15 @@ DOCUMENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "function": {
             "name": "get_full_document_content",
             "description": (
-                "Retrieves the full text content of a specific document using its unique document ID (obtained from a previous search). Use this when you need the complete text after identifying a relevant document.\n\n"
-                "Returns: A string containing the document content. "
-                "On success, returns the full text content of the document (raw content if available, or reconstructed from chunks). "
-                "If document exists but no content available, returns 'Error: Document [id] found, but no text content is available.' or 'Error: Document [id] found, but its text content appears to be empty.'. "
+                "Retrieves the full content of a document in the best available format using its unique document ID (obtained from a previous search). Returns original file (PDF, image, etc.) when available, otherwise text content.\n\n"
+                "Returns: ToolResult with file attachment when original file is available, otherwise a string containing the text content. "
+                "When original file exists, returns both the file as an attachment and extracted text for context. "
+                "For PDFs and images, you can analyze the file directly using your multimodal capabilities. "
+                "If only text content is available, returns the full text content (raw content if available, or reconstructed from chunks). "
+                "If document exists but no content available, returns 'Error: Document [id] found, but no content is available.'. "
                 "If document not found, returns 'Error: Document with ID [id] not found.'. "
-                "On error, returns 'Error: Failed to retrieve content for document ID [id]. [error details]'."
+                "On error, returns 'Error: Failed to retrieve content for document ID [id]. [error details]'. "
+                "Files larger than 20MB will fallback to text-only for performance."
             ),
             "parameters": {
                 "type": "object",
@@ -278,6 +286,11 @@ async def search_documents_tool(
             source = res.get("source_type", "Unknown Source")
             doc_id = res.get("document_id", "Unknown")
             metadata = res.get("doc_metadata", {})
+            file_path = res.get("file_path")
+
+            # Check if original file is available
+            has_file = file_path and pathlib.Path(file_path).exists()
+
             # Truncate snippet for brevity
             snippet = res.get("embedding_source_content", "")
             if snippet:
@@ -291,8 +304,21 @@ async def search_documents_tool(
             if metadata:
                 metadata_text = f"\n  Metadata: {metadata}"
 
+            # Indicate file availability
+            file_info = ""
+            if has_file and file_path:
+                try:
+                    file_path_obj = pathlib.Path(file_path)
+                    file_size = file_path_obj.stat().st_size
+                    original_filename = (
+                        metadata.get("original_filename") or file_path_obj.name
+                    )
+                    file_info = f"\n  📎 Original file available: {original_filename} ({file_size / 1024:.1f}KB)"
+                except Exception:
+                    file_info = "\n  📎 Original file available"
+
             formatted_results.append(
-                f"{i + 1}. Title: {title} (Source: {source}, Document ID: {doc_id} - for retrieving full content){metadata_text}{snippet_text}"
+                f"{i + 1}. Title: {title} (Source: {source}, Document ID: {doc_id} - for retrieving full content){file_info}{metadata_text}{snippet_text}"
             )
 
         return "\n".join(formatted_results)
@@ -305,9 +331,10 @@ async def search_documents_tool(
 async def get_full_document_content_tool(
     exec_context: ToolExecutionContext,
     document_id: int,
-) -> str:
+) -> str | ToolResult:
     """
-    Retrieves the full text content associated with a specific document ID.
+    Retrieves the full content of a document in the best available format.
+    Returns original file (PDF, image, etc.) when available, otherwise text content.
     This is typically used after finding a relevant document via search_documents.
 
     Args:
@@ -315,8 +342,8 @@ async def get_full_document_content_tool(
         document_id: The unique ID of the document (obtained from search results).
 
     Returns:
-        A string containing the full concatenated text content of the document,
-        or an error message if not found or content is unavailable.
+        ToolResult with file attachment when original file is available,
+        otherwise a string containing the text content or an error message.
     """
     logger.info(
         f"Executing get_full_document_content_tool for document ID: {document_id}"
@@ -324,87 +351,85 @@ async def get_full_document_content_tool(
     db_context = exec_context.db_context
 
     try:
-        # First try to get raw/full content types that contain complete text
-        raw_types_query = text(
+        # First, get document metadata including file_path and original filename
+        doc_query = text(
             """
-            SELECT content, embedding_type
-            FROM document_embeddings
-            WHERE document_id = :doc_id
-              AND embedding_type IN (
-                'raw_note_text', 
-                'raw_body_text', 
-                'raw_file_text',
-                'extracted_markdown_content',
-                'fetched_content_markdown'
-              )
-              AND content IS NOT NULL
-            LIMIT 1;
+            SELECT file_path, doc_metadata, title, source_type
+            FROM documents 
+            WHERE id = :doc_id
         """
         )
-        raw_result = await db_context.fetch_one(
-            raw_types_query, {"doc_id": document_id}
-        )
+        doc_result = await db_context.fetch_one(doc_query, {"doc_id": document_id})
 
-        if raw_result and raw_result["content"]:
-            logger.info(
-                f"Retrieved full content for document ID {document_id} from "
-                f"'{raw_result['embedding_type']}' (Length: {len(raw_result['content'])})."
-            )
-            return raw_result["content"]
+        if not doc_result:
+            logger.warning(f"Document ID {document_id} not found.")
+            return f"Error: Document with ID {document_id} not found."
 
-        # Fall back to chunk reconstruction if no raw content found
-        logger.info(
-            f"No raw content found for document ID {document_id}, "
-            "falling back to chunk reconstruction."
-        )
+        file_path = doc_result["file_path"]
+        doc_metadata = doc_result.get("doc_metadata") or {}
+        title = doc_result.get("title")
+        source_type = doc_result.get("source_type")
 
-        chunk_query = text(
-            """
-            SELECT content
-            FROM document_embeddings
-            WHERE document_id = :doc_id
-              AND embedding_type = 'content_chunk'
-              AND content IS NOT NULL
-            ORDER BY chunk_index ASC;
-        """
-        )
-        chunk_results = await db_context.fetch_all(chunk_query, {"doc_id": document_id})
+        # Try to return original file if available
+        if file_path and pathlib.Path(file_path).exists():
+            try:
+                file_path_obj = pathlib.Path(file_path)
+                file_size = file_path_obj.stat().st_size
 
-        if not chunk_results:
-            # Check if the document exists at all
-            doc_check_stmt = text("SELECT id FROM documents WHERE id = :doc_id")
-            doc_exists = await db_context.fetch_one(
-                doc_check_stmt, {"doc_id": document_id}
-            )
-            if doc_exists:
-                logger.warning(
-                    f"Document ID {document_id} exists, but no content found "
-                    "(neither raw content nor chunks)."
+                # Check 20MB limit for multimodal attachments
+                if file_size > 20 * 1024 * 1024:  # 20MB
+                    logger.warning(
+                        f"File for document ID {document_id} is {file_size / (1024 * 1024):.1f}MB, "
+                        "exceeding 20MB limit for multimodal attachments. Returning text content only."
+                    )
+                else:
+                    # Read file content and detect MIME type
+                    async with aiofiles.open(file_path, "rb") as f:
+                        file_content = await f.read()
+
+                    kind = filetype.guess(file_path)
+                    mime_type = kind.mime if kind else "application/octet-stream"
+
+                    # Get original filename from metadata or use file basename
+                    original_filename = (
+                        doc_metadata.get("original_filename") or file_path_obj.name
+                    )
+
+                    # Get text content for context
+                    text_content = await _get_text_content_fallback(
+                        db_context, document_id
+                    )
+
+                    logger.info(
+                        f"Returning original file for document ID {document_id}: "
+                        f"{original_filename} ({file_size / 1024:.1f}KB, {mime_type})"
+                    )
+
+                    # Create attachment
+                    attachment = ToolAttachment(
+                        content=file_content,
+                        mime_type=mime_type,
+                        description=f"{title or original_filename} ({source_type})",
+                    )
+
+                    # Return ToolResult with both text and file
+                    return ToolResult(
+                        text=text_content or f"Original document: {original_filename}",
+                        attachment=attachment,
+                    )
+            except Exception as file_err:
+                logger.error(
+                    f"Error reading file {file_path} for document ID {document_id}: {file_err}",
+                    exc_info=True,
                 )
-                return f"Error: Document {document_id} found, but no text content is available."
-            else:
-                logger.warning(f"Document ID {document_id} not found.")
-                return f"Error: Document with ID {document_id} not found."
+                # Fall through to text content
 
-        # Concatenate content from all chunks
-        # NOTE: This may contain duplicated text due to chunk overlap
-        full_content = "".join([row["content"] for row in chunk_results])
-        logger.warning(
-            f"Reconstructed content for document ID {document_id} from "
-            f"{len(chunk_results)} chunks. Note: Text may contain duplicates due to chunk overlap."
-        )
-
-        if not full_content.strip():
-            logger.warning(
-                f"Document ID {document_id} content chunks were empty or whitespace."
-            )
-            return f"Error: Document {document_id} found, but its text content appears to be empty."
-
-        logger.info(
-            f"Retrieved full content for document ID {document_id} (Length: {len(full_content)})."
-        )
-        # Return only the content for now. Future versions could return a dict with content_type.
-        return full_content
+        # Fall back to text content
+        text_content = await _get_text_content_fallback(db_context, document_id)
+        if text_content:
+            return text_content
+        else:
+            return f"Error: Document {document_id} found, but no content is available."
 
     except Exception as e:
         logger.error(
@@ -412,6 +437,60 @@ async def get_full_document_content_tool(
             exc_info=True,
         )
         return f"Error: Failed to retrieve content for document ID {document_id}. {e}"
+
+
+async def _get_text_content_fallback(
+    db_context: DatabaseContext, document_id: int
+) -> str | None:
+    """Helper function to get text content from embeddings."""
+    # First try to get raw/full content types that contain complete text
+    raw_types_query = text(
+        """
+        SELECT content, embedding_type
+        FROM document_embeddings
+        WHERE document_id = :doc_id
+          AND embedding_type IN (
+            'raw_note_text', 
+            'raw_body_text', 
+            'raw_file_text',
+            'extracted_markdown_content',
+            'fetched_content_markdown'
+          )
+          AND content IS NOT NULL
+        LIMIT 1;
+    """
+    )
+    raw_result = await db_context.fetch_one(raw_types_query, {"doc_id": document_id})
+
+    if raw_result and raw_result["content"]:
+        logger.info(
+            f"Retrieved text content for document ID {document_id} from "
+            f"'{raw_result['embedding_type']}' (Length: {len(raw_result['content'])})."
+        )
+        return raw_result["content"]
+
+    # Fall back to chunk reconstruction if no raw content found
+    chunk_query = text(
+        """
+        SELECT content
+        FROM document_embeddings
+        WHERE document_id = :doc_id
+          AND embedding_type = 'content_chunk'
+          AND content IS NOT NULL
+        ORDER BY chunk_index ASC;
+    """
+    )
+    chunk_results = await db_context.fetch_all(chunk_query, {"doc_id": document_id})
+
+    if chunk_results:
+        full_content = "".join([row["content"] for row in chunk_results])
+        logger.info(
+            f"Reconstructed text content for document ID {document_id} from "
+            f"{len(chunk_results)} chunks (Length: {len(full_content)})."
+        )
+        return full_content
+
+    return None
 
 
 async def ingest_document_from_url_tool(

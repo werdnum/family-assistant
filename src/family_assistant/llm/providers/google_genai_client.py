@@ -4,16 +4,21 @@ Direct Google Generative AI (Gemini) implementation for LLM interactions.
 
 import json
 import logging
+import mimetypes
 import uuid
 from collections.abc import AsyncIterator
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from family_assistant.tools.types import ToolAttachment
 
 import aiofiles
 from google import genai
 from google.genai import types
 
 from family_assistant.llm import (
-    LLMInterface,
+    BaseLLMClient,
     LLMOutput,
     LLMStreamEvent,
     ToolCallFunction,
@@ -34,7 +39,7 @@ from ..base import (
 logger = logging.getLogger(__name__)
 
 
-class GoogleGenAIClient(LLMInterface):
+class GoogleGenAIClient(BaseLLMClient):
     """Direct Google Generative AI implementation."""
 
     def __init__(
@@ -85,10 +90,98 @@ class GoogleGenAIClient(LLMInterface):
                 )
         return params
 
+    def _supports_multimodal_tools(self) -> bool:
+        """Gemini doesn't support multimodal tool responses"""
+        return False
+
+    def _create_attachment_injection(
+        self, attachment: "ToolAttachment"
+    ) -> dict[str, Any]:
+        """Create user message with attachment for Gemini"""
+        from google.genai import types
+
+        parts: list[dict[str, Any] | types.Part] = [
+            {"text": "[System: File from previous tool response]"}
+        ]
+
+        if attachment.content and (
+            attachment.mime_type.startswith("image/")
+            or attachment.mime_type == "application/pdf"
+        ):
+            # Use the recommended types.Part.from_bytes() method for both images and PDFs
+            # This is the cleanest approach that works for both content types
+            media_part = types.Part.from_bytes(
+                data=attachment.content, mime_type=attachment.mime_type
+            )
+            parts.append(media_part)
+        elif attachment.content:
+            # Other binary content with data - describe what we have
+            size_mb = len(attachment.content) / (1024 * 1024)
+            parts.append({
+                "text": f"[File content: {attachment.mime_type}, {size_mb:.1f}MB - {attachment.description}. Note: Binary content not accessible to model, text extraction may be needed]"
+            })
+        elif attachment.file_path:
+            # Try to read file content for supported types
+            try:
+                file_path = Path(attachment.file_path)
+                if file_path.exists() and file_path.is_file():
+                    # Check file size before reading (20MB limit, aligned with Gemini API)
+                    MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
+                    file_size = file_path.stat().st_size
+
+                    if file_size > MAX_FILE_SIZE:
+                        size_mb = file_size / (1024 * 1024)
+                        parts.append({
+                            "text": f"[File: {file_path.name} ({size_mb:.1f}MB) - Too large to process "
+                            f"(exceeds {MAX_FILE_SIZE // (1024 * 1024)}MB limit). "
+                            f"{attachment.description or 'No description'}]"
+                        })
+                    else:
+                        # Read file content
+                        file_content = file_path.read_bytes()
+
+                        # Infer MIME type from file extension if not provided
+                        effective_mime_type = attachment.mime_type
+                        if not effective_mime_type:
+                            guessed_mime_type, _ = mimetypes.guess_type(str(file_path))
+                            if guessed_mime_type:
+                                effective_mime_type = guessed_mime_type
+
+                        # Handle supported file types with content
+                        if effective_mime_type and (
+                            effective_mime_type.startswith("image/")
+                            or effective_mime_type == "application/pdf"
+                        ):
+                            media_part = types.Part.from_bytes(
+                                data=file_content, mime_type=effective_mime_type
+                            )
+                            parts.append(media_part)
+                        else:
+                            # Unsupported type - describe the file
+                            size_mb = len(file_content) / (1024 * 1024)
+                            parts.append({
+                                "text": f"[File: {file_path.name} ({effective_mime_type or 'unknown type'}, "
+                                f"{size_mb:.1f}MB) - {attachment.description or 'No description'}. "
+                                f"Binary content not accessible to model]"
+                            })
+                else:
+                    parts.append({
+                        "text": f"[File: {attachment.file_path} - File not found or inaccessible]"
+                    })
+            except Exception as e:
+                # Error reading file - fall back to description
+                parts.append({
+                    "text": f"[File: {attachment.file_path} - Error reading file: {str(e)}]"
+                })
+
+        return {"role": "user", "parts": parts}
+
     def _convert_messages_to_genai_format(
         self, messages: list[dict[str, Any]]
     ) -> list[Any]:
         """Convert OpenAI-style messages to Gemini format."""
+        # First process any tool attachments
+        messages = self._process_tool_messages(messages)
         # Build proper Content objects for the new API
         contents = []
 
@@ -103,8 +196,13 @@ class GoogleGenAIClient(LLMInterface):
                     "parts": [{"text": f"System: {content}"}],
                 })
             elif role == "user":
+                # Check if message already has parts (e.g., from attachment injection)
+                if "parts" in msg:
+                    # Parts can be a mix of dicts and types.Part objects
+                    # The API will handle both, so pass them as-is
+                    contents.append({"role": "user", "parts": msg["parts"]})
                 # Handle both simple string content and multi-part content (text + images)
-                if isinstance(content, str):
+                elif isinstance(content, str):
                     # Simple text content
                     contents.append({"role": "user", "parts": [{"text": content}]})
                 elif isinstance(content, list):

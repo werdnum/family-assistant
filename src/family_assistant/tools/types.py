@@ -3,6 +3,7 @@ Defines common types used by the tool system, like the execution context.
 Moved here to avoid circular imports.
 """
 
+import base64
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
@@ -81,6 +82,38 @@ class ToolExecutionContext:
     tools_provider: Optional["ToolsProvider"] = (
         None  # Add tools_provider for API access
     )
+
+
+@dataclass
+class ToolAttachment:
+    """File attachment for tool results"""
+
+    mime_type: str
+    content: bytes | None = None
+    file_path: str | None = None
+    description: str = ""
+
+    def get_content_as_base64(self) -> str | None:
+        """Get content as base64 string for embedding in messages"""
+        if self.content is not None:
+            return base64.b64encode(self.content).decode()
+        return None
+
+
+@dataclass
+class ToolResult:
+    """Enhanced tool result supporting multimodal content"""
+
+    text: str  # Primary text response
+    attachment: ToolAttachment | None = None
+
+    def to_string(self) -> str:
+        """Convert to string for backward compatibility"""
+        return self.text  # Message injection handled by providers
+
+
+# Type alias for tool function return types (backward compatibility)
+ToolReturnType = str | ToolResult
 
 
 class ToolNotFoundError(LookupError):

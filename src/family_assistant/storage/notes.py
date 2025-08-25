@@ -91,6 +91,10 @@ class NoteDocument(Document):
         return self._created_at
 
     @property
+    def file_path(self) -> str | None:
+        return None  # Notes are text-only and don't have associated files
+
+    @property
     def metadata(self) -> dict[str, Any] | None:
         return {
             "title": self._title,

@@ -100,6 +100,7 @@ class MockDocument:
     created_at: datetime | None = None
     metadata: dict[str, Any] | None = None
     id: int | None = None  # Add id property for Document protocol
+    file_path: str | None = None  # Add file_path for Document protocol
 
     def __post_init__(self) -> None:
         if self.created_at is None:
