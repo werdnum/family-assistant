@@ -2,9 +2,10 @@
 
 import os
 import tempfile
-from typing import Any
+from collections.abc import Generator
 
 import pytest
+from alembic.config import Config
 
 # Import pytest-alembic built-in tests
 from pytest_alembic.tests import (
@@ -13,6 +14,7 @@ from pytest_alembic.tests import (
     test_up_down_consistency,
     test_upgrade,
 )
+from sqlalchemy import Engine, create_engine
 
 # Re-export the tests to ensure they're available
 __all__ = [
@@ -24,14 +26,12 @@ __all__ = [
 
 
 @pytest.fixture
-def alembic_engine() -> Any:
+def alembic_engine() -> Generator[Engine, None, None]:
     """
     Override this fixture to provide a custom engine for pytest-alembic.
 
     The engine should point to an empty database for tests to work properly.
     """
-    from sqlalchemy import create_engine
-
     # Create a temporary database file for testing
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
         db_path = tmp.name
@@ -47,13 +47,11 @@ def alembic_engine() -> Any:
 
 
 @pytest.fixture
-def alembic_config() -> Any:
+def alembic_config() -> Config:
     """
     Override this fixture to provide the alembic config object.
     """
     from pathlib import Path
-
-    from alembic.config import Config
 
     # Use relative path to alembic.ini
     config_path = Path(__file__).parent.parent / "alembic.ini"
