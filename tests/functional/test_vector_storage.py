@@ -101,6 +101,10 @@ class MockDocumentImpl(Document):
     def metadata(self) -> dict[str, Any] | None:
         return self._metadata
 
+    @property
+    def file_path(self) -> str | None:
+        return None  # Mock documents don't have file paths by default
+
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
@@ -424,6 +428,7 @@ async def test_get_full_document_content_with_raw_content(
     logger.info("\n--- Running Get Full Document Content Test ---")
 
     from family_assistant.tools.documents import get_full_document_content_tool
+    from family_assistant.tools.types import ToolResult
 
     # Test content
     test_title = f"Full Content Test Doc {uuid.uuid4()}"
@@ -458,6 +463,10 @@ async def test_get_full_document_content_with_raw_content(
         @property
         def metadata(self) -> dict[str, Any] | None:
             return {"test": True}
+
+        @property
+        def file_path(self) -> str | None:
+            return None  # Test document doesn't have a file path
 
     doc_id = None
 
@@ -529,10 +538,15 @@ async def test_get_full_document_content_with_raw_content(
             )
 
             # Result should contain the text but may have duplicates due to overlap
-            assert len(result2) > len(full_text), (
+            # Handle both string and ToolResult return types
+            result2_text = result2.text if isinstance(result2, ToolResult) else result2
+
+            assert len(result2_text) > len(full_text), (
                 "Reconstructed text should be longer due to overlap"
             )
-            assert full_text[:100] in result2, "Beginning of text should be present"
+            assert full_text[:100] in result2_text, (
+                "Beginning of text should be present"
+            )
             logger.info("Successfully fell back to chunk reconstruction")
 
     finally:

@@ -114,6 +114,7 @@ async def _setup_comprehensive_test_data(
                 title=doc_data["title"],
                 created_at=datetime.now(timezone.utc),
                 metadata=doc_data["metadata"],
+                file_path=None,
             )
             doc_id = await db.vector.add_document(doc)
 
@@ -371,6 +372,7 @@ async def test_vector_search_document_with_no_embeddings(
             title="Document Without Embeddings",
             created_at=datetime.now(timezone.utc),
             metadata={"orphan": True},
+            file_path=None,
         )
         doc_id = await db.vector.add_document(doc)
 
@@ -403,6 +405,7 @@ async def test_vector_search_performance_with_large_dataset(
                 title=f"Performance Test Document {i}",
                 created_at=datetime.now(timezone.utc),
                 metadata={"batch": "performance", "index": i},
+                file_path=None,
             )
             doc_id = await db.vector.add_document(doc)
 

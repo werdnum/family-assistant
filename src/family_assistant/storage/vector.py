@@ -91,6 +91,11 @@ class Document(Protocol):
         """Base metadata extracted directly from the source (can be enriched later)."""
         ...
 
+    @property
+    def file_path(self) -> str | None:
+        """Path to the original uploaded file, if applicable."""
+        ...
+
 
 class Base(DeclarativeBase):
     # Associate metadata with this Base
@@ -117,6 +122,9 @@ class DocumentRecord(Base):
     doc_metadata: Mapped[dict[str, Any] | None] = mapped_column(
         JSON().with_variant(JSONB, "postgresql")
     )  # Use variant
+    file_path: Mapped[str | None] = mapped_column(
+        sa.Text
+    )  # Path to original uploaded file
 
     embeddings: Mapped[list["DocumentEmbeddingRecord"]] = relationship(
         "DocumentEmbeddingRecord",
@@ -235,6 +243,7 @@ async def add_document(
         "title": doc.title,
         "created_at": doc.created_at,
         "doc_metadata": final_doc_metadata,
+        "file_path": doc.file_path,
     }
 
     try:
@@ -721,6 +730,7 @@ async def query_vectors(
         DocumentRecord.source_uri,
         DocumentRecord.created_at,
         DocumentRecord.doc_metadata,
+        DocumentRecord.file_path,  # Add file_path to results
         DocumentEmbeddingRecord.embedding_type,
         DocumentEmbeddingRecord.content.label("embedding_source_content"),
         DocumentEmbeddingRecord.embedding_metadata,  # Add embedding_metadata to output

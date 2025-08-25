@@ -46,6 +46,10 @@ class IngestedDocument:
     def metadata(self) -> dict[str, Any] | None:
         return self._data["_base_metadata"]
 
+    @property
+    def file_path(self) -> str | None:
+        return self._data.get("_file_path")
+
 
 async def process_document_ingestion_request(
     db_context: "DatabaseContext",
@@ -159,6 +163,7 @@ async def process_document_ingestion_request(
             "_title": title,
             "_created_at": created_at_dt,
             "_base_metadata": doc_metadata,
+            "_file_path": file_ref,  # Store the file path
         }
         doc_for_storage = IngestedDocument(document_data_for_obj)
 
