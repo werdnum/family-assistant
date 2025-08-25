@@ -37,6 +37,8 @@ class ToolExecutionContext:
             (conversation_id: str, interface_type: str, turn_id: str | None,
              prompt_text: str, tool_name: str, tool_args: dict[str, Any], timeout: float)
             -> Awaitable[bool]
+        update_activity_callback: Optional callback to update task worker activity timestamp.
+            Used by long-running tasks to prevent worker from being marked as stuck.
         processing_service: Optional service for core processing logic.
         embedding_generator: Optional generator for creating text embeddings.
         clock: Optional clock instance for managing time.
@@ -68,6 +70,9 @@ class ToolExecutionContext:
         ]
         | None
     ) = None
+    update_activity_callback: Callable[[], None] | None = (
+        None  # Optional callback to update task worker activity timestamp
+    )
     # Add processing_service back, make it optional
     processing_service: Optional["ProcessingService"] = None
     embedding_generator: Optional["EmbeddingGenerator"] = (
