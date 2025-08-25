@@ -7,6 +7,28 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
   const [copyStatus, setCopyStatus] = useState('');
   const [isExpanded, setIsExpanded] = useState(false);
   const [useEditor, setUseEditor] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(false);
+
+  // Detect dark mode
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDarkMode(window.matchMedia('(prefers-color-scheme: dark)').matches);
+    };
+
+    checkDarkMode();
+
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = (e) => setIsDarkMode(e.matches);
+
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', handleChange);
+      return () => mediaQuery.removeEventListener('change', handleChange);
+    } else {
+      // Fallback for older browsers
+      mediaQuery.addListener(handleChange);
+      return () => mediaQuery.removeListener(handleChange);
+    }
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current || !isExpanded || !useEditor) {
@@ -71,26 +93,49 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
     setUseEditor(true);
   };
 
+  // Dynamic styles based on dark mode
+  const containerStyle = {
+    border: `1px solid ${isDarkMode ? '#374151' : '#ddd'}`,
+    borderRadius: '3px',
+    backgroundColor: isDarkMode ? '#1f2937' : '#f8f9fa',
+    marginTop: '0.5rem',
+  };
+
+  const headerStyle = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '0.5rem',
+    borderBottom: isExpanded ? `1px solid ${isDarkMode ? '#374151' : '#ddd'}` : 'none',
+    backgroundColor: isDarkMode ? '#374151' : '#e9ecef',
+    color: isDarkMode ? '#f9fafb' : '#374151',
+  };
+
+  const preStyle = {
+    fontSize: '0.8rem',
+    fontFamily: 'monospace',
+    backgroundColor: isDarkMode ? '#0f172a' : '#fff',
+    color: isDarkMode ? '#e2e8f0' : '#1f2937',
+    padding: '0.5rem',
+    border: `1px solid ${isDarkMode ? '#374151' : '#ddd'}`,
+    borderRadius: '3px',
+    overflow: 'auto',
+    maxHeight: '300px',
+    margin: 0,
+  };
+
+  const editorContainerStyle = {
+    minHeight: '200px',
+    maxHeight: '400px',
+    overflow: 'auto',
+    border: `1px solid ${isDarkMode ? '#374151' : '#ddd'}`,
+    borderRadius: '3px',
+  };
+
   return (
-    <div
-      style={{
-        border: '1px solid #ddd',
-        borderRadius: '3px',
-        backgroundColor: '#f8f9fa',
-        marginTop: '0.5rem',
-      }}
-    >
+    <div style={containerStyle}>
       {/* Control buttons */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '0.5rem',
-          borderBottom: isExpanded ? '1px solid #ddd' : 'none',
-          backgroundColor: '#e9ecef',
-        }}
-      >
+      <div style={headerStyle}>
         <div style={{ fontSize: '0.9rem', fontWeight: 'bold' }}>Task Payload</div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <Button
@@ -123,34 +168,11 @@ const JsonPayloadViewer = ({ data, taskId: _taskId }) => {
                   Load Rich Editor
                 </Button>
               </div>
-              <pre
-                style={{
-                  fontSize: '0.8rem',
-                  fontFamily: 'monospace',
-                  backgroundColor: '#fff',
-                  padding: '0.5rem',
-                  border: '1px solid #ddd',
-                  borderRadius: '3px',
-                  overflow: 'auto',
-                  maxHeight: '300px',
-                  margin: 0,
-                }}
-              >
-                {JSON.stringify(data, null, 2)}
-              </pre>
+              <pre style={preStyle}>{JSON.stringify(data, null, 2)}</pre>
             </div>
           ) : (
             // Rich editor container
-            <div
-              ref={containerRef}
-              style={{
-                minHeight: '200px',
-                maxHeight: '400px',
-                overflow: 'auto',
-                border: '1px solid #ddd',
-                borderRadius: '3px',
-              }}
-            />
+            <div ref={containerRef} style={editorContainerStyle} />
           )}
         </div>
       )}
