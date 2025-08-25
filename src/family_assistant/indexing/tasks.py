@@ -145,6 +145,14 @@ async def handle_embed_and_store_batch(
         embedding_vector = None
         embedding_model_used = "unknown"
 
+        # Update worker activity every 10 items to prevent timeout
+        if i % 10 == 0 and exec_context.update_activity_callback:
+            exec_context.update_activity_callback()
+            if i > 0:  # Don't log on first iteration
+                logger.debug(
+                    f"Processing item {i + 1}/{len(texts_to_embed)} for document_id {document_id}"
+                )
+
         # Check if content is too long for embedding
         if len(text_content) > MAX_CONTENT_LENGTH:
             logger.info(

@@ -522,6 +522,7 @@ class TaskWorker:
                 db_context=db_context,
                 chat_interface=self.chat_interface,
                 timezone_str=self.timezone_str,
+                update_activity_callback=self._update_last_activity,  # Pass activity callback
                 processing_service=self.processing_service,
                 embedding_generator=self.embedding_generator,
                 clock=self.clock,  # Pass the clock instance
@@ -775,6 +776,7 @@ class TaskWorker:
 
                         if task:
                             logger.debug("Dequeued task: %s", task["task_id"])
+                            self._update_last_activity()  # Update activity when starting task processing
                             await self._process_task(db_context, task, wake_up_event)
                             self._update_last_activity()  # Update after successful task processing
                         else:

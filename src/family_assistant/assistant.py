@@ -1065,9 +1065,7 @@ class Assistant:
     async def _monitor_task_worker_health(self) -> None:
         """Monitors the health of the task worker and restarts it if necessary."""
         HEALTH_CHECK_INTERVAL = 30  # Check every 30 seconds
-        WORKER_INACTIVITY_TIMEOUT = (
-            120  # Consider worker dead after 2 minutes of inactivity
-        )
+        WORKER_INACTIVITY_TIMEOUT = 600
 
         while not self.shutdown_event.is_set():
             try:
