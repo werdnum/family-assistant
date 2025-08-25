@@ -32,3 +32,4 @@ ci-artifacts-new/
 workspace-artifacts/
 CLAUDE.local.md
 .playwright-mcp
+*.db
