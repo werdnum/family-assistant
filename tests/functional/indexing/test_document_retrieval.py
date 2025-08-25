@@ -74,6 +74,7 @@ class TestDocumentRetrieval:
         img.save(buffer, format="PNG")
         return buffer.getvalue()
 
+    @pytest.mark.postgres
     async def test_pdf_document_upload_and_retrieval(
         self,
         pg_vector_db_engine: AsyncEngine,
@@ -156,6 +157,7 @@ class TestDocumentRetrieval:
             assert attachment.content == sample_pdf_content
             assert "Test PDF Document" in attachment.description
 
+    @pytest.mark.postgres
     async def test_image_document_upload_and_retrieval(
         self,
         pg_vector_db_engine: AsyncEngine,
@@ -224,6 +226,7 @@ class TestDocumentRetrieval:
             assert attachment.content == sample_image_content
             assert "Test Image" in attachment.description
 
+    @pytest.mark.postgres
     async def test_text_only_document_retrieval(
         self,
         pg_vector_db_engine: AsyncEngine,
@@ -295,6 +298,7 @@ class TestDocumentRetrieval:
             assert isinstance(content_result, str)
             assert "test text document" in content_result.lower()
 
+    @pytest.mark.postgres
     async def test_missing_file_fallback(
         self,
         pg_vector_db_engine: AsyncEngine,
@@ -361,6 +365,7 @@ class TestDocumentRetrieval:
             # (PDF processing would have extracted text during indexing)
             assert isinstance(content_result, str)
 
+    @pytest.mark.postgres
     async def test_file_size_limit_fallback(
         self,
         pg_vector_db_engine: AsyncEngine,
@@ -423,6 +428,7 @@ class TestDocumentRetrieval:
             # Should fall back to string for large files
             assert isinstance(content_result, str)
 
+    @pytest.mark.postgres
     async def test_file_path_persistence(
         self,
         pg_vector_db_engine: AsyncEngine,
