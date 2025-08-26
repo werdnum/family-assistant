@@ -3,10 +3,10 @@
 import asyncio
 import logging
 from asyncio import Event
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import insert, or_, select, update
+from sqlalchemy import and_, insert, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from family_assistant.storage.repositories.base import BaseRepository
@@ -192,12 +192,24 @@ class TasksRepository(BaseRepository):
             f"DEQUEUE START: Worker {worker_id} searching for tasks of types {task_types} at {current_time}"
         )
 
+        # Task timeout: tasks stuck in processing state for longer than this will be reclaimed
+        task_timeout_minutes = 5
+        stale_task_cutoff = current_time - timedelta(minutes=task_timeout_minutes)
+
         if self._db.engine.dialect.name == "postgresql":
             # PostgreSQL: Use SELECT FOR UPDATE SKIP LOCKED for true atomic dequeue
             stmt = (
                 select(tasks_table)
                 .where(
-                    tasks_table.c.status == "pending",
+                    or_(
+                        # Normal pending tasks
+                        tasks_table.c.status == "pending",
+                        # Stalled processing tasks (worker likely crashed)
+                        and_(
+                            tasks_table.c.status == "processing",
+                            tasks_table.c.locked_at <= stale_task_cutoff,
+                        ),
+                    ),
                     tasks_table.c.task_type.in_(task_types),
                     or_(
                         tasks_table.c.scheduled_at.is_(None),
@@ -237,43 +249,52 @@ class TasksRepository(BaseRepository):
                 )
                 return None
         else:
-            # SQLite fallback: Use a two-step process (less atomic but functional)
-            # First, find an available task
-            select_stmt = (
-                select(tasks_table.c.id, tasks_table.c.task_id)
+            # SQLite: Use atomic UPDATE to claim the first available task
+            # This ensures only one worker can claim each task
+            update_stmt = (
+                update(tasks_table)
                 .where(
-                    tasks_table.c.status == "pending",
+                    or_(
+                        # Normal pending tasks
+                        tasks_table.c.status == "pending",
+                        # Stalled processing tasks (worker likely crashed)
+                        and_(
+                            tasks_table.c.status == "processing",
+                            tasks_table.c.locked_at <= stale_task_cutoff,
+                        ),
+                    ),
                     tasks_table.c.task_type.in_(task_types),
                     or_(
                         tasks_table.c.scheduled_at.is_(None),
                         tasks_table.c.scheduled_at <= current_time,
                     ),
                     tasks_table.c.retry_count <= tasks_table.c.max_retries,
-                )
-                .order_by(
-                    tasks_table.c.scheduled_at.asc().nullsfirst(),
-                    tasks_table.c.created_at.asc(),
-                )
-                .limit(1)
-            )
-
-            row = await self._db.fetch_one(select_stmt)
-            if not row:
-                logger.debug(
-                    f"DEQUEUE EMPTY (SQLite): Worker {worker_id} found no available tasks"
-                )
-                return None
-
-            logger.debug(
-                f"DEQUEUE ATTEMPT (SQLite): Worker {worker_id} attempting to lock task {row['task_id']}"
-            )
-
-            # Try to lock it
-            update_stmt = (
-                update(tasks_table)
-                .where(
-                    tasks_table.c.id == row["id"],
-                    tasks_table.c.status == "pending",  # Double-check status
+                    # Use a subquery to enforce ordering and limit to first task
+                    tasks_table.c.id
+                    == select(tasks_table.c.id)
+                    .where(
+                        or_(
+                            # Normal pending tasks
+                            tasks_table.c.status == "pending",
+                            # Stalled processing tasks (worker likely crashed)
+                            and_(
+                                tasks_table.c.status == "processing",
+                                tasks_table.c.locked_at <= stale_task_cutoff,
+                            ),
+                        ),
+                        tasks_table.c.task_type.in_(task_types),
+                        or_(
+                            tasks_table.c.scheduled_at.is_(None),
+                            tasks_table.c.scheduled_at <= current_time,
+                        ),
+                        tasks_table.c.retry_count <= tasks_table.c.max_retries,
+                    )
+                    .order_by(
+                        tasks_table.c.scheduled_at.asc().nullsfirst(),
+                        tasks_table.c.created_at.asc(),
+                    )
+                    .limit(1)
+                    .scalar_subquery(),
                 )
                 .values(
                     status="processing", locked_by=worker_id, locked_at=current_time
@@ -281,26 +302,23 @@ class TasksRepository(BaseRepository):
             )
 
             result = await self._db.execute_with_retry(update_stmt)
-            if result.rowcount == 0:  # type: ignore[attr-defined]
-                # Someone else got it first
-                logger.debug(
-                    f"DEQUEUE RACE LOST (SQLite): Worker {worker_id} lost race for task {row['task_id']} (already taken)"
+            if result.rowcount > 0:  # type: ignore[attr-defined]
+                # Successfully claimed a task, now fetch it
+                fetch_stmt = (
+                    select(tasks_table)
+                    .where(
+                        tasks_table.c.locked_by == worker_id,
+                        tasks_table.c.status == "processing",
+                        tasks_table.c.task_type.in_(task_types),
+                    )
+                    .order_by(tasks_table.c.locked_at.desc())
+                    .limit(1)
                 )
-                return None
+                task_row = await self._db.fetch_one(fetch_stmt)
+                if task_row:
+                    return dict(task_row)
 
-            # Fetch the full task data
-            fetch_stmt = select(tasks_table).where(tasks_table.c.id == row["id"])
-            task_row = await self._db.fetch_one(fetch_stmt)
-            if task_row:
-                logger.info(
-                    f"DEQUEUE SUCCESS (SQLite): Worker {worker_id} dequeued task {task_row['task_id']} (type: {task_row['task_type']})"
-                )
-                return dict(task_row)
-            else:
-                logger.error(
-                    f"DEQUEUE ERROR (SQLite): Worker {worker_id} locked task {row['task_id']} but failed to fetch it"
-                )
-                return None
+            return None
 
     async def update_status(
         self,

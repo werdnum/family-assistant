@@ -766,37 +766,52 @@ class TaskWorker:
                 # Database context per iteration (starts a transaction)
                 if not self.engine:
                     raise RuntimeError("Database engine not initialized")
-                async with get_db_context(engine=self.engine) as db_context:
+                # Split task processing into separate transactions for better isolation
+                # Transaction 1: Dequeue task (commits immediately)
+                task = None
+                async with get_db_context(engine=self.engine) as dequeue_context:
                     logger.debug(
-                        "Polling for tasks on DB context: %s", db_context.engine.url
+                        "Polling for tasks on DB context: %s",
+                        dequeue_context.engine.url,
                     )
-                    try:  # Inner try for dequeue, task processing, and waiting logic
-                        task = await db_context.tasks.dequeue(
+                    try:  # Inner try for dequeue
+                        task = await dequeue_context.tasks.dequeue(
                             worker_id=self.worker_id,
                             task_types=task_types_handled,
                             current_time=self.clock.now(),  # Pass current time from worker's clock
                         )
-
-                        if task:
-                            logger.debug("Dequeued task: %s", task["task_id"])
-                            self._update_last_activity()  # Update activity when starting task processing
-                            await self._process_task(db_context, task, wake_up_event)
-                            self._update_last_activity()  # Update after successful task processing
-                        else:
-                            logger.debug("No tasks found, waiting for next poll")
-                            await self._wait_for_next_poll(wake_up_event)
-                            self._update_last_activity()  # Update after polling cycle
-
-                    # --- Exception handling for the inner try block (catches dequeue or helper errors) ---
                     except Exception as e:
                         logger.error(
-                            f"Error during task processing or DB operation within context for worker {self.worker_id}: {e}",
+                            f"Error during task dequeue for worker {self.worker_id}: {e}",
                             exc_info=True,
                         )
-                        # If an error occurs *within* the db_context block (e.g., during dequeue, handler execution, or waiting),
-                        # the context manager will handle rollback/commit based on the exception.
-                        # We might still want a delay before the next iteration's context attempt.
+                        # Continue to next iteration without processing
+
+                # Process task in separate transaction if one was dequeued
+                if task:
+                    logger.debug("Dequeued task: %s", task["task_id"])
+                    self._update_last_activity()  # Update activity when starting task processing
+                    try:  # Inner try for task processing
+                        # Transaction 2: Process task and update status (commits immediately)
+                        async with get_db_context(
+                            engine=self.engine
+                        ) as process_context:
+                            await self._process_task(
+                                process_context, task, wake_up_event
+                            )
+                        self._update_last_activity()  # Update after successful task processing
+                    except Exception as e:
+                        logger.error(
+                            f"Error during task processing for worker {self.worker_id}: {e}",
+                            exc_info=True,
+                        )
+                        # Task processing failed, continue to next iteration
                         await asyncio.sleep(TASK_POLLING_INTERVAL)
+                else:
+                    # No task found, wait for next poll
+                    logger.debug("No tasks found, waiting for next poll")
+                    await self._wait_for_next_poll(wake_up_event)
+                    self._update_last_activity()  # Update after polling cycle
 
             # --- Exception handling for the outer try block (whole loop iteration) ---
             except asyncio.CancelledError:
