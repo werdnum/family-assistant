@@ -456,14 +456,14 @@ class TaskWorker:
     ) -> None:
         """Handles the execution, completion marking, and recurrence logic for a dequeued task."""
         logger.info(
-            f"Worker {self.worker_id} processing task {task['task_id']} (type: {task['task_type']})"
+            f"PROCESS START: Worker {self.worker_id} processing task {task['task_id']} (type: {task['task_type']})"
         )
         handler = self.task_handlers.get(task["task_type"])
 
         if not handler:
             # This shouldn't happen if dequeue_task respects task_types properly
             logger.error(
-                f"Worker {self.worker_id} dequeued task {task['task_id']} but no handler found for type {task['task_type']}. Marking failed."
+                f"PROCESS ERROR: Worker {self.worker_id} dequeued task {task['task_id']} but no handler found for type {task['task_type']}. Marking failed."
             )
             await db_context.tasks.update_status(
                 task_id=task["task_id"],
@@ -488,7 +488,7 @@ class TaskWorker:
             if task["task_type"] == "llm_callback":
                 if not raw_interface_type or not raw_conversation_id:
                     logger.error(
-                        f"Task {task['task_id']} (llm_callback) missing interface_type or conversation_id in payload."
+                        f"PROCESS ERROR: Task {task['task_id']} (llm_callback) missing interface_type or conversation_id in payload."
                     )
                     await db_context.tasks.update_status(
                         task_id=task["task_id"],
@@ -531,16 +531,19 @@ class TaskWorker:
             )
             # --- Execute Handler with Context ---
             logger.debug(
-                f"Worker {self.worker_id} executing handler for task {task['task_id']} with context."
+                f"HANDLER START: Worker {self.worker_id} executing handler for task {task['task_id']} with context."
             )
             # Pass the context and the original payload with timeout
             try:
                 await asyncio.wait_for(
                     handler(exec_context, task["payload"]), timeout=TASK_HANDLER_TIMEOUT
                 )
+                logger.debug(
+                    f"HANDLER SUCCESS: Worker {self.worker_id} completed handler for task {task['task_id']}"
+                )
             except asyncio.TimeoutError:
                 logger.error(
-                    f"Task {task['task_id']} (type: {task['task_type']}) timed out after {TASK_HANDLER_TIMEOUT} seconds"
+                    f"HANDLER TIMEOUT: Task {task['task_id']} (type: {task['task_type']}) timed out after {TASK_HANDLER_TIMEOUT} seconds"
                 )
                 # Re-raise to trigger retry logic in _handle_task_failure
                 raise
@@ -561,13 +564,13 @@ class TaskWorker:
                 status="done",
             )
             logger.info(
-                f"Worker {self.worker_id} completed task {task_id} (Original: {original_task_id})"
+                f"PROCESS SUCCESS: Worker {self.worker_id} completed task {task_id} (Original: {original_task_id})"
             )
 
             # --- Handle Recurrence ---
             if recurrence_rule_str:
                 logger.info(
-                    f"Task {task_id} has recurrence rule: {recurrence_rule_str}. Scheduling next instance."
+                    f"RECURRENCE PROCESSING: Task {task_id} has recurrence rule: {recurrence_rule_str}. Scheduling next instance."
                 )
                 try:
                     # Use the *scheduled_at* time of the completed task as the base for the next occurrence
@@ -578,7 +581,7 @@ class TaskWorker:
                             "created_at", datetime.now(timezone.utc)
                         )
                         logger.warning(
-                            f"Task {task_id} missing scheduled_at, using created_at ({last_scheduled_at}) for recurrence base."
+                            f"RECURRENCE WARNING: Task {task_id} missing scheduled_at, using created_at ({last_scheduled_at}) for recurrence base."
                         )
                     # Ensure the base time is timezone-aware for rrule
                     if last_scheduled_at.tzinfo is None:
@@ -586,7 +589,7 @@ class TaskWorker:
                             tzinfo=timezone.utc
                         )
                         logger.warning(
-                            f"Made recurrence base time timezone-aware (UTC): {last_scheduled_at}"
+                            f"RECURRENCE WARNING: Made recurrence base time timezone-aware (UTC): {last_scheduled_at}"
                         )
 
                     # Convert UTC time to user's timezone before calculating recurrence
@@ -594,7 +597,7 @@ class TaskWorker:
                     user_tz = zoneinfo.ZoneInfo(self.timezone_str)
                     last_scheduled_in_user_tz = last_scheduled_at.astimezone(user_tz)
                     logger.debug(
-                        f"Converting scheduled time from {last_scheduled_at} UTC to {last_scheduled_in_user_tz} {self.timezone_str} for recurrence calculation"
+                        f"RECURRENCE DEBUG: Converting scheduled time from {last_scheduled_at} UTC to {last_scheduled_in_user_tz} {self.timezone_str} for recurrence calculation"
                     )
 
                     # Get current time in user timezone to avoid scheduling in the past
@@ -613,7 +616,7 @@ class TaskWorker:
                     if next_scheduled_dt:
                         next_scheduled_dt = next_scheduled_dt.astimezone(timezone.utc)
                         logger.debug(
-                            f"Next occurrence calculated as {next_scheduled_dt} UTC"
+                            f"RECURRENCE DEBUG: Next occurrence calculated as {next_scheduled_dt} UTC"
                         )
 
                     if next_scheduled_dt:
@@ -622,13 +625,13 @@ class TaskWorker:
                         if original_task_id.startswith("system_"):
                             next_task_id = original_task_id
                             logger.info(
-                                f"Calculated next occurrence for system task {original_task_id} at {next_scheduled_dt}. Reusing task ID for upsert."
+                                f"RECURRENCE SYSTEM: Calculated next occurrence for system task {original_task_id} at {next_scheduled_dt}. Reusing task ID for upsert."
                             )
                         else:
                             # Format: <original_task_id>_recur_<next_iso_timestamp>
                             next_task_id = f"{original_task_id}_recur_{next_scheduled_dt.isoformat()}"
                             logger.info(
-                                f"Calculated next occurrence for {original_task_id} at {next_scheduled_dt}. New task ID: {next_task_id}"
+                                f"RECURRENCE NEW: Calculated next occurrence for {original_task_id} at {next_scheduled_dt}. New task ID: {next_task_id}"
                             )
 
                         # Enqueue the next task instance
@@ -642,16 +645,16 @@ class TaskWorker:
                             original_task_id=original_task_id,
                         )
                         logger.info(
-                            f"Successfully enqueued next recurring task instance {next_task_id} for original {original_task_id}."
+                            f"RECURRENCE SUCCESS: Successfully enqueued next recurring task instance {next_task_id} for original {original_task_id}."
                         )
                     else:
                         logger.info(
-                            f"No further occurrences found for recurring task {original_task_id} based on rule '{recurrence_rule_str}'."
+                            f"RECURRENCE END: No further occurrences found for recurring task {original_task_id} based on rule '{recurrence_rule_str}'."
                         )
 
                 except Exception as recur_err:
                     logger.error(
-                        f"Failed to calculate or enqueue next instance for recurring task {task_id} (Original: {original_task_id}): {recur_err}",
+                        f"RECURRENCE ERROR: Failed to calculate or enqueue next instance for recurring task {task_id} (Original: {original_task_id}): {recur_err}",
                         exc_info=True,
                     )
                     # Don't mark the original task as failed, just log the recurrence error.

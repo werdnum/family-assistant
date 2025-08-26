@@ -501,7 +501,7 @@ async def schedule_recurring_task_tool(
     task_type = "llm_callback"
 
     logger.info(
-        f"Executing schedule_recurring_task_tool: type='{task_type}', initial='{initial_schedule_time}', rule='{recurrence_rule}'"
+        f"RECURRING TASK CREATION START: type='{task_type}', initial='{initial_schedule_time}', rule='{recurrence_rule}', description='{description}'"
     )
     db_context = exec_context.db_context
     interface_type = exec_context.interface_type
@@ -514,6 +514,9 @@ async def schedule_recurring_task_tool(
             # We don't need dtstart here, just parsing validity
             rrule.rrulestr(recurrence_rule)
         except ValueError as rrule_err:
+            logger.error(
+                f"RECURRING TASK CREATION ERROR: Invalid recurrence rule '{recurrence_rule}': {rrule_err}"
+            )
             raise ValueError(
                 f"Invalid recurrence_rule format: {rrule_err}"
             ) from rrule_err
@@ -522,7 +525,7 @@ async def schedule_recurring_task_tool(
         initial_dt = isoparse(initial_schedule_time)
         if initial_dt.tzinfo is None:
             logger.warning(
-                f"Initial schedule time '{initial_schedule_time}' lacks timezone. Assuming {exec_context.timezone_str}."
+                f"RECURRING TASK CREATION WARNING: Initial schedule time '{initial_schedule_time}' lacks timezone. Assuming {exec_context.timezone_str}."
             )
             initial_dt = initial_dt.replace(tzinfo=ZoneInfo(exec_context.timezone_str))
 
@@ -530,6 +533,9 @@ async def schedule_recurring_task_tool(
         # Use the clock from context to ensure test compatibility
         now_aware = clock.now()
         if initial_dt <= now_aware:
+            logger.error(
+                f"RECURRING TASK CREATION ERROR: Initial schedule time {initial_dt} is not in the future (now: {now_aware})"
+            )
             raise ValueError("Initial schedule time must be in the future.")
 
         # Generate the *initial* unique task ID
@@ -541,6 +547,10 @@ async def schedule_recurring_task_tool(
             )
             base_id += f"_{safe_desc}"
         initial_task_id = f"{base_id}_{uuid.uuid4()}"
+
+        logger.info(
+            f"RECURRING TASK CREATION ID: Generated initial task ID '{initial_task_id}' for base '{base_id}'"
+        )
 
         # Build the payload for llm_callback
         scheduling_time = clock.now()
@@ -561,14 +571,16 @@ async def schedule_recurring_task_tool(
             recurrence_rule=recurrence_rule,
         )
         logger.info(
-            f"Scheduled initial recurring task {initial_task_id} (Type: {task_type}) starting at {initial_dt} with rule '{recurrence_rule}'"
+            f"RECURRING TASK CREATION SUCCESS: Scheduled initial recurring task {initial_task_id} (Type: {task_type}) starting at {initial_dt} with rule '{recurrence_rule}'"
         )
         return f"OK. Recurring callback '{initial_task_id}' scheduled starting {initial_schedule_time} with rule '{recurrence_rule}'."
     except ValueError as ve:
-        logger.error(f"Invalid arguments for scheduling recurring task: {ve}")
+        logger.error(f"RECURRING TASK CREATION ERROR: Invalid arguments: {ve}")
         return f"Error: Invalid arguments provided. {ve}"
     except Exception as e:
-        logger.error(f"Failed to schedule recurring task: {e}", exc_info=True)
+        logger.error(
+            f"RECURRING TASK CREATION ERROR: Failed to schedule: {e}", exc_info=True
+        )
         return "Error: Failed to schedule the recurring task."
 
 
