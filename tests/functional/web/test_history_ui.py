@@ -224,7 +224,11 @@ async def test_history_filters_interface(
         "document.querySelector('input[name=\"conversation_id\"]').disabled === false",
         timeout=5000,
     )
-    await conv_input.fill("web_conv_123")
+    # Clear any existing value first, then fill the new value
+    await conv_input.clear()
+    await conv_input.fill("web_conv_123", force=True)
+    # Add a small delay for React state to update
+    await page.wait_for_timeout(100)
     conv_value = await conv_input.input_value()
     assert conv_value == "web_conv_123"
 
@@ -236,7 +240,9 @@ async def test_history_filters_interface(
         "document.querySelector('input[name=\"date_from\"]').disabled === false",
         timeout=5000,
     )
-    await date_from_input.fill("2024-01-01")
+    # For date inputs, use fill with force and a small delay
+    await date_from_input.fill("2024-01-01", force=True)
+    await page.wait_for_timeout(100)
     from_value = await date_from_input.input_value()
     assert from_value == "2024-01-01"
 
@@ -247,7 +253,9 @@ async def test_history_filters_interface(
         "document.querySelector('input[name=\"date_to\"]').disabled === false",
         timeout=5000,
     )
-    await date_to_input.fill("2024-12-31")
+    # For date inputs, use fill with force and a small delay
+    await date_to_input.fill("2024-12-31", force=True)
+    await page.wait_for_timeout(100)
     to_value = await date_to_input.input_value()
     assert to_value == "2024-12-31"
 
