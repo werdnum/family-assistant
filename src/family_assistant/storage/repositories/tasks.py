@@ -145,13 +145,15 @@ class TasksRepository(BaseRepository):
                 event = get_task_event()
                 event.set()
 
-            logger.info(f"Successfully enqueued task: {task_id} (type: {task_type})")
+            logger.info(
+                f"Successfully enqueued task: {task_id} (type: {task_type}, scheduled: {processed_scheduled_at})"
+            )
 
         except IntegrityError as e:
             # For non-system tasks, this is an error
             if not is_system_task:
                 logger.error(
-                    f"Task with ID '{task_id}' already exists in the queue: {e}",
+                    f"ENQUEUE FAILED: Task with ID '{task_id}' already exists in the queue: {e}",
                     exc_info=True,
                 )
                 raise RuntimeError(f"Task ID '{task_id}' already exists") from e
@@ -186,6 +188,10 @@ class TasksRepository(BaseRepository):
             Task data if a task was dequeued, None if no tasks available
         """
 
+        logger.debug(
+            f"DEQUEUE START: Worker {worker_id} searching for tasks of types {task_types} at {current_time}"
+        )
+
         if self._db.engine.dialect.name == "postgresql":
             # PostgreSQL: Use SELECT FOR UPDATE SKIP LOCKED for true atomic dequeue
             stmt = (
@@ -209,6 +215,9 @@ class TasksRepository(BaseRepository):
 
             row = await self._db.fetch_one(stmt)
             if row:
+                logger.info(
+                    f"DEQUEUE SUCCESS (PostgreSQL): Worker {worker_id} dequeued task {row['task_id']} (type: {row['task_type']})"
+                )
                 # Update the task to mark it as locked
                 update_stmt = (
                     update(tasks_table)
@@ -218,13 +227,20 @@ class TasksRepository(BaseRepository):
                     )
                 )
                 await self._db.execute_with_retry(update_stmt)
+                logger.debug(
+                    f"DEQUEUE LOCKED: Worker {worker_id} marked task {row['task_id']} as processing"
+                )
                 return dict(row)
-            return None
+            else:
+                logger.debug(
+                    f"DEQUEUE EMPTY (PostgreSQL): Worker {worker_id} found no available tasks"
+                )
+                return None
         else:
             # SQLite fallback: Use a two-step process (less atomic but functional)
             # First, find an available task
             select_stmt = (
-                select(tasks_table.c.id)
+                select(tasks_table.c.id, tasks_table.c.task_id)
                 .where(
                     tasks_table.c.status == "pending",
                     tasks_table.c.task_type.in_(task_types),
@@ -243,7 +259,14 @@ class TasksRepository(BaseRepository):
 
             row = await self._db.fetch_one(select_stmt)
             if not row:
+                logger.debug(
+                    f"DEQUEUE EMPTY (SQLite): Worker {worker_id} found no available tasks"
+                )
                 return None
+
+            logger.debug(
+                f"DEQUEUE ATTEMPT (SQLite): Worker {worker_id} attempting to lock task {row['task_id']}"
+            )
 
             # Try to lock it
             update_stmt = (
@@ -260,12 +283,24 @@ class TasksRepository(BaseRepository):
             result = await self._db.execute_with_retry(update_stmt)
             if result.rowcount == 0:  # type: ignore[attr-defined]
                 # Someone else got it first
+                logger.debug(
+                    f"DEQUEUE RACE LOST (SQLite): Worker {worker_id} lost race for task {row['task_id']} (already taken)"
+                )
                 return None
 
             # Fetch the full task data
             fetch_stmt = select(tasks_table).where(tasks_table.c.id == row["id"])
             task_row = await self._db.fetch_one(fetch_stmt)
-            return dict(task_row) if task_row else None
+            if task_row:
+                logger.info(
+                    f"DEQUEUE SUCCESS (SQLite): Worker {worker_id} dequeued task {task_row['task_id']} (type: {task_row['task_type']})"
+                )
+                return dict(task_row)
+            else:
+                logger.error(
+                    f"DEQUEUE ERROR (SQLite): Worker {worker_id} locked task {row['task_id']} but failed to fetch it"
+                )
+                return None
 
     async def update_status(
         self,
@@ -278,7 +313,7 @@ class TasksRepository(BaseRepository):
 
         Args:
             task_id: The unique task identifier
-            status: New status ('completed', 'failed', etc.)
+            status: New status ('completed', 'failed', etc.')
             error: Optional error message if the task failed
         """
         values = {"status": status}
@@ -292,6 +327,11 @@ class TasksRepository(BaseRepository):
         result = await self._db.execute_with_retry(stmt)
         if result.rowcount == 0:  # type: ignore[attr-defined]
             logger.warning(f"Task {task_id} not found for status update to {status}")
+        else:
+            error_msg = f" (error: {error})" if error else ""
+            logger.info(
+                f"STATUS UPDATE: Task {task_id} status changed to {status}{error_msg}"
+            )
 
     async def reschedule_for_retry(
         self,
@@ -329,11 +369,13 @@ class TasksRepository(BaseRepository):
 
         result = await self._db.execute_with_retry(update_stmt)
         if result.rowcount == 0:  # type: ignore[attr-defined]
-            logger.error(f"Task {task_id} not found for retry scheduling")
+            logger.error(
+                f"RESCHEDULE FAILED: Task {task_id} not found for retry scheduling"
+            )
             return False
 
         logger.info(
-            f"Rescheduled task {task_id} for retry {new_retry_count} at {next_scheduled_at}."
+            f"RESCHEDULE SUCCESS: Task {task_id} rescheduled for retry #{new_retry_count} at {next_scheduled_at} (error: {error})"
         )
         return True
 
