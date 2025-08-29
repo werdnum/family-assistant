@@ -258,12 +258,6 @@ if [ "$ONESHOT_MODE" = "true" ]; then
         cat "/opt/oneshot-config/CLAUDE.oneshot.md" >> CLAUDE.local.md
     fi
     
-    # Export oneshot environment variables so they're available to all subprocesses
-    # including the stop hook which runs in a separate shell
-    echo "export ONESHOT_MODE='$ONESHOT_MODE'" >> /home/claude/.bashrc
-    echo "export ONESHOT_STRICT_EXIT='$ONESHOT_STRICT_EXIT'" >> /home/claude/.bashrc
-    echo "   Exported oneshot environment variables to shell profile"
-    
     echo "One shot mode configuration complete"
     echo "  • Settings merged with oneshot permissions"
     echo "  • Instructions added to CLAUDE.local.md"
