@@ -213,6 +213,12 @@ async def _create_initial_schema(engine: AsyncEngine) -> None:
     """Creates all tables defined in the SQLAlchemy metadata."""
     logger.info("Creating tables from SQLAlchemy metadata...")
     async with engine.begin() as conn:
+        # For PostgreSQL, create pgvector extension before creating tables
+        if engine.dialect.name == "postgresql":
+            logger.info("Creating pgvector extension for PostgreSQL...")
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            logger.info("pgvector extension created or already exists.")
+
         await conn.run_sync(metadata.create_all)
     logger.info("Tables created.")
 

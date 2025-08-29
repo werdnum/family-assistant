@@ -421,6 +421,9 @@ def upgrade() -> None:
 
     # PostgreSQL-specific vector tables
     if op.get_bind().dialect.name == "postgresql":
+        # Create pgvector extension before creating tables that use VECTOR type
+        op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+
         import pgvector.sqlalchemy
 
         op.create_table(
