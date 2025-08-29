@@ -439,11 +439,14 @@ EOF
     else
         echo "${GREEN}✅ No issues found - proceeding with commit${NC}" >&2
         
-        # Return JSON for hooks - approve
+        # Return JSON for hooks - allow
         output_json << EOF
 {
-  "decision": "approve",
-  "reason": "No issues found"
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow",
+    "permissionDecisionReason": "No issues found"
+  }
 }
 EOF
         exit 0
@@ -461,11 +464,14 @@ if [[ "$HAS_REVIEWED" == "true" ]]; then
         # Extract issues for JSON response
         ISSUES_FOUND=$(echo "$REVIEW_OUTPUT" | sed -n '/Issues Found:/,/Review Result:/p' | grep -v "Review Result:" | head -20)
         
-        # Return JSON for hooks - block
+        # Return JSON for hooks - deny
         output_json << EOF
 {
-  "decision": "block",
-  "reason": "MAJOR issues found that cannot be bypassed with 'Reviewed' acknowledgment:\n\n$ISSUES_FOUND\n\nTo bypass major issues, use: Bypass-Review: <reason why this is safe>"
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "MAJOR issues found that cannot be bypassed with 'Reviewed' acknowledgment:\n\n$ISSUES_FOUND\n\nTo bypass major issues, use: Bypass-Review: <reason why this is safe>"
+  }
 }
 EOF
         exit 1
@@ -473,22 +479,28 @@ EOF
         echo "${YELLOW}⚠️  Minor issues found but proceeding with review acknowledgment${NC}" >&2
         echo "${GREEN}✅ Commit approved - you've acknowledged the warnings${NC}" >&2
         
-        # Return JSON for hooks - approve
+        # Return JSON for hooks - allow
         output_json << EOF
 {
-  "decision": "approve",
-  "reason": "Minor issues acknowledged with $SENTINEL_PHRASE"
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow",
+    "permissionDecisionReason": "Minor issues acknowledged with $SENTINEL_PHRASE"
+  }
 }
 EOF
         exit 0
     else
         echo "${GREEN}✅ No issues found - proceeding with commit${NC}" >&2
         
-        # Return JSON for hooks - approve
+        # Return JSON for hooks - allow
         output_json << EOF
 {
-  "decision": "approve",
-  "reason": "No issues found"
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow",
+    "permissionDecisionReason": "No issues found"
+  }
 }
 EOF
         exit 0
@@ -500,11 +512,14 @@ if [[ $REVIEW_EXIT_CODE -eq 0 ]]; then
     # No issues found
     echo "${GREEN}✅ All checks passed, ready to commit${NC}" >&2
     
-    # Return JSON for hooks - approve
+    # Return JSON for hooks - allow
     output_json << EOF
 {
-  "decision": "approve",
-  "reason": "All checks passed"
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow",
+    "permissionDecisionReason": "All checks passed"
+  }
 }
 EOF
     exit 0
@@ -527,11 +542,14 @@ else
         # Extract the issues from review output for JSON response
         ISSUES_FOUND=$(echo "$REVIEW_OUTPUT" | sed -n '/Issues Found:/,/^$/p' | grep -v "^$" || echo "Minor issues detected")
         
-        # Return JSON for hooks - block with helpful message including actual issues
+        # Return JSON for hooks - deny with helpful message including actual issues
         output_json << EOF
 {
-  "decision": "block",
-  "reason": "Code review found minor issues that should be addressed:\n\n$ISSUES_FOUND\n\nTo bypass with acknowledgment, add to your commit message:\n• $SENTINEL_PHRASE\n\nThis confirms you've reviewed the warnings and decided to proceed."
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "Code review found minor issues that should be addressed:\n\n$ISSUES_FOUND\n\nTo bypass with acknowledgment, add to your commit message:\n• $SENTINEL_PHRASE\n\nThis confirms you've reviewed the warnings and decided to proceed."
+  }
 }
 EOF
     else
@@ -546,11 +564,14 @@ EOF
         # Extract the issues from review output for JSON response
         ISSUES_FOUND=$(echo "$REVIEW_OUTPUT" | sed -n '/Issues Found:/,/^$/p' | grep -v "^$" || echo "BLOCKING issues detected")
         
-        # Return JSON for hooks - block
+        # Return JSON for hooks - deny
         output_json << EOF
 {
-  "decision": "block",
-  "reason": "Code review found BLOCKING issues that appear to be serious problems:\n\n$ISSUES_FOUND\n\nThese should be fixed before committing.\n\nTo override (use with caution), add to your commit message:\n• Bypass-Review: <specific reason why this is safe despite the issues>"
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "Code review found BLOCKING issues that appear to be serious problems:\n\n$ISSUES_FOUND\n\nThese should be fixed before committing.\n\nTo override (use with caution), add to your commit message:\n• Bypass-Review: <specific reason why this is safe despite the issues>"
+  }
 }
 EOF
     fi
