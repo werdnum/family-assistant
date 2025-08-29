@@ -412,8 +412,11 @@ if [[ "$HAS_BYPASS" == "true" ]]; then
         # Return JSON for hooks - ask for user approval
         output_json << EOF
 {
-  "decision": "ask",
-  "reason": "MAJOR issues found. Bypass requested: $BYPASS_REASON\n\nThese are serious issues that could break the build or cause runtime errors. Do you want to proceed anyway?"
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "ask",
+    "permissionDecisionReason": "MAJOR issues found. Bypass requested: $BYPASS_REASON\n\nThese are serious issues that could break the build or cause runtime errors. Do you want to proceed anyway?"
+  }
 }
 EOF
         exit 0
@@ -425,8 +428,11 @@ EOF
         # Return JSON for hooks - ask for user approval
         output_json << EOF
 {
-  "decision": "ask",
-  "reason": "Minor issues found. Bypass requested: $BYPASS_REASON\n\nDo you want to proceed with the bypass?"
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "ask",
+    "permissionDecisionReason": "Minor issues found. Bypass requested: $BYPASS_REASON\n\nDo you want to proceed with the bypass?"
+  }
 }
 EOF
         exit 0
