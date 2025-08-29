@@ -13,8 +13,6 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CopyIcon,
-  PencilIcon,
-  RefreshCwIcon,
   SendHorizontalIcon,
   UserIcon,
   BotIcon,
@@ -275,10 +273,10 @@ const ComposerAction: React.FC = () => {
 const UserMessage: React.FC = () => {
   return (
     <MessagePrimitive.Root
-      className="p-6 animate-in slide-in-from-bottom-4 duration-300"
+      className="p-6 animate-in slide-in-from-bottom-4 duration-300 group"
       data-testid="user-message"
     >
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-4xl mx-auto relative">
         <div className="flex items-center justify-end mb-2 h-5">
           <MessageTimestamp />
         </div>
@@ -296,26 +294,9 @@ const UserMessage: React.FC = () => {
             </AvatarFallback>
           </Avatar>
         </div>
-        <UserActionBar />
       </div>
       <BranchPicker className="justify-end pr-12" />
     </MessagePrimitive.Root>
-  );
-};
-
-const UserActionBar: React.FC = () => {
-  return (
-    <ActionBarPrimitive.Root
-      hideWhenRunning
-      autohide="not-last"
-      className="flex gap-1 mt-2 justify-end pr-12 opacity-0 transition-opacity group-hover:opacity-100"
-    >
-      <ActionBarPrimitive.Edit asChild>
-        <TooltipIconButton tooltip="Edit message" size="sm" variant="ghost">
-          <PencilIcon size={14} />
-        </TooltipIconButton>
-      </ActionBarPrimitive.Edit>
-    </ActionBarPrimitive.Root>
   );
 };
 
@@ -362,7 +343,7 @@ const AssistantMessage: React.FC = () => {
       className="p-6 animate-in slide-in-from-bottom-4 duration-300 group"
       data-testid="assistant-message"
     >
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-4xl mx-auto relative">
         <div className="flex items-center justify-between mb-2 h-5">
           <MessageTimestamp />
           {profile && (
@@ -399,32 +380,36 @@ const AssistantMessage: React.FC = () => {
               <BotIcon size={20} className="text-primary" />
             </AvatarFallback>
           </Avatar>
-          <div
-            className="max-w-[70%] p-4 bg-muted border rounded-2xl rounded-bl-md shadow-sm"
-            data-testid="assistant-message-content"
-          >
-            {isLoading ? (
-              <div className="flex items-center gap-1">
-                <div className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce [animation-delay:-0.32s]"></div>
-                <div className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce [animation-delay:-0.16s]"></div>
-                <div className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce"></div>
-              </div>
-            ) : (
-              <>
-                {Array.isArray(message.content) ? (
-                  <MessagePrimitive.Content components={messageContentComponents} />
-                ) : typeof message.content === 'string' ? (
-                  <MarkdownText>{message.content}</MarkdownText>
-                ) : message.content ? (
-                  <MarkdownText>{String(message.content)}</MarkdownText>
+          <div className="flex-1">
+            <div className="relative inline-block max-w-[70%]">
+              <div
+                className="p-4 bg-muted border rounded-2xl rounded-bl-md shadow-sm"
+                data-testid="assistant-message-content"
+              >
+                {isLoading ? (
+                  <div className="flex items-center gap-1">
+                    <div className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce [animation-delay:-0.32s]"></div>
+                    <div className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce [animation-delay:-0.16s]"></div>
+                    <div className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce"></div>
+                  </div>
                 ) : (
-                  <div className="text-muted-foreground italic">No content</div>
+                  <>
+                    {Array.isArray(message.content) ? (
+                      <MessagePrimitive.Content components={messageContentComponents} />
+                    ) : typeof message.content === 'string' ? (
+                      <MarkdownText>{message.content}</MarkdownText>
+                    ) : message.content ? (
+                      <MarkdownText>{String(message.content)}</MarkdownText>
+                    ) : (
+                      <div className="text-muted-foreground italic">No content</div>
+                    )}
+                  </>
                 )}
-              </>
-            )}
+              </div>
+              <AssistantActionBar />
+            </div>
           </div>
         </div>
-        <AssistantActionBar />
       </div>
       <BranchPicker className="pl-12" />
     </MessagePrimitive.Root>
@@ -437,7 +422,7 @@ const AssistantActionBar: React.FC = () => {
       hideWhenRunning
       autohide="not-last"
       autohideFloat="single-branch"
-      className="flex gap-1 mt-2 pl-12 opacity-0 transition-opacity group-hover:opacity-100"
+      className="absolute top-2 -right-9 flex items-start opacity-0 group-hover:opacity-100 transition-opacity duration-200"
     >
       <ActionBarPrimitive.Copy asChild>
         <TooltipIconButton tooltip="Copy" size="sm" variant="ghost">
@@ -449,11 +434,6 @@ const AssistantActionBar: React.FC = () => {
           </MessagePrimitive.If>
         </TooltipIconButton>
       </ActionBarPrimitive.Copy>
-      <ActionBarPrimitive.Reload asChild>
-        <TooltipIconButton tooltip="Regenerate" size="sm" variant="ghost">
-          <RefreshCwIcon size={14} />
-        </TooltipIconButton>
-      </ActionBarPrimitive.Reload>
     </ActionBarPrimitive.Root>
   );
 };
