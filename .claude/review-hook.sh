@@ -99,7 +99,7 @@ COMMAND=$(echo "$JSON_INPUT" | jq -r '.tool_input.command // ""')
 # - With env vars: SOME_VAR=value git commit -m "message"
 # - PR creation: gh pr create
 # Look for git commit/ci or gh pr create anywhere in the command
-if ! echo "$COMMAND" | grep -qE "(git\s+(commit|ci)|gh\s+pr\s+create)\s+"; then
+if ! echo "$COMMAND" | grep -qE "(git\s+(commit|ci)|gh\s+pr\s+create)(\s|$)"; then
     # Not a git commit or PR creation, allow it
     exit 0
 fi
