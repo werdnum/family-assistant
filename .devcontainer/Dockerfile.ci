@@ -12,9 +12,19 @@ RUN mkdir -p /opt/uv-cache && chown claude:claude /opt/uv-cache
 # The UV cache will be mounted at runtime and persist between builds
 # No need to pre-populate - BuildKit cache mounts handle this efficiently
 
-# Pre-install Playwright system dependencies and browser
-RUN npx --yes playwright install-deps chromium && \
-    npx --yes playwright install chromium
+# Pre-install Playwright system dependencies (as root)
+RUN npx --yes playwright install-deps chromium
+
+# Create the browsers directory with correct permissions
+RUN mkdir -p /home/claude/.cache/playwright-browsers && \
+    chown -R claude:claude /home/claude/.cache
+
+# Switch to claude user to install browsers in the correct location
+USER claude
+RUN npx --yes playwright install chromium
+
+# Switch back to root for remaining setup
+USER root
 
 # Pre-build frontend assets for CI
 # First copy only package files for better layer caching
