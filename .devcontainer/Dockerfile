@@ -89,7 +89,8 @@ RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/home/claude/.deno sh
 ENV PATH="/usr/local/bin:/home/claude/.local/bin:/usr/lib/postgresql/17/bin:$PATH"
 
 # Install Claude Code CLI and LLM tools as claude user
-RUN npm install -g @anthropic-ai/claude-code @google/gemini-cli && \
+# Pin playwright to 1.55.0 to match Python version
+RUN npm install -g @anthropic-ai/claude-code @google/gemini-cli playwright@1.55.0 && \
     uv tool install --with llm-gemini --with llm-openrouter --with llm-fragments-github llm
 
 # Set Playwright browsers path to user's home to avoid permission issues
@@ -109,8 +110,8 @@ RUN npx playwright install-deps chromium
 USER claude
 
 # Install Playwright globally as claude user (after system deps are installed)
-RUN npm install -g playwright && \
-    npx playwright install chromium
+# Already installed at specific version above, just install browsers
+RUN npx playwright install chromium
 
 # Switch back to root for remaining system-level operations
 USER root
