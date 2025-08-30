@@ -96,8 +96,10 @@ COMMAND=$(echo "$JSON_INPUT" | jq -r '.tool_input.command // ""')
 # - Simple: git commit -m "message"
 # - Compound: git add . && git commit -m "message"
 # - With semicolon: git add .; git commit -m "message"
+# - With env vars: SOME_VAR=value git commit -m "message"
 # - PR creation: gh pr create
-if ! echo "$COMMAND" | grep -qE "(^|[;&|])\s*(git\s+(commit|ci)|gh\s+pr\s+create)\s+"; then
+# Look for git commit/ci or gh pr create anywhere in the command
+if ! echo "$COMMAND" | grep -qE "(git\s+(commit|ci)|gh\s+pr\s+create)(\s|$)"; then
     # Not a git commit or PR creation, allow it
     exit 0
 fi
@@ -134,7 +136,7 @@ if echo "$COMMAND" | grep -qE "(^|[;&|])\s*git\s+add\s+"; then
                 echo "${CYAN}Running: $add_cmd${NC}" >&2
                 if ! eval "$add_cmd" 2>&1; then
                     echo "${RED}❌ git add failed${NC}" >&2
-                    exit 2
+                    exit 0
                 fi
             fi
         done <<< "$ADD_COMMANDS"
@@ -203,7 +205,7 @@ if [[ -f "$REPO_ROOT/scripts/format-and-lint.sh" ]]; then
         else
             echo "${RED}❌ Formatting/linting failed${NC}" >&2
             echo "Please fix the issues before committing." >&2
-            exit 2
+            exit 0
         fi
     else
         echo "${YELLOW}⚠️  No staged files to format/lint${NC}" >&2
@@ -221,7 +223,7 @@ else
             echo "$FORMATTER_OUTPUT" >&2
             echo "" >&2
             echo "Please fix formatting issues before committing." >&2
-            exit 2
+            exit 0
         fi
         
         LINTER_OUTPUT=$("$REPO_ROOT/.venv/bin/poe" lint-fast 2>&1)
@@ -232,7 +234,7 @@ else
             echo "$LINTER_OUTPUT" >&2
             echo "" >&2
             echo "Please fix linting issues before committing." >&2
-            exit 2
+            exit 0
         fi
         
         # Stage any changes made by formatters
@@ -299,7 +301,7 @@ if command -v pre-commit &> /dev/null && [[ -f "$REPO_ROOT/.pre-commit-config.ya
             echo "$PRECOMMIT_OUTPUT" >&2
             echo "" >&2
             echo "${YELLOW}Please fix the issues and try again.${NC}" >&2
-            exit 2
+            exit 0
         fi
     done
 else
@@ -325,23 +327,30 @@ HEAD_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "no-head")
 # Check for sentinel phrase or bypass pattern in the entire command
 # The sentinel should be: "Reviewed: HEAD-<commit-hash>" or "Bypass-Review: <reason>"
 SENTINEL_PHRASE="Reviewed: HEAD-$HEAD_COMMIT"
-HAS_SENTINEL=false
+HAS_REVIEWED=false
+HAS_BYPASS=false
 BYPASS_REASON=""
 
 # Check for the original sentinel phrase
 if echo "$COMMAND" | grep -qF "$SENTINEL_PHRASE"; then
-    HAS_SENTINEL=true
-    echo "${GREEN}✅ Found review override sentinel: $SENTINEL_PHRASE${NC}" >&2
+    HAS_REVIEWED=true
+    echo "${GREEN}✅ Found review acknowledgment: $SENTINEL_PHRASE${NC}" >&2
     echo "" >&2
 fi
 
-# Check for the new bypass pattern
+# Check for the bypass pattern
 if echo "$COMMAND" | grep -qE "Bypass-Review:[[:space:]]*([^\"\'$'\n']+)"; then
-    HAS_SENTINEL=true
     # Extract the bypass reason
-    BYPASS_REASON=$(echo "$COMMAND" | sed -n "s/.*Bypass-Review:[[:space:]]*\([^\"\'$'\n']*\).*/\1/p" | head -1)
-    echo "${GREEN}✅ Found review bypass: Bypass-Review: $BYPASS_REASON${NC}" >&2
-    echo "" >&2
+    BYPASS_REASON=$(echo "$COMMAND" | sed -n "s/.*Bypass-Review:[[:space:]]*\([^\"\'$'\n']*\).*/\1/p" | head -1 | xargs)
+    if [[ -n "$BYPASS_REASON" && "$BYPASS_REASON" != "<reason>" && "$BYPASS_REASON" != "reason" ]]; then
+        HAS_BYPASS=true
+        echo "${YELLOW}⚠️  Found bypass request: Bypass-Review: $BYPASS_REASON${NC}" >&2
+        echo "" >&2
+    else
+        echo "${RED}❌ Invalid bypass format: Bypass-Review requires an actual reason${NC}" >&2
+        echo "${YELLOW}Example: Bypass-Review: This is safe because...${NC}" >&2
+        echo "" >&2
+    fi
 fi
 
 # For PR creation, extract the body text to check for sentinel
@@ -356,14 +365,20 @@ if [[ "$IS_PR_CREATE" == "true" ]]; then
     
     if [[ -n "$PR_BODY" ]]; then
         if echo "$PR_BODY" | grep -qF "$SENTINEL_PHRASE"; then
-            HAS_SENTINEL=true
-            echo "${GREEN}✅ Found review override sentinel in PR body: $SENTINEL_PHRASE${NC}" >&2
+            HAS_REVIEWED=true
+            echo "${GREEN}✅ Found review acknowledgment in PR body: $SENTINEL_PHRASE${NC}" >&2
             echo "" >&2
         elif echo "$PR_BODY" | grep -qE "Bypass-Review:[[:space:]]*([^\"\'$'\n']+)"; then
-            HAS_SENTINEL=true
-            BYPASS_REASON=$(echo "$PR_BODY" | sed -n "s/.*Bypass-Review:[[:space:]]*\([^\"\'$'\n']*\).*/\1/p" | head -1)
-            echo "${GREEN}✅ Found review bypass in PR body: Bypass-Review: $BYPASS_REASON${NC}" >&2
-            echo "" >&2
+            BYPASS_REASON=$(echo "$PR_BODY" | sed -n "s/.*Bypass-Review:[[:space:]]*\([^\"\'$'\n']*\).*/\1/p" | head -1 | xargs)
+            if [[ -n "$BYPASS_REASON" && "$BYPASS_REASON" != "<reason>" && "$BYPASS_REASON" != "reason" ]]; then
+                HAS_BYPASS=true
+                echo "${YELLOW}⚠️  Found bypass request in PR body: Bypass-Review: $BYPASS_REASON${NC}" >&2
+                echo "" >&2
+            else
+                echo "${RED}❌ Invalid bypass format in PR body: Bypass-Review requires an actual reason${NC}" >&2
+                echo "${YELLOW}Use: Bypass-Review: <your actual reason why this is safe>${NC}" >&2
+                echo "" >&2
+            fi
         fi
     fi
 fi
@@ -382,53 +397,110 @@ echo "$REVIEW_OUTPUT" >&2
 # Step 6: Process review results and decide whether to proceed
 echo "" >&2
 
-# If sentinel phrase is present, allow even major issues with warning
-if [[ "$HAS_SENTINEL" == "true" ]]; then
+# Handle Bypass-Review: requires user approval for ANY issues
+if [[ "$HAS_BYPASS" == "true" ]]; then
     if [[ $REVIEW_EXIT_CODE -eq 2 ]]; then
-        echo "${YELLOW}⚠️ Code review found MAJOR issues but proceeding with bypass${NC}" >&2
+        echo "${YELLOW}⚠️ Code review found MAJOR issues${NC}" >&2
         echo "${RED}WARNING: Bypassing serious issues:${NC}" >&2
         echo "• Potential build-breaking changes" >&2
         echo "• Possible runtime errors" >&2
         echo "• Security risks" >&2
         echo "" >&2
-        echo "${GREEN}✅ Commit approved with bypass - you take full responsibility${NC}" >&2
+        echo "${YELLOW}Bypass reason: $BYPASS_REASON${NC}" >&2
+        echo "${YELLOW}⚠️  Requesting user approval to bypass MAJOR issues...${NC}" >&2
         
-        # Return JSON for hooks - approve with strong warning
-        REASON_MSG="MAJOR issues bypassed - user takes responsibility"
-        if [[ -n "$BYPASS_REASON" ]]; then
-            REASON_MSG="MAJOR issues bypassed: $BYPASS_REASON"
-        fi
+        # Return JSON for hooks - ask for user approval
         output_json << EOF
 {
-  "decision": "approve",
-  "reason": "$REASON_MSG"
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "ask",
+    "permissionDecisionReason": "MAJOR issues found. Bypass requested: $BYPASS_REASON\n\nThese are serious issues that could break the build or cause runtime errors. Do you want to proceed anyway?"
+  }
 }
 EOF
         exit 0
     elif [[ $REVIEW_EXIT_CODE -eq 1 ]]; then
-        echo "${YELLOW}⚠️  Minor issues found but proceeding with review override${NC}" >&2
-        echo "${GREEN}✅ Commit approved - you've acknowledged the warnings${NC}" >&2
+        echo "${YELLOW}⚠️  Minor issues found${NC}" >&2
+        echo "${YELLOW}Bypass reason: $BYPASS_REASON${NC}" >&2
+        echo "${YELLOW}⚠️  Requesting user approval to bypass...${NC}" >&2
         
-        # Return JSON for hooks - allow with bypass
-        REASON_MSG="Minor issues bypassed"
-        if [[ -n "$BYPASS_REASON" ]]; then
-            REASON_MSG="Review bypassed: $BYPASS_REASON"
-        fi
+        # Return JSON for hooks - ask for user approval
         output_json << EOF
 {
-  "decision": "approve",
-  "reason": "$REASON_MSG"
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "ask",
+    "permissionDecisionReason": "Minor issues found. Bypass requested: $BYPASS_REASON\n\nDo you want to proceed with the bypass?"
+  }
 }
 EOF
         exit 0
     else
         echo "${GREEN}✅ No issues found - proceeding with commit${NC}" >&2
         
-        # Return JSON for hooks - approve
+        # Return JSON for hooks - allow
         output_json << EOF
 {
-  "decision": "approve",
-  "reason": "No issues found"
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow",
+    "permissionDecisionReason": "No issues found"
+  }
+}
+EOF
+        exit 0
+    fi
+fi
+
+# Handle Reviewed: allows minor issues but NOT major ones
+if [[ "$HAS_REVIEWED" == "true" ]]; then
+    if [[ $REVIEW_EXIT_CODE -eq 2 ]]; then
+        echo "${RED}❌ Code review found MAJOR issues${NC}" >&2
+        echo "${RED}The 'Reviewed' acknowledgment only bypasses minor issues.${NC}" >&2
+        echo "${RED}For major issues, you must use: Bypass-Review: <reason>${NC}" >&2
+        echo "" >&2
+        
+        # Extract issues for JSON response
+        ISSUES_FOUND=$(echo "$REVIEW_OUTPUT" | sed -n '/Issues Found:/,/Review Result:/p' | grep -v "Review Result:" | head -20)
+        
+        # Return JSON for hooks - deny
+        output_json << EOF
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "MAJOR issues found that cannot be bypassed with 'Reviewed' acknowledgment:\n\n$ISSUES_FOUND\n\nTo bypass major issues, use: Bypass-Review: <reason why this is safe>"
+  }
+}
+EOF
+        exit 0
+    elif [[ $REVIEW_EXIT_CODE -eq 1 ]]; then
+        echo "${YELLOW}⚠️  Minor issues found but proceeding with review acknowledgment${NC}" >&2
+        echo "${GREEN}✅ Commit approved - you've acknowledged the warnings${NC}" >&2
+        
+        # Return JSON for hooks - allow
+        output_json << EOF
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow",
+    "permissionDecisionReason": "Minor issues acknowledged with Reviewed: HEAD-$HEAD_COMMIT"
+  }
+}
+EOF
+        exit 0
+    else
+        echo "${GREEN}✅ No issues found - proceeding with commit${NC}" >&2
+        
+        # Return JSON for hooks - allow
+        output_json << EOF
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow",
+    "permissionDecisionReason": "No issues found"
+  }
 }
 EOF
         exit 0
@@ -440,11 +512,14 @@ if [[ $REVIEW_EXIT_CODE -eq 0 ]]; then
     # No issues found
     echo "${GREEN}✅ All checks passed, ready to commit${NC}" >&2
     
-    # Return JSON for hooks - approve
+    # Return JSON for hooks - allow
     output_json << EOF
 {
-  "decision": "approve",
-  "reason": "All checks passed"
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow",
+    "permissionDecisionReason": "All checks passed"
+  }
 }
 EOF
     exit 0
@@ -458,8 +533,7 @@ else
         echo "If it's hard and not important enough to fix, track the fix somewhere - with a TODO comment or similar, and acknowledge in the commit message." >&2
         echo "" >&2
         echo "${BOLD}To proceed anyway, add this to your commit message:${NC}" >&2
-        echo "   ${YELLOW}$SENTINEL_PHRASE${NC}" >&2
-        echo "${BOLD}Or use:${NC} ${YELLOW}Bypass-Review: <reason>${NC}" >&2
+        echo "   ${YELLOW}Reviewed: HEAD-$HEAD_COMMIT${NC}" >&2
         echo "" >&2
         echo "This acknowledges you've reviewed the warnings and decided to proceed." >&2
         echo "" >&2
@@ -468,11 +542,14 @@ else
         # Extract the issues from review output for JSON response
         ISSUES_FOUND=$(echo "$REVIEW_OUTPUT" | sed -n '/Issues Found:/,/^$/p' | grep -v "^$" || echo "Minor issues detected")
         
-        # Return JSON for hooks - block with helpful message including actual issues
+        # Return JSON for hooks - deny with helpful message including actual issues
         output_json << EOF
 {
-  "decision": "block",
-  "reason": "Code review found minor issues that should be addressed:\n\n$ISSUES_FOUND\n\nTo bypass with acknowledgment, add one of these to your commit message:\n• $SENTINEL_PHRASE\n• Bypass-Review: <your reason>\n\nThis confirms you've reviewed the warnings and decided to proceed."
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "Code review found minor issues that should be addressed:\n\n$ISSUES_FOUND\n\nTo bypass with acknowledgment, add to your commit message:\n• Reviewed: HEAD-$HEAD_COMMIT\n\nThis confirms you've reviewed the warnings and decided to proceed."
+  }
 }
 EOF
     else
@@ -487,15 +564,18 @@ EOF
         # Extract the issues from review output for JSON response
         ISSUES_FOUND=$(echo "$REVIEW_OUTPUT" | sed -n '/Issues Found:/,/^$/p' | grep -v "^$" || echo "BLOCKING issues detected")
         
-        # Return JSON for hooks - block
+        # Return JSON for hooks - deny
         output_json << EOF
 {
-  "decision": "block",
-  "reason": "Code review found BLOCKING issues that appear to be serious problems:\n\n$ISSUES_FOUND\n\nThese should be fixed before committing.\n\nTo override (use with caution), add to your commit message:\n• $SENTINEL_PHRASE\n• Bypass-Review: <reason why this is safe>"
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "Code review found BLOCKING issues that appear to be serious problems:\n\n$ISSUES_FOUND\n\nThese should be fixed before committing.\n\nTo override (use with caution), add to your commit message:\n• Bypass-Review: <specific reason why this is safe despite the issues>"
+  }
 }
 EOF
     fi
-    exit 2
+    exit 0
 fi
 
 # Note: The cleanup function will always restore stashed changes on exit
