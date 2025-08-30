@@ -185,14 +185,34 @@ fi
 # Install Playwright browsers if needed
 # In CI, they should already be pre-installed, but ensure they're available
 if [ -f "pyproject.toml" ] && grep -q "playwright" pyproject.toml; then
+    echo "=== Debug: Playwright browser setup ===" 
+    echo "USER: $(whoami)"
+    echo "HOME: $HOME"
+    echo "PLAYWRIGHT_BROWSERS_PATH: $PLAYWRIGHT_BROWSERS_PATH"
+    echo "IS_CI_CONTAINER: $IS_CI_CONTAINER"
+    
+    echo "=== Debug: Checking browser directory ===" 
+    ls -la /home/claude/.cache/ || echo "Cache directory doesn't exist"
+    ls -la /home/claude/.cache/playwright-browsers/ || echo "Browsers directory doesn't exist"
+    
     if [ "$IS_CI_CONTAINER" = "true" ]; then
         echo "Verifying Playwright browsers are installed..."
+        echo "=== Debug: Running playwright install dry-run ===" 
+        .venv/bin/playwright install chromium --dry-run || echo "Dry run failed"
+        
+        echo "=== Debug: Checking what playwright thinks ===" 
+        .venv/bin/python -c "import os; print('Python PLAYWRIGHT_BROWSERS_PATH:', os.environ.get('PLAYWRIGHT_BROWSERS_PATH', 'NOT SET'))"
+        
         # Just verify they exist, don't re-download
         .venv/bin/playwright install chromium --dry-run || .venv/bin/playwright install chromium || true
     else
         echo "Installing Playwright browsers for Python environment..."
         .venv/bin/playwright install chromium || true
     fi
+    
+    echo "=== Debug: Final browser directory state ===" 
+    ls -la /home/claude/.cache/playwright-browsers/ || echo "Still no browsers directory"
+    find /home/claude/.cache -name "*chromium*" -type d 2>/dev/null || echo "No chromium found in cache"
 fi
 
 # Copy Claude configuration if provided
