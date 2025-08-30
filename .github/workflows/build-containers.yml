@@ -46,7 +46,7 @@ jobs:
     timeout-minutes: 120 # 2 hours for build
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Set up QEMU
         if: needs.prepare.outputs.platforms != 'linux/amd64'
         uses: docker/setup-qemu-action@v3
@@ -78,7 +78,7 @@ jobs:
     timeout-minutes: 120 # 2 hours for build
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Set up QEMU
         if: needs.prepare.outputs.platforms != 'linux/amd64'
         uses: docker/setup-qemu-action@v3
