@@ -20,14 +20,14 @@ RUN npx --yes playwright@1.55.0 install-deps chromium
 RUN mkdir -p /home/claude/.cache/playwright-browsers && \
     chown -R claude:claude /home/claude/.cache
 
-# Install Python playwright package at specific version and browsers
+# Install browsers using npx (npm playwright) at specific version
 # Since PLAYWRIGHT_BROWSERS_PATH is set, the browsers will be shared between npm and Python
-RUN echo "=== Installing Python Playwright 1.55.0 and browsers ===" && \
+# The Python playwright will be installed at runtime from pyproject.toml
+RUN echo "=== Installing Playwright 1.55.0 browsers ===" && \
     echo "PLAYWRIGHT_BROWSERS_PATH: $PLAYWRIGHT_BROWSERS_PATH" && \
-    /venv/bin/pip install playwright==1.55.0 && \
-    /venv/bin/playwright --version && \
-    echo "Installing browsers via Python playwright..." && \
-    /venv/bin/playwright install chromium && \
+    npx --yes playwright@1.55.0 --version && \
+    echo "Installing browsers via npx playwright..." && \
+    npx --yes playwright@1.55.0 install chromium && \
     echo "Browser installation complete" && \
     ls -la /home/claude/.cache/playwright-browsers/
 
