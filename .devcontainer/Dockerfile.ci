@@ -23,13 +23,7 @@ RUN mkdir -p /home/claude/.cache/playwright-browsers && \
 # Install browsers using npx (npm playwright) at specific version
 # Since PLAYWRIGHT_BROWSERS_PATH is set, the browsers will be shared between npm and Python
 # The Python playwright will be installed at runtime from pyproject.toml
-RUN echo "=== Installing Playwright 1.55.0 browsers ===" && \
-    echo "PLAYWRIGHT_BROWSERS_PATH: $PLAYWRIGHT_BROWSERS_PATH" && \
-    npx --yes playwright@1.55.0 --version && \
-    echo "Installing browsers via npx playwright..." && \
-    npx --yes playwright@1.55.0 install chromium && \
-    echo "Browser installation complete" && \
-    ls -la /home/claude/.cache/playwright-browsers/
+RUN npx --yes playwright@1.55.0 install chromium
 
 # Pre-build frontend assets for CI
 # First copy only package files for better layer caching
@@ -53,18 +47,8 @@ RUN mkdir -p /opt/src/family_assistant/static/dist && \
     mkdir -p /opt/frontend-dist && \
     # The Vite build outputs to ../src/family_assistant/static/dist relative to /opt/frontend/
     # which is /opt/src/family_assistant/static/dist
-    echo "=== Debug: Build output directory contents ===" && \
-    ls -la /opt/src/family_assistant/static/dist/ && \
     # Copy all files including hidden directories like .vite/
     cp -r /opt/src/family_assistant/static/dist/. /opt/frontend-dist/ && \
-    # Verify the copy worked and includes manifest
-    echo "=== Debug: Frontend-dist contents after copy ===" && \
-    ls -la /opt/frontend-dist/ && \
-    echo "=== Debug: Checking for HistoryApp assets ===" && \
-    (find /opt/frontend-dist -name "*HistoryApp*" -type f | head -5) && \
-    echo "=== Debug: Manifest file check ===" && \
-    (test -f /opt/frontend-dist/.vite/manifest.json && echo "✅ Manifest file found" || echo "❌ Manifest file missing") && \
-    (test -f /opt/frontend-dist/router.html && echo "✅ Router HTML found" || echo "❌ Router HTML missing") && \
     # Clean up source files but keep node_modules for CI linting
     rm -rf src *.html *.js *.json
 
