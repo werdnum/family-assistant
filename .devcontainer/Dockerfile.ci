@@ -13,8 +13,8 @@ RUN mkdir -p /opt/uv-cache && chown claude:claude /opt/uv-cache
 # No need to pre-populate - BuildKit cache mounts handle this efficiently
 
 # Pre-install Playwright system dependencies and browser
-RUN npx playwright install-deps chromium || true && \
-    npx playwright install chromium || true
+RUN npx --yes playwright install-deps chromium && \
+    npx --yes playwright install chromium
 
 # Pre-build frontend assets for CI
 # First copy only package files for better layer caching
