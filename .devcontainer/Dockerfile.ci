@@ -13,31 +13,23 @@ RUN mkdir -p /opt/uv-cache && chown claude:claude /opt/uv-cache
 # No need to pre-populate - BuildKit cache mounts handle this efficiently
 
 # Pre-install Playwright system dependencies (as root)
-RUN npx --yes playwright install-deps chromium
-
-# Debug: Check environment and paths before installation
-RUN echo "=== Debug: Pre-installation environment ===" && \
-    echo "USER: $(whoami)" && \
-    echo "HOME: $HOME" && \
-    echo "PLAYWRIGHT_BROWSERS_PATH: $PLAYWRIGHT_BROWSERS_PATH" && \
-    echo "PATH: $PATH" && \
-    echo "=== Debug: Directory state before ===" && \
-    ls -la /home/claude/.cache/ || echo "Cache directory doesn't exist yet"
+# These are OS-level dependencies needed by Chromium
+RUN npx --yes playwright@1.55.0 install-deps chromium
 
 # Create the browsers directory with correct permissions
 RUN mkdir -p /home/claude/.cache/playwright-browsers && \
     chown -R claude:claude /home/claude/.cache
 
-# Install browsers as root (they should go to PLAYWRIGHT_BROWSERS_PATH)
-RUN echo "=== Debug: Installing Playwright browsers as root ===" && \
+# Install Python playwright package at specific version and browsers
+# Since PLAYWRIGHT_BROWSERS_PATH is set, the browsers will be shared between npm and Python
+RUN echo "=== Installing Python Playwright 1.55.0 and browsers ===" && \
     echo "PLAYWRIGHT_BROWSERS_PATH: $PLAYWRIGHT_BROWSERS_PATH" && \
-    npx --yes playwright install chromium && \
-    echo "=== Debug: After browser installation ===" && \
-    ls -la /home/claude/.cache/ && \
-    echo "=== Debug: Browser directory contents ===" && \
-    ls -la /home/claude/.cache/playwright-browsers/ && \
-    echo "=== Debug: Find all chromium installations ===" && \
-    find / -name "chromium*" -type d 2>/dev/null | grep -E "(playwright|chrome)" | head -20
+    /venv/bin/pip install playwright==1.55.0 && \
+    /venv/bin/playwright --version && \
+    echo "Installing browsers via Python playwright..." && \
+    /venv/bin/playwright install chromium && \
+    echo "Browser installation complete" && \
+    ls -la /home/claude/.cache/playwright-browsers/
 
 # Pre-build frontend assets for CI
 # First copy only package files for better layer caching
