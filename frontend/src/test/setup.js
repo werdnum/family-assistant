@@ -14,3 +14,15 @@ Object.defineProperty(window, 'matchMedia', {
     dispatchEvent: () => {},
   }),
 });
+
+// Mock ResizeObserver for components that rely on it
+class ResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+window.ResizeObserver = ResizeObserver;
+
+// jsdom doesn't implement scrollTo on elements
+window.HTMLElement.prototype.scrollTo = () => {};
