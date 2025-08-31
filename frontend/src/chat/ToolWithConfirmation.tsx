@@ -33,7 +33,10 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
     : undefined;
 
   useEffect(() => {
-    if (pendingConfirmation?.timeout_seconds && pendingConfirmation.created_at) {
+    if (
+      typeof pendingConfirmation?.timeout_seconds === 'number' &&
+      pendingConfirmation.created_at
+    ) {
       const createdAt = new Date(pendingConfirmation.created_at);
       const expiresAt = new Date(createdAt.getTime() + pendingConfirmation.timeout_seconds * 1000);
 
