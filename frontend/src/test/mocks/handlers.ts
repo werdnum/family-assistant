@@ -269,7 +269,7 @@ export function createStreamingResponse(chunks: string[]): ReadableStream {
 export const testHandlers = {
   // Handler for streaming chat responses
   streamingChat: (responseChunks: string[]) =>
-    http.post('/api/v1/chat/stream', () => {
+    http.post('/api/v1/chat/send_message_stream', () => {
       const stream = createStreamingResponse(responseChunks);
       return new HttpResponse(stream, {
         headers: {
@@ -282,7 +282,7 @@ export const testHandlers = {
 
   // Handler for tool calls in responses
   toolCallResponse: (toolName: string, args: Record<string, unknown>) =>
-    http.post('/api/v1/chat/stream', () => {
+    http.post('/api/v1/chat/send_message_stream', () => {
       const encoder = new TextEncoder();
       const stream = new ReadableStream({
         start(controller) {

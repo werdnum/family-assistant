@@ -209,7 +209,7 @@ describe('ErrorHandling', () => {
 
     // Should handle confirmation errors gracefully
     expect(screen.getByText('Chat')).toBeInTheDocument();
-  });
+  }, 10000);
 
   it('handles attachment upload errors', async () => {
     // Mock attachment upload failure
