@@ -33,21 +33,35 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
     : undefined;
 
   useEffect(() => {
-    if (pendingConfirmation?.timeout_seconds) {
+    if (pendingConfirmation?.timeout_seconds && pendingConfirmation.created_at) {
       const createdAt = new Date(pendingConfirmation.created_at);
       const expiresAt = new Date(createdAt.getTime() + pendingConfirmation.timeout_seconds * 1000);
 
-      const interval = setInterval(() => {
+      // Calculate initial time remaining immediately
+      const calculateTimeRemaining = () => {
         const now = new Date();
-        const remaining = Math.max(0, Math.floor((expiresAt.getTime() - now.getTime()) / 1000));
-        setTimeRemaining(remaining);
+        return Math.max(0, Math.floor((expiresAt.getTime() - now.getTime()) / 1000));
+      };
 
-        if (remaining <= 0) {
-          clearInterval(interval);
-        }
-      }, 1000);
+      // Set initial value immediately
+      const initialRemaining = calculateTimeRemaining();
+      setTimeRemaining(initialRemaining);
 
-      return () => clearInterval(interval);
+      if (initialRemaining > 0) {
+        const interval = setInterval(() => {
+          const remaining = calculateTimeRemaining();
+          setTimeRemaining(remaining);
+
+          if (remaining <= 0) {
+            clearInterval(interval);
+          }
+        }, 1000);
+
+        return () => clearInterval(interval);
+      }
+    } else {
+      // No timeout specified, clear any existing timeout display
+      setTimeRemaining(null);
     }
   }, [pendingConfirmation]);
 
