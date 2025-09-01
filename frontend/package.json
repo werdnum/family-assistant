@@ -21,7 +21,7 @@
   "license": "MIT",
   "description": "Frontend assets for Family Assistant",
   "dependencies": {
-    "@assistant-ui/react": "^0.5.100",
+    "@assistant-ui/react": "^0.10.44",
     "@hookform/resolvers": "^5.2.1",
     "@json-editor/json-editor": "^2.15.2",
     "@radix-ui/react-avatar": "^1.1.10",
