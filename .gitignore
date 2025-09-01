@@ -33,3 +33,5 @@ workspace-artifacts/
 CLAUDE.local.md
 .playwright-mcp
 *.db
+test_results.log
+test-results
