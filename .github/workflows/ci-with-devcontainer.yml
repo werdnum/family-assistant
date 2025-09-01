@@ -84,6 +84,44 @@ jobs:
                 ln -s /opt/frontend/node_modules frontend/node_modules; \
               fi && \
               scripts/format-and-lint.sh'
+  test-frontend:
+    needs: [prepare, build-devcontainer]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run frontend tests in devcontainer
+        run: |
+          docker run \
+            --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -e CLAUDE_PROJECT_REPO="" \
+            -e UV_CACHE_DIR=/opt/uv-cache \
+            -e CI=true \
+            -u claude \
+            ${{ needs.prepare.outputs.image-name }} \
+            bash -c 'cd /workspace && \
+              if [ -d "/opt/frontend/node_modules" ] && [ ! -d "frontend/node_modules" ]; then \
+                echo "Symlinking pre-installed node_modules for frontend tests..."; \
+                ln -s /opt/frontend/node_modules frontend/node_modules; \
+              fi && \
+              mkdir -p test-results && \
+              npm test --prefix frontend -- --run --reporter=json --reporter=verbose --outputFile=test-results/frontend-report.json'
+      - name: Upload frontend test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-test-results-${{ github.run_id }}
+          path: test-results/frontend-report.json
+          retention-days: 7
+          if-no-files-found: ignore
   test-sqlite:
     needs: [prepare, build-devcontainer]
     runs-on: ubuntu-latest
@@ -219,13 +257,14 @@ jobs:
           echo "💡 Download with: gh run download ${{ github.run_id }} --name playwright-artifacts-postgres-${{ github.run_id }}"
   # Require all test jobs to pass
   all-tests:
-    needs: [lint, test-sqlite, test-postgres]
+    needs: [lint, test-frontend, test-sqlite, test-postgres]
     runs-on: ubuntu-latest
     if: always()
     steps:
       - name: Check all tests passed
         run: |
           if [[ "${{ needs.lint.result }}" != "success" || \
+                "${{ needs.test-frontend.result }}" != "success" || \
                 "${{ needs.test-sqlite.result }}" != "success" || \
                 "${{ needs.test-postgres.result }}" != "success" ]]; then
             echo "One or more test jobs failed"
