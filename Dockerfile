@@ -83,8 +83,9 @@ ENV PATH="${UV_TOOL_BIN_DIR}:/root/.deno/bin:/usr/local/bin:${PATH}"
 
 # --- Install Python dependencies for contrib/scrape_mcp.py and Playwright browsers ---
 # Install playwright and markitdown packages first
+# Pin playwright to match pyproject.toml version to ensure browser compatibility
 RUN --mount=type=cache,target=${UV_CACHE_DIR} \
-    uv pip install "playwright>=1.0" "markitdown[html]>=0.1.0"
+    uv pip install "playwright==1.55.0" "markitdown[html]>=0.1.0"
 
 # Install Playwright browsers with system dependencies
 # This must be done after the playwright package is installed
