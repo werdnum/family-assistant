@@ -721,20 +721,54 @@ class TaskWorker:
             )
 
     async def _wait_for_next_poll(self, wake_up_event: asyncio.Event) -> None:
-        """Waits for the polling interval or a wake-up event."""
+        """Waits for the polling interval, next scheduled task time, or a wake-up event."""
+        # Only use smart sleep duration with SystemClock to avoid test timing issues
+        # Mock clocks in tests can create time skew between mock time and database timestamps
+        use_smart_sleep = (
+            self.engine is not None and self.clock.__class__.__name__ == "SystemClock"
+        )
+
+        timeout = TASK_POLLING_INTERVAL
+
+        if use_smart_sleep and self.engine is not None:
+            # Query for the next scheduled task time to optimize sleep duration
+            task_types_handled = list(self.task_handlers.keys())
+            try:
+                async with get_db_context(engine=self.engine) as db_context:
+                    next_task_time = await db_context.tasks.get_next_scheduled_time(
+                        current_time=self.clock.now(), task_types=task_types_handled
+                    )
+                if next_task_time:
+                    time_until_next = (
+                        next_task_time - self.clock.now()
+                    ).total_seconds()
+                    if time_until_next > 0:
+                        timeout = min(time_until_next, TASK_POLLING_INTERVAL)
+                        logger.debug(
+                            f"Worker {self.worker_id}: Next scheduled task in {time_until_next:.1f}s, "
+                            f"using timeout {timeout:.1f}s"
+                        )
+            except Exception as e:
+                logger.error(
+                    f"Worker {self.worker_id}: Failed to query next scheduled task time: {e}",
+                    exc_info=True,
+                )
+                # Fall back to normal polling interval on error
+                timeout = TASK_POLLING_INTERVAL
+
         try:
             logger.debug(
-                f"Worker {self.worker_id}: No tasks found, waiting for event or timeout ({TASK_POLLING_INTERVAL}s)..."
+                f"Worker {self.worker_id}: No tasks found, waiting for event or timeout ({timeout:.1f}s)..."
             )
 
-            await asyncio.wait_for(wake_up_event.wait(), timeout=TASK_POLLING_INTERVAL)
+            await asyncio.wait_for(wake_up_event.wait(), timeout=timeout)
             # If wait_for completes without timeout, the event was set
             logger.debug(f"Worker {self.worker_id}: Woken up by event.")
             wake_up_event.clear()  # Reset the event for the next notification
         except asyncio.TimeoutError:
             # Event didn't fire, timeout reached, proceed to next polling cycle
             logger.debug(
-                f"Worker {self.worker_id}: Wait timed out, continuing poll cycle."
+                f"Worker {self.worker_id}: Wait timed out after {timeout:.1f}s, continuing poll cycle."
             )
             # Continue the loop normally after timeout
 
@@ -800,6 +834,9 @@ class TaskWorker:
                                 process_context, task, wake_up_event
                             )
                         self._update_last_activity()  # Update after successful task processing
+                        # After successful task processing, immediately continue to check for more tasks
+                        # This eliminates unnecessary delays between tasks
+                        continue
                     except Exception as e:
                         logger.error(
                             f"Error during task processing for worker {self.worker_id}: {e}",
