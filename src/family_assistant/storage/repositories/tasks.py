@@ -218,6 +218,7 @@ class TasksRepository(BaseRepository):
                     tasks_table.c.retry_count <= tasks_table.c.max_retries,
                 )
                 .order_by(
+                    tasks_table.c.scheduled_at.asc().nullsfirst(),
                     tasks_table.c.retry_count.asc(),
                     tasks_table.c.created_at.asc(),
                 )
@@ -291,6 +292,7 @@ class TasksRepository(BaseRepository):
                     )
                     .order_by(
                         tasks_table.c.scheduled_at.asc().nullsfirst(),
+                        tasks_table.c.retry_count.asc(),
                         tasks_table.c.created_at.asc(),
                     )
                     .limit(1)
@@ -549,3 +551,31 @@ class TasksRepository(BaseRepository):
         else:
             logger.error(f"Failed to update task {task['task_id']} for manual retry.")
             return False
+
+    async def get_next_scheduled_time(
+        self, current_time: datetime, task_types: list[str] | None = None
+    ) -> datetime | None:
+        """
+        Get the scheduled time of the next pending task.
+
+        Args:
+            current_time: Current time for comparison
+            task_types: Optional list of task types to filter by
+
+        Returns:
+            The scheduled time of the next pending task, or None if no scheduled tasks exist
+        """
+        stmt = select(tasks_table.c.scheduled_at).where(
+            tasks_table.c.status == "pending",
+            tasks_table.c.scheduled_at.isnot(None),
+            tasks_table.c.scheduled_at > current_time,
+            tasks_table.c.retry_count <= tasks_table.c.max_retries,
+        )
+
+        if task_types:
+            stmt = stmt.where(tasks_table.c.task_type.in_(task_types))
+
+        stmt = stmt.order_by(tasks_table.c.scheduled_at.asc()).limit(1)
+
+        row = await self._db.fetch_one(stmt)
+        return row["scheduled_at"] if row else None
