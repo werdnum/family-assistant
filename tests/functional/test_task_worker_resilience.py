@@ -23,83 +23,114 @@ from tests.helpers import wait_for_tasks_to_complete
 logger = logging.getLogger(__name__)
 
 
-@pytest.mark.skip(
-    reason="Test needs refactoring - timeout patching with fixture has race conditions"
-)
 @pytest.mark.asyncio
 async def test_task_handler_timeout(
-    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+    db_engine: AsyncEngine,
 ) -> None:
     """Test that a handler timeout causes task retry."""
-    # Create worker using the fixture factory
-    worker, new_task_event, shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
-    )
-
-    # Handler that will definitely timeout
-    async def hanging_handler(
-        exec_context: ToolExecutionContext, payload: dict[str, Any]
-    ) -> None:
-        logger.info("Hanging handler started, will sleep for 2 seconds")
-        await asyncio.sleep(2.0)  # Longer than the 1 second timeout we'll set
-        logger.info("Hanging handler finished (should not reach here)")
-
-    worker.register_task_handler("hang", hanging_handler)
-
-    # Create a task with 0 retries allowed to avoid retry delays
-    async with DatabaseContext(engine=worker.engine) as db_context:
-        await db_context.tasks.enqueue(
-            task_id="timeout_test",
-            task_type="hang",
-            payload={},
-            max_retries_override=0,  # No retries to avoid retry delays in test
-        )
-        logger.info("Created test task with ID: timeout_test")
-
-    # Small delay to ensure task is committed (important for postgres)
-    await asyncio.sleep(0.1)
-
-    # Patch the timeout on the module directly before running
+    # Patch the timeout BEFORE creating the worker to avoid race conditions
     import family_assistant.task_worker
 
     original_timeout = family_assistant.task_worker.TASK_HANDLER_TIMEOUT
-    family_assistant.task_worker.TASK_HANDLER_TIMEOUT = 1.0  # Use 1 second timeout
-    logger.info("Patched TASK_HANDLER_TIMEOUT to 1.0 seconds")
+    test_timeout = 1.0  # Use 1 second timeout
+    family_assistant.task_worker.TASK_HANDLER_TIMEOUT = test_timeout
+    logger.info(
+        f"Patched TASK_HANDLER_TIMEOUT to {test_timeout} seconds before worker creation"
+    )
 
     try:
-        # Wake up worker to process task
-        new_task_event.set()
+        # Create events for worker coordination
+        shutdown_event = asyncio.Event()
+        new_task_event = asyncio.Event()
 
-        # Add a small delay to let worker start
-        await asyncio.sleep(1.0)
+        # Create worker with patched timeout already in effect
+        worker = TaskWorker(
+            processing_service=MagicMock(),
+            chat_interface=MagicMock(),
+            calendar_config={},
+            timezone_str="UTC",
+            embedding_generator=MagicMock(),
+            shutdown_event_instance=shutdown_event,
+            engine=db_engine,
+        )
 
-        # Wake up the worker again in case it missed the first event
+        # Handler that will definitely timeout
+        async def hanging_handler(
+            exec_context: ToolExecutionContext, payload: dict[str, Any]
+        ) -> None:
+            logger.info(
+                f"Hanging handler started, will sleep for {test_timeout + 0.5} seconds"
+            )
+            await asyncio.sleep(test_timeout + 0.5)  # Longer than timeout
+            logger.info("Hanging handler finished (should not reach here)")
+
+        worker.register_task_handler("hang", hanging_handler)
+
+        # Start worker task
+        worker_task = asyncio.create_task(worker.run(new_task_event))
+        logger.info("Started TaskWorker in background")
+
+        # Give worker a moment to start up
+        await asyncio.sleep(0.1)
+
+        # Create a task with 0 retries allowed to avoid retry delays
+        async with DatabaseContext(engine=db_engine) as db_context:
+            await db_context.tasks.enqueue(
+                task_id="timeout_test",
+                task_type="hang",
+                payload={},
+                max_retries_override=0,  # No retries to avoid retry delays in test
+            )
+            logger.info("Created test task with ID: timeout_test")
+
+        # Wake up worker to process task immediately
         new_task_event.set()
+        logger.info("Signaled worker to process task")
 
         # Wait for task to be processed (it should timeout and fail immediately with no retries)
-        assert worker.engine is not None
         await wait_for_tasks_to_complete(
-            engine=worker.engine,
-            timeout_seconds=5.0,  # Very short timeout since no retries
+            engine=db_engine,
+            timeout_seconds=10.0,  # Give enough time for timeout + processing
             task_ids={"timeout_test"},
             allow_failures=True,
         )
+        logger.info("Task processing completed")
+
+        # Stop the worker
+        shutdown_event.set()
+        new_task_event.set()  # Wake worker so it sees shutdown
+
+        try:
+            await asyncio.wait_for(worker_task, timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("Worker did not shut down cleanly, canceling")
+            worker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker_task
+
+        # Check task was marked as failed due to timeout
+        async with DatabaseContext(engine=db_engine) as db_context:
+            stmt = select(tasks_table).where(tasks_table.c.task_id == "timeout_test")
+            tasks = await db_context.fetch_all(stmt)
+            task = tasks[0] if tasks else None
+
+            assert task is not None, "Task not found in database"
+            # Task should have failed immediately since max_retries=0
+            assert task["status"] == "failed", (
+                f"Expected status 'failed', got '{task['status']}'"
+            )
+            assert task["retry_count"] == 0, (
+                f"Expected retry_count 0, got {task['retry_count']}"
+            )  # No retries were allowed
+            assert "TimeoutError" in (task["error"] or ""), (
+                f"Expected 'TimeoutError' in error, got: {task['error']}"
+            )
+            logger.info(f"Task correctly failed with timeout: {task['error']}")
+
     finally:
         # Restore original timeout
         family_assistant.task_worker.TASK_HANDLER_TIMEOUT = original_timeout
-
-    # Check task was marked for retry
-    async with DatabaseContext(engine=worker.engine) as db_context:
-        stmt = select(tasks_table).where(tasks_table.c.task_id == "timeout_test")
-        tasks = await db_context.fetch_all(stmt)
-        task = tasks[0] if tasks else None
-
-        assert task is not None
-        # Task should have failed immediately since max_retries=0
-        assert task["status"] == "failed"
-        assert task["retry_count"] == 0  # No retries were allowed
-        assert "TimeoutError" in (task["error"] or "")
+        logger.info("Restored original TASK_HANDLER_TIMEOUT")
 
 
 @pytest.mark.asyncio
