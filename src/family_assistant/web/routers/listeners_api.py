@@ -273,15 +273,15 @@ async def update_event_listener(
     db: Annotated[DatabaseContext, Depends(get_db)],
 ) -> EventListenerResponse:
     """Update an existing event listener."""
-    # Check if listener exists and user has permission
-    existing = await db.events.get_event_listener_by_id(listener_id, conversation_id)
+    # Check if listener exists
+    existing = await db.events.get_event_listener_by_id(listener_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Event listener not found")
 
     # Update the listener - merge with existing values for partial updates
     success = await db.events.update_event_listener(
         listener_id=listener_id,
-        conversation_id=conversation_id,
+        conversation_id=existing["conversation_id"],
         name=request.name if request.name is not None else existing["name"],
         description=request.description
         if request.description is not None
@@ -341,12 +341,14 @@ async def delete_event_listener(
     db: Annotated[DatabaseContext, Depends(get_db)],
 ) -> dict[str, str]:
     """Delete an event listener."""
-    # Check if listener exists and user has permission
-    listener = await db.events.get_event_listener_by_id(listener_id, conversation_id)
+    # Check if listener exists
+    listener = await db.events.get_event_listener_by_id(listener_id)
     if not listener:
         raise HTTPException(status_code=404, detail="Event listener not found")
 
-    success = await db.events.delete_event_listener(listener_id, conversation_id)
+    success = await db.events.delete_event_listener(
+        listener_id, listener["conversation_id"]
+    )
 
     if not success:
         raise HTTPException(status_code=500, detail="Failed to delete event listener")
