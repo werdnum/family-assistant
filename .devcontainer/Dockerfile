@@ -117,8 +117,9 @@ RUN npx playwright install chromium
 USER root
 
 # Install Python dependencies for scraper MCP and jsonmerge for oneshot config
+# Pin playwright to 1.55.0 to match pyproject.toml and npm global install
 RUN uv venv /venv && \
-    uv pip install -p /venv/bin/python --system "playwright>=1.0" "markitdown[html]>=0.1.0" "jsonmerge>=1.9.0" && \
+    uv pip install -p /venv/bin/python --system "playwright==1.55.0" "markitdown[html]>=0.1.0" "jsonmerge>=1.9.0" && \
     /venv/bin/playwright install chromium && \
     chown -R claude:claude /venv
 

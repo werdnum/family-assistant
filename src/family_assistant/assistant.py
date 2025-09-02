@@ -189,8 +189,49 @@ class Assistant:
             raise RuntimeError("Database engine not initialized")
         return get_db_context(self.database_engine)
 
+    async def _ensure_playwright_browsers_installed(self) -> None:
+        """Ensure Playwright browsers are installed, install if missing."""
+        try:
+            import subprocess
+            import sys
+
+            # Check if browsers are installed by trying to get the path
+            result = subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "--dry-run"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,  # Don't raise on non-zero exit code
+            )
+
+            # If dry-run suggests installation is needed, install chromium
+            if "chromium" in result.stdout.lower() or result.returncode != 0:
+                logger.info("Playwright browsers not found, installing chromium...")
+                install_result = subprocess.run(
+                    [sys.executable, "-m", "playwright", "install", "chromium"],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,  # 5 minute timeout for installation
+                    check=False,  # Don't raise on non-zero exit code
+                )
+                if install_result.returncode == 0:
+                    logger.info("Playwright chromium browser installed successfully")
+                else:
+                    logger.warning(
+                        f"Failed to install Playwright browsers: {install_result.stderr}"
+                    )
+            else:
+                logger.debug("Playwright browsers already installed")
+        except subprocess.TimeoutExpired:
+            logger.warning("Playwright browser check timed out")
+        except Exception as e:
+            logger.warning(f"Could not check/install Playwright browsers: {e}")
+
     async def setup_dependencies(self) -> None:
         """Initializes and wires up all core application components."""
+        # Ensure Playwright browsers are installed as a failsafe
+        await self._ensure_playwright_browsers_installed()
+
         logger.info(f"Using model: {self.config['model']}")
 
         # Store config in FastAPI app state for access by routes
