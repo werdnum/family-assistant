@@ -1,6 +1,7 @@
 import json
 import logging
 import pathlib
+import uuid
 from datetime import date, datetime, timezone
 from typing import Annotated, Any
 
@@ -181,7 +182,7 @@ async def reindex_document(
     API endpoint to re-index a document.
     """
     await db_context.tasks.enqueue(
-        task_id=f"reindex_document_{document_id}",
+        task_id=f"reindex_document_{document_id}_{uuid.uuid4()}",
         task_type="reindex_document",
         payload={"document_id": document_id},
     )
