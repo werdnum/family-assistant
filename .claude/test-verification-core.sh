@@ -63,6 +63,8 @@ check_test_status() {
     if [ -z "$TEST_COMMANDS" ]; then
         echo "❌ Tests have not been run since modifying $LAST_MOD_FILE" >&2
         echo "You MUST run 'poe test' before finishing" >&2
+        echo "Reminder: only `poe test` (with optional -xq) will do. No other commands will satisfy this hook." >&2
+        echo "... even if you think these changes don't impact any or all tests." >&2
         return 1
     fi
 
@@ -103,6 +105,8 @@ check_test_status() {
     else
         echo "❌ Tests failed after modifying $LAST_MOD_FILE" >&2
         echo "You MUST fix failing tests before finishing" >&2
+        echo "Reminder: commits are not accepted without a passing run of poe test." >&2
+        echo "If you believe the failure to be a flake, prove it by rerunning poe test to get a passing result." >&2
         return 1
     fi
 }
