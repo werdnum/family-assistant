@@ -2330,16 +2330,17 @@ wheels = [
 
 [[package]]
 name = "mcp-server-time"
-version = "0.6.2"
+version = "2025.8.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "mcp" },
     { name = "pydantic" },
     { name = "tzdata" },
+    { name = "tzlocal" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/76/65/6f4ac2df4dbed45e2606ceb8d05d2d63f3d1a4a6982babf37059683c88d0/mcp_server_time-0.6.2.tar.gz", hash = "sha256:f8baddaf4787a4ccf8bb585fa936e3537692dd9a24ac2bbe5d2616014f08a6b2", size = 26714, upload-time = "2024-12-04T16:10:18.275Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/04/1c/0593458e9bd1aba06fb981092e213ee668b739f58c58e87a0880d67c7e6f/mcp_server_time-2025.8.4.tar.gz", hash = "sha256:5605e5222b8d2814160c09c38947731cf816fa977a4158c344a95f6a363ca124", size = 30140, upload-time = "2025-08-04T14:52:29.944Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f6/71/e5b546bbe8769be4608728624ad4c4c51c93243a124e527b39465bcf559e/mcp_server_time-0.6.2-py3-none-any.whl", hash = "sha256:6b67640eb9df3df834b3de5001e37ca8b0c997ce700b014882b585964094d116", size = 5693, upload-time = "2024-12-04T16:10:16.487Z" },
+    { url = "https://files.pythonhosted.org/packages/5e/f7/c961382d84df694682ebc76486b2a98cfce429c7d15b1eb3ce89e9cf7ff0/mcp_server_time-2025.8.4-py3-none-any.whl", hash = "sha256:8c7bf9ce770fc0df9268cb1ed29d1a6f0ba8e96dac68ee505d1533e58db3ae74", size = 6510, upload-time = "2025-08-04T14:52:28.891Z" },
 ]
 
 [[package]]
