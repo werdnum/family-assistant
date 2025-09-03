@@ -90,7 +90,7 @@ class MockClientResponse:
     def raise_for_status(self) -> None:
         """Raise if status indicates an error."""
         if self.status >= 400:
-            raise Exception(f"HTTP {self.status}")
+            raise RuntimeError(f"HTTP {self.status}")
 
 
 def create_gemini_streaming_chunks(
