@@ -86,11 +86,40 @@ class TestStarlarkEngineIntegration:
         result = await engine.evaluate_async("x * y", globals_dict)
         assert result == 50
 
-    @pytest.mark.skip(reason="Timeout test disabled - resource intensive and may crash")
+    @pytest.mark.skip(
+        reason="PERMANENTLY DISABLED: Resource-intensive timeout test that may crash the system. "
+        "This test verifies that infinite loops in Starlark scripts are properly terminated, "
+        "but the test itself can consume excessive CPU/memory resources and potentially crash "
+        "the test runner or development environment. The underlying timeout functionality is "
+        "tested through integration tests with safer, bounded scripts."
+    )
     @pytest.mark.asyncio
     async def test_async_timeout(self) -> None:
-        """Test that long-running scripts timeout in async mode."""
-        # This test is disabled as it's resource intensive
+        """
+        Test that long-running scripts timeout in async mode.
+
+        SAFETY NOTE: This test is permanently disabled due to system safety concerns.
+        It would test that scripts with infinite loops (e.g., 'while True: pass') are
+        properly terminated after the configured timeout period. However, running such
+        scripts even briefly can:
+
+        1. Consume excessive CPU resources
+        2. Exhaust available memory
+        3. Make the system unresponsive
+        4. Crash the test runner or IDE
+
+        The timeout functionality is sufficiently tested through:
+        - Integration tests with bounded loops
+        - Unit tests of the timeout configuration
+        - Practical usage in the application
+
+        To re-enable this test (NOT RECOMMENDED):
+        1. Ensure test runs in isolated environment (container/VM)
+        2. Set very short timeout (e.g., 100ms)
+        3. Monitor system resources during execution
+        4. Have process kill mechanisms ready as backup
+        """
+        # Test implementation would use infinite loops to verify timeout behavior
         pass
 
     @pytest.mark.asyncio
@@ -173,8 +202,44 @@ class TestStarlarkEngineIntegration:
         assert engine.evaluate("get_data()['status']", globals_dict) == "ok"
         assert engine.evaluate("get_data()['count']", globals_dict) == 3
 
-    @pytest.mark.skip(reason="Resource limits testing disabled - crashes the machine")
+    @pytest.mark.skip(
+        reason="PERMANENTLY DISABLED: Resource limit testing causes system crashes. "
+        "This test would verify that Starlark scripts respect memory and execution limits, "
+        "but testing resource exhaustion scenarios (e.g., creating massive data structures, "
+        "recursive function calls) can crash the test runner and development environment. "
+        "Resource limits are verified through controlled integration tests and runtime monitoring."
+    )
     def test_resource_limits(self) -> None:
-        """Test resource limit configuration."""
-        # This test is disabled as it was causing system crashes
+        """
+        Test resource limit configuration for Starlark scripts.
+
+        SAFETY NOTE: This test is permanently disabled due to system stability concerns.
+        It would test that scripts are properly constrained by resource limits such as:
+
+        - Maximum memory usage (preventing memory exhaustion attacks)
+        - Maximum execution depth (preventing stack overflow from deep recursion)
+        - Maximum data structure size (preventing DoS via large objects)
+
+        However, testing these limits requires actually approaching or exceeding them,
+        which can cause:
+
+        1. Out-of-memory conditions that crash the Python interpreter
+        2. Stack overflow errors that terminate the test process
+        3. System-wide resource exhaustion affecting the entire development environment
+        4. Unrecoverable crashes requiring system restart
+
+        Alternative verification methods used instead:
+        - Configuration validation tests (ensuring limits are set)
+        - Smoke tests with small but realistic workloads
+        - Production monitoring and alerting
+        - Manual testing in isolated environments
+
+        To re-enable this test (STRONGLY NOT RECOMMENDED):
+        1. Run only in completely isolated container/VM that can be destroyed
+        2. Use very conservative resource limits for testing
+        3. Implement external process monitoring and kill switches
+        4. Have system recovery procedures ready
+        5. Never run on development machines or shared infrastructure
+        """
+        # Test implementation would create resource-intensive scripts to verify limits
         pass

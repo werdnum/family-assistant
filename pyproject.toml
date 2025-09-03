@@ -348,6 +348,7 @@ reportUnusedImport = true
 
 typeCheckingMode = "basic"
 
+
 [tool.uv]
 dev-dependencies = [
     "llm-fragments-github>=0.4",

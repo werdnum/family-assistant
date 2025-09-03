@@ -613,17 +613,77 @@ async def test_responsive_sidebar_mobile(
     # On mobile, sidebar should be closed by default
     assert not await chat_page.is_sidebar_open()
 
-    # Check if toggle button exists
-    toggle_button = await page.query_selector("button[aria-label='Toggle sidebar']")
-    print(f"DEBUG: Toggle button found: {toggle_button is not None}")
+    # Verify toggle button is available
+    await page.wait_for_selector("button[aria-label='Toggle sidebar']", state="visible")
 
-    # Skip the mobile sidebar test for now - the Sheet component behavior is complex
-    # and may require more sophisticated handling
-    pytest.skip("Mobile sidebar test is flaky due to Sheet component complexity")
+    # Test opening sidebar on mobile
+    # Before toggling, make sure no dialog is already open
+    existing_dialog = await page.query_selector('[role="dialog"]')
+    if existing_dialog:
+        # If dialog exists, close it first by clicking outside or using toggle
+        try:
+            # Try clicking the toggle button to close it
+            await page.click("button[aria-label='Toggle sidebar']", timeout=2000)
+            await page.wait_for_timeout(1000)
+        except Exception:
+            pass
 
-    # On mobile, verify the sidebar opened successfully
-    # Skip testing overlay click as it may have timing/z-index issues
+    # Ensure we start from a clean state
+    assert not await chat_page.is_sidebar_open(), (
+        "Sidebar should be closed initially on mobile"
+    )
+
+    # Now open the sidebar
+    await page.click("button[aria-label='Toggle sidebar']")
+
+    # Wait for Sheet component to fully open with proper animation
+    # The Sheet uses Radix UI Dialog with data-state="open" when fully opened
+    await page.wait_for_selector(
+        '[role="dialog"][data-state="open"]', state="visible", timeout=10000
+    )
+
+    # Additional wait for animation completion (Sheet uses duration-500 for open)
+    await page.wait_for_timeout(600)
+
+    # Verify sidebar is now open
     assert await chat_page.is_sidebar_open()
+
+    # Verify sidebar content is accessible
+    await page.wait_for_selector(
+        '[data-testid="new-chat-button"]', state="visible", timeout=5000
+    )
+
+    # Test closing sidebar on mobile by clicking on the overlay
+    # The SheetOverlay has classes: fixed inset-0 z-50 bg-background/80 backdrop-blur-sm
+    overlay = await page.wait_for_selector(
+        ".fixed.inset-0.z-50", state="visible", timeout=5000
+    )
+
+    # Get the viewport dimensions to click in a safe area (far from the sheet content)
+    viewport = page.viewport_size
+    if viewport and overlay:
+        # Click on the far right side of the overlay (away from the left-side sheet)
+        click_x = viewport["width"] - 50  # 50px from right edge
+        click_y = viewport["height"] // 2  # Middle vertically
+        await overlay.click(position={"x": click_x, "y": click_y})
+    elif overlay:
+        # Fallback: click in a safe area
+        await overlay.click(position={"x": 300, "y": 300})
+
+    # Wait for Sheet to start closing (should show data-state="closed")
+    await page.wait_for_function(
+        """() => {
+            const dialog = document.querySelector('[role="dialog"]');
+            return !dialog || dialog.getAttribute('data-state') === 'closed';
+        }""",
+        timeout=5000,
+    )
+
+    # Additional wait for closing animation (Sheet uses duration-300 for close)
+    await page.wait_for_timeout(400)
+
+    # Verify sidebar is closed
+    assert not await chat_page.is_sidebar_open()
 
     # Reset viewport
     await page.set_viewport_size({"width": 1280, "height": 720})

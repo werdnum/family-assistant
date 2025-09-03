@@ -15,9 +15,32 @@ from .vcr_helpers import sanitize_response
 
 
 def skip_if_google_tool_calling(provider: str) -> None:
-    """Skip test if provider is Google since tool calling is not implemented."""
+    """
+    Skip test if provider is Google since tool calling is not implemented.
+
+    ARCHITECTURAL LIMITATION: Google's Gemini API integration does not currently
+    support structured tool calling in our LLM client implementation. This is a
+    temporary limitation pending development work to add tool calling support
+    for the Google provider.
+
+    Status: TEMPORARY - Implementation planned
+
+    What needs to be implemented:
+    1. Google-specific tool calling request format in LiteLLM client
+    2. Proper tool response parsing for Gemini API responses
+    3. Integration testing with Google's function calling API
+    4. Configuration mapping for Google tool calling parameters
+
+    This skip will be removed once Google tool calling is implemented.
+    See related issues/PRs for Google tool calling implementation progress.
+    """
     if provider == "google":
-        pytest.skip("Tool calling not yet implemented for Google provider")
+        pytest.skip(
+            "ARCHITECTURAL LIMITATION: Tool calling not yet implemented for Google provider. "
+            "This is a temporary skip pending implementation of Google/Gemini tool calling "
+            "support in our LLM client. The test infrastructure exists and will work once "
+            "the underlying Google provider tool calling is implemented."
+        )
 
 
 @pytest_asyncio.fixture

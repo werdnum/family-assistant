@@ -279,6 +279,9 @@ class ChatPage(BasePage):
             "h2:has-text('Family Assistant Chat')", state="visible", timeout=10000
         )
 
+        # Get current sidebar state before toggle
+        was_open = await self.is_sidebar_open()
+
         # The toggle button is now always visible and has a specific aria-label
         # Wait for the specific sidebar toggle button to be available
         toggle_button = await self.page.wait_for_selector(
@@ -289,12 +292,27 @@ class ChatPage(BasePage):
         else:
             raise RuntimeError("Sidebar toggle button not found")
 
-        # Wait longer for Sheet animation on mobile
+        # Handle mobile Sheet animations more robustly
         viewport_size = self.page.viewport_size
         if viewport_size and viewport_size["width"] <= 768:
-            await self.page.wait_for_timeout(
-                1500
-            )  # Longer wait for mobile Sheet animation
+            if not was_open:
+                # Opening: wait for dialog to appear and fully open
+                await self.page.wait_for_selector(
+                    '[role="dialog"][data-state="open"]', state="visible", timeout=3000
+                )
+                # Additional buffer for animation completion (Sheet duration-500)
+                await self.page.wait_for_timeout(600)
+            else:
+                # Closing: wait for dialog to close or disappear
+                await self.page.wait_for_function(
+                    """() => {
+                        const dialog = document.querySelector('[role="dialog"]');
+                        return !dialog || dialog.getAttribute('data-state') === 'closed';
+                    }""",
+                    timeout=3000,
+                )
+                # Additional buffer for closing animation (Sheet duration-300)
+                await self.page.wait_for_timeout(400)
         else:
             await self.page.wait_for_timeout(300)  # Standard wait for desktop
 
@@ -303,15 +321,28 @@ class ChatPage(BasePage):
         # Check viewport width to determine if we're in mobile or desktop mode
         viewport_size = self.page.viewport_size
         if viewport_size and viewport_size["width"] <= 768:
-            # Mobile: Check for Sheet dialog state
-            # The Sheet component from shadcn/ui uses data-state="open" or data-state="closed"
-            sheet = await self.page.query_selector('[data-state="open"][role="dialog"]')
+            # Mobile: Check for Sheet dialog state with more robust detection
+            # First check if there's an open dialog
+            sheet = await self.page.query_selector('[role="dialog"][data-state="open"]')
             if sheet:
-                # If we found a sheet with data-state="open", check if it contains sidebar content
+                # Verify it's the sidebar sheet by checking for sidebar-specific content
                 sidebar_content = await sheet.query_selector(
                     '[data-testid="new-chat-button"]'
                 )
                 return sidebar_content is not None
+
+            # Also check if the dialog exists but might still be animating
+            # In case data-state hasn't updated yet
+            sheet_any = await self.page.query_selector('[role="dialog"]')
+            if sheet_any:
+                state = await sheet_any.get_attribute("data-state")
+                if state == "open":
+                    # Double-check with sidebar content
+                    sidebar_content = await sheet_any.query_selector(
+                        '[data-testid="new-chat-button"]'
+                    )
+                    return sidebar_content is not None
+
             return False
         else:
             # Desktop: Check if sidebar is visible by looking for its presence and checking the margin class
