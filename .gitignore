@@ -35,3 +35,6 @@ CLAUDE.local.md
 *.db
 test_results.log
 test-results
+
+.gemini/
+gha-creds-*.json
