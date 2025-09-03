@@ -396,6 +396,7 @@ class TaskWorker:
         engine: AsyncEngine
         | None = None,  # Add engine parameter for dependency injection
         event_sources: dict[str, Any] | None = None,  # Add event sources
+        handler_timeout: float = TASK_HANDLER_TIMEOUT,  # Configurable timeout per instance
     ) -> None:
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
@@ -415,6 +416,7 @@ class TaskWorker:
         self.indexing_source = indexing_source
         self.event_sources = event_sources  # Store event sources
         self.engine = engine  # Store the engine for database operations
+        self.handler_timeout = handler_timeout  # Store timeout per instance
         # Initialize handlers - specific handlers are registered externally
         # Update handler signature type hint
         self.task_handlers: dict[
@@ -536,14 +538,14 @@ class TaskWorker:
             # Pass the context and the original payload with timeout
             try:
                 await asyncio.wait_for(
-                    handler(exec_context, task["payload"]), timeout=TASK_HANDLER_TIMEOUT
+                    handler(exec_context, task["payload"]), timeout=self.handler_timeout
                 )
                 logger.debug(
                     f"HANDLER SUCCESS: Worker {self.worker_id} completed handler for task {task['task_id']}"
                 )
             except asyncio.TimeoutError:
                 logger.error(
-                    f"HANDLER TIMEOUT: Task {task['task_id']} (type: {task['task_type']}) timed out after {TASK_HANDLER_TIMEOUT} seconds"
+                    f"HANDLER TIMEOUT: Task {task['task_id']} (type: {task['task_type']}) timed out after {self.handler_timeout} seconds"
                 )
                 # Re-raise to trigger retry logic in _handle_task_failure
                 raise
