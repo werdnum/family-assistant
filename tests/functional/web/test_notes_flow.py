@@ -116,11 +116,74 @@ async def test_delete_note_flow(web_test_fixture: WebTestFixture) -> None:
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="Search functionality not yet implemented in UI")
 async def test_search_notes_flow(web_test_fixture: WebTestFixture) -> None:
     """Test searching for notes through the UI."""
-    # This test is skipped until search functionality is added to the UI
-    pass  # Should show all created notes
+    page = web_test_fixture.page
+    notes_page = NotesPage(page, web_test_fixture.base_url)
+
+    # Create some test notes with distinct titles for searching
+    test_notes = [
+        ("Grocery List", "Buy milk, eggs, and bread"),
+        ("Meeting Notes", "Discussed project timeline and deliverables"),
+        ("Recipe Ideas", "Try making pasta carbonara next week"),
+        ("Shopping List", "Need new laptop and office supplies"),
+        ("Personal Thoughts", "Reflecting on recent achievements"),
+    ]
+
+    # Add all test notes
+    for title, content in test_notes:
+        await notes_page.add_note(title=title, content=content, include_in_prompt=True)
+
+    # Navigate to notes list and verify all notes exist
+    await notes_page.navigate_to_notes_list()
+    initial_count = await notes_page.get_note_count()
+    assert initial_count >= len(test_notes)
+
+    # Verify all notes are visible initially
+    for title, _ in test_notes:
+        assert await notes_page.is_note_present(title)
+
+    # Test search functionality with different queries
+
+    # Search for "List" - should show "Grocery List" and "Shopping List"
+    await notes_page.search_notes("List")
+
+    # Give the search time to filter (client-side filtering is usually immediate but add small delay for stability)
+    await page.wait_for_timeout(500)
+
+    # Should show filtered results
+    filtered_count = await notes_page.get_note_count()
+    assert filtered_count == 2
+    assert await notes_page.is_note_present("Grocery List")
+    assert await notes_page.is_note_present("Shopping List")
+    assert not await notes_page.is_note_present("Meeting Notes")
+
+    # Search for "Meeting" - should show only "Meeting Notes"
+    await notes_page.search_notes("Meeting")
+    await page.wait_for_timeout(500)
+
+    filtered_count = await notes_page.get_note_count()
+    assert filtered_count == 1
+    assert await notes_page.is_note_present("Meeting Notes")
+    assert not await notes_page.is_note_present("Grocery List")
+
+    # Search for something that doesn't exist
+    await notes_page.search_notes("NonexistentNote")
+    await page.wait_for_timeout(500)
+
+    filtered_count = await notes_page.get_note_count()
+    assert filtered_count == 0
+
+    # Clear search - should show all notes again
+    await notes_page.search_notes("")
+    await page.wait_for_timeout(500)
+
+    final_count = await notes_page.get_note_count()
+    assert final_count >= len(test_notes)
+
+    # Verify all original notes are visible again
+    for title, _ in test_notes:
+        assert await notes_page.is_note_present(title)
 
 
 @pytest.mark.playwright
