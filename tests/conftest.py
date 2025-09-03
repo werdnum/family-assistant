@@ -1109,6 +1109,56 @@ def vcr_cassette_dir(request: pytest.FixtureRequest) -> str:
     return str(test_dir / "cassettes")
 
 
+# --- VCR Bypass Mechanism ---
+@pytest.fixture(autouse=True)
+def vcr_bypass_for_streaming(request: pytest.FixtureRequest) -> None:
+    """
+    Automatically disable VCR for tests marked with 'no_vcr'.
+
+    This fixture addresses VCR.py issue #927 where MockStream doesn't implement
+    the readany() method required by aiohttp 3.12+ for streaming responses.
+
+    Usage:
+    ------
+    @pytest.mark.no_vcr
+    @pytest.mark.llm_integration
+    async def test_streaming_functionality():
+        # This test will make real API calls, bypassing VCR.py
+        pass
+
+    Benefits:
+    ---------
+    - Allows streaming tests to work with aiohttp 3.12+
+    - Preserves VCR.py benefits for non-streaming tests
+    - Clean separation between recorded and live tests
+    - Automatic test skipping in CI without API keys
+    """
+    # Check if the test is marked with 'no_vcr'
+    if request.node.get_closest_marker("no_vcr"):
+        # Import here to avoid circular imports
+        import vcr
+
+        # Monkey patch VCR to be a no-op for this test
+        original_use_cassette = vcr.VCR.use_cassette
+
+        def disabled_use_cassette(
+            self: Any, path: str | None = None, **kwargs: Any
+        ) -> Any:
+            """Return a no-op context manager that doesn't record or replay."""
+            from contextlib import nullcontext
+
+            return nullcontext()
+
+        # Apply the patch for the duration of this test
+        vcr.VCR.use_cassette = disabled_use_cassette
+
+        # Restore original behavior after test
+        def restore() -> None:
+            vcr.VCR.use_cassette = original_use_cassette
+
+        request.addfinalizer(restore)
+
+
 @pytest.fixture(scope="session")
 def built_frontend() -> Generator[None, None, None]:
     """
