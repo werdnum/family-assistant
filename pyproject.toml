@@ -353,6 +353,7 @@ typeCheckingMode = "basic"
 dev-dependencies = [
     "llm-fragments-github>=0.4",
     "llm-fragments-reader>=0.1",
+    "pytest-rerunfailures>=16.0.1",
     "pytest-xdist>=3.7.0",
 ]
 

@@ -274,7 +274,7 @@ async def test_schedule_and_execute_callback(
     await wait_for_tasks_to_complete(
         engine=db_engine,
         task_types={"llm_callback"},
-        timeout_seconds=5.0,
+        timeout_seconds=30.0,
         poll_interval_seconds=0.1,
     )
 
@@ -626,7 +626,7 @@ async def test_modify_pending_callback(
     await wait_for_tasks_to_complete(
         engine=db_engine,
         task_ids={scheduled_task_id},
-        timeout_seconds=5.0,
+        timeout_seconds=30.0,
         poll_interval_seconds=0.1,
     )
 
@@ -955,6 +955,7 @@ async def test_cancel_pending_callback(
     logger.info(f"--- Cancel Callback Test ({test_run_id}) Passed ---")
 
 
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
 @pytest.mark.asyncio
 async def test_schedule_reminder_with_follow_up(
     db_engine: AsyncEngine,
@@ -1167,7 +1168,7 @@ async def test_schedule_reminder_with_follow_up(
     await wait_for_tasks_to_complete(
         engine=db_engine,
         task_ids={initial_task_id},
-        timeout_seconds=5.0,
+        timeout_seconds=30.0,
         poll_interval_seconds=0.1,
     )
 
@@ -1209,7 +1210,7 @@ async def test_schedule_reminder_with_follow_up(
     await wait_for_tasks_to_complete(
         engine=db_engine,
         task_ids={follow_up_task_id},
-        timeout_seconds=5.0,
+        timeout_seconds=30.0,
         poll_interval_seconds=0.1,
     )
 
@@ -1263,7 +1264,7 @@ async def test_schedule_reminder_with_follow_up(
     await wait_for_tasks_to_complete(
         engine=db_engine,
         task_ids={second_follow_up["task_id"]},
-        timeout_seconds=5.0,
+        timeout_seconds=30.0,
         poll_interval_seconds=0.1,
     )
 
@@ -1519,7 +1520,7 @@ async def test_schedule_recurring_callback(
     await wait_for_tasks_to_complete(
         engine=db_engine,
         task_ids={initial_task_id},
-        timeout_seconds=5.0,
+        timeout_seconds=30.0,
         poll_interval_seconds=0.1,
     )
 

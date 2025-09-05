@@ -3,6 +3,7 @@ import contextlib
 import logging
 import os
 import pathlib
+import random
 import shutil
 import socket
 import subprocess
@@ -118,11 +119,41 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
                 metafunc.parametrize("db_engine", db_backends, indirect=True)
 
 
+# Port allocation now handled by worker-specific ranges - no global tracking needed
+
+
 def find_free_port() -> int:
-    """Finds a free port on localhost."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+    """Find a free port, using worker-specific ranges when running under pytest-xdist."""
+
+    # Check if we're running under pytest-xdist
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+
+    if worker_id and worker_id.startswith("gw"):
+        # Extract worker number (gw0 -> 0, gw1 -> 1, etc.)
+        worker_num = int(worker_id[2:])
+
+        # Each worker gets 2000 ports (enough for any test suite)
+        base_port = 40000 + (worker_num * 2000)
+        max_port = base_port + 1999
+
+        # Try random ports in our range until we find a free one
+        for _ in range(100):  # Max 100 attempts
+            port = random.randint(base_port, max_port)
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                try:
+                    s.bind(("127.0.0.1", port))
+                    return port
+                except OSError:
+                    continue  # Port in use, try another
+
+        raise RuntimeError(f"Could not find free port in range {base_port}-{max_port}")
+
+    else:
+        # Not running under xdist or single worker - use traditional approach
+        # Just find any free port
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            return s.getsockname()[1]
 
 
 @pytest.fixture(autouse=True)

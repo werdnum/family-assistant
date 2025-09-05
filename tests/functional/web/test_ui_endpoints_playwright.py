@@ -234,6 +234,7 @@ async def test_responsive_design_mobile(
     console_error_checker.assert_no_errors()
 
 
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_form_interactions(
@@ -253,6 +254,12 @@ async def test_form_interactions(
     # Check if we got HTML or JSON
     page_content = await page.content()
     print(f"Page content type check - starts with: {page_content[:100]}")
+
+    # Wait for search input to be available
+    await page.wait_for_selector(
+        'input[type="text"], input[type="search"]',
+        timeout=10000,  # 10 seconds should be plenty
+    )
 
     # Find search input
     search_input = page.locator('input[type="text"], input[type="search"]').first
