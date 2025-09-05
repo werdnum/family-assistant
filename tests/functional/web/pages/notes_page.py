@@ -85,7 +85,19 @@ class NotesPage(BasePage):
         await self.page.click(self.SAVE_BUTTON)
         # Wait for navigation to the notes list page after save
         await self.page.wait_for_url(f"{self.base_url}/notes", timeout=10000)
-        await self.wait_for_load()
+        # Ensure network has settled and the list has updated
+        await self.wait_for_load(wait_for_network=True)
+        # Deterministically wait until the just-created note appears in the list
+        try:
+            await self.page.wait_for_selector(
+                f"tbody tr td:first-child:has-text('{title}')", timeout=10000
+            )
+        except Exception:
+            # Fall back: small reload to pick up any late updates, then one more quick check
+            await self.reload()
+            await self.page.wait_for_selector(
+                f"tbody tr td:first-child:has-text('{title}')", timeout=3000
+            )
 
     async def edit_note(
         self,
@@ -179,6 +191,8 @@ class NotesPage(BasePage):
             The number of notes visible
         """
         await self.ensure_on_notes_list()
+        # Wait for network to settle so the table reflects latest data
+        await self.wait_for_load(wait_for_network=True)
         # Count table rows, excluding the "No notes found" row
         note_rows = await self.page.query_selector_all(self.NOTE_ROW)
         # Check if it's the empty state

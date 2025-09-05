@@ -104,6 +104,7 @@ dev = [
     "pytest-flakefinder>=1.1.0",
     "pytest-recording>=0.13.0",  # VCR.py integration for pytest
     "pytest-xdist>=3.8.0",  # Parallel test execution
+    "pytest-rerunfailures>=16.0.1",  # Enable @pytest.mark.flaky reruns in CI
     "vcrpy>=7.0.0",  # HTTP record/replay for testing - v7 fixes urllib3 conflicts
     "aiosqlite",
     "assertpy>=1.1", # Add assertpy
@@ -356,4 +357,3 @@ dev-dependencies = [
     "pytest-rerunfailures>=16.0.1",
     "pytest-xdist>=3.7.0",
 ]
-
