@@ -1050,6 +1050,7 @@ local-embeddings = [
 dev = [
     { name = "llm-fragments-github" },
     { name = "llm-fragments-reader" },
+    { name = "pytest-rerunfailures" },
     { name = "pytest-xdist" },
 ]
 
@@ -1149,6 +1150,7 @@ provides-extras = ["dev", "local-embeddings"]
 dev = [
     { name = "llm-fragments-github", specifier = ">=0.4" },
     { name = "llm-fragments-reader", specifier = ">=0.1" },
+    { name = "pytest-rerunfailures", specifier = ">=16.0.1" },
     { name = "pytest-xdist", specifier = ">=3.7.0" },
 ]
 
@@ -3724,6 +3726,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/32/9c/f4027c5f1693847b06d11caf4b4f6bb09f22c1581ada4663877ec166b8c6/pytest_recording-0.13.4.tar.gz", hash = "sha256:568d64b2a85992eec4ae0a419c855d5fd96782c5fb016784d86f18053792768c", size = 26576, upload-time = "2025-05-08T10:41:11.231Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/42/c2/ce34735972cc42d912173e79f200fe66530225190c06655c5632a9d88f1e/pytest_recording-0.13.4-py3-none-any.whl", hash = "sha256:ad49a434b51b1c4f78e85b1e6b74fdcc2a0a581ca16e52c798c6ace971f7f439", size = 13723, upload-time = "2025-05-08T10:41:09.684Z" },
+]
+
+[[package]]
+name = "pytest-rerunfailures"
+version = "16.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/26/53/a543a76f922a5337d10df22441af8bf68f1b421cadf9aedf8a77943b81f6/pytest_rerunfailures-16.0.1.tar.gz", hash = "sha256:ed4b3a6e7badb0a720ddd93f9de1e124ba99a0cb13bc88561b3c168c16062559", size = 27612, upload-time = "2025-09-02T06:48:25.193Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/38/73/67dc14cda1942914e70fbb117fceaf11e259362c517bdadd76b0dd752524/pytest_rerunfailures-16.0.1-py3-none-any.whl", hash = "sha256:0bccc0e3b0e3388275c25a100f7077081318196569a121217688ed05e58984b9", size = 13610, upload-time = "2025-09-02T06:48:23.615Z" },
 ]
 
 [[package]]
