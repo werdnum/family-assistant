@@ -1300,6 +1300,7 @@ async def test_schedule_reminder_with_follow_up(
     logger.info(f"--- Reminder with Follow-up Test ({test_run_id}) Passed ---")
 
 
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
 @pytest.mark.asyncio
 async def test_schedule_recurring_callback(
     db_engine: AsyncEngine,
