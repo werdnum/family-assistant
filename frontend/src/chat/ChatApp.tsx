@@ -57,7 +57,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       abortControllerRef.current = abortController;
 
       setConversationsLoading(true);
-      const response = await fetch('/api/v1/chat/conversations', {
+      const response = await fetch('/api/v1/chat/conversations?interface_type=web', {
         signal: abortController.signal,
       });
       if (response.ok) {

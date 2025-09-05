@@ -34,8 +34,33 @@ export const handlers = [
     });
   }),
 
-  // Mock conversations endpoint
-  http.get('/api/v1/chat/conversations', () => {
+  // Mock conversations endpoint - checks for interface_type filter
+  http.get('/api/v1/chat/conversations', ({ request }) => {
+    const url = new URL(request.url);
+    const interfaceType = url.searchParams.get('interface_type');
+
+    // If interface_type=web is requested, return only web conversations
+    if (interfaceType === 'web') {
+      return HttpResponse.json({
+        conversations: [
+          {
+            conversation_id: 'web_conv_test-1',
+            last_message: 'Hi there! How can I help you today?',
+            last_timestamp: '2025-01-01T10:00:00Z',
+            message_count: 3,
+          },
+          {
+            conversation_id: 'web_conv_test-2',
+            last_message: 'Good evening!',
+            last_timestamp: '2025-01-01T09:00:00Z',
+            message_count: 2,
+          },
+        ],
+        count: 2,
+      });
+    }
+
+    // If no filter, return mixed conversations (including non-web)
     return HttpResponse.json({
       conversations: [
         {
@@ -45,13 +70,19 @@ export const handlers = [
           message_count: 3,
         },
         {
+          conversation_id: 'telegram_conv_test-1',
+          last_message: 'Telegram message',
+          last_timestamp: '2025-01-01T08:00:00Z',
+          message_count: 1,
+        },
+        {
           conversation_id: 'web_conv_test-2',
           last_message: 'Good evening!',
           last_timestamp: '2025-01-01T09:00:00Z',
           message_count: 2,
         },
       ],
-      count: 2,
+      count: 3,
     });
   }),
 
