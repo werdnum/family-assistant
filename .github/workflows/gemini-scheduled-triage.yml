@@ -25,6 +25,9 @@ jobs:
   triage:
     runs-on: 'ubuntu-latest'
     timeout-minutes: 7
+    # Skip if this is a Dependabot pull request
+    if: |-
+      github.actor != 'dependabot[bot]'
     permissions:
       contents: 'read'
       id-token: 'write'
@@ -220,6 +223,7 @@ jobs:
     needs:
       - 'triage'
     if: |-
+      github.actor != 'dependabot[bot]' &&
       needs.triage.outputs.available_labels != '' &&
       needs.triage.outputs.available_labels != '[]' &&
       needs.triage.outputs.triaged_issues != '' &&

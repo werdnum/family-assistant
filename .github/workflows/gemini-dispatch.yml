@@ -39,20 +39,23 @@ jobs:
         run: |-
           env | grep '^DEBUG_'
   dispatch:
-    # For PRs: only if not from a fork
-    # For comments: only if user types @gemini-cli and is OWNER/MEMBER/COLLABORATOR
-    # For issues: only on open/reopen
+    # For PRs: only if not from a fork and not from Dependabot
+    # For comments: only if user types @gemini-cli and is OWNER/MEMBER/COLLABORATOR (excluding Dependabot)
+    # For issues: only on open/reopen and not from Dependabot
     if: |-
       (
         github.event_name == 'pull_request' &&
-        github.event.pull_request.head.repo.fork == false
+        github.event.pull_request.head.repo.fork == false &&
+        github.event.pull_request.user.login != 'dependabot[bot]'
       ) || (
         github.event.sender.type == 'User' &&
+        github.event.sender.login != 'dependabot[bot]' &&
         startsWith(github.event.comment.body || github.event.review.body || github.event.issue.body, '@gemini-cli') &&
         contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association || github.event.review.author_association || github.event.issue.author_association)
       ) || (
         github.event_name == 'issues' &&
-        contains(fromJSON('["opened", "reopened"]'), github.event.action)
+        contains(fromJSON('["opened", "reopened"]'), github.event.action) &&
+        github.event.issue.user.login != 'dependabot[bot]'
       )
     runs-on: 'ubuntu-latest'
     permissions:
