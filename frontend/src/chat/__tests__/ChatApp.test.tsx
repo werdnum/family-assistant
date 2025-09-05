@@ -273,4 +273,74 @@ describe('ChatApp', () => {
       value: 768,
     });
   });
+
+  it('displays only web conversations in sidebar', async () => {
+    const { server } = await import('../../test/setup.js');
+    const { http, HttpResponse } = await import('msw');
+
+    // Mock API to return mixed conversation types, but web UI should filter to only show web ones
+    server.use(
+      http.get('/api/v1/chat/conversations', ({ request }) => {
+        const url = new URL(request.url);
+        const interfaceType = url.searchParams.get('interface_type');
+
+        // If requesting web conversations specifically, return only web ones
+        if (interfaceType === 'web') {
+          return HttpResponse.json({
+            conversations: [
+              {
+                conversation_id: 'web_conv_123',
+                last_message: 'Web conversation message',
+                last_timestamp: '2025-01-01T10:00:00Z',
+                message_count: 2,
+              },
+              {
+                conversation_id: 'web_conv_456',
+                last_message: 'Another web message',
+                last_timestamp: '2025-01-01T09:00:00Z',
+                message_count: 1,
+              },
+            ],
+            count: 2,
+          });
+        }
+
+        // Without filter, would return mixed types (but web UI shouldn't call this)
+        return HttpResponse.json({
+          conversations: [
+            {
+              conversation_id: 'web_conv_123',
+              last_message: 'Web conversation message',
+              last_timestamp: '2025-01-01T10:00:00Z',
+              message_count: 2,
+            },
+            {
+              conversation_id: 'telegram_conv_789',
+              last_message: 'Telegram message that should not appear',
+              last_timestamp: '2025-01-01T08:00:00Z',
+              message_count: 1,
+            },
+          ],
+          count: 2,
+        });
+      })
+    );
+
+    renderChatApp();
+
+    // Wait for conversations to load
+    await waitFor(
+      () => {
+        expect(screen.getByText('Conversations')).toBeInTheDocument();
+      },
+      { timeout: 3000 }
+    );
+
+    // Should see web conversations
+    expect(screen.getByText('Web conversation message')).toBeInTheDocument();
+    expect(screen.getByText('Another web message')).toBeInTheDocument();
+
+    // Should NOT see telegram conversations (they should be filtered out by the interface_type filter)
+    expect(screen.queryByText('Telegram message that should not appear')).not.toBeInTheDocument();
+  });
 });
