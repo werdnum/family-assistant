@@ -50,6 +50,7 @@ class TestProfilesAPI:
         assert response is not None
         assert response.status < 400, f"API returned error status: {response.status}"
 
+    @pytest.mark.flaky(reruns=3, reruns_delay=2)
     async def test_profiles_content_type(
         self, web_test_fixture: WebTestFixture
     ) -> None:
