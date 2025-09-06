@@ -3,10 +3,10 @@
 import asyncio
 import contextlib
 import os
-import random
+import socket
 import subprocess
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 from typing import Any, NamedTuple
 from unittest.mock import AsyncMock
@@ -104,39 +104,30 @@ async def wait_for_server(url: str, timeout: int = 60) -> None:
 # Port allocation now handled by worker-specific ranges - no global tracking needed
 
 
-def find_free_port() -> int:
-    """Find a free port, using worker-specific ranges when running under pytest-xdist."""
+def find_free_port_with_socket() -> tuple[int, socket.socket]:
+    """Find a free port and return both port and socket to prevent race conditions.
+
+    Returns:
+        tuple[int, socket.socket]: Port number and bound socket. Caller must close the socket.
+    """
     import socket
 
-    # Check if we're running under pytest-xdist
-    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+    # Simple approach: let the OS choose a free port and keep the socket bound
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("127.0.0.1", 0))  # Let OS choose a free port
+    port = s.getsockname()[1]
+    return port, s
 
-    if worker_id and worker_id.startswith("gw"):
-        # Extract worker number (gw0 -> 0, gw1 -> 1, etc.)
-        worker_num = int(worker_id[2:])
 
-        # Each worker gets 2000 ports (enough for any test suite)
-        base_port = 40000 + (worker_num * 2000)
-        max_port = base_port + 1999
+def find_free_port() -> int:
+    """Find a free port (legacy function for backward compatibility).
 
-        # Try random ports in our range until we find a free one
-        for _ in range(100):  # Max 100 attempts
-            port = random.randint(base_port, max_port)
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                try:
-                    s.bind(("127.0.0.1", port))
-                    return port
-                except OSError:
-                    continue  # Port in use, try another
-
-        raise RuntimeError(f"Could not find free port in range {base_port}-{max_port}")
-
-    else:
-        # Not running under xdist or single worker - use traditional approach
-        # Just find any free port
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("127.0.0.1", 0))
-            return s.getsockname()[1]
+    Warning: This has a race condition. Use find_free_port_with_socket() instead.
+    """
+    port, sock = find_free_port_with_socket()
+    sock.close()
+    return port
 
 
 @pytest.fixture(scope="function")
@@ -145,6 +136,16 @@ def vite_and_api_ports() -> tuple[int, int]:
     # For the simplified approach, we only need the API port
     api_port = find_free_port()
     return 0, api_port  # Vite port is 0 since we're not using it
+
+
+@pytest.fixture(scope="function")
+def api_socket_and_port() -> Generator[tuple[int, socket.socket], None, None]:
+    """Get a bound socket and port for the API server to prevent race conditions."""
+    port, sock = find_free_port_with_socket()
+    try:
+        yield port, sock
+    finally:
+        sock.close()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -274,7 +275,7 @@ def mock_llm_client() -> RuleBasedMockLLMClient:
 @pytest_asyncio.fixture(scope="function")
 async def web_only_assistant(
     db_engine: AsyncEngine,
-    vite_and_api_ports: tuple[int, int],
+    api_socket_and_port: tuple[int, socket.socket],
     build_frontend_assets: None,  # Ensure assets are built
     mock_llm_client: RuleBasedMockLLMClient,
 ) -> AsyncGenerator[Assistant, None]:
@@ -282,9 +283,9 @@ async def web_only_assistant(
     # Auth is already disabled at module level
     # DEV_MODE is already set to false at module level
 
-    # Get the API port
-    _, api_port = vite_and_api_ports
-    print(f"\n=== Starting API server on port {api_port} ===")
+    # Get the API port and socket
+    api_port, api_socket = api_socket_and_port
+    print(f"\n=== Starting API server on port {api_port} with pre-bound socket ===")
 
     # Create minimal test configuration
     test_config: dict[str, Any] = {
@@ -391,6 +392,7 @@ async def web_only_assistant(
             "test_research": mock_llm_client,
         },  # Key by profile ID, not model name
         database_engine=db_engine,  # Inject the test database engine
+        server_socket=api_socket,  # Pass the pre-bound socket to avoid race conditions
     )
 
     # Enable debug mode for tests to get detailed error messages
@@ -451,7 +453,7 @@ async def web_only_assistant(
 async def web_test_fixture(
     page: Page,
     web_only_assistant: Assistant,
-    vite_and_api_ports: tuple[int, int],
+    api_socket_and_port: tuple[int, socket.socket],
     build_frontend_assets: None,  # Ensure frontend is built before tests
 ) -> WebTestFixture:
     """Combined fixture providing all web test dependencies."""
@@ -476,7 +478,7 @@ async def web_test_fixture(
     page.on("request", log_request)
     page.on("response", log_response)
 
-    _, api_port = vite_and_api_ports
+    api_port, _ = api_socket_and_port
     base_url = f"http://localhost:{api_port}"
 
     # WORKAROUND: Pre-load the router to avoid race conditions with dynamic imports
