@@ -140,10 +140,12 @@ class Assistant:
         config: dict[str, Any],
         llm_client_overrides: dict[str, LLMInterface] | None = None,
         database_engine: AsyncEngine | None = None,
+        server_socket: Any | None = None,
     ) -> None:
         self.config = config
         self._injected_database_engine = database_engine
         self.shutdown_event = asyncio.Event()
+        self.server_socket = server_socket
         self.llm_client_overrides = (
             llm_client_overrides if llm_client_overrides is not None else {}
         )
@@ -908,12 +910,22 @@ class Assistant:
         # Get port from config, default to 8000
         server_port = self.config.get("server_port", 8000)
 
-        uvicorn_config = uvicorn.Config(
-            fastapi_app, host="0.0.0.0", port=server_port, log_level="info"
-        )
+        if self.server_socket is not None:
+            # Use the pre-bound socket to avoid race conditions
+            uvicorn_config = uvicorn.Config(
+                fastapi_app, fd=self.server_socket.fileno(), log_level="info"
+            )
+            logger.info(f"Web server using pre-bound socket on port {server_port}")
+        else:
+            # Use normal host/port binding
+            uvicorn_config = uvicorn.Config(
+                fastapi_app, host="0.0.0.0", port=server_port, log_level="info"
+            )
+            logger.info(f"Web server running on http://0.0.0.0:{server_port}")
+
         server = uvicorn.Server(uvicorn_config)
         self.uvicorn_server_task = asyncio.create_task(server.serve())
-        logger.info(f"Web server running on http://0.0.0.0:{server_port}")
+
         logger.info(
             "In development, run 'poe dev' and access the app at http://localhost:5173"
         )
