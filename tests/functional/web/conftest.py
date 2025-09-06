@@ -110,8 +110,6 @@ def find_free_port_with_socket() -> tuple[int, socket.socket]:
     Returns:
         tuple[int, socket.socket]: Port number and bound socket. Caller must close the socket.
     """
-    import socket
-
     # Simple approach: let the OS choose a free port and keep the socket bound
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

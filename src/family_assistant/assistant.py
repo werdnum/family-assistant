@@ -3,6 +3,7 @@ import contextlib
 import copy
 import logging
 import os
+import socket
 from datetime import datetime, timezone
 from typing import Any
 
@@ -140,7 +141,7 @@ class Assistant:
         config: dict[str, Any],
         llm_client_overrides: dict[str, LLMInterface] | None = None,
         database_engine: AsyncEngine | None = None,
-        server_socket: Any | None = None,
+        server_socket: socket.socket | None = None,
     ) -> None:
         self.config = config
         self._injected_database_engine = database_engine
