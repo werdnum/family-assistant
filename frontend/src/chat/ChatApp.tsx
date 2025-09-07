@@ -229,6 +229,26 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         // Refresh conversations after state is updated
         fetchConversations();
       }
+
+      // Update tool call message status when streaming completes
+      if (toolCallMessageId) {
+        setMessages((prev) =>
+          prev.map((msg) => {
+            if (msg.id === toolCallMessageId) {
+              // Check if all tool calls have results
+              const allToolsComplete = msg.content?.every(
+                (part) => part.type !== 'tool-call' || part.result !== undefined
+              );
+
+              return {
+                ...msg,
+                status: allToolsComplete ? { type: 'complete' } : msg.status,
+              };
+            }
+            return msg;
+          })
+        );
+      }
     },
     [fetchConversations]
   );
