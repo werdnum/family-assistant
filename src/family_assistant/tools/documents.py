@@ -43,7 +43,7 @@ DOCUMENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query_text": {
+                    "query": {
                         "type": "string",
                         "description": (
                             "The natural language query describing the information to search for."
@@ -71,7 +71,7 @@ DOCUMENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
                         "default": 5,
                     },
                 },
-                "required": ["query_text"],
+                "required": ["query"],
             },
         },
     },
@@ -219,7 +219,7 @@ def _scan_user_docs(docs_user_dir: pathlib.Path | None = None) -> list[str]:
 async def search_documents_tool(
     exec_context: ToolExecutionContext,
     embedding_generator: EmbeddingGenerator,  # Injected by LocalToolsProvider
-    query_text: str,
+    query: str,
     source_types: list[str] | None = None,
     embedding_types: list[str] | None = None,
     limit: int = 5,  # Default limit for LLM tool
@@ -230,7 +230,7 @@ async def search_documents_tool(
     Args:
         exec_context: The execution context containing the database context.
         embedding_generator: The embedding generator instance.
-        query_text: The natural language query to search for.
+        query: The natural language query to search for.
         source_types: Optional list of source types to filter by (e.g., ['email', 'note']).
         embedding_types: Optional list of embedding types to filter by (e.g., ['content_chunk', 'summary']).
         limit: Maximum number of results to return.
@@ -243,16 +243,16 @@ async def search_documents_tool(
         query_vector_store,
     )
 
-    logger.info(f"Executing search_documents_tool with query: '{query_text}'")
+    logger.info(f"Executing search_documents_tool with query: '{query}'")
     db_context = exec_context.db_context
     # Use the provided generator's model name
     embedding_model = embedding_generator.model_name
 
     try:
         # 1. Generate query embedding
-        if not query_text:
+        if not query:
             return "Error: Query text cannot be empty."
-        embedding_result = await embedding_generator.generate_embeddings([query_text])
+        embedding_result = await embedding_generator.generate_embeddings([query])
         if not embedding_result.embeddings or len(embedding_result.embeddings) == 0:
             return "Error: Failed to generate embedding for the query."
         query_embedding = embedding_result.embeddings[0]
@@ -260,8 +260,8 @@ async def search_documents_tool(
         # 2. Construct the search query object
         search_query = VectorSearchQuery(
             search_type="hybrid",
-            semantic_query=query_text,
-            keywords=query_text,  # Use same text for keywords in this simplified tool
+            semantic_query=query,
+            keywords=query,  # Use same text for keywords in this simplified tool
             embedding_model=embedding_model,
             source_types=source_types or [],  # Use empty list if None
             embedding_types=embedding_types or [],  # Use empty list if None

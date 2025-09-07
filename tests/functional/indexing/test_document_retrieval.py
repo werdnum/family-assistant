@@ -133,7 +133,7 @@ class TestDocumentRetrieval:
             search_results = await search_documents_tool(
                 exec_context=exec_context,
                 embedding_generator=mock_embedding_generator,
-                query_text="test PDF document",
+                query="test PDF document",
                 limit=5,
             )
 
@@ -281,7 +281,7 @@ class TestDocumentRetrieval:
             search_results = await search_documents_tool(
                 exec_context=exec_context,
                 embedding_generator=mock_embedding_generator,
-                query_text="test text document",
+                query="test text document",
                 limit=5,
             )
 

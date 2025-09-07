@@ -374,7 +374,7 @@ async def test_search_documents_tool(pg_vector_db_engine: AsyncEngine) -> None:
         logger.info(f"Executing search_documents tool with query: '{test_query}'")
         tool_result = await local_provider.execute_tool(
             name="search_documents",
-            arguments={"query_text": test_query},  # Pass arguments as dict
+            arguments={"query": test_query},  # Pass arguments as dict
             context=tool_context,
         )
 

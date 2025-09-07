@@ -403,7 +403,7 @@ export const toolTestCases = {
         type: 'function',
         function: {
           name: 'search_documents',
-          arguments: '{"source_types": ["email"], "query_text": "school newsletter"}',
+          arguments: '{"source_types": ["email"], "query": "school newsletter"}',
         },
       },
       tool_response: {
@@ -421,7 +421,7 @@ export const toolTestCases = {
         type: 'function',
         function: {
           name: 'search_documents',
-          arguments: '{"source_types": ["email"], "query_text": "Welcome 1L to Term 3"}',
+          arguments: '{"source_types": ["email"], "query": "Welcome 1L to Term 3"}',
         },
       },
       tool_response: {
@@ -439,7 +439,7 @@ export const toolTestCases = {
         type: 'function',
         function: {
           name: 'search_documents',
-          arguments: '{"query_text": "Term 2 2025 dates"}',
+          arguments: '{"query": "Term 2 2025 dates"}',
         },
       },
       tool_response: {
