@@ -2322,15 +2322,15 @@ wheels = [
 
 [[package]]
 name = "mcp-proxy"
-version = "0.8.0"
+version = "0.8.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "mcp" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fd/0a/edf09492d9259265824bcb49b801fd185c9b5ff32382e48fa61bf0f1aa98/mcp_proxy-0.8.0.tar.gz", hash = "sha256:a80fe0fbfdef060a3b6479f3c17a74eeb9e27e1478a1259b7988c8cc0e9686ea", size = 30500, upload-time = "2025-05-31T07:18:11.257Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6a/94/0d4a824f33562f59cb83f55227857539238b63f6175fce4b66920e4227d5/mcp_proxy-0.8.2.tar.gz", hash = "sha256:5d113da6c965bef04202ed2525c6642cfbb786e2517fff8b7c209d58d5a6d00e", size = 30526, upload-time = "2025-07-05T13:48:37.749Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/38/08/292a9b51cb12c231b8226a1672fbdfd2741161b599314bfd56b15127641b/mcp_proxy-0.8.0-py3-none-any.whl", hash = "sha256:13b2189e293b5c81389ea308ce9b5d57ee92f48fe37f94b195f40864ef84f8bd", size = 19145, upload-time = "2025-05-31T07:18:09.716Z" },
+    { url = "https://files.pythonhosted.org/packages/87/e3/5daf3248a82036ebafcce0387de4098c97102383562dc3f86f19429a6702/mcp_proxy-0.8.2-py3-none-any.whl", hash = "sha256:6974fee896267c6a2444c064b80818a68e08629adc2acf35ac147abd6ae435b2", size = 19276, upload-time = "2025-07-05T13:48:36.677Z" },
 ]
 
 [[package]]
