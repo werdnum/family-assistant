@@ -784,3 +784,76 @@ async def test_responsive_sidebar_mobile(
 
     # Reset viewport
     await page.set_viewport_size({"width": 1280, "height": 720})
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_mobile_chat_input_visibility(
+    web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
+) -> None:
+    """Test that chat input is visible and accessible on mobile viewport without scrolling."""
+    page = web_test_fixture.page
+    chat_page = ChatPage(page, web_test_fixture.base_url)
+
+    # Configure mock LLM response
+    mock_llm_client.rules = [
+        (
+            lambda args: "test mobile" in str(args.get("messages", [])),
+            LLMOutput(content="Mobile test response received successfully!"),
+        )
+    ]
+
+    # Set mobile viewport (iPhone SE size)
+    await page.set_viewport_size({"width": 375, "height": 667})
+
+    # Navigate to chat
+    await chat_page.navigate_to_chat()
+
+    # Wait for React app to fully initialize on mobile
+    await page.wait_for_timeout(2000)
+
+    # Check if chat input is visible without scrolling
+    chat_input = await page.wait_for_selector(
+        chat_page.CHAT_INPUT, state="visible", timeout=10000
+    )
+    assert chat_input is not None, "Chat input should be found"
+
+    # Get the input element's position relative to the viewport
+    input_box = await chat_input.bounding_box()
+    assert input_box is not None, "Chat input bounding box should be available"
+
+    # Get viewport height
+    viewport = page.viewport_size
+    assert viewport is not None, "Viewport size should be available"
+    viewport_height = viewport["height"]
+
+    # Verify that the input is visible within the viewport (with some margin for padding)
+    # The input should be fully visible, meaning its bottom should be within the viewport
+    assert input_box["y"] + input_box["height"] <= viewport_height, (
+        f"Chat input is below the fold. Input bottom at {input_box['y'] + input_box['height']}px "
+        f"but viewport height is {viewport_height}px. Input is {(input_box['y'] + input_box['height']) - viewport_height}px below the fold."
+    )
+
+    # Also verify the input is reasonably positioned (not too close to the very bottom)
+    assert input_box["y"] < viewport_height - 50, (
+        f"Chat input should have some margin from bottom. Input top at {input_box['y']}px "
+        f"but viewport height is {viewport_height}px."
+    )
+
+    # Test that the input is functional
+    assert chat_input is not None, "Chat input should be available for interaction"
+    await chat_input.click()
+    await chat_input.type("test mobile message")
+
+    # Verify we can send the message
+    await chat_input.press("Enter")
+
+    # Wait for the message to appear
+    await chat_page.wait_for_assistant_response(timeout=15000)
+
+    # Verify the conversation works on mobile
+    messages = await chat_page.get_all_messages()
+    assert len(messages) >= 2, "Should have user and assistant messages"
+
+    # Reset viewport
+    await page.set_viewport_size({"width": 1280, "height": 720})
