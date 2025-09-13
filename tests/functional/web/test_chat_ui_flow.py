@@ -855,5 +855,51 @@ async def test_mobile_chat_input_visibility(
     messages = await chat_page.get_all_messages()
     assert len(messages) >= 2, "Should have user and assistant messages"
 
+    # Test that last message is not obscured by input
+    # Send multiple messages to fill the viewport
+    for i in range(3):
+        await chat_input.type(f"Additional test message {i + 1}")
+        await chat_input.press("Enter")
+        await chat_page.wait_for_assistant_response(timeout=15000)
+
+    # Get all message elements
+    message_elements = await page.query_selector_all(
+        '[data-testid="user-message"], [data-testid="assistant-message"]'
+    )
+    assert len(message_elements) >= 8, (
+        "Should have multiple messages after sending more"
+    )
+
+    # Get the last message element position
+    last_message = message_elements[-1]
+    last_message_box = await last_message.bounding_box()
+    assert last_message_box is not None, "Last message bounding box should be available"
+
+    # Get the input container position (the flex-shrink-0 container, not just the input)
+    input_container = await page.query_selector(".flex-shrink-0.bg-background.border-t")
+    assert input_container is not None, "Input container should exist"
+    container_box = await input_container.bounding_box()
+    assert container_box is not None, "Input container bounding box should be available"
+
+    # With the new layout, messages should auto-scroll to be visible
+    # Wait a moment for any automatic scrolling to complete
+    await page.wait_for_timeout(1000)
+
+    # Check if the last message is visible without manual scrolling
+    last_message_box_auto = await last_message.bounding_box()
+    assert last_message_box_auto is not None, "Last message should be visible"
+
+    # Verify the last message is not obscured by the input
+    # The bottom of the last message should be above the top of the input container
+    assert (
+        last_message_box_auto["y"] + last_message_box_auto["height"]
+        <= container_box["y"]
+    ), (
+        f"Last message is obscured by input. Message bottom at "
+        f"{last_message_box_auto['y'] + last_message_box_auto['height']}px "
+        f"but input container starts at {container_box['y']}px. "
+        f"Overlap of {(last_message_box_auto['y'] + last_message_box_auto['height']) - container_box['y']}px."
+    )
+
     # Reset viewport
     await page.set_viewport_size({"width": 1280, "height": 720})
