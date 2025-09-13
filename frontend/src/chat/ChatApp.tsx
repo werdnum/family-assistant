@@ -751,11 +751,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
         {/* Main content */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <main className="flex flex-1 flex-col overflow-hidden">
+          <main className="flex flex-1 flex-col min-h-0">
             <AssistantRuntimeProvider runtime={runtime}>
               <ToolConfirmationProvider value={{ pendingConfirmations, handleConfirmation }}>
-                <div className="flex flex-1 flex-col overflow-hidden">
-                  <div className="border-b bg-muted/50 p-6">
+                <div className="flex flex-1 flex-col min-h-0">
+                  <div className="border-b bg-muted/50 p-6 flex-shrink-0">
                     <h2 className="text-xl font-semibold">Family Assistant Chat</h2>
                     {conversationId && (
                       <div className="mt-1 text-xs text-muted-foreground font-mono">

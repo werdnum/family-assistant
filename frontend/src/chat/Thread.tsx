@@ -121,26 +121,28 @@ export const Thread: React.FC = () => {
 
 const ThreadContent: React.FC = () => {
   return (
-    <ThreadPrimitive.Root className="relative flex flex-1 flex-col bg-background">
-      <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-muted-foreground/20 pb-24 md:pb-32">
-        <ThreadWelcome />
+    <ThreadPrimitive.Root className="flex flex-1 flex-col bg-background min-h-0">
+      <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-muted-foreground/20 min-h-0">
+        <div className="pb-6">
+          <ThreadWelcome />
 
-        <ThreadPrimitive.Messages
-          components={{
-            UserMessage: UserMessage,
-            EditComposer: EditComposer,
-            AssistantMessage: AssistantMessage,
-          }}
-        />
+          <ThreadPrimitive.Messages
+            components={{
+              UserMessage: UserMessage,
+              EditComposer: EditComposer,
+              AssistantMessage: AssistantMessage,
+            }}
+          />
 
-        <ThreadPrimitive.If empty={false}>
-          <div className="h-20" />
-        </ThreadPrimitive.If>
+          <ThreadPrimitive.If empty={false}>
+            <div className="h-4" />
+          </ThreadPrimitive.If>
+        </div>
+
+        <ThreadScrollToBottom />
       </ThreadPrimitive.Viewport>
 
-      <ThreadScrollToBottom />
-
-      <div className="fixed bottom-0 left-0 right-0 bg-background border-t p-4 md:p-6 z-50">
+      <div className="flex-shrink-0 bg-background border-t p-4 md:p-6">
         <Composer />
       </div>
     </ThreadPrimitive.Root>
@@ -153,7 +155,7 @@ const ThreadScrollToBottom: React.FC = () => {
       <TooltipIconButton
         tooltip="Scroll to bottom"
         variant="outline"
-        className="absolute bottom-24 md:bottom-32 right-4 md:right-8 z-10 shadow-lg bg-background opacity-0 scale-75 transition-all duration-200 data-[enabled]:opacity-100 data-[enabled]:scale-100"
+        className="absolute bottom-4 right-4 md:right-8 z-10 shadow-lg bg-background opacity-0 scale-75 transition-all duration-200 data-[enabled]:opacity-100 data-[enabled]:scale-100"
       >
         <ArrowDownIcon size={16} />
       </TooltipIconButton>
