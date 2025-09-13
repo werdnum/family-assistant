@@ -684,7 +684,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   });
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
+    <div className="flex h-screen flex-col bg-background">
       {/* Header */}
       <div className="sticky top-0 z-50 flex items-center gap-4 border-b bg-background/95 p-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <Button
@@ -768,7 +768,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               </ToolConfirmationProvider>
             </AssistantRuntimeProvider>
           </main>
-          <footer className="border-t p-4 text-center text-sm text-muted-foreground bg-background">
+          <footer className="hidden md:block border-t p-4 text-center text-sm text-muted-foreground bg-background">
             <p>&copy; {new Date().getFullYear()} Family Assistant</p>
           </footer>
         </div>

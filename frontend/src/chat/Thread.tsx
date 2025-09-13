@@ -121,8 +121,8 @@ export const Thread: React.FC = () => {
 
 const ThreadContent: React.FC = () => {
   return (
-    <ThreadPrimitive.Root className="flex h-full flex-col bg-background">
-      <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-muted-foreground/20">
+    <ThreadPrimitive.Root className="relative flex flex-1 flex-col bg-background">
+      <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-muted-foreground/20 pb-24 md:pb-32">
         <ThreadWelcome />
 
         <ThreadPrimitive.Messages
@@ -136,12 +136,13 @@ const ThreadContent: React.FC = () => {
         <ThreadPrimitive.If empty={false}>
           <div className="h-20" />
         </ThreadPrimitive.If>
-
-        <div className="sticky bottom-0 bg-background border-t p-6">
-          <ThreadScrollToBottom />
-          <Composer />
-        </div>
       </ThreadPrimitive.Viewport>
+
+      <ThreadScrollToBottom />
+
+      <div className="fixed bottom-0 left-0 right-0 bg-background border-t p-4 md:p-6 z-50">
+        <Composer />
+      </div>
     </ThreadPrimitive.Root>
   );
 };
@@ -152,7 +153,7 @@ const ThreadScrollToBottom: React.FC = () => {
       <TooltipIconButton
         tooltip="Scroll to bottom"
         variant="outline"
-        className="absolute bottom-20 right-8 z-10 shadow-lg bg-background opacity-0 scale-75 transition-all duration-200 data-[enabled]:opacity-100 data-[enabled]:scale-100"
+        className="absolute bottom-24 md:bottom-32 right-4 md:right-8 z-10 shadow-lg bg-background opacity-0 scale-75 transition-all duration-200 data-[enabled]:opacity-100 data-[enabled]:scale-100"
       >
         <ArrowDownIcon size={16} />
       </TooltipIconButton>
@@ -163,7 +164,7 @@ const ThreadScrollToBottom: React.FC = () => {
 const ThreadWelcome: React.FC = () => {
   return (
     <ThreadPrimitive.Empty>
-      <div className="flex min-h-[60vh] flex-col items-center justify-center p-8 animate-in fade-in duration-300">
+      <div className="flex min-h-[40vh] md:min-h-[60vh] flex-col items-center justify-center p-8 animate-in fade-in duration-300">
         <Card className="p-8 text-center">
           <div className="mb-6 text-primary animate-in slide-in-from-bottom-4 duration-500 delay-150">
             <BotIcon size={48} strokeWidth={1.5} className="mx-auto animate-bounce" />
