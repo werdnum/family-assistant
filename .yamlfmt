@@ -1,0 +1,4 @@
+formatter:
+  scan_folded_as_literal: true
+  retain_line_breaks: true
+  max_line_length: 0
