@@ -309,6 +309,7 @@ else:
 # --- Include Routers ---
 # Note: Auth router will be added after AuthService is initialized
 
+logger.info("Including vite_pages_router...")
 app.include_router(vite_pages_router, tags=["Vite Pages"])
 
 # Log registered UI routes for debugging CI issues
@@ -319,7 +320,15 @@ for route in vite_pages_router.routes:
         path = getattr(route, "path", "unknown")
         method = list(methods)[0] if methods else "GET"
         ui_routes.append(f"{method} {path}")
-logger.info(f"Registered UI routes: {ui_routes}")
+logger.info(f"Registered UI routes from vite_pages_router: {ui_routes}")
+
+# Check if any vite routes might conflict with auth routes
+auth_paths = ["/login", "/logout", "/auth"]
+conflicting_paths = [
+    path for path in ui_routes if any(auth in path for auth in auth_paths)
+]
+if conflicting_paths:
+    logger.warning(f"Potential route conflicts with auth paths: {conflicting_paths}")
 
 # NOTE: The following routers have been removed as their Jinja2 templates
 # have been migrated to React components served via vite_pages_router:
@@ -408,12 +417,62 @@ def configure_app_auth(app: FastAPI, database_engine: Any | None = None) -> None
     # Include auth router
     if AUTH_ENABLED:
         auth_router = create_auth_router(auth_service)
+
+        # Verify routes were actually added
+        route_count = len(auth_router.routes)
+        if route_count == 0:
+            logger.error(
+                "Auth router has no routes despite AUTH_ENABLED=True. "
+                "This should not happen - create_auth_router should have added fallback routes."
+            )
+
         app.include_router(auth_router, tags=["Authentication"])
-        logger.info("Authentication routes included with AuthService")
+
+        # Log the actual routes for debugging
+        route_paths = []
+        for route in auth_router.routes:
+            if hasattr(route, "path"):
+                route_path = getattr(route, "path", "unknown")
+                route_paths.append(route_path)
+                logger.debug(f"  Auth route registered: {route_path}")
+
+        logger.info(
+            f"Authentication routes included with AuthService "
+            f"({route_count} routes added: {', '.join(route_paths)})"
+        )
+
+        # Additional check: verify /login is actually accessible
+        login_found = any(
+            hasattr(r, "path") and getattr(r, "path", "") == "/login"
+            for r in auth_router.routes
+        )
+        if not login_found:
+            logger.error(
+                "CRITICAL: /login route not found in auth router despite AUTH_ENABLED=True"
+            )
+    else:
+        logger.info("Authentication not configured (AUTH_ENABLED=False)")
 
     # Store auth configuration in app state for dependencies
     app.state.config = app.state.config if hasattr(app.state, "config") else {}
     app.state.config["auth_enabled"] = AUTH_ENABLED
+
+    # Log ALL application routes for debugging
+    logger.info("=== ALL APPLICATION ROUTES AFTER AUTH CONFIGURATION ===")
+    all_routes = []
+    for route in app.routes:
+        if hasattr(route, "path"):
+            route_path = getattr(route, "path", "unknown")
+            methods = getattr(route, "methods", set())
+            method_str = ",".join(methods) if methods else "ANY"
+            all_routes.append(f"{method_str} {route_path}")
+            logger.debug(f"  App route: {method_str} {route_path}")
+
+    # Check if /login is in the final application routes
+    login_in_app = any("/login" in r for r in all_routes)
+    if AUTH_ENABLED and not login_in_app:
+        logger.error("CRITICAL: /login route is NOT in final application routes!")
+    logger.info(f"Total application routes: {len(all_routes)}")
 
 
 # Export the helper functions and app
