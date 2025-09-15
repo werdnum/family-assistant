@@ -1431,7 +1431,7 @@ wheels = [
 
 [[package]]
 name = "homeassistant-api"
-version = "5.0.0"
+version = "5.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -1442,9 +1442,9 @@ dependencies = [
     { name = "simplejson" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/88/e9/576ab6d080e4d29a38b3ce6b5fc8cf64801a1bc8d62a19e946fcb9a702c1/homeassistant_api-5.0.0.tar.gz", hash = "sha256:50d293b60227ad526d8c76f55959546dc6e18c13ad4d7d347879a6e78c30d2b6", size = 31695, upload-time = "2025-01-22T02:11:53.988Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7c/eb/c615084df81706769d3a6d126b55f20ee24ed9a8b4a41027599cd9540575/homeassistant_api-5.0.1.tar.gz", hash = "sha256:1261452ca412e95c7b28863e2d7d4c92744afeb94ac2d91646139e1cc7bfba86", size = 35196, upload-time = "2025-09-10T14:36:41.341Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1c/d9/0ff4b551ca41f082313bcab6b0ba44340247eab5dc42f2024d73de9e22ba/homeassistant_api-5.0.0-py3-none-any.whl", hash = "sha256:d5bde1f1a8da19ca7450208cd171be74f248481f83fd7a9326b18b41e0945466", size = 41857, upload-time = "2025-01-22T02:11:51.911Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/db/932ae32199e45008c0685f0381a3c69f141f108b3a1b88b1892dd140ec81/homeassistant_api-5.0.1-py3-none-any.whl", hash = "sha256:12d0589b37385dc407552b6e66c6248d7a428cdd26b93ef1ba7739931b6bc9de", size = 45457, upload-time = "2025-09-10T14:36:40.14Z" },
 ]
 
 [[package]]
