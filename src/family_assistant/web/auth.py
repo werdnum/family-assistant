@@ -72,16 +72,28 @@ class AuthService:
 
         if AUTH_ENABLED:
             logger.info("OIDC Authentication is ENABLED in AuthService.")
-            self.oauth = OAuth(config)  # type: ignore
-            self.oauth.register(
-                name="oidc_provider",
-                client_id=OIDC_CLIENT_ID,
-                client_secret=OIDC_CLIENT_SECRET,
-                server_metadata_url=OIDC_DISCOVERY_URL,
-                client_kwargs={
-                    "scope": "openid email profile",
-                },
-            )
+            try:
+                logger.info(
+                    f"Initializing OAuth with authlib (client_id={OIDC_CLIENT_ID}, discovery_url={OIDC_DISCOVERY_URL})"
+                )
+                self.oauth = OAuth(config)  # type: ignore
+                self.oauth.register(
+                    name="oidc_provider",
+                    client_id=OIDC_CLIENT_ID,
+                    client_secret=OIDC_CLIENT_SECRET,
+                    server_metadata_url=OIDC_DISCOVERY_URL,
+                    client_kwargs={
+                        "scope": "openid email profile",
+                    },
+                )
+                logger.info(
+                    "OAuth successfully initialized and OIDC provider registered"
+                )
+            except Exception as e:
+                logger.error(f"Failed to initialize OAuth: {e}", exc_info=True)
+                self.oauth = None
+                # Don't raise here - let create_auth_router handle it
+                # This allows the app to start but with proper error logging
         else:
             logger.info("OIDC Authentication is DISABLED in AuthService.")
 
@@ -319,24 +331,67 @@ def create_auth_router(auth_service: AuthService) -> APIRouter:
     """Create the auth router with proper dependency injection."""
     auth_router = APIRouter()
 
-    if auth_service.auth_enabled and auth_service.oauth:
+    if auth_service.auth_enabled:
+        if not auth_service.oauth:
+            # OAuth initialization failed but auth is enabled
+            logger.error(
+                "AUTH_ENABLED is True but OAuth is not initialized. "
+                "Creating fallback error routes for /login, /auth, /logout"
+            )
 
-        @auth_router.get("/login", name="login")  # Add name for url_for
-        async def login(request: Request) -> RedirectResponse:
-            """Redirects the user to the OIDC provider for authentication."""
-            return await auth_service.handle_login(request)
+            # Add fallback routes that show clear error messages
+            @auth_router.get("/login", name="login")
+            async def login_error(request: Request) -> None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Authentication system initialization failed. "
+                    "OAuth client could not be configured. "
+                    "Please check server logs for details.",
+                )
 
-        @auth_router.get(
-            "/auth", name="auth_callback"
-        )  # Callback URL, named for url_for
-        async def auth_callback(request: Request) -> RedirectResponse:
-            """Handles the callback from the OIDC provider after authentication."""
-            return await auth_service.handle_auth_callback(request)
+            @auth_router.get("/auth", name="auth_callback")
+            async def auth_error(request: Request) -> None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Authentication callback cannot function - OAuth not initialized.",
+                )
 
-        @auth_router.get("/logout", name="logout")
-        async def logout(request: Request) -> RedirectResponse:
-            """Clears the user session."""
-            return await auth_service.handle_logout(request)
+            @auth_router.get("/logout", name="logout")
+            async def logout_error(request: Request) -> RedirectResponse:
+                # Allow logout to work even if OAuth is broken - just clear session
+                request.session.pop("user", None)
+                logger.info(
+                    "User logged out (OAuth not initialized, session cleared only)"
+                )
+                return RedirectResponse(url="/")
+
+            logger.warning(
+                "Auth router created with ERROR routes due to OAuth initialization failure"
+            )
+        else:
+            # Normal case - OAuth is properly initialized
+            @auth_router.get("/login", name="login")  # Add name for url_for
+            async def login(request: Request) -> RedirectResponse:
+                """Redirects the user to the OIDC provider for authentication."""
+                return await auth_service.handle_login(request)
+
+            @auth_router.get(
+                "/auth", name="auth_callback"
+            )  # Callback URL, named for url_for
+            async def auth_callback(request: Request) -> RedirectResponse:
+                """Handles the callback from the OIDC provider after authentication."""
+                return await auth_service.handle_auth_callback(request)
+
+            @auth_router.get("/logout", name="logout")
+            async def logout(request: Request) -> RedirectResponse:
+                """Clears the user session."""
+                return await auth_service.handle_logout(request)
+
+            logger.info(
+                "Auth router created with /login, /auth, and /logout routes (OAuth initialized successfully)"
+            )
+    else:
+        logger.info("Auth router created empty (AUTH_ENABLED=False)")
 
     return auth_router
 
