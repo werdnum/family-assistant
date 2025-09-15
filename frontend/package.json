@@ -69,7 +69,7 @@
     "@types/react-dom": "^18.3.5",
     "@vitest/ui": "^3.2.4",
     "autoprefixer": "^10.4.21",
-    "eslint": "^9.34.0",
+    "eslint": "^9.35.0",
     "jsdom": "^26.1.0",
     "msw": "^2.11.2",
     "postcss": "^8.5.6",
