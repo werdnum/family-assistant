@@ -157,14 +157,14 @@ class ReviewHook:
         print("✅ Formatting and linting completed", file=sys.stderr)
         return True
 
-    def _run_precommit_hooks(self) -> bool:
+    def _run_precommit_hooks(self) -> tuple[bool, str]:
         """Run pre-commit hooks on staged files."""
         if subprocess.run(["which", "pre-commit"], capture_output=True).returncode != 0:
-            return True
+            return True, ""
 
         config_path = self.repo_root / ".pre-commit-config.yaml"
         if not config_path.exists():
-            return True
+            return True, ""
 
         print("Running pre-commit hooks...", file=sys.stderr)
 
@@ -198,10 +198,18 @@ class ReviewHook:
                     subprocess.run(["git", "add", "-u"], check=False)
             else:
                 print("❌ Pre-commit hooks failed", file=sys.stderr)
-                print(result.stdout, file=sys.stderr)
-                return False
+                error_msg = ""
+                if result.stdout:
+                    print("STDOUT:", file=sys.stderr)
+                    print(result.stdout, file=sys.stderr)
+                    error_msg += f"STDOUT:\n{result.stdout}\n"
+                if result.stderr:
+                    print("STDERR:", file=sys.stderr)
+                    print(result.stderr, file=sys.stderr)
+                    error_msg += f"STDERR:\n{result.stderr}\n"
+                return False, error_msg
 
-        return True
+        return True, ""
 
     def _run_review(self) -> tuple[int, dict[str, Any]]:
         """Run the review script and get JSON output."""
@@ -312,10 +320,11 @@ class ReviewHook:
                 return
 
             # Step 4: Run pre-commit hooks
-            if not self._run_precommit_hooks():
+            success, error_msg = self._run_precommit_hooks()
+            if not success:
                 self._output_json_response(
                     "deny",
-                    "Pre-commit hooks failed. Please fix the issues before committing.",
+                    f"Pre-commit hooks failed. Please fix the issues before committing.\n\n{error_msg}",
                 )
                 return
 
