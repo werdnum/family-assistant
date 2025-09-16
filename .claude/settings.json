@@ -31,7 +31,7 @@
           },
           {
             "type": "command",
-            "command": "/bin/bash .claude/review-hook.sh",
+            "command": "/usr/bin/env python3 .claude/review-hook.py",
             "timeout": 300
           }
         ]
