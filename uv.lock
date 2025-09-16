@@ -4008,7 +4008,7 @@ wheels = [
 
 [[package]]
 name = "radicale"
-version = "3.5.5"
+version = "3.5.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "defusedxml" },
@@ -4017,9 +4017,9 @@ dependencies = [
     { name = "requests" },
     { name = "vobject" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/33/3c/507c495a3762bd69e8bfa59cb67754b087f2da9ec40a9ec38b4db2150177/radicale-3.5.5.tar.gz", hash = "sha256:bd8a51f194090473eb4b09f903fbc692b7c518ec4df6245b21e5b504c124e7f6", size = 178120, upload-time = "2025-08-22T06:58:01.42Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9c/be/202b535ca632974a50bfaafde733da7c4cb8e02332cbeaf9b9eaf0dbcdb3/radicale-3.5.6.tar.gz", hash = "sha256:312c12c99c34983c2b90a2cb1a5f7eb4e2fd06cc339ccb90ab7602fed313c646", size = 181654, upload-time = "2025-09-15T18:44:02.863Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/be/c6/6c41e0052750dc855a6b3d46c3a017f248a8c68cf7cba1fdeb0368910732/radicale-3.5.5-py3-none-any.whl", hash = "sha256:d7fbb6d6c9c7db04723e347d3d010c96659d3497117ffdd59bc61536ddcf916e", size = 201071, upload-time = "2025-08-22T06:57:59.599Z" },
+    { url = "https://files.pythonhosted.org/packages/61/a8/71fe12545ac0cead18a8de401f11cafa583bc5213efffaf147940aef4360/radicale-3.5.6-py3-none-any.whl", hash = "sha256:2eac6c0c0e63632882a8269dfdee06bb768c23840206a198c6162a36674578f8", size = 202709, upload-time = "2025-09-15T18:44:00.896Z" },
 ]
 
 [[package]]
