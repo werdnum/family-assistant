@@ -323,10 +323,18 @@ for route in vite_pages_router.routes:
 logger.info(f"Registered UI routes from vite_pages_router: {ui_routes}")
 
 # Check if any vite routes might conflict with auth routes
-auth_paths = ["/login", "/logout", "/auth"]
-conflicting_paths = [
-    path for path in ui_routes if any(auth in path for auth in auth_paths)
-]
+auth_paths = {"/login", "/logout", "/auth"}
+conflicting_paths = []
+for route in ui_routes:
+    # Extract just the path from the route string (e.g., "GET /path" -> "/path")
+    path_parts = route.split()
+    if len(path_parts) >= 2:
+        route_path = path_parts[1]
+        # Check for exact matches or if route starts with auth path + "/"
+        for auth_path in auth_paths:
+            if route_path == auth_path or route_path.startswith(auth_path + "/"):
+                conflicting_paths.append(route)
+                break
 if conflicting_paths:
     logger.warning(f"Potential route conflicts with auth paths: {conflicting_paths}")
 
