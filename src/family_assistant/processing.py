@@ -2,7 +2,6 @@ import asyncio
 import base64
 import json
 import logging
-import os
 import re
 import traceback  # Added for error traceback
 import uuid  # Added for unique task IDs
@@ -19,6 +18,8 @@ from typing import (
 
 import aiofiles
 import pytz  # Added
+
+from family_assistant.services.attachments import AttachmentService
 
 # Import storage and calendar integration for context building
 # storage import removed - using repository pattern via DatabaseContext
@@ -83,6 +84,8 @@ class ProcessingService:
         server_url: str | None,
         app_config: dict[str, Any],  # Keep app_config for now
         clock: Clock | None = None,
+        attachment_service: AttachmentService
+        | None = None,  # AttachmentService (optional)
         event_sources: dict[str, Any] | None = None,  # Add event sources
     ) -> None:
         """
@@ -96,6 +99,7 @@ class ProcessingService:
             server_url: The base URL of the web server.
             app_config: The main application configuration dictionary (global settings).
             clock: Clock instance for time operations.
+            attachment_service: AttachmentService instance for handling file attachments.
             event_sources: Dictionary mapping event source IDs to EventSource instances.
         """
         self.llm_client = (
@@ -111,6 +115,7 @@ class ProcessingService:
         self.clock = (
             clock if clock is not None else SystemClock()
         )  # Store the clock instance
+        self.attachment_service = attachment_service  # Store the attachment service
         self.processing_services_registry: dict[str, ProcessingService] | None = None
         # Store the confirmation callback function if provided at init? No, get from context.
         self.home_assistant_client: Any | None = None  # Store HA client if available
@@ -741,7 +746,9 @@ class ProcessingService:
         Returns:
             Modified content parts with server URLs converted to data URIs
         """
-        from .services.attachments import AttachmentService
+        # If no attachment service is available, return parts unchanged
+        if not self.attachment_service:
+            return content_parts
 
         converted_parts = []
 
@@ -752,34 +759,19 @@ class ProcessingService:
             for part in content_parts
         )
 
-        # Only create AttachmentService if we have attachment URLs to convert
-        attachment_service = None
-        if has_attachment_urls:
-            # Use same logic as web API to determine storage path
-            storage_path = os.getenv(
-                "CHAT_ATTACHMENT_STORAGE_PATH",
-                self.app_config.get(
-                    "chat_attachment_storage_path",
-                    self.app_config.get(
-                        "attachment_storage_path", "/tmp/chat_attachments"
-                    ),
-                ),
-            )
-            attachment_service = AttachmentService(storage_path)
-
         for part in content_parts:
             if part.get("type") == "image_url":
                 image_url = part.get("image_url", {}).get("url", "")
 
                 # Check if it's a server URL that needs conversion
-                if image_url.startswith("/api/attachments/"):
+                if image_url.startswith("/api/attachments/") and has_attachment_urls:
                     # Extract attachment ID from URL
                     match = re.match(r"/api/attachments/([a-f0-9-]+)", image_url)
-                    if match and attachment_service:
+                    if match:
                         attachment_id = match.group(1)
 
                         # Use AttachmentService to get the file path
-                        file_path = attachment_service.get_attachment_path(
+                        file_path = self.attachment_service.get_attachment_path(
                             attachment_id
                         )
 
@@ -790,7 +782,7 @@ class ProcessingService:
                                     file_bytes = await f.read()
 
                                 # Detect MIME type from file extension
-                                content_type = attachment_service.get_content_type(
+                                content_type = self.attachment_service.get_content_type(
                                     file_path
                                 )
 
