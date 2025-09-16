@@ -84,8 +84,7 @@ class ProcessingService:
         server_url: str | None,
         app_config: dict[str, Any],  # Keep app_config for now
         clock: Clock | None = None,
-        attachment_service: AttachmentService
-        | None = None,  # AttachmentService (optional)
+        attachment_service: AttachmentService | None = None,  # AttachmentService (optional)
         event_sources: dict[str, Any] | None = None,  # Add event sources
     ) -> None:
         """
