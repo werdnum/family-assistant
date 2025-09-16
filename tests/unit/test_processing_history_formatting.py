@@ -2,12 +2,16 @@
 Unit tests for the history formatting logic in ProcessingService.
 """
 
+import base64
 import json
 from collections.abc import AsyncIterator
+from io import BytesIO
+from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
 import pytest
+from PIL import Image
 
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -285,10 +289,9 @@ async def test_format_history_handles_empty_tool_calls(
 
 
 async def test_format_history_converts_attachment_urls(
-    processing_service: ProcessingService, tmp_path: Any
+    processing_service: ProcessingService, tmp_path: Path
 ) -> None:
     """Test that attachment URLs are converted to data URIs."""
-    import base64
 
     # Create a mock attachment file
     attachment_id = "550e8400-e29b-41d4-a716-446655440000"
@@ -297,8 +300,15 @@ async def test_format_history_converts_attachment_urls(
     attachment_dir = storage_path / hash_prefix
     attachment_dir.mkdir(parents=True)
 
-    # Create a simple test image file
-    test_image_content = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05test"
+    # Create a simple test image using PIL (1x1 red pixel)
+    test_image = Image.new("RGB", (1, 1), color="red")
+
+    # Save to bytes
+    image_buffer = BytesIO()
+    test_image.save(image_buffer, format="PNG")
+    test_image_content = image_buffer.getvalue()
+
+    # Write to file
     attachment_file = attachment_dir / f"{attachment_id}.png"
     attachment_file.write_bytes(test_image_content)
 
