@@ -91,7 +91,7 @@ def processing_service() -> ProcessingService:
 # --- Test Cases ---
 
 
-def test_format_simple_history(processing_service: ProcessingService) -> None:
+async def test_format_simple_history(processing_service: ProcessingService) -> None:
     """Test formatting a simple user-assistant conversation."""
     history_messages = [
         {"role": "user", "content": "Hello", "tool_calls_info_raw": None},
@@ -101,11 +101,13 @@ def test_format_simple_history(processing_service: ProcessingService) -> None:
         {"role": "user", "content": "Hello"},
         {"role": "assistant", "content": "Hi there!"},
     ]
-    actual_output = processing_service._format_history_for_llm(history_messages)
+    actual_output = await processing_service._format_history_for_llm(history_messages)
     assert actual_output == expected_output  # Marked line 120
 
 
-def test_format_history_with_tool_call(processing_service: ProcessingService) -> None:
+async def test_format_history_with_tool_call(
+    processing_service: ProcessingService,
+) -> None:
     """Test formatting history including an assistant message with a tool call."""
     tool_call_id = "call_123"
     tool_name = "get_weather"
@@ -166,11 +168,11 @@ def test_format_history_with_tool_call(processing_service: ProcessingService) ->
         },
     ]
 
-    actual_output = processing_service._format_history_for_llm(history_messages)
+    actual_output = await processing_service._format_history_for_llm(history_messages)
     assert actual_output == expected_output
 
 
-def test_format_history_preserves_leading_tool_and_assistant_tool_calls(
+async def test_format_history_preserves_leading_tool_and_assistant_tool_calls(
     processing_service: ProcessingService,
 ) -> None:
     """
@@ -229,11 +231,11 @@ def test_format_history_preserves_leading_tool_and_assistant_tool_calls(
         {"role": "user", "content": "Follow-up user message"},
     ]
 
-    actual_output = processing_service._format_history_for_llm(history_messages)
+    actual_output = await processing_service._format_history_for_llm(history_messages)
     assert actual_output == expected_output
 
 
-def test_format_history_includes_errors_as_assistant(
+async def test_format_history_includes_errors_as_assistant(
     processing_service: ProcessingService,
 ) -> None:
     """Test that messages with role 'error' are included as assistant messages."""
@@ -255,11 +257,11 @@ def test_format_history_includes_errors_as_assistant(
         },
         {"role": "assistant", "content": "Okay"},
     ]
-    actual_output = processing_service._format_history_for_llm(history_messages)
+    actual_output = await processing_service._format_history_for_llm(history_messages)
     assert actual_output == expected_output
 
 
-def test_format_history_handles_empty_tool_calls(
+async def test_format_history_handles_empty_tool_calls(
     processing_service: ProcessingService,
 ) -> None:
     """Test formatting an assistant message where tool_calls_info is explicitly empty."""
@@ -278,8 +280,66 @@ def test_format_history_handles_empty_tool_calls(
             "content": "Assistant message",
         },  # Should be treated as simple message
     ]
-    actual_output = processing_service._format_history_for_llm(history_messages)
+    actual_output = await processing_service._format_history_for_llm(history_messages)
     assert actual_output == expected_output
+
+
+async def test_format_history_converts_attachment_urls(
+    processing_service: ProcessingService, tmp_path: Any
+) -> None:
+    """Test that attachment URLs are converted to data URIs."""
+    import base64
+
+    # Create a mock attachment file
+    attachment_id = "550e8400-e29b-41d4-a716-446655440000"
+    storage_path = tmp_path / "attachments"
+    hash_prefix = attachment_id[:2]  # "55"
+    attachment_dir = storage_path / hash_prefix
+    attachment_dir.mkdir(parents=True)
+
+    # Create a simple test image file
+    test_image_content = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05test"
+    attachment_file = attachment_dir / f"{attachment_id}.png"
+    attachment_file.write_bytes(test_image_content)
+
+    # Set the storage path in app_config
+    processing_service.app_config["chat_attachment_storage_path"] = str(storage_path)
+
+    # Create history with attachment URL
+    history_messages = [
+        {
+            "role": "user",
+            "content": "Check this image",
+            "attachments": [
+                {"type": "image", "content_url": f"/api/attachments/{attachment_id}"}
+            ],
+        },
+    ]
+
+    # Format the history
+    actual_output = await processing_service._format_history_for_llm(history_messages)
+
+    # Verify the attachment URL was converted to data URI
+    assert len(actual_output) == 1
+    assert actual_output[0]["role"] == "user"
+
+    # Content should be a list with text and image parts
+    content = actual_output[0]["content"]
+    assert isinstance(content, list)
+    assert len(content) == 2
+
+    # First part should be text
+    assert content[0]["type"] == "text"
+    assert content[0]["text"] == "Check this image"
+
+    # Second part should be converted image with data URI
+    assert content[1]["type"] == "image_url"
+    image_url = content[1]["image_url"]["url"]
+    assert image_url.startswith("data:image/png;base64,")
+
+    # Verify the base64 content matches
+    expected_base64 = base64.b64encode(test_image_content).decode("utf-8")
+    assert image_url == f"data:image/png;base64,{expected_base64}"
 
 
 def test_web_specific_history_configuration() -> None:

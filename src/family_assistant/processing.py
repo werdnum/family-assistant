@@ -1,6 +1,8 @@
 import asyncio
+import base64
 import json
 import logging
+import os
 import re
 import traceback  # Added for error traceback
 import uuid  # Added for unique task IDs
@@ -15,6 +17,7 @@ from typing import (
     Any,
 )
 
+import aiofiles
 import pytz  # Added
 
 # Import storage and calendar integration for context building
@@ -723,7 +726,112 @@ class ProcessingService:
                 },
             )
 
-    def _format_history_for_llm(
+    async def _convert_attachment_urls_to_data_uris(
+        self, content_parts: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """
+        Convert any attachment server URLs in content parts to data URIs.
+
+        This is necessary because external LLM providers cannot access our internal
+        server URLs like /api/attachments/...
+
+        Args:
+            content_parts: List of content parts that may contain image_url entries
+
+        Returns:
+            Modified content parts with server URLs converted to data URIs
+        """
+        from .services.attachments import AttachmentService
+
+        converted_parts = []
+
+        # Check if we need to do any conversions
+        has_attachment_urls = any(
+            part.get("type") == "image_url"
+            and part.get("image_url", {}).get("url", "").startswith("/api/attachments/")
+            for part in content_parts
+        )
+
+        # Only create AttachmentService if we have attachment URLs to convert
+        attachment_service = None
+        if has_attachment_urls:
+            # Use same logic as web API to determine storage path
+            storage_path = os.getenv(
+                "CHAT_ATTACHMENT_STORAGE_PATH",
+                self.app_config.get(
+                    "chat_attachment_storage_path",
+                    self.app_config.get(
+                        "attachment_storage_path", "/tmp/chat_attachments"
+                    ),
+                ),
+            )
+            attachment_service = AttachmentService(storage_path)
+
+        for part in content_parts:
+            if part.get("type") == "image_url":
+                image_url = part.get("image_url", {}).get("url", "")
+
+                # Check if it's a server URL that needs conversion
+                if image_url.startswith("/api/attachments/"):
+                    # Extract attachment ID from URL
+                    match = re.match(r"/api/attachments/([a-f0-9-]+)", image_url)
+                    if match and attachment_service:
+                        attachment_id = match.group(1)
+
+                        # Use AttachmentService to get the file path
+                        file_path = attachment_service.get_attachment_path(
+                            attachment_id
+                        )
+
+                        if file_path and file_path.exists():
+                            try:
+                                # Read file asynchronously
+                                async with aiofiles.open(file_path, "rb") as f:
+                                    file_bytes = await f.read()
+
+                                # Detect MIME type from file extension
+                                content_type = attachment_service.get_content_type(
+                                    file_path
+                                )
+
+                                # Convert to base64
+                                base64_data = base64.b64encode(file_bytes).decode(
+                                    "utf-8"
+                                )
+                                data_uri = f"data:{content_type};base64,{base64_data}"
+
+                                # Replace with data URI
+                                converted_parts.append({
+                                    "type": "image_url",
+                                    "image_url": {"url": data_uri},
+                                })
+                                logger.info(
+                                    f"Converted attachment URL to data URI for attachment {attachment_id} (type: {content_type})"
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Failed to convert attachment URL to data URI: {e}"
+                                )
+                                # Keep original if conversion fails
+                                converted_parts.append(part)
+                        else:
+                            logger.warning(
+                                f"Attachment file not found for ID: {attachment_id}"
+                            )
+                            converted_parts.append(part)
+                    else:
+                        # Couldn't parse attachment ID, keep original
+                        converted_parts.append(part)
+                else:
+                    # Already a data URI or external URL, keep as-is
+                    converted_parts.append(part)
+            else:
+                # Not an image_url part, keep as-is
+                converted_parts.append(part)
+
+        return converted_parts
+
+    async def _format_history_for_llm(
         self, history_messages: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """
@@ -820,6 +928,14 @@ class ProcessingService:
                                     "type": "image_url",
                                     "image_url": {"url": attachment["content_url"]},
                                 })
+
+                        # Convert attachment URLs to data URIs if we have content parts with images
+                        if content_parts:
+                            content_parts = (
+                                await self._convert_attachment_urls_to_data_uris(
+                                    content_parts
+                                )
+                            )
 
                         messages.append({
                             "role": "user",
@@ -1021,7 +1137,7 @@ class ProcessingService:
             else:
                 filtered_history_messages = raw_history_messages
 
-            initial_messages_for_llm = self._format_history_for_llm(
+            initial_messages_for_llm = await self._format_history_for_llm(
                 filtered_history_messages
             )
             logger.debug(
@@ -1053,7 +1169,7 @@ class ProcessingService:
                     else:
                         current_trigger_removed_from_thread = full_thread_messages_db
 
-                    initial_messages_for_llm = self._format_history_for_llm(
+                    initial_messages_for_llm = await self._format_history_for_llm(
                         current_trigger_removed_from_thread
                     )
                     logger.info(
@@ -1170,15 +1286,20 @@ class ProcessingService:
                     0, {"role": "system", "content": final_system_prompt}
                 )
 
+            # Convert attachment URLs to data URIs before sending to LLM
+            converted_trigger_parts = await self._convert_attachment_urls_to_data_uris(
+                trigger_content_parts
+            )
+
             # Add current user trigger message
             llm_user_content: str | list[dict[str, Any]]
             if (
-                len(trigger_content_parts) == 1
-                and trigger_content_parts[0].get("type") == "text"
+                len(converted_trigger_parts) == 1
+                and converted_trigger_parts[0].get("type") == "text"
             ):
-                llm_user_content = trigger_content_parts[0]["text"]
+                llm_user_content = converted_trigger_parts[0]["text"]
             else:
-                llm_user_content = trigger_content_parts
+                llm_user_content = converted_trigger_parts
 
             messages_for_llm.append({"role": "user", "content": llm_user_content})
 
@@ -1437,7 +1558,7 @@ class ProcessingService:
             else:
                 filtered_history_messages = raw_history_messages
 
-            initial_messages_for_llm = self._format_history_for_llm(
+            initial_messages_for_llm = await self._format_history_for_llm(
                 filtered_history_messages
             )
 
@@ -1463,7 +1584,7 @@ class ProcessingService:
                     else:
                         current_trigger_removed_from_thread = full_thread_messages_db
 
-                    initial_messages_for_llm = self._format_history_for_llm(
+                    initial_messages_for_llm = await self._format_history_for_llm(
                         current_trigger_removed_from_thread
                     )
                 except Exception as thread_fetch_err:
@@ -1524,15 +1645,20 @@ class ProcessingService:
                     0, {"role": "system", "content": final_system_prompt}
                 )
 
+            # Convert attachment URLs to data URIs before sending to LLM
+            converted_trigger_parts = await self._convert_attachment_urls_to_data_uris(
+                trigger_content_parts
+            )
+
             # Add current user trigger message
             llm_user_content: str | list[dict[str, Any]]
             if (
-                len(trigger_content_parts) == 1
-                and trigger_content_parts[0].get("type") == "text"
+                len(converted_trigger_parts) == 1
+                and converted_trigger_parts[0].get("type") == "text"
             ):
-                llm_user_content = trigger_content_parts[0]["text"]
+                llm_user_content = converted_trigger_parts[0]["text"]
             else:
-                llm_user_content = trigger_content_parts
+                llm_user_content = converted_trigger_parts
 
             messages_for_llm.append({"role": "user", "content": llm_user_content})
 
