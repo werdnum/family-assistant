@@ -241,9 +241,10 @@ class GoogleGenAIClient(BaseLLMClient):
                                         )
                                         # Skip this image part if parsing fails
                                 else:
-                                    # Handle regular URLs if needed
+                                    # Non-data URLs should already be converted by ProcessingService
+                                    # Log a warning if we still see them here
                                     logger.warning(
-                                        f"Non-data URL images not yet supported: {image_url[:50]}..."
+                                        f"Non-data URL images not supported by Gemini API: {image_url[:50]}..."
                                     )
                         elif isinstance(part, str):
                             # Fallback for string parts
