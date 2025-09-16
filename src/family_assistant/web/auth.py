@@ -341,7 +341,7 @@ def create_auth_router(auth_service: AuthService) -> APIRouter:
 
             # Add fallback routes that show clear error messages
             @auth_router.get("/login", name="login")
-            async def login_error(request: Request) -> NoReturn:
+            def login_error(request: Request) -> NoReturn:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="Authentication system initialization failed. "
@@ -350,7 +350,7 @@ def create_auth_router(auth_service: AuthService) -> APIRouter:
                 )
 
             @auth_router.get("/auth", name="auth_callback")
-            async def auth_error(request: Request) -> NoReturn:
+            def auth_error(request: Request) -> NoReturn:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="Authentication callback cannot function - OAuth not initialized.",
