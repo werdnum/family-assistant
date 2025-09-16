@@ -1448,9 +1448,11 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
         ])
 
         try:
+            # Escape the prompt text for MarkdownV2 to prevent parse errors
+            escaped_prompt_text = telegramify_markdown.markdownify(prompt_text)
             sent_message = await self.application.bot.send_message(
                 chat_id=chat_id_int,  # Use integer chat_id
-                text=prompt_text,
+                text=escaped_prompt_text,
                 parse_mode=ParseMode.MARKDOWN_V2,
                 reply_markup=keyboard,
             )
@@ -1493,7 +1495,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                 await self.application.bot.edit_message_text(
                     chat_id=chat_id_int,  # Use integer chat_id
                     message_id=sent_message.message_id,
-                    text=prompt_text + "\n\n\\(Confirmation timed out\\)",
+                    text=escaped_prompt_text + "\n\n\\(Confirmation timed out\\)",
                     parse_mode=ParseMode.MARKDOWN_V2,
                 )
             except Exception as edit_err:

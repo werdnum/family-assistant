@@ -170,7 +170,6 @@ default_profile_settings:
     confirm_tools:
       - delete_calendar_event
       - modify_calendar_event
-      - add_or_update_note
       # - tool_that_posts_online
     mcp_initialization_timeout_seconds: 60 # Default 1 minute
   # Default list of slash commands that trigger this profile.

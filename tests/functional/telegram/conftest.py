@@ -89,9 +89,7 @@ async def telegram_handler_fixture(
                         "add_or_update_note",
                         "send_message_to_user",  # Enable the tool for this test
                     ],
-                    "confirm_tools": [
-                        "add_or_update_note"
-                    ],  # Enable confirmation for add_or_update_note
+                    "confirm_tools": [],  # No tools require confirmation in tests
                     "mcp_initialization_timeout_seconds": 5,
                 },
                 "chat_id_to_name_map": {12345: "TestUser"},
