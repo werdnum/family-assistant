@@ -38,6 +38,7 @@ from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.llm import LLMInterface
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.services.attachments import AttachmentService
 from family_assistant.storage import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.context import (
@@ -158,6 +159,7 @@ class Assistant:
         self.processing_services_registry: dict[str, ProcessingService] = {}
         self.default_processing_service: ProcessingService | None = None
         self.scraper_instance: PlaywrightScraper | None = None
+        self.attachment_service: AttachmentService | None = None
         self.document_indexer: DocumentIndexer | None = None
         self.email_indexer: EmailIndexer | None = None
         self.notes_indexer: NotesIndexer | None = None
@@ -243,6 +245,19 @@ class Assistant:
 
         self.shared_httpx_client = httpx.AsyncClient()
         logger.info("Shared httpx.AsyncClient created.")
+
+        # Initialize AttachmentService
+        attachment_storage_path = self.config.get(
+            "chat_attachment_storage_path", "/tmp/chat_attachments"
+        )
+        self.attachment_service = AttachmentService(attachment_storage_path)
+        logger.info(
+            f"AttachmentService initialized with path: {attachment_storage_path}"
+        )
+
+        # Store in FastAPI app state for web access
+        fastapi_app.state.attachment_service = self.attachment_service
+        logger.info("AttachmentService stored in FastAPI app state.")
 
         # Check if Telegram is enabled
         self.telegram_enabled = self.config.get("telegram_enabled", True)
@@ -749,6 +764,7 @@ class Assistant:
                 context_providers=context_providers,
                 server_url=self.config["server_url"],
                 app_config=self.config,
+                attachment_service=self.attachment_service,
                 event_sources=self.event_processor.sources
                 if self.event_processor
                 else None,
@@ -827,6 +843,7 @@ class Assistant:
                 processing_service=self.default_processing_service,
                 processing_services_registry=self.processing_services_registry,
                 app_config=self.config,
+                attachment_service=self.attachment_service,
                 get_db_context_func=self._get_db_context_for_telegram,
                 # use_batching argument removed
             )

@@ -40,16 +40,10 @@ class AttachmentMetadata(BaseModel):
 def get_attachment_service(request: Request) -> AttachmentService:
     """Dependency to get the AttachmentService from app state."""
     if not hasattr(request.app.state, "attachment_service"):
-        # Initialize attachment service if not already done
-        config = getattr(request.app.state, "config", {})
-        attachment_storage_path = config.get(
-            "chat_attachment_storage_path",
-            config.get("attachment_storage_path", "/tmp/chat_attachments"),
+        raise HTTPException(
+            status_code=500,
+            detail="AttachmentService not initialized. Server may still be starting up.",
         )
-        request.app.state.attachment_service = AttachmentService(
-            attachment_storage_path
-        )
-
     return request.app.state.attachment_service
 
 

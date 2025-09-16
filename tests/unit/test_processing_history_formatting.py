@@ -302,8 +302,10 @@ async def test_format_history_converts_attachment_urls(
     attachment_file = attachment_dir / f"{attachment_id}.png"
     attachment_file.write_bytes(test_image_content)
 
-    # Set the storage path in app_config
-    processing_service.app_config["chat_attachment_storage_path"] = str(storage_path)
+    # Create and inject AttachmentService
+    from family_assistant.services.attachments import AttachmentService
+
+    processing_service.attachment_service = AttachmentService(str(storage_path))
 
     # Create history with attachment URL
     history_messages = [
