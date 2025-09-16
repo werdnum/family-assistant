@@ -1625,6 +1625,7 @@ class TelegramService:
             str, ProcessingService
         ],  # Registry of all services
         app_config: dict[str, Any],  # Main application config
+        attachment_service: AttachmentService,  # Add injected AttachmentService
         get_db_context_func: Callable[
             ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
         ],
@@ -1639,6 +1640,7 @@ class TelegramService:
             processing_service: The Default ProcessingService instance.
             processing_services_registry: Dictionary of all ProcessingService instances.
             app_config: The main application configuration dictionary.
+            attachment_service: The AttachmentService instance for handling file attachments.
             get_db_context_func: Async context manager function to get a DatabaseContext.
         """
         logger.info("Initializing TelegramService...")
@@ -1647,14 +1649,9 @@ class TelegramService:
         self._last_error: Exception | None = None
         self.chat_interface = TelegramChatInterface(self.application)
 
-        # Initialize AttachmentService for storing photos/files
-        attachment_storage_path = app_config.get(
-            "chat_attachment_storage_path", "/tmp/chat_attachments"
-        )
-        self.attachment_service = AttachmentService(attachment_storage_path)
-        logger.info(
-            f"Initialized AttachmentService with path: {attachment_storage_path}"
-        )
+        # Use injected AttachmentService
+        self.attachment_service = attachment_service
+        logger.info("Using injected AttachmentService")
 
         self.processing_service = processing_service  # Store default service
         self.processing_services_registry = (
