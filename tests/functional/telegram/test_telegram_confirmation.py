@@ -48,6 +48,16 @@ async def test_confirmation_accepted(
     """
     # Arrange
     fix = telegram_handler_fixture
+
+    # Temporarily add add_or_update_note to confirm_tools just for this test
+    # This is a test-specific override to verify confirmation flow works
+    processing_service = fix.processing_service
+    if processing_service and processing_service.tools_provider:
+        # Get the ConfirmingToolsProvider if it exists
+        provider = processing_service.tools_provider
+        if hasattr(provider, "_tools_requiring_confirmation"):
+            # Add the tool to the set of tools requiring confirmation for this test
+            provider._tools_requiring_confirmation.add(TOOL_NAME_SENSITIVE)  # type: ignore[attr-defined]
     # Cast mock_llm to the concrete type to access specific attributes like .rules and ._calls
     mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
     user_message_id = 401
@@ -178,6 +188,16 @@ async def test_confirmation_rejected(
     """
     # Arrange
     fix = telegram_handler_fixture
+
+    # Temporarily add add_or_update_note to confirm_tools just for this test
+    # This is a test-specific override to verify confirmation flow works
+    processing_service = fix.processing_service
+    if processing_service and processing_service.tools_provider:
+        # Get the ConfirmingToolsProvider if it exists
+        provider = processing_service.tools_provider
+        if hasattr(provider, "_tools_requiring_confirmation"):
+            # Add the tool to the set of tools requiring confirmation for this test
+            provider._tools_requiring_confirmation.add(TOOL_NAME_SENSITIVE)  # type: ignore[attr-defined]
     # Cast mock_llm to the concrete type
     mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
     user_message_id = 501
@@ -304,6 +324,16 @@ async def test_confirmation_timed_out(
     """
     # Arrange
     fix = telegram_handler_fixture
+
+    # Temporarily add add_or_update_note to confirm_tools just for this test
+    # This is a test-specific override to verify confirmation flow works
+    processing_service = fix.processing_service
+    if processing_service and processing_service.tools_provider:
+        # Get the ConfirmingToolsProvider if it exists
+        provider = processing_service.tools_provider
+        if hasattr(provider, "_tools_requiring_confirmation"):
+            # Add the tool to the set of tools requiring confirmation for this test
+            provider._tools_requiring_confirmation.add(TOOL_NAME_SENSITIVE)  # type: ignore[attr-defined]
     # Cast mock_llm to the concrete type
     mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
     user_message_id = 601
