@@ -20,6 +20,7 @@ ${BOLD}Usage:${NC} $0 [OPTIONS]
 
 ${BOLD}Options:${NC}
     --commit    Review the most recent commit (default: review staged changes)
+    --json      Output results as JSON instead of human-readable format
     --help      Display this help message
 
 ${BOLD}Description:${NC}
@@ -39,10 +40,15 @@ EOF
 }
 
 # Parse command line arguments
+OUTPUT_JSON=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --commit)
             REVIEW_MODE="commit"
+            shift
+            ;;
+        --json)
+            OUTPUT_JSON=true
             shift
             ;;
         --help|-h)
@@ -55,6 +61,12 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# When JSON is requested, redirect human output to stderr right away
+if [[ "$OUTPUT_JSON" == "true" ]]; then
+    exec 3>&1  # Save original stdout
+    exec 1>&2  # Redirect stdout to stderr for human-readable output
+fi
 
 # Check if git is available
 if ! command -v git &> /dev/null; then
@@ -307,6 +319,7 @@ fi
 SUMMARY=$(jq -r '.summary' "$TEMP_RESPONSE")
 ISSUE_COUNT=$(jq '.issues | length' "$TEMP_RESPONSE")
 
+# Human-readable output (goes to stderr when JSON mode is on)
 echo ""
 echo "${BOLD}Summary:${NC}"
 echo "$SUMMARY"
@@ -413,6 +426,17 @@ fi
 
 echo ""
 echo "Exit code: $EXIT_CODE"
+
+# If JSON output was requested, output it to original stdout
+if [[ "$OUTPUT_JSON" == "true" ]]; then
+    # Restore stdout and output JSON
+    exec 1>&3  # Restore original stdout
+
+    # Add exit_code and highest_severity to the JSON and output it
+    jq --arg exit_code "$EXIT_CODE" --arg highest "$HIGHEST_SEVERITY" \
+       '. + {exit_code: ($exit_code | tonumber), highest_severity: $highest}' \
+       "$TEMP_RESPONSE"
+fi
 
 exit $EXIT_CODE
 
