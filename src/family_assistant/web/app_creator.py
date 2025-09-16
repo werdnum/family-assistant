@@ -375,42 +375,9 @@ app.include_router(
 
 
 # --- Serve Vite-built HTML files in production ---
-# Always add this handler, but it will check dev mode at runtime
-@app.get("/{path:path}", include_in_schema=False, response_model=None)
-async def serve_vite_html(request: Request, path: str) -> FileResponse:
-    """
-    Serve Vite-built HTML files from the dist directory in production mode.
-    This handler runs after all other routes, acting as a fallback.
-    """
-    # Check if we're in dev mode at runtime
-    config = getattr(request.app.state, "config", {})
-    dev_mode = config.get("dev_mode", os.getenv("DEV_MODE", "false").lower() == "true")
-
-    if dev_mode:
-        # In dev mode, let the default 404 handler run (Vite will serve the files)
-        raise HTTPException(status_code=404, detail="Not found")
-
-    # Only handle paths that could be HTML pages (no extension or .html)
-    if path and not path.endswith(".html") and "." in path:
-        # Has an extension but not .html, let default 404 handle it
-        raise HTTPException(status_code=404, detail="Not found")
-
-    # Check if there's a corresponding HTML file in dist
-    html_filename = (
-        f"{path}.html"
-        if path and not path.endswith(".html")
-        else (path or "index.html")
-    )
-    if not html_filename.endswith(".html"):
-        html_filename += ".html"
-
-    html_path = static_dir / "dist" / html_filename
-
-    if html_path.exists() and html_path.is_file():
-        return FileResponse(html_path, media_type="text/html")
-
-    # No matching HTML file, return 404
-    raise HTTPException(status_code=404, detail="Not found")
+# NOTE: This catch-all route MUST be registered AFTER auth routes
+# to avoid intercepting /login, /logout, /auth paths.
+# It's now registered in configure_app_auth() after auth routes are added.
 
 
 def configure_app_auth(app: FastAPI, database_engine: Any | None = None) -> None:
@@ -465,6 +432,48 @@ def configure_app_auth(app: FastAPI, database_engine: Any | None = None) -> None
     # Store auth configuration in app state for dependencies
     app.state.config = app.state.config if hasattr(app.state, "config") else {}
     app.state.config["auth_enabled"] = AUTH_ENABLED
+
+    # IMPORTANT: Register catch-all route AFTER auth routes to prevent it from
+    # intercepting /login, /logout, /auth paths
+    @app.get("/{path:path}", include_in_schema=False, response_model=None)
+    async def serve_vite_html(request: Request, path: str) -> FileResponse:
+        """
+        Serve Vite-built HTML files from the dist directory in production mode.
+        This handler runs after all other routes, acting as a fallback.
+        """
+        # Check if we're in dev mode at runtime
+        config = getattr(request.app.state, "config", {})
+        dev_mode = config.get(
+            "dev_mode", os.getenv("DEV_MODE", "false").lower() == "true"
+        )
+
+        if dev_mode:
+            # In dev mode, let the default 404 handler run (Vite will serve the files)
+            raise HTTPException(status_code=404, detail="Not found")
+
+        # Only handle paths that could be HTML pages (no extension or .html)
+        if path and not path.endswith(".html") and "." in path:
+            # Has an extension but not .html, let default 404 handle it
+            raise HTTPException(status_code=404, detail="Not found")
+
+        # Check if there's a corresponding HTML file in dist
+        html_filename = (
+            f"{path}.html"
+            if path and not path.endswith(".html")
+            else (path or "index.html")
+        )
+        if not html_filename.endswith(".html"):
+            html_filename += ".html"
+
+        html_path = static_dir / "dist" / html_filename
+
+        if html_path.exists() and html_path.is_file():
+            return FileResponse(html_path, media_type="text/html")
+
+        # No matching HTML file, return 404
+        raise HTTPException(status_code=404, detail="Not found")
+
+    logger.info("Catch-all route registered for serving Vite HTML files")
 
     # Log ALL application routes for debugging
     logger.info("=== ALL APPLICATION ROUTES AFTER AUTH CONFIGURATION ===")
