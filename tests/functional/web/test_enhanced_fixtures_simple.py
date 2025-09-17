@@ -4,12 +4,13 @@ from typing import Any
 
 import pytest
 
+from tests.functional.web.conftest import ConsoleErrorCollector, WebTestFixture
 from tests.functional.web.pages import BasePage
 
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_authenticated_page_fixture(authenticated_page: Any) -> None:
+async def test_authenticated_page_fixture(authenticated_page: Any) -> None:  # noqa: ANN401  # playwright fixture
     """Test that authenticated_page fixture provides a valid page."""
     # Since auth is disabled in tests, authenticated_page should work like regular page
     assert authenticated_page is not None
@@ -21,8 +22,8 @@ async def test_authenticated_page_fixture(authenticated_page: Any) -> None:
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_console_error_checker_basic(
-    page: Any,
-    console_error_checker: Any,
+    page: Any,  # noqa: ANN401  # playwright fixture
+    console_error_checker: ConsoleErrorCollector,
 ) -> None:
     """Test that console_error_checker captures errors."""
 
@@ -52,8 +53,8 @@ async def test_console_error_checker_basic(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_console_error_checker_warnings(
-    page: Any,
-    console_error_checker: Any,
+    page: Any,  # noqa: ANN401  # playwright fixture
+    console_error_checker: ConsoleErrorCollector,
 ) -> None:
     """Test that console_error_checker captures warnings separately."""
 
@@ -76,7 +77,7 @@ async def test_console_error_checker_warnings(
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_base_page_with_fixtures(web_test_fixture: Any) -> None:
+async def test_base_page_with_fixtures(web_test_fixture: WebTestFixture) -> None:
     """Test that BasePage works with web fixtures."""
     page = BasePage(web_test_fixture.page, web_test_fixture.base_url)
 

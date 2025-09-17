@@ -13,11 +13,15 @@ from datetime import (  # Added timezone
     timezone,
 )
 from typing import (
+    TYPE_CHECKING,
     Any,
 )
 
 import aiofiles
 import pytz  # Added
+
+if TYPE_CHECKING:
+    import homeassistant_api
 
 from family_assistant.services.attachments import AttachmentService
 
@@ -28,7 +32,7 @@ from .context_providers import ContextProvider
 from .interfaces import ChatInterface  # Import ChatInterface
 
 # Import the LLM interface and output structure
-from .llm import LLMInterface, LLMStreamEvent
+from .llm import LLMInterface, LLMStreamEvent, ToolCallItem
 
 # Import DatabaseContext for type hinting
 from .storage.context import DatabaseContext, get_db_context
@@ -118,7 +122,9 @@ class ProcessingService:
         self.attachment_service = attachment_service  # Store the attachment service
         self.processing_services_registry: dict[str, ProcessingService] | None = None
         # Store the confirmation callback function if provided at init? No, get from context.
-        self.home_assistant_client: Any | None = None  # Store HA client if available
+        self.home_assistant_client: homeassistant_api.Client | None = (
+            None  # Store HA client if available
+        )
         self.event_sources = event_sources  # Store event sources for validation
 
     # The LiteLLMClient passed to __init__ should already be configured
@@ -506,7 +512,7 @@ class ProcessingService:
 
     async def _execute_single_tool(
         self,
-        tool_call_item_obj: Any,
+        tool_call_item_obj: ToolCallItem,
         interface_type: str,
         conversation_id: str,
         user_name: str,
@@ -522,7 +528,7 @@ class ProcessingService:
         """Execute a single tool call and return the result.
 
         Args:
-            tool_call_item_obj: The tool call object from LLM
+            tool_call_item_obj: The tool call object from LLM (ToolCallItem instance)
             interface_type: Interface type (e.g., 'telegram')
             conversation_id: Conversation identifier
             user_name: User name for context

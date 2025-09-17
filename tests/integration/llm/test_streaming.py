@@ -19,25 +19,27 @@ preserving the VCR.py benefits for non-streaming tests.
 """
 
 import os
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
 import pytest_asyncio
 
-from family_assistant.llm import LLMStreamEvent
+from family_assistant.llm import LLMInterface, LLMStreamEvent
 from family_assistant.llm.factory import LLMClientFactory
 
 from .vcr_helpers import sanitize_response
 
 
 @pytest_asyncio.fixture
-async def llm_client_factory() -> Callable[[str, str, str | None], Any]:
+async def llm_client_factory() -> Callable[
+    [str, str, str | None], Awaitable[LLMInterface]
+]:
     """Factory fixture for creating LLM clients."""
 
     async def _create_client(
         provider: str, model: str, api_key: str | None = None
-    ) -> Any:
+    ) -> LLMInterface:
         """Create an LLM client for testing."""
         # Use test API key or environment variable
         if api_key is None:
@@ -120,14 +122,16 @@ async def sample_tools() -> list[dict[str, Any]]:
     ],
 )
 async def test_basic_streaming(
-    provider: str, model: str, llm_client_factory: Any
+    provider: str,
+    model: str,
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test basic streaming functionality for each provider."""
     # Skip if running in CI without API keys
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
         pytest.skip(f"Skipping {provider} test in CI without API key")
 
-    client = await llm_client_factory(provider, model)
+    client = await llm_client_factory(provider, model, None)
 
     # Simple streaming request
     messages = [
@@ -173,13 +177,15 @@ async def test_basic_streaming(
     ],
 )
 async def test_streaming_with_system_message(
-    provider: str, model: str, llm_client_factory: Any
+    provider: str,
+    model: str,
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test streaming with system messages."""
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
         pytest.skip(f"Skipping {provider} test in CI without API key")
 
-    client = await llm_client_factory(provider, model)
+    client = await llm_client_factory(provider, model, None)
 
     messages = [
         {
@@ -228,14 +234,14 @@ async def test_streaming_with_system_message(
 async def test_streaming_with_tool_calls(
     provider: str,
     model: str,
-    llm_client_factory: Any,
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
     sample_tools: list[dict[str, Any]],
 ) -> None:
     """Test streaming with tool calls."""
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
         pytest.skip(f"Skipping {provider} test in CI without API key")
 
-    client = await llm_client_factory(provider, model)
+    client = await llm_client_factory(provider, model, None)
 
     messages = [
         {
@@ -284,13 +290,15 @@ async def test_streaming_with_tool_calls(
     ],
 )
 async def test_streaming_error_handling(
-    provider: str, model: str, llm_client_factory: Any
+    provider: str,
+    model: str,
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test error handling during streaming."""
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
         pytest.skip(f"Skipping {provider} test in CI without API key")
 
-    client = await llm_client_factory(provider, model)
+    client = await llm_client_factory(provider, model, None)
 
     # Test with invalid message format (missing role)
     messages = [
@@ -306,7 +314,7 @@ async def test_streaming_error_handling(
         async for event in client.generate_response_stream(messages):
             if event.type == "error":
                 error_event_received = True
-                error_message = event.data
+                error_message = event.error
                 break
     except Exception as e:
         # Some providers might raise exceptions instead of yielding error events
@@ -326,13 +334,15 @@ async def test_streaming_error_handling(
     ],
 )
 async def test_streaming_with_multi_turn_conversation(
-    provider: str, model: str, llm_client_factory: Any
+    provider: str,
+    model: str,
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test streaming with multi-turn conversation."""
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
         pytest.skip(f"Skipping {provider} test in CI without API key")
 
-    client = await llm_client_factory(provider, model)
+    client = await llm_client_factory(provider, model, None)
 
     messages = [
         {"role": "user", "content": "My favorite color is blue. Remember this."},
@@ -371,13 +381,15 @@ async def test_streaming_with_multi_turn_conversation(
     ],
 )
 async def test_streaming_reasoning_info(
-    provider: str, model: str, llm_client_factory: Any
+    provider: str,
+    model: str,
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test that reasoning info (usage data) is included in streaming responses."""
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
         pytest.skip(f"Skipping {provider} test in CI without API key")
 
-    client = await llm_client_factory(provider, model)
+    client = await llm_client_factory(provider, model, None)
 
     messages = [{"role": "user", "content": "Say 'hello world'"}]
 
@@ -425,13 +437,15 @@ async def test_streaming_reasoning_info(
     ],
 )
 async def test_streaming_content_accumulation(
-    provider: str, model: str, llm_client_factory: Any
+    provider: str,
+    model: str,
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test that content chunks accumulate correctly to form the complete response."""
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
         pytest.skip(f"Skipping {provider} test in CI without API key")
 
-    client = await llm_client_factory(provider, model)
+    client = await llm_client_factory(provider, model, None)
 
     messages = [
         {
@@ -465,7 +479,9 @@ async def test_streaming_content_accumulation(
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.vcr(before_record_response=sanitize_response)
-async def test_litellm_streaming_with_various_models(llm_client_factory: Any) -> None:
+async def test_litellm_streaming_with_various_models(
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+) -> None:
     """Test LiteLLM streaming with various model configurations."""
     # This test uses a mock provider to avoid API calls
     # We'll test the LiteLLM client directly with streaming support
@@ -475,7 +491,7 @@ async def test_litellm_streaming_with_various_models(llm_client_factory: Any) ->
         pytest.skip("Skipping LiteLLM streaming test - requires API key")
 
     # Test with a LiteLLM-supported model
-    client = await llm_client_factory("litellm", "gpt-4.1-nano")
+    client = await llm_client_factory("litellm", "gpt-4.1-nano", None)
 
     messages = [
         {
@@ -525,14 +541,16 @@ async def test_litellm_streaming_with_various_models(llm_client_factory: Any) ->
     ],
 )
 async def test_basic_streaming_gemini(
-    provider: str, model: str, llm_client_factory: Any
+    provider: str,
+    model: str,
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test basic streaming functionality for Google Gemini (VCR bypass)."""
     # Skip if running in CI without API keys
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
         pytest.skip(f"Skipping {provider} test in CI without API key")
 
-    client = await llm_client_factory(provider, model)
+    client = await llm_client_factory(provider, model, None)
 
     # Simple streaming request
     messages = [
@@ -578,13 +596,15 @@ async def test_basic_streaming_gemini(
     ],
 )
 async def test_streaming_with_system_message_gemini(
-    provider: str, model: str, llm_client_factory: Any
+    provider: str,
+    model: str,
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test streaming with system messages for Google Gemini (VCR bypass)."""
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
         pytest.skip(f"Skipping {provider} test in CI without API key")
 
-    client = await llm_client_factory(provider, model)
+    client = await llm_client_factory(provider, model, None)
 
     messages = [
         {
@@ -633,14 +653,14 @@ async def test_streaming_with_system_message_gemini(
 async def test_streaming_with_tool_calls_gemini(
     provider: str,
     model: str,
-    llm_client_factory: Any,
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
     sample_tools: list[dict[str, Any]],
 ) -> None:
     """Test streaming with tool calls for Google Gemini (VCR bypass)."""
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
         pytest.skip(f"Skipping {provider} test in CI without API key")
 
-    client = await llm_client_factory(provider, model)
+    client = await llm_client_factory(provider, model, None)
 
     messages = [
         {
@@ -690,13 +710,15 @@ async def test_streaming_with_tool_calls_gemini(
     ],
 )
 async def test_streaming_error_handling_gemini(
-    provider: str, model: str, llm_client_factory: Any
+    provider: str,
+    model: str,
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test error handling during streaming for Google Gemini (VCR bypass)."""
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
         pytest.skip(f"Skipping {provider} test in CI without API key")
 
-    client = await llm_client_factory(provider, model)
+    client = await llm_client_factory(provider, model, None)
 
     # Test with invalid message format (missing role)
     messages = [
@@ -712,7 +734,7 @@ async def test_streaming_error_handling_gemini(
         async for event in client.generate_response_stream(messages):
             if event.type == "error":
                 error_event_received = True
-                error_message = event.data
+                error_message = event.error
                 break
     except Exception as e:
         # Some providers might raise exceptions instead of yielding error events
@@ -732,13 +754,15 @@ async def test_streaming_error_handling_gemini(
     ],
 )
 async def test_streaming_with_multi_turn_conversation_gemini(
-    provider: str, model: str, llm_client_factory: Any
+    provider: str,
+    model: str,
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test streaming with multi-turn conversation for Google Gemini (VCR bypass)."""
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
         pytest.skip(f"Skipping {provider} test in CI without API key")
 
-    client = await llm_client_factory(provider, model)
+    client = await llm_client_factory(provider, model, None)
 
     messages = [
         {"role": "user", "content": "My favorite color is blue. Remember this."},
@@ -777,13 +801,15 @@ async def test_streaming_with_multi_turn_conversation_gemini(
     ],
 )
 async def test_streaming_reasoning_info_gemini(
-    provider: str, model: str, llm_client_factory: Any
+    provider: str,
+    model: str,
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test that reasoning info (usage data) is included in streaming responses for Google Gemini (VCR bypass)."""
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
         pytest.skip(f"Skipping {provider} test in CI without API key")
 
-    client = await llm_client_factory(provider, model)
+    client = await llm_client_factory(provider, model, None)
 
     messages = [{"role": "user", "content": "Say 'hello world'"}]
 

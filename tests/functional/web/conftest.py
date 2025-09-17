@@ -457,7 +457,7 @@ async def web_test_fixture(
     """Combined fixture providing all web test dependencies."""
 
     # Set up console message logging for debugging
-    def log_console(msg: Any) -> None:
+    def log_console(msg: Any) -> None:  # noqa: ANN401  # playwright console message
         print(f"[Browser Console] {msg.type}: {msg.text}")
         # Also log location for errors
         if msg.type == "error":
@@ -467,10 +467,10 @@ async def web_test_fixture(
 
     # Set up request/response logging for debugging
     # Always log API requests to help debug
-    def log_request(req: Any) -> None:
+    def log_request(req: Any) -> None:  # noqa: ANN401  # playwright request object
         print(f"[Request] {req.method} {req.url}")
 
-    def log_response(res: Any) -> None:
+    def log_response(res: Any) -> None:  # noqa: ANN401  # playwright response object
         print(f"[Response] {res.status} {res.url}")
 
     page.on("request", log_request)
@@ -601,7 +601,7 @@ class ConsoleErrorCollector:
     def _setup_listeners(self) -> None:
         """Set up console message listeners."""
 
-        def handle_console_message(msg: Any) -> None:
+        def handle_console_message(msg: Any) -> None:  # noqa: ANN401  # playwright console message
             if msg.type == "error":
                 self.errors.append(
                     f"{msg.location.get('url', 'unknown')}:{msg.location.get('lineNumber', '?')} - {msg.text}"
@@ -658,8 +658,8 @@ def connect_options() -> dict[str, str] | None:
 # Override the playwright browser fixture to add timeout on close
 @pytest_asyncio.fixture(scope="session")
 async def browser(
-    launch_browser: Any,  # From playwright's fixtures
-) -> AsyncGenerator[Any, None]:
+    launch_browser: Any,  # noqa: ANN401  # From playwright's fixtures
+) -> AsyncGenerator[Any, None]:  # noqa: ANN401  # playwright browser object
     """Override playwright's browser fixture to add timeout on close.
 
     This prevents the test suite from hanging when browser.close() gets stuck

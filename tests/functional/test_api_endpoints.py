@@ -1,6 +1,6 @@
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
-from types import SimpleNamespace
+from typing import Any
 
 import httpx
 import pytest
@@ -10,6 +10,62 @@ from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.web.app_creator import app as fastapi_app
 from family_assistant.web.dependencies import get_db
+
+
+class TestDocument:
+    """Test document class that implements the Document protocol."""
+
+    def __init__(
+        self,
+        source_type: str,
+        source_id: str,
+        id: int | None = None,
+        source_uri: str | None = None,
+        title: str | None = None,
+        created_at: datetime | None = None,
+        metadata: dict[str, Any] | None = None,
+        file_path: str | None = None,
+    ) -> None:
+        self._id = id
+        self._source_type = source_type
+        self._source_id = source_id
+        self._source_uri = source_uri
+        self._title = title
+        self._created_at = created_at
+        self._metadata = metadata
+        self._file_path = file_path
+
+    @property
+    def id(self) -> int | None:
+        return self._id
+
+    @property
+    def source_type(self) -> str:
+        return self._source_type
+
+    @property
+    def source_id(self) -> str:
+        return self._source_id
+
+    @property
+    def source_uri(self) -> str | None:
+        return self._source_uri
+
+    @property
+    def title(self) -> str | None:
+        return self._title
+
+    @property
+    def created_at(self) -> datetime | None:
+        return self._created_at
+
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        return self._metadata
+
+    @property
+    def file_path(self) -> str | None:
+        return self._file_path
 
 
 @pytest.fixture
@@ -86,10 +142,10 @@ async def test_documents_api_list_and_detail(
     api_client: httpx.AsyncClient, db_engine: AsyncEngine
 ) -> None:
     async with DatabaseContext(engine=db_engine) as db:
-        doc = SimpleNamespace(
-            id=None,
+        doc = TestDocument(
             source_type="note",
             source_id="doc1",
+            id=None,
             source_uri=None,
             title="Doc One",
             created_at=datetime.now(timezone.utc),
@@ -147,10 +203,10 @@ async def test_vector_search_api_search(
     """Test vector search API endpoint."""
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
         # Create test document
-        doc = SimpleNamespace(
-            id=None,
+        doc = TestDocument(
             source_type="note",
             source_id="doc2",
+            id=None,
             source_uri=None,
             title="Doc Two",
             created_at=datetime.now(timezone.utc),
@@ -195,10 +251,10 @@ async def test_vector_search_api_with_limit(
         # Create multiple test documents
         doc_ids = []
         for i in range(5):
-            doc = SimpleNamespace(
-                id=None,
+            doc = TestDocument(
                 source_type="note",
                 source_id=f"doc{i}",
+                id=None,
                 source_uri=None,
                 title=f"Document {i}",
                 created_at=datetime.now(timezone.utc),
@@ -232,10 +288,10 @@ async def test_vector_search_api_document_detail(
 ) -> None:
     """Test vector search document detail API endpoint."""
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        doc = SimpleNamespace(
-            id=None,
+        doc = TestDocument(
             source_type="pdf",
             source_id="test_pdf",
+            id=None,
             source_uri="file:///test.pdf",
             title="Test PDF Document",
             created_at=datetime.now(timezone.utc),

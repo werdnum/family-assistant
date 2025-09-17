@@ -176,7 +176,7 @@ def _get_alembic_config(engine: AsyncEngine) -> AlembicConfig:
 
 
 async def _run_alembic_command(
-    engine: AsyncEngine, config: AlembicConfig, command_name: str, *args: Any
+    engine: AsyncEngine, config: AlembicConfig, command_name: str, *args: str
 ) -> None:
     """Executes an Alembic command asynchronously with detailed logging."""
     command_func = getattr(alembic_command, command_name)

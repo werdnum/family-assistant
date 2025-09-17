@@ -63,7 +63,7 @@ async def test_message_history_includes_most_recent_when_limited(
     # Configure mock bot to return message IDs in sequence
     message_counter = 2  # Start at 2 (1 is user's first message)
 
-    def mock_send_message(*args: Any, **kwargs: Any) -> Message:
+    def mock_send_message(*args: Any, **kwargs: Any) -> Message:  # noqa: ANN401  # Mock function args/kwargs
         nonlocal message_counter
         msg_id = message_counter
         message_counter += 2  # Skip user message IDs
@@ -114,11 +114,11 @@ async def test_message_history_includes_most_recent_when_limited(
         return False
 
     # Create matcher function that always returns True
-    def always_match(messages: list[dict[str, Any]], **kwargs: Any) -> bool:
+    def always_match(messages: list[dict[str, Any]], **kwargs: Any) -> bool:  # noqa: ANN401  # Mock kwargs
         return True
 
     # Create rule function that returns the dynamic response
-    def get_response(messages: list[dict[str, Any]], **kwargs: Any) -> LLMOutput | bool:
+    def get_response(messages: list[dict[str, Any]], **kwargs: Any) -> LLMOutput | bool:  # noqa: ANN401  # Mock kwargs
         return dynamic_response(messages)
 
     # Set up the mock LLM with a custom generate_response method
@@ -189,7 +189,7 @@ async def test_reminder_after_completed_conversation(
     # Configure mock bot responses
     message_counter = 2
 
-    def mock_send_message(*args: Any, **kwargs: Any) -> Message:
+    def mock_send_message(*args: Any, **kwargs: Any) -> Message:  # noqa: ANN401  # Mock function args/kwargs
         nonlocal message_counter
         msg_id = message_counter
         message_counter += 2

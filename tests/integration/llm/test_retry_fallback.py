@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import pytest_asyncio
 
-from family_assistant.llm import LLMOutput
+from family_assistant.llm import LLMInterface, LLMOutput
 from family_assistant.llm.base import (
     ProviderTimeoutError,
     RateLimitError,
@@ -19,7 +19,7 @@ from .vcr_helpers import sanitize_response
 
 
 @pytest_asyncio.fixture
-async def retry_client_factory() -> Any:
+async def retry_client_factory() -> Any:  # noqa: ANN401 # Factory returns different client types
     """Factory fixture for creating retrying LLM clients."""
 
     async def _create_client(
@@ -27,7 +27,7 @@ async def retry_client_factory() -> Any:
         primary_model: str,
         fallback_provider: str | None = None,
         fallback_model: str | None = None,
-    ) -> Any:
+    ) -> LLMInterface:
         """Create a retrying LLM client for testing."""
         config = {
             "retry_config": {
@@ -53,7 +53,9 @@ async def retry_client_factory() -> Any:
 
 @pytest.mark.no_db
 @pytest.mark.llm_integration
-async def test_successful_primary_response(retry_client_factory: Any) -> None:
+async def test_successful_primary_response(
+    retry_client_factory: Any,  # noqa: ANN401 # Factory returns different client types
+) -> None:
     """Test that successful primary requests work without retry."""
     # Create a mock primary client that succeeds
     mock_primary = AsyncMock()
@@ -77,7 +79,9 @@ async def test_successful_primary_response(retry_client_factory: Any) -> None:
 
 @pytest.mark.no_db
 @pytest.mark.llm_integration
-async def test_retry_on_retriable_error(retry_client_factory: Any) -> None:
+async def test_retry_on_retriable_error(
+    retry_client_factory: Any,  # noqa: ANN401 # Factory returns different client types
+) -> None:
     """Test that retriable errors trigger a retry on the primary model."""
     # Create a mock that fails once then succeeds
     mock_primary = AsyncMock()
@@ -104,7 +108,9 @@ async def test_retry_on_retriable_error(retry_client_factory: Any) -> None:
 
 @pytest.mark.no_db
 @pytest.mark.llm_integration
-async def test_fallback_after_primary_failures(retry_client_factory: Any) -> None:
+async def test_fallback_after_primary_failures(
+    retry_client_factory: Any,  # noqa: ANN401 # Factory returns different client types
+) -> None:
     """Test fallback to secondary model after primary failures."""
     # Create mocks for primary and fallback
     mock_primary = AsyncMock()
@@ -123,7 +129,7 @@ async def test_fallback_after_primary_failures(retry_client_factory: Any) -> Non
     # Mock the factory to return our mocks in order
     call_count = 0
 
-    def mock_create_single(*args: Any, **kwargs: Any) -> Any:
+    def mock_create_single(*args: Any, **kwargs: Any) -> LLMInterface:  # noqa: ANN401 # Mock function for testing
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -151,7 +157,9 @@ async def test_fallback_after_primary_failures(retry_client_factory: Any) -> Non
 
 @pytest.mark.no_db
 @pytest.mark.llm_integration
-async def test_all_retries_exhausted(retry_client_factory: Any) -> None:
+async def test_all_retries_exhausted(
+    retry_client_factory: Any,  # noqa: ANN401 # Factory returns different client types
+) -> None:
     """Test that exceptions are raised when all retries are exhausted."""
     # Create a mock that always fails
     mock_primary = AsyncMock()
@@ -177,7 +185,9 @@ async def test_all_retries_exhausted(retry_client_factory: Any) -> None:
 
 @pytest.mark.no_db
 @pytest.mark.llm_integration
-async def test_non_retriable_error_goes_to_fallback(retry_client_factory: Any) -> None:
+async def test_non_retriable_error_goes_to_fallback(
+    retry_client_factory: Any,  # noqa: ANN401 # Factory returns different client types
+) -> None:
     """Test that non-retriable errors skip retry and go to fallback."""
     from family_assistant.llm.base import InvalidRequestError
 
@@ -196,7 +206,7 @@ async def test_non_retriable_error_goes_to_fallback(retry_client_factory: Any) -
 
     call_count = 0
 
-    def mock_create_single(*args: Any, **kwargs: Any) -> Any:
+    def mock_create_single(*args: Any, **kwargs: Any) -> LLMInterface:  # noqa: ANN401 # Mock function for testing
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -237,7 +247,7 @@ async def test_real_provider_fallback(
     primary_model: str,
     fallback_provider: str,
     fallback_model: str,
-    retry_client_factory: Any,
+    retry_client_factory: Any,  # noqa: ANN401 # Factory returns different client types
 ) -> None:
     """Test real provider fallback using VCR recordings."""
     # Skip if running in CI without API keys

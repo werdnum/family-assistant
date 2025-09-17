@@ -300,7 +300,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         text: str,
         parse_mode: ParseMode | None,
         reply_to_message_id: int | None,
-        reply_markup: Any | None = None,  # For ForceReply etc.
+        reply_markup: InlineKeyboardMarkup | ForceReply | None = None,
     ) -> Message | None:
         """Sends a message, splitting it into chunks if it's too long."""
         first_sent_message: Message | None = None

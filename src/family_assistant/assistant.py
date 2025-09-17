@@ -117,7 +117,7 @@ class NullChatInterface:
 
 
 async def task_wrapper_handle_log_message(
-    exec_context: ToolExecutionContext, payload: Any
+    exec_context: ToolExecutionContext, payload: dict[str, Any]
 ) -> None:
     """
     Wrapper for the original handle_log_message to match TaskWorker's expected handler signature.

@@ -15,7 +15,7 @@ from family_assistant.storage.repositories.base import BaseRepository
 class MessageHistoryRepository(BaseRepository):
     """Repository for managing message history in the database."""
 
-    async def add(self, **kwargs: Any) -> dict[str, Any] | None:
+    async def add(self, **kwargs: Any) -> dict[str, Any] | None:  # noqa: ANN401 # Forwards arbitrary message args
         """Alias for add_message for backward compatibility."""
         return await self.add_message(**kwargs)
 

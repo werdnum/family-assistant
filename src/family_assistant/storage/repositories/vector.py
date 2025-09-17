@@ -5,13 +5,14 @@ from typing import TYPE_CHECKING, Any
 from family_assistant.storage.repositories.base import BaseRepository
 
 if TYPE_CHECKING:
+    from family_assistant.storage.context import DatabaseContext
     from family_assistant.storage.vector import Document, DocumentRecord
 
 
 class VectorRepository(BaseRepository):
     """Repository for managing vector storage operations."""
 
-    def __init__(self, db_context: Any) -> None:
+    def __init__(self, db_context: "DatabaseContext") -> None:
         """Initialize the vector repository."""
         super().__init__(db_context)
         # Import here to avoid circular dependencies

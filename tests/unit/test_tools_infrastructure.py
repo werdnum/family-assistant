@@ -21,7 +21,7 @@ class TestLocalToolsProvider:
         """Test that dict results are properly converted to JSON strings."""
 
         # Define a tool that returns a dict
-        async def tool_returns_dict(**kwargs: Any) -> dict:
+        async def tool_returns_dict(**kwargs: Any) -> dict:  # noqa: ANN401 # Test tool needs flexibility
             return {"status": "success", "data": {"value": 42, "message": "test"}}
 
         provider = LocalToolsProvider(
@@ -66,7 +66,7 @@ class TestLocalToolsProvider:
         """Test that list results are properly converted to JSON strings."""
 
         # Define a tool that returns a list
-        async def tool_returns_list(**kwargs: Any) -> list:
+        async def tool_returns_list(**kwargs: Any) -> list:  # noqa: ANN401 # Test tool needs flexibility
             return [
                 {"id": 1, "name": "first"},
                 {"id": 2, "name": "second"},
@@ -116,7 +116,7 @@ class TestLocalToolsProvider:
         """Test that complex nested structures are properly converted to JSON."""
 
         # Define a tool that returns a complex nested structure
-        async def tool_returns_complex(**kwargs: Any) -> dict:
+        async def tool_returns_complex(**kwargs: Any) -> dict:  # noqa: ANN401 # Test tool needs flexibility
             return {
                 "metadata": {"version": "1.0", "timestamp": "2025-01-01T00:00:00Z"},
                 "items": [
@@ -182,7 +182,7 @@ class TestLocalToolsProvider:
         """Test that None results are handled gracefully."""
 
         # Define a tool that returns None
-        async def tool_returns_none(**kwargs: Any) -> None:
+        async def tool_returns_none(**kwargs: Any) -> None:  # noqa: ANN401 # Test tool needs flexibility
             return None
 
         provider = LocalToolsProvider(
@@ -221,7 +221,7 @@ class TestLocalToolsProvider:
         """Test that string results are returned unchanged."""
 
         # Define a tool that returns a string
-        async def tool_returns_string(**kwargs: Any) -> str:
+        async def tool_returns_string(**kwargs: Any) -> str:  # noqa: ANN401 # Test tool needs flexibility
             return "This is a plain string result"
 
         provider = LocalToolsProvider(
@@ -258,7 +258,7 @@ class TestLocalToolsProvider:
         """Test that numeric results are converted to strings."""
 
         # Define a tool that returns a number
-        async def tool_returns_number(**kwargs: Any) -> int:
+        async def tool_returns_number(**kwargs: Any) -> int:  # noqa: ANN401 # Test tool needs flexibility
             return 42
 
         provider = LocalToolsProvider(

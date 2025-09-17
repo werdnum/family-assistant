@@ -5,7 +5,6 @@ Tests advanced search features, error conditions, and edge cases.
 
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -16,6 +15,62 @@ from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.web.app_creator import app as fastapi_app
 from family_assistant.web.dependencies import get_db
+
+
+class TestDocument:
+    """Test document class that implements the Document protocol."""
+
+    def __init__(
+        self,
+        source_type: str,
+        source_id: str,
+        id: int | None = None,
+        source_uri: str | None = None,
+        title: str | None = None,
+        created_at: datetime | None = None,
+        metadata: dict[str, Any] | None = None,
+        file_path: str | None = None,
+    ) -> None:
+        self._id = id
+        self._source_type = source_type
+        self._source_id = source_id
+        self._source_uri = source_uri
+        self._title = title
+        self._created_at = created_at
+        self._metadata = metadata
+        self._file_path = file_path
+
+    @property
+    def id(self) -> int | None:
+        return self._id
+
+    @property
+    def source_type(self) -> str:
+        return self._source_type
+
+    @property
+    def source_id(self) -> str:
+        return self._source_id
+
+    @property
+    def source_uri(self) -> str | None:
+        return self._source_uri
+
+    @property
+    def title(self) -> str | None:
+        return self._title
+
+    @property
+    def created_at(self) -> datetime | None:
+        return self._created_at
+
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        return self._metadata
+
+    @property
+    def file_path(self) -> str | None:
+        return self._file_path
 
 
 @pytest.fixture
@@ -106,10 +161,10 @@ async def _setup_comprehensive_test_data(
 
         for doc_data in test_docs:
             # Create document
-            doc = SimpleNamespace(
-                id=None,
+            doc = TestDocument(
                 source_type=doc_data["source_type"],
                 source_id=doc_data["source_id"],
+                id=None,
                 source_uri=f"test://{doc_data['source_id']}",
                 title=doc_data["title"],
                 created_at=datetime.now(timezone.utc),
@@ -364,10 +419,10 @@ async def test_vector_search_document_with_no_embeddings(
     """Test document detail for document without embeddings."""
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
         # Create document without embeddings
-        doc = SimpleNamespace(
-            id=None,
+        doc = TestDocument(
             source_type="orphan",
             source_id="no_embeddings",
+            id=None,
             source_uri=None,
             title="Document Without Embeddings",
             created_at=datetime.now(timezone.utc),
@@ -397,10 +452,10 @@ async def test_vector_search_performance_with_large_dataset(
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
         # Create 50 additional documents
         for i in range(50):
-            doc = SimpleNamespace(
-                id=None,
+            doc = TestDocument(
                 source_type="performance_test",
                 source_id=f"perf_doc_{i}",
+                id=None,
                 source_uri=None,
                 title=f"Performance Test Document {i}",
                 created_at=datetime.now(timezone.utc),

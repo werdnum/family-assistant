@@ -407,7 +407,9 @@ def _check_match_conditions(event_data: dict, match_conditions: dict | None) -> 
     return True
 
 
-def _get_nested_value(data: dict, key_path: str) -> Any:
+def _get_nested_value(
+    data: dict, key_path: str
+) -> str | int | float | bool | dict | list | None:
     """Get value from nested dict using dot notation (e.g., 'new_state.state')."""
     keys = key_path.split(".")
     value = data

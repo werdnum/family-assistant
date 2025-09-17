@@ -11,7 +11,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
-from . import LLMStreamEvent
+from . import LLMInterface, LLMOutput, LLMStreamEvent
 from .base import (
     LLMProviderError,
     ProviderConnectionError,
@@ -34,9 +34,9 @@ class RetryingLLMClient:
 
     def __init__(
         self,
-        primary_client: Any,  # LLMInterface
+        primary_client: "LLMInterface",
         primary_model: str,
-        fallback_client: Any | None = None,  # LLMInterface
+        fallback_client: "LLMInterface | None" = None,
         fallback_model: str | None = None,
     ) -> None:
         """
@@ -63,7 +63,7 @@ class RetryingLLMClient:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
-    ) -> Any:  # Returns LLMOutput
+    ) -> "LLMOutput":
         """Generate response with retry and fallback logic."""
         # Define retriable errors - matching LiteLLM's logic
         retriable_errors = (

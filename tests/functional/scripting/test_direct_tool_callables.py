@@ -8,6 +8,7 @@ without going through the tools_execute() wrapper.
 from typing import Any
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.scripting.engine import StarlarkConfig, StarlarkEngine
 from family_assistant.storage.context import DatabaseContext
@@ -112,7 +113,7 @@ class MockToolsProvider:
 
 
 @pytest.mark.asyncio
-async def test_direct_tool_callable(db_engine: Any) -> None:
+async def test_direct_tool_callable(db_engine: AsyncEngine) -> None:
     """Test calling tools directly as functions."""
     # Create mock tools provider
     tools_provider = MockToolsProvider()
@@ -158,7 +159,7 @@ results  # Return the results
 
 
 @pytest.mark.asyncio
-async def test_tool_prefix_fallback(db_engine: Any) -> None:
+async def test_tool_prefix_fallback(db_engine: AsyncEngine) -> None:
     """Test that tools can also be called with tool_ prefix."""
     # Create mock tools provider
     tools_provider = MockToolsProvider()
@@ -203,7 +204,7 @@ results  # Return the results
 
 
 @pytest.mark.asyncio
-async def test_direct_callable_with_security(db_engine: Any) -> None:
+async def test_direct_callable_with_security(db_engine: AsyncEngine) -> None:
     """Test that security controls still apply to direct callables."""
     # Create mock tools provider
     tools_provider = MockToolsProvider()
@@ -258,7 +259,7 @@ available  # Return the available tools
 
 
 @pytest.mark.asyncio
-async def test_direct_callable_validates_parameters(db_engine: Any) -> None:
+async def test_direct_callable_validates_parameters(db_engine: AsyncEngine) -> None:
     """Test that direct tool calls validate parameters properly."""
 
     # Create mock tools provider that validates parameters
@@ -313,7 +314,7 @@ results  # Return the results
 
 
 @pytest.mark.asyncio
-async def test_tools_api_still_works(db_engine: Any) -> None:
+async def test_tools_api_still_works(db_engine: AsyncEngine) -> None:
     """Test that the old tools API still works alongside direct callables."""
     # Create mock tools provider
     tools_provider = MockToolsProvider()
@@ -365,7 +366,7 @@ results  # Return the results
 
 
 @pytest.mark.asyncio
-async def test_no_tools_when_denied(db_engine: Any) -> None:
+async def test_no_tools_when_denied(db_engine: AsyncEngine) -> None:
     """Test that no direct callables are created when all tools are denied."""
     # Create mock tools provider
     tools_provider = MockToolsProvider()

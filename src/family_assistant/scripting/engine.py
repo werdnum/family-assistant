@@ -8,6 +8,7 @@ scripts with access to family assistant tools and state.
 import asyncio
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -79,7 +80,7 @@ class StarlarkEngine:
         script: str,
         globals_dict: dict[str, Any] | None = None,
         execution_context: "ToolExecutionContext | None" = None,
-    ) -> Any:
+    ) -> Any:  # noqa: ANN401 # Starlark scripts can return any type
         """
         Evaluate a Starlark expression or script synchronously.
 
@@ -217,8 +218,8 @@ class StarlarkEngine:
                     tool_name = tool_info["name"]
 
                     # Create a closure to capture the tool name
-                    def make_tool_wrapper(name: str) -> Any:
-                        def tool_wrapper(*args: Any, **kwargs: Any) -> str:
+                    def make_tool_wrapper(name: str) -> Callable[..., str]:
+                        def tool_wrapper(*args: Any, **kwargs: Any) -> str:  # noqa: ANN401 # Tool args can be any type
                             """Execute the tool with the given arguments."""
                             # If positional args are provided, we need to map them to kwargs
                             # This requires knowing the parameter names of the tool
@@ -296,7 +297,7 @@ class StarlarkEngine:
         script: str,
         globals_dict: dict[str, Any] | None = None,
         execution_context: "ToolExecutionContext | None" = None,
-    ) -> Any:
+    ) -> Any:  # noqa: ANN401 # Starlark scripts can return any type
         """
         Evaluate a Starlark expression or script asynchronously.
 
@@ -331,10 +332,10 @@ class StarlarkEngine:
             logger.error(error_msg)
             raise ScriptTimeoutError(error_msg, self.config.max_execution_time) from e
 
-    def _create_print_function(self) -> Any:
+    def _create_print_function(self) -> Callable[..., None]:
         """Create a print function that logs output."""
 
-        def starlark_print(*args: Any, **kwargs: Any) -> None:
+        def starlark_print(*args: Any, **kwargs: Any) -> None:  # noqa: ANN401 # Print can accept any args
             """Print function exposed to Starlark scripts."""
             # Convert all arguments to strings
             message = " ".join(str(arg) for arg in args)
@@ -348,7 +349,7 @@ class StarlarkEngine:
 
         return starlark_print
 
-    def _create_wake_llm_function(self) -> Any:
+    def _create_wake_llm_function(self) -> Callable[..., None]:
         """Create a wake_llm function for scripts."""
 
         def wake_llm(context: dict[str, Any] | str, include_event: bool = True) -> None:

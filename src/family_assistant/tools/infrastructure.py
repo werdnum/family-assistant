@@ -11,9 +11,12 @@ import inspect
 import json
 import logging
 import uuid
-from typing import Any, Protocol, get_type_hints
+from typing import TYPE_CHECKING, Any, Protocol, get_type_hints
 
 from family_assistant.tools.types import ToolExecutionContext
+
+if TYPE_CHECKING:
+    from family_assistant.embeddings import EmbeddingGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +140,7 @@ class LocalToolsProvider:
         self,
         definitions: list[dict[str, Any]],
         implementations: dict[str, Any],  # dict[str, Callable]
-        embedding_generator: Any | None = None,  # EmbeddingGenerator
+        embedding_generator: EmbeddingGenerator | None = None,
         calendar_config: dict[str, Any] | None = None,
     ) -> None:
         self._definitions = definitions
