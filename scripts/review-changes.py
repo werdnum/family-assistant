@@ -24,6 +24,8 @@ class CodeReviewToolbox(llm.Toolbox):
     def __init__(self, repo_root: Path, max_file_size: int = 100_000) -> None:
         self.repo_root = repo_root.resolve()
         self.max_file_size = max_file_size
+        self.review_submitted = False
+        self.review_data: dict[str, Any] = {}
 
     def read_file(
         self, path: str, start_line: int | None = None, end_line: int | None = None
@@ -149,6 +151,53 @@ class CodeReviewToolbox(llm.Toolbox):
             marker = ">>> " if i == line else "    "
             result.append(f"{i:4d}{marker}{line_content}")
         return "\n".join(result)
+
+    def submit_review(
+        self,
+        summary: str,
+        issues: list[dict[str, Any]] | None = None,
+        positive_aspects: list[str] | None = None,
+    ) -> str:
+        """
+        Submit the final code review after analysis.
+
+        Args:
+            summary: One paragraph describing the changes
+            issues: List of issues found, each with keys:
+                - severity: One of BREAKS_BUILD, RUNTIME_ERROR, SECURITY_RISK,
+                           LOGIC_ERROR, DESIGN_FLAW_MAJOR, DESIGN_FLAW_MINOR,
+                           BEST_PRACTICE, STYLE, SUGGESTION
+                - file: File path where issue was found
+                - line: Optional line number
+                - description: Clear description of the issue
+                - suggestion: How to fix the issue
+            positive_aspects: List of good practices observed
+
+        Returns:
+            Confirmation message
+        """
+        # Prepare the review data for validation
+        review_data = {
+            "summary": summary,
+            "issues": issues or [],
+            "positive_aspects": positive_aspects or [],
+        }
+
+        # Validate issues structure BEFORE setting submission status
+        for issue in review_data["issues"]:
+            if not isinstance(issue, dict):
+                return "ERROR: Each issue must be a dictionary/object"
+            required = ["severity", "file", "description", "suggestion"]
+            missing = [k for k in required if k not in issue]
+            if missing:
+                return f"ERROR: Issue missing required fields: {missing}"
+
+        # Only set submission status after successful validation
+        self.review_submitted = True
+        self.review_data = review_data
+
+        issue_count = len(self.review_data["issues"])
+        return f"Review submitted successfully with {issue_count} issue(s) found."
 
 
 def get_diff(mode: str = "staged") -> str:
@@ -527,17 +576,28 @@ def review_changes(
         "Tests and linting have already passed, so focus on logic, security, and design issues."
     )
     prompt_parts.append(
-        "CRITICAL: Read the 'Understanding Context' section in guidelines. The CodeReviewToolbox is documented as future-ready code."
+        "CRITICAL: Read the 'Understanding Context' section in guidelines."
+    )
+    prompt_parts.append(
+        "\nIMPORTANT: After reviewing the changes, you MUST call the submit_review() tool "
+        "to submit your findings. The tool takes three parameters:\n"
+        "- summary: A paragraph describing the changes\n"
+        "- issues: A list of issue objects (or empty list if no issues)\n"
+        "- positive_aspects: A list of strings describing good practices (or empty list)\n"
     )
 
     if was_truncated:
         prompt_parts.append("\nNOTE: The diff has been truncated to fit size limits.")
         prompt_parts.append(f"Changed files: {', '.join(changed_files)}")
         prompt_parts.append(
-            "Use the read_file and search_pattern tools to examine specific files or patterns if you need more context."
+            "You can use read_file, search_pattern, and get_file_context tools to examine "
+            "specific files or patterns if you need more context before submitting your review."
         )
 
     prompt_parts.append(f"\nDIFF:\n{truncated_diff}")
+    prompt_parts.append(
+        "\nRemember to call submit_review() with your findings after analyzing the changes."
+    )
 
     prompt = "\n".join(prompt_parts)
 
@@ -566,7 +626,28 @@ Key points to remember:
 - Read the clarifications and notes in the guidelines carefully - they explain what is NOT an issue
 - Code prepared for future use with clear documentation is intentional, not a flaw
 - Path validation using relative_to() or similar IS proper validation
-- subprocess.run() with list arguments (not shell=True) is safe from injection"""
+- subprocess.run() with list arguments (not shell=True) is safe from injection
+
+TOOLS AVAILABLE:
+- read_file(path, start_line, end_line): Read file contents or specific lines
+- search_pattern(pattern, file_glob, max_results): Search for patterns using ripgrep
+- get_file_context(file, line, context_lines): Get context around a specific line
+- submit_review(summary, issues, positive_aspects): Submit your final review (REQUIRED)
+
+You MUST call submit_review() after analyzing the changes. Example:
+submit_review(
+    summary="The changes add a new feature...",
+    issues=[
+        {{
+            "severity": "LOGIC_ERROR",
+            "file": "src/main.py",
+            "line": 42,
+            "description": "Variable used before initialization",
+            "suggestion": "Initialize the variable before use"
+        }}
+    ],
+    positive_aspects=["Good error handling", "Well-documented functions"]
+)"""
 
     # Define schema for structured output
     schema = {
@@ -628,23 +709,76 @@ Key points to remember:
 
     print("\nAnalyzing changes with LLM...", file=sys.stderr)
 
-    # Call LLM with tools
-    try:
-        # Get the default configured model from llm
-        # This respects the user's LLM_DEFAULT_MODEL setting
-        model = llm.get_model()
+    # Create toolbox with tools
+    toolbox = CodeReviewToolbox(repo_root)
+    tools = [
+        toolbox.read_file,
+        toolbox.search_pattern,
+        toolbox.get_file_context,
+        toolbox.submit_review,
+    ]
 
-        # Prepare the full conversation for the model
-        # NOTE: Tools are not currently used due to llm library limitations with combining
-        # tools and schemas. The CodeReviewToolbox class is ready for future activation
-        # when the library supports this combination.
-        response = model.prompt(prompt, system=system, schema=schema)
+    # Get the default configured model
+    model = llm.get_model()
 
-        # Debug: Check response
-        response_text = response.text() if hasattr(response, "text") else str(response)
+    review_data = None
+    max_attempts = 3
 
-        # Parse the response
+    # Try to get review with tools (with retries)
+    # Create a conversation object to maintain context across retries
+    conversation = model.conversation()
+
+    for attempt in range(max_attempts):
         try:
+            if attempt == 0:
+                # First attempt: fresh prompt with system context
+                response = conversation.prompt(prompt, system=system, tools=tools)
+            else:
+                # Retry: Continue the conversation with a reminder
+                print(
+                    f"Retry {attempt}: Adding reminder to submit review...",
+                    file=sys.stderr,
+                )
+                reminder_messages = [
+                    "Please submit your review using the submit_review() tool. "
+                    "Call submit_review() with your summary, issues list, and positive_aspects list.",
+                    "I notice you haven't called submit_review() yet. "
+                    "Please complete your review by calling:\n"
+                    "submit_review(summary='...', issues=[...], positive_aspects=[...])",
+                    "To complete the review, you MUST call the submit_review() tool. "
+                    "Example: submit_review(summary='The changes...', issues=[], positive_aspects=['Good error handling'])\n"
+                    "Please submit your review now.",
+                ]
+                reminder = reminder_messages[
+                    min(attempt - 1, len(reminder_messages) - 1)
+                ]
+
+                # Continue the conversation with the reminder
+                response = conversation.prompt(reminder, tools=tools)
+
+            # Check if review was submitted
+            if toolbox.review_submitted:
+                review_data = toolbox.review_data
+                print("Review successfully submitted via tool.", file=sys.stderr)
+                break
+            else:
+                print(
+                    f"Attempt {attempt + 1}: Model did not submit review.",
+                    file=sys.stderr,
+                )
+
+        except Exception as e:
+            print(f"Error on attempt {attempt + 1}: {e}", file=sys.stderr)
+
+    # Fallback: Use schema without tools if no review submitted
+    if not review_data:
+        print("\nFalling back to schema-based review (no tools)...", file=sys.stderr)
+        try:
+            response = model.prompt(prompt, system=system, schema=schema)
+            response_text = (
+                response.text() if hasattr(response, "text") else str(response)
+            )
+
             if response_text:
                 review_data = json.loads(response_text)
             else:
@@ -652,23 +786,18 @@ Key points to remember:
                 if output_json:
                     sys.stdout = original_stdout
                 return 1, {}
+
         except json.JSONDecodeError as e:
             print(f"Error: Failed to parse LLM response as JSON: {e}", file=sys.stderr)
             print(f"Response was: {response_text[:500]}", file=sys.stderr)
             if output_json:
                 sys.stdout = original_stdout
             return 1, {}
-
-    except json.JSONDecodeError as e:
-        print(f"Error: Failed to parse LLM response as JSON: {e}", file=sys.stderr)
-        if output_json:
-            sys.stdout = original_stdout
-        return 1, {}
-    except Exception as e:
-        print(f"Error calling LLM: {e}", file=sys.stderr)
-        if output_json:
-            sys.stdout = original_stdout
-        return 1, {}
+        except Exception as e:
+            print(f"Error calling LLM: {e}", file=sys.stderr)
+            if output_json:
+                sys.stdout = original_stdout
+            return 1, {}
 
     # Determine exit code
     exit_code, highest_severity = determine_exit_code(review_data.get("issues", []))
