@@ -188,7 +188,7 @@ class EventProcessor:
 
     def _get_nested_value(
         self, data: dict, key_path: str
-    ) -> str | int | float | bool | dict[str, Any] | None:
+    ) -> str | int | float | bool | dict[str, Any] | list[Any] | None:
         """Get value from nested dict using dot notation (e.g., 'new_state.state')."""
         keys = key_path.split(".")
         value = data
