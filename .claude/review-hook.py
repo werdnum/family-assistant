@@ -213,14 +213,16 @@ class ReviewHook:
 
     def _run_review(self) -> tuple[int, dict[str, Any]]:
         """Run the review script and get JSON output."""
-        review_script = self.repo_root / "scripts" / "review-changes.sh"
+        review_script = self.repo_root / "scripts" / "review-changes.py"
         if not review_script.exists():
             print("Review script not found, skipping code review", file=sys.stderr)
             return 0, {}
 
         print("\nAnalyzing staged changes for issues...", file=sys.stderr)
         result = subprocess.run(
-            [str(review_script), "--json"], capture_output=True, text=True
+            [sys.executable, str(review_script), "--json"],
+            capture_output=True,
+            text=True,
         )
 
         # The human-readable output goes to stderr, JSON to stdout
