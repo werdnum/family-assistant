@@ -43,7 +43,7 @@ class OpenAIClient(BaseLLMClient):
         api_key: str,
         model: str,
         model_parameters: dict[str, dict[str, Any]] | None = None,
-        **kwargs: Any,
+        **kwargs: Any,  # noqa: ANN401 # Accepts arbitrary OpenAI API parameters
     ) -> None:
         """
         Initialize OpenAI client.

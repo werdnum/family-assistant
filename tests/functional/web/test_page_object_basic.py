@@ -1,15 +1,14 @@
 """Basic test to verify Page Object Model infrastructure works."""
 
-from typing import Any
-
 import pytest
 
+from tests.functional.web.conftest import WebTestFixture
 from tests.functional.web.pages import BasePage
 
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_base_page_navigation(web_test_fixture: Any) -> None:
+async def test_base_page_navigation(web_test_fixture: WebTestFixture) -> None:
     """Test that the base page can navigate to different routes."""
     page = BasePage(web_test_fixture.page, web_test_fixture.base_url)
 
@@ -26,7 +25,7 @@ async def test_base_page_navigation(web_test_fixture: Any) -> None:
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_base_page_console_errors(web_test_fixture: Any) -> None:
+async def test_base_page_console_errors(web_test_fixture: WebTestFixture) -> None:
     """Test that we can capture console errors."""
     page = BasePage(web_test_fixture.page, web_test_fixture.base_url)
 

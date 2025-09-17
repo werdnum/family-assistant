@@ -1,9 +1,13 @@
 """Base repository class for storage repositories."""
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy.exc import SQLAlchemyError
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import CursorResult
+    from sqlalchemy.sql import Delete, Insert, Select, Update
 
 from family_assistant.storage.context import DatabaseContext
 
@@ -21,8 +25,11 @@ class BaseRepository:
         self._logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
     async def _execute_with_logging(
-        self, operation_name: str, query: Any, params: dict[str, Any] | None = None
-    ) -> Any:
+        self,
+        operation_name: str,
+        query: "Select | Insert | Update | Delete",
+        params: dict[str, object] | None = None,
+    ) -> "CursorResult[object]":
         """Execute query with consistent error logging.
 
         Args:

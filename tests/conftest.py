@@ -833,7 +833,7 @@ async def task_worker_manager(
     def worker_factory(
         processing_service: ProcessingService,
         chat_interface: MagicMock,
-        **kwargs: Any,
+        **kwargs: Any,  # noqa: ANN401
     ) -> tuple[TaskWorker, asyncio.Event, asyncio.Event]:
         nonlocal worker_task_handle
         # Extract timezone_str from kwargs with default of "UTC"
@@ -1173,8 +1173,10 @@ def vcr_bypass_for_streaming(request: pytest.FixtureRequest) -> None:
         original_use_cassette = vcr.VCR.use_cassette
 
         def disabled_use_cassette(
-            self: Any, path: str | None = None, **kwargs: Any
-        ) -> Any:
+            self: Any,  # noqa: ANN401  # VCR patching requires Any type
+            path: str | None = None,
+            **kwargs: Any,  # noqa: ANN401
+        ) -> Any:  # noqa: ANN401
             """Return a no-op context manager that doesn't record or replay."""
             from contextlib import nullcontext
 

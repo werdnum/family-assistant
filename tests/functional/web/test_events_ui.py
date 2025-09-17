@@ -24,14 +24,14 @@ async def test_events_page_basic_loading(
     console_errors = []
     network_errors = []
 
-    def on_console(msg: Any) -> None:
+    def on_console(msg: Any) -> None:  # noqa: ANN401  # playwright console message
         if msg.type == "error":
             console_errors.append(
                 f"{msg.location.get('url', 'unknown')}:{msg.location.get('lineNumber', '?')} - {msg.text}"
             )
             print(f"[CONSOLE ERROR] {msg.text}")
 
-    def on_response(response: Any) -> None:
+    def on_response(response: Any) -> None:  # noqa: ANN401  # playwright response object
         if response.status >= 400:
             network_errors.append(f"{response.status} {response.url}")
             print(f"[NETWORK ERROR] {response.status} {response.url}")
@@ -613,7 +613,7 @@ async def test_events_page_load_triggers_api_call(
     # Monitor API requests
     api_requests = []
 
-    def log_api_request(request: Any) -> None:
+    def log_api_request(request: Any) -> None:  # noqa: ANN401  # playwright request object
         if "/api/events" in request.url:
             api_requests.append(request.url)
 
@@ -643,7 +643,7 @@ async def test_events_filter_changes_trigger_api_calls(
     # Monitor API requests
     api_requests = []
 
-    def log_api_request(request: Any) -> None:
+    def log_api_request(request: Any) -> None:  # noqa: ANN401  # playwright request object
         if "/api/events" in request.url:
             api_requests.append(request.url)
 

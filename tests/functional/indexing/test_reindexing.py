@@ -258,7 +258,8 @@ async def test_reindex_document_e2e(
             embeddings = await db.vector.get_document_by_id(document_id)
             assert embeddings is not None
             assert len(embeddings.embeddings) > 0
-            assert "failed" in embeddings.embeddings[0].content.lower()
+            content = embeddings.embeddings[0].content
+            assert content is not None and "failed" in content.lower()
             logger.info(f"Verified buggy content was indexed for doc ID {document_id}")
 
         # --- PHASE 2: Fix and Re-index ---

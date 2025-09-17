@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-def minimal_anonymize(data: Any) -> Any:
+def minimal_anonymize(data: Any) -> Any:  # noqa: ANN401  # Handles arbitrary JSON-like data types recursively
     """Minimally anonymize data - just names and locations."""
     if isinstance(data, str):
         # Replace email addresses

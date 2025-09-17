@@ -59,7 +59,7 @@ async def telegram_handler_fixture(
     # 2. Prepare Configuration for Assistant
     # Ensure this profile ID matches what Assistant expects or is configured as default
     test_profile_id = "default_assistant_test_profile"
-    test_config: dict[str, Any] = {
+    test_config: dict[str, Any] = {  # noqa: ANN401
         "telegram_token": "test_token_123:ABC",
         "allowed_user_ids": [123, 12345],  # Include user_id used in tests
         "developer_chat_id": None,

@@ -10,8 +10,10 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
-from typing import Any
+from types import TracebackType
 from unittest.mock import AsyncMock
+
+from pytest_mock import MockerFixture
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +80,12 @@ class MockClientResponse:
     async def __aenter__(self) -> "MockClientResponse":
         return self
 
-    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         await self.close()
 
     async def close(self) -> None:
@@ -202,7 +209,7 @@ def create_gemini_error_chunks() -> list[bytes]:
 class GeminiStreamingMocker:
     """Context manager for mocking Gemini streaming responses."""
 
-    def __init__(self, mocker: Any) -> None:
+    def __init__(self, mocker: MockerFixture) -> None:
         """Initialize with pytest-mock mocker."""
         self.mocker = mocker
         self.original_client_session = None
@@ -211,7 +218,12 @@ class GeminiStreamingMocker:
     def __enter__(self) -> "GeminiStreamingMocker":
         return self
 
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         pass
 
     def mock_basic_streaming_response(self, content: str = "1\n2\n3\n4\n5") -> None:

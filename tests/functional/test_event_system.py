@@ -57,7 +57,7 @@ class MockState:
         self.last_changed = datetime.now(timezone.utc).isoformat()
 
 
-def safe_json_loads(data: str | dict | list) -> Any:
+def safe_json_loads(data: str | dict | list) -> Any:  # noqa: ANN401  # JSON can be any type
     """
     Safely load JSON data that might already be parsed.
 

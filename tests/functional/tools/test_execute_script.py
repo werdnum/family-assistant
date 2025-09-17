@@ -1,9 +1,9 @@
 """Tests for the execute_script tool."""
 
-from typing import Any
 from unittest.mock import Mock
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.execute_script import execute_script_tool
@@ -15,7 +15,7 @@ from family_assistant.tools.types import ToolExecutionContext
 
 
 @pytest.mark.asyncio
-async def test_execute_script_without_tools_provider(db_engine: Any) -> None:
+async def test_execute_script_without_tools_provider(db_engine: AsyncEngine) -> None:
     """Test execute_script when no tools provider is available."""
     async with DatabaseContext(engine=db_engine) as db:
         # Create context without processing service
@@ -39,7 +39,7 @@ async def test_execute_script_without_tools_provider(db_engine: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_script_with_empty_tools_provider(db_engine: Any) -> None:
+async def test_execute_script_with_empty_tools_provider(db_engine: AsyncEngine) -> None:
     """Test execute_script with an empty tools provider."""
     async with DatabaseContext(engine=db_engine) as db:
         # Create empty tools provider
@@ -70,7 +70,7 @@ len(tools)
 
 
 @pytest.mark.asyncio
-async def test_execute_script_with_tools(db_engine: Any) -> None:
+async def test_execute_script_with_tools(db_engine: AsyncEngine) -> None:
     """Test execute_script with actual tools available."""
     async with DatabaseContext(engine=db_engine) as db:
         # Create a simple echo tool
@@ -133,7 +133,7 @@ echo(message="Hello from Starlark!")
 
 
 @pytest.mark.asyncio
-async def test_execute_script_syntax_error(db_engine: Any) -> None:
+async def test_execute_script_syntax_error(db_engine: AsyncEngine) -> None:
     """Test execute_script with syntax errors."""
     async with DatabaseContext(engine=db_engine) as db:
         ctx = ToolExecutionContext(
@@ -152,7 +152,7 @@ async def test_execute_script_syntax_error(db_engine: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_script_with_globals(db_engine: Any) -> None:
+async def test_execute_script_with_globals(db_engine: AsyncEngine) -> None:
     """Test execute_script with global variables."""
     async with DatabaseContext(engine=db_engine) as db:
         ctx = ToolExecutionContext(
@@ -174,7 +174,7 @@ async def test_execute_script_with_globals(db_engine: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_script_with_wake_llm(db_engine: Any) -> None:
+async def test_execute_script_with_wake_llm(db_engine: AsyncEngine) -> None:
     """Test execute_script with wake_llm calls."""
     async with DatabaseContext(engine=db_engine) as db:
         ctx = ToolExecutionContext(

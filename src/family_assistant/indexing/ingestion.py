@@ -50,6 +50,11 @@ class IngestedDocument:
     def file_path(self) -> str | None:
         return self._data.get("_file_path")
 
+    @property
+    def id(self) -> int | None:  # pylint: disable=invalid-name
+        """The internal database ID of the document, if persisted. None otherwise."""
+        return self._data.get("_id")
+
 
 async def process_document_ingestion_request(
     db_context: "DatabaseContext",

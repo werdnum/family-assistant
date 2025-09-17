@@ -34,6 +34,7 @@ if TYPE_CHECKING:
         MessageHistoryRepository,
         NotesRepository,
         TasksRepository,
+        VectorRepository,
     )
 
 
@@ -256,7 +257,7 @@ class DatabaseContext:
             )
 
         # Wrapper to call the original callback without arguments
-        def event_listener_wrapper(*args: Any, **kwargs: Any) -> None:  # noqa: ARG001
+        def event_listener_wrapper(*args: object, **kwargs: object) -> None:  # noqa: ARG001
             callback()
 
         # Register the wrapper with the transaction context manager
@@ -318,7 +319,7 @@ class DatabaseContext:
         return self._events
 
     @property
-    def vector(self) -> Any:  # Type hint as Any to avoid circular import
+    def vector(self) -> "VectorRepository":
         """Get the vector repository instance."""
         if self._vector is None:
             from family_assistant.storage.repositories import VectorRepository

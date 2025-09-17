@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timedelta
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 import pytz
@@ -19,6 +19,9 @@ PromptsType = dict[str, str]
 
 logger = logging.getLogger(__name__)
 
+
+if TYPE_CHECKING:
+    import homeassistant_api
 
 # Attempt to import homeassistant_api and its specific exception
 try:
@@ -160,7 +163,7 @@ class HomeAssistantContextProvider(ContextProvider):
         context_template: str,
         prompts: PromptsType,
         verify_ssl: bool = True,
-        client: Any | None = None,  # homeassistant_api.Client
+        client: Any = None,  # noqa: ANN401 # homeassistant_api.Client | None when available
     ) -> None:
         """
         Initializes the HomeAssistantContextProvider.

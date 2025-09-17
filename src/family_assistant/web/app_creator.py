@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.templating import _TemplateResponse
@@ -191,7 +192,9 @@ def get_dev_mode_from_request(request: Request) -> bool:
     return os.getenv("DEV_MODE", "false").lower() == "true"
 
 
-def create_template_context(request: Request, **kwargs: Any) -> dict[str, Any]:
+def create_template_context(
+    request: Request, **kwargs: str | int | float | bool | None
+) -> dict[str, Any]:
     """Create a template context with common variables including dev_mode."""
     dev_mode = get_dev_mode_from_request(request)
 
@@ -216,7 +219,11 @@ templates.env.globals["AUTH_ENABLED"] = AUTH_ENABLED
 class DevModeTemplates(Jinja2Templates):
     """Custom Jinja2Templates that injects dev_mode into context."""
 
-    def TemplateResponse(self, *args: Any, **kwargs: Any) -> _TemplateResponse:
+    def TemplateResponse(
+        self,
+        *args: Any,  # noqa: ANN401 # Complex template args with multiple possible types
+        **kwargs: Any,  # noqa: ANN401 # Complex template kwargs with multiple possible types
+    ) -> _TemplateResponse:
         """Override to inject dev_mode and context-aware functions."""
         # First, let the parent class parse the arguments to get the request and context
         # We need to extract the request to determine dev_mode
@@ -380,7 +387,9 @@ app.include_router(
 # It's now registered in configure_app_auth() after auth routes are added.
 
 
-def configure_app_auth(app: FastAPI, database_engine: Any | None = None) -> None:
+def configure_app_auth(
+    app: FastAPI, database_engine: AsyncEngine | None = None
+) -> None:
     """Configure authentication for the app with proper dependency injection.
 
     This should be called after the app is created and database engine is available.

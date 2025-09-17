@@ -153,7 +153,7 @@ class BasePage:
         """
         errors: list[str] = []
 
-        def handle_console_message(msg: Any) -> None:
+        def handle_console_message(msg: Any) -> None:  # noqa: ANN401  # playwright console message
             if msg.type == "error":
                 errors.append(msg.text)
 
