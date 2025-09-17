@@ -44,6 +44,11 @@
           {
             "type": "command",
             "command": "/usr/bin/env python3 .claude/format-files.py"
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/env python3 .claude/lint-hook.py",
+            "timeout": 15000
           }
         ]
       }
