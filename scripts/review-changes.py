@@ -3,12 +3,12 @@
 Enhanced code review script using LLM with tools for better context understanding.
 Replaces the bash-based review-changes.sh with Python + llm library.
 
-Note: The CodeReviewToolbox class below implements tools for reading files and searching
-code, but they are not currently active due to limitations in the llm library when
-combining tools with structured output schemas. The tools are implemented and ready
-for future use when the library supports this combination.
+The CodeReviewToolbox class provides tools for reading files, searching patterns,
+and submitting reviews. These tools are actively used during the review process.
+The system uses a tool-based approach with a schema-based fallback for robustness.
 """
 
+import argparse
 import json
 import subprocess
 import sys
@@ -85,10 +85,22 @@ class CodeReviewToolbox(llm.Toolbox):
         Returns:
             Search results in format "file:line: content" or error message
         """
-        # SECURITY NOTE: This is SAFE from command injection because:
-        # 1. We use subprocess.run() with a list, NOT shell=True
-        # 2. Pattern is passed as a separate argument, not interpolated into a shell command
-        # 3. Ripgrep treats the pattern as a literal regex, not shell code
+        # SECURITY: Protect against ReDoS attacks
+        MAX_PATTERN_LENGTH = 500
+        if len(pattern) > MAX_PATTERN_LENGTH:
+            return f"ERROR: Pattern too long (max {MAX_PATTERN_LENGTH} characters)"
+
+        # Additional ReDoS protection: check for dangerous patterns
+        dangerous_patterns = [
+            r"(\w+)*",  # Excessive backtracking
+            r"(\d+)+",  # Nested quantifiers
+            r"(.*)+",  # Catastrophic backtracking
+        ]
+        for dangerous in dangerous_patterns:
+            if dangerous in pattern:
+                return "ERROR: Pattern contains potentially dangerous regex constructs"
+
+        # SECURITY NOTE: subprocess.run() with list args is safe from command injection
         cmd = ["rg", "--json", "-m", str(max_results)]
 
         if file_glob:
@@ -251,6 +263,11 @@ def get_changed_files(mode: str = "staged") -> list[str]:
     return [f for f in result.stdout.splitlines() if f]
 
 
+# Constants for smart truncation
+EXTRA_CONTEXT_LINES = 5  # Lines to include after hunk header
+HEADER_PREVIEW_LINES = 30  # Lines to check for header
+
+
 def smart_truncate_diff(diff: str, max_chars: int = 50000) -> tuple[str, bool]:
     """
     Truncate diff intelligently - longest files first, exclude generated files.
@@ -346,12 +363,12 @@ def smart_truncate_diff(diff: str, max_chars: int = 50000) -> tuple[str, bool]:
         if current_size + len(content) > max_chars:
             # Try to include at least the file header
             header_lines = []
-            for line in content.splitlines()[:30]:  # First 30 lines
+            for line in content.splitlines()[:HEADER_PREVIEW_LINES]:
                 header_lines.append(line)
                 if line.startswith("@@"):  # Include up to first hunk header
                     # Try to include a few lines after the hunk header
                     for extra_line in content.splitlines()[
-                        len(header_lines) : len(header_lines) + 5
+                        len(header_lines) : len(header_lines) + EXTRA_CONTEXT_LINES
                     ]:
                         header_lines.append(extra_line)
                     break
@@ -817,35 +834,33 @@ submit_review(
 
 
 def main() -> None:
-    """Main entry point."""
-    mode = "staged"
-    output_json = False
+    """Main entry point with argparse for robust argument handling."""
+    parser = argparse.ArgumentParser(
+        description="Review code changes using LLM with tools to identify potential issues.",
+        epilog="""
+Exit codes:
+  0 - No issues or only style/suggestions
+  1 - Minor issues (best practices, minor design flaws)
+  2 - Major issues (build breaks, runtime errors, security risks)
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
 
-    # Parse command line arguments
-    for arg in sys.argv[1:]:
-        if arg == "--commit":
-            mode = "commit"
-        elif arg == "--json":
-            output_json = True
-        elif arg in ["--help", "-h"]:
-            print("""Usage: review-changes.py [OPTIONS]
+    parser.add_argument(
+        "--commit",
+        action="store_true",
+        help="Review the most recent commit (default: review staged changes)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results as JSON instead of human-readable format",
+    )
 
-Options:
-    --commit    Review the most recent commit (default: review staged changes)
-    --json      Output results as JSON instead of human-readable format
-    --help      Display this help message
+    args = parser.parse_args()
 
-Description:
-    This script reviews code changes using an LLM with tools to identify potential
-    issues categorized by severity. It can read files and search the codebase for
-    additional context.
-
-    Exit codes:
-    0 - No issues or only style/suggestions
-    1 - Minor issues (best practices, minor design flaws)
-    2 - Major issues (build breaks, runtime errors, security risks)
-""")
-            sys.exit(0)
+    mode = "commit" if args.commit else "staged"
+    output_json = args.json
 
     try:
         exit_code, _ = review_changes(mode, output_json)
