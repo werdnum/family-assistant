@@ -51,25 +51,20 @@ Examples:
 Vulnerabilities that could be exploited:
 
 - SQL injection vulnerabilities (string concatenation in queries)
-- Command injection risks (using shell=True with user input)
+- Command injection risks
 - Hardcoded secrets, passwords, or API keys
 - Unsafe deserialization
-- Path traversal vulnerabilities WITHOUT validation
+- Path traversal vulnerabilities
 - Missing authentication/authorization checks
 - Exposed sensitive information in logs
 - Use of deprecated cryptographic functions
 
-Note: If path validation exists (e.g., using Path.relative_to() or similar checks), it's not a
-vulnerability. subprocess.run() with list arguments (not shell=True) is safe.
-
 Examples:
 
 - `query = f"SELECT * FROM users WHERE id = {user_input}"`
-- `subprocess.run(user_input, shell=True)` (but NOT `subprocess.run([cmd, arg])`)
 - `API_KEY = "sk-1234567890"`
 - `eval(user_input)`
 - Logging passwords or tokens
-- Path access WITHOUT validation: `open(user_path)` with no checks
 
 ### LOGIC_ERROR
 
@@ -80,19 +75,16 @@ Incorrect program logic that produces wrong results:
 - Wrong conditional logic (using AND instead of OR)
 - Off-by-one errors in loops
 - Incorrect comparison operators
-- Missing edge case handling that causes crashes
+- Missing edge case handling
 - Race conditions in concurrent code
 - Incorrect state transitions
 - Wrong algorithm implementation
-
-Note: Checking for file existence after already verifying the repository root is NOT a logic error
-if the file check happens later with proper error handling.
 
 Examples:
 
 - `if x > 10 and x < 5:` (impossible condition)
 - `for i in range(len(items) + 1):` (will go out of bounds)
-- Missing handling for empty lists or None values that causes crashes
+- Missing handling for empty lists or None values
 
 ### DESIGN_FLAW_MAJOR
 
@@ -107,9 +99,6 @@ Significant architectural issues requiring substantial refactoring:
 - Synchronous operations that should be async
 - Missing critical error handling patterns
 - Database queries in loops (N+1 problem)
-
-Note: Code that is prepared for future use (e.g., disabled features with clear documentation) is NOT
-a design flaw if it's intentional and documented
 
 Examples:
 
@@ -202,22 +191,6 @@ The review system will:
 2. Categorize each issue found by severity
 3. Exit with the highest severity level found
 4. Provide actionable feedback for improvements
-
-## IMPORTANT: Understanding Context
-
-When reviewing code changes, consider:
-
-1. **Intentional Future-Ready Code**: Classes or functions that are implemented but not yet used are
-   NOT design flaws if they are documented as being prepared for future use.
-
-2. **Safe Subprocess Usage**: `subprocess.run()` with a list of arguments (not shell=True) is NOT a
-   security risk. Only flag if shell=True with user input.
-
-3. **Path Validation**: Using `Path.relative_to()` or try/except ValueError IS proper path
-   validation. Don't flag as insecure if validation exists.
-
-4. **Error Handling**: Returning empty data or default values with proper error messages IS valid
-   error handling, not a logic error.
 
 ## Project-Specific Patterns
 
