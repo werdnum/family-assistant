@@ -328,8 +328,6 @@ select = [
 ignore = [
 	# Line length - fornatter can deal with it
 	"E501",
-	# Forbids dynamic types in kwargs etc
-	"ANN4"
 ]
 
 [tool.pyright]
@@ -357,3 +355,4 @@ dev-dependencies = [
     "pytest-rerunfailures>=16.0.1",
     "pytest-xdist>=3.7.0",
 ]
+

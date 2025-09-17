@@ -44,7 +44,7 @@ async def create_test_event_in_radicale(
     event_summary: str,
     start_dt: datetime,
     end_dt: datetime,
-    engine: Any,  # SQLAlchemy AsyncEngine
+    engine: AsyncEngine,
 ) -> str:
     """Helper to create an event in Radicale using the actual calendar tool and return its UID."""
     base_url, user, passwd, calendar_url = radicale_server_details

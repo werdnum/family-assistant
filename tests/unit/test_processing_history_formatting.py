@@ -20,11 +20,13 @@ from family_assistant.tools.types import ToolExecutionContext
 
 # Mock interfaces required by ProcessingService constructor
 class MockLLMClient:
-    async def generate_response(self, *args: Any, **kwargs: Any) -> Mock:
+    async def generate_response(self, *args: Any, **kwargs: Any) -> Mock:  # noqa: ANN401 # Mock needs flexibility
         return Mock()  # Not used in the tested method
 
     def generate_response_stream(
-        self, *args: Any, **kwargs: Any
+        self,
+        *args: Any,  # noqa: ANN401  # Mock needs flexibility
+        **kwargs: Any,  # noqa: ANN401 # Mock needs flexibility
     ) -> AsyncIterator[LLMStreamEvent]:
         # Return an async generator that yields nothing
         async def empty_generator() -> AsyncIterator[LLMStreamEvent]:
@@ -40,7 +42,7 @@ class MockLLMClient:
         mime_type: str | None,
         max_text_length: int | None,
         # Add any other params from the protocol if necessary, though not used here
-        **_kwargs: Any,  # Capture other potential arguments
+        **_kwargs: Any,  # noqa: ANN401 # Capture other potential arguments from protocol
     ) -> dict[str, Any]:
         # Return a simple dict structure, content not important for these tests
         return {"role": "user", "content": prompt_text or ""}
@@ -48,7 +50,9 @@ class MockLLMClient:
 
 class MockToolsProvider:
     async def get_tool_definitions(
-        self, *args: Any, **kwargs: Any
+        self,
+        *args: Any,  # noqa: ANN401  # Mock needs flexibility
+        **kwargs: Any,  # noqa: ANN401 # Mock needs flexibility
     ) -> list[dict[str, Any]]:
         return []  # Not used
 

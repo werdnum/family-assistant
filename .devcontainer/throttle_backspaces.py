@@ -8,7 +8,7 @@ import struct
 import sys
 import termios
 import tty
-from typing import Any
+import types
 
 # --- Configuration ---
 # The minimum time, in seconds, between consecutive backspaces.
@@ -127,7 +127,7 @@ async def async_main(command: list[str]) -> None:
         print("\r")
 
     # Handle window resizing
-    def on_resize(signum: int, frame: Any) -> None:
+    def on_resize(signum: int, frame: types.FrameType | None) -> None:
         rows, cols = _get_terminal_size()
         fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack("hh", rows, cols))
 

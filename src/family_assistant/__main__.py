@@ -7,6 +7,7 @@ import os
 import signal
 import string  # For environment variable expansion in MCP config
 import sys
+import types
 import zoneinfo  # Keep for timezone validation in load_config
 from typing import Any
 
@@ -57,7 +58,7 @@ CONFIG_FILE_PATH = "config.yaml"  # Path to the new config file
 
 
 # --- Configuration Loading ---
-def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
+def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # noqa: ANN401  # Config structure has nested dicts with various value types
     """
     Loads configuration according to the defined hierarchy:
     Defaults -> config.yaml -> Environment Variables.
@@ -70,7 +71,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         A dictionary containing the resolved configuration.
     """
     # 1. Code Defaults
-    config_data: dict[str, Any] = {
+    config_data: dict[str, Any] = {  # noqa: ANN401  # Config values include strings, ints, lists, nested dicts
         # --- Top-level application-wide settings & secrets placeholders ---
         "telegram_token": None,
         "telegram_enabled": True,  # Can be disabled for web-only mode
@@ -565,7 +566,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:
         f"Resolved {len(resolved_service_profiles)} service profiles. Default ID: {config_data['default_service_profile_id']}"
     )
 
-    def expand_env_vars_in_dict(data: Any) -> Any:
+    def expand_env_vars_in_dict(data: Any) -> Any:  # noqa: ANN401  # Recursively handles arbitrary JSON-like data
         """Recursively expand environment variables in dictionary values.
 
         Uses ${VAR} syntax for safer expansion to avoid accidental substitution
@@ -709,9 +710,8 @@ parser.add_argument(
 )
 
 
-def reload_config_handler(signum: int, frame: Any) -> None:
+def reload_config_handler(signum: int, frame: types.FrameType | None) -> None:
     """Handles SIGHUP for config reloading (placeholder)."""
-    # Note: Frame type is `types.FrameType | None` but Any for simplicity here.
     logger.info(f"Received signal {signum}. Basic config reload triggered.")
     # This currently only re-calls load_config. A running Assistant instance
     # would not automatically pick up these changes without further logic.

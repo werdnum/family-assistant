@@ -70,7 +70,7 @@ def normalize_llm_request_body(body: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def llm_request_matcher(r1: Any, r2: Any) -> bool:
+def llm_request_matcher(r1: Any, r2: Any) -> bool:  # noqa: ANN401 # VCR request objects are dynamically typed
     """
     Custom matcher for LLM API requests.
 
@@ -189,7 +189,7 @@ def generate_cassette_name(test_name: str, provider: str, model: str) -> str:
 def hash_request_for_cache(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
-    **kwargs: Any,
+    **kwargs: Any,  # noqa: ANN401 # Generic LLM parameters are dynamically typed
 ) -> str:
     """
     Generate a hash for an LLM request for caching purposes.

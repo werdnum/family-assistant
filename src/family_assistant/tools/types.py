@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
+    import homeassistant_api
+
     from family_assistant.embeddings import EmbeddingGenerator
     from family_assistant.events.indexing_source import IndexingSource
     from family_assistant.events.sources import EventSource
@@ -80,7 +82,9 @@ class ToolExecutionContext:
     )
     clock: Optional["Clock"] = None  # Add clock
     indexing_source: Optional["IndexingSource"] = None  # Add indexing_source
-    home_assistant_client: Any | None = None  # Add home_assistant_client
+    home_assistant_client: Optional["homeassistant_api.Client"] = (
+        None  # Add home_assistant_client
+    )
     event_sources: dict[str, "EventSource"] | None = (
         None  # Map of event source ID to source instance
     )

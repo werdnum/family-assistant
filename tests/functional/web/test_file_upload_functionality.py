@@ -400,7 +400,7 @@ async def test_api_request_includes_attachments(
     # Set up network request interception
     requests = []
 
-    def handle_request(request: Any) -> None:
+    def handle_request(request: Any) -> None:  # noqa: ANN401  # playwright request object
         if "/api/v1/chat/send_message_stream" in request.url:
             requests.append({
                 "url": request.url,

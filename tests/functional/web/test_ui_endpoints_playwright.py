@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from tests.functional.web.conftest import ConsoleErrorCollector, WebTestFixture
 from tests.functional.web.pages import BasePage
 
 # Base UI endpoints accessible regardless of auth state
@@ -49,7 +50,9 @@ BASE_UI_ENDPOINTS = [
 
 
 async def check_endpoint(
-    browser: Any, base_url: str, endpoint_info: tuple[str, str, list[str]]
+    browser: Any,  # noqa: ANN401  # playwright browser object
+    base_url: str,
+    endpoint_info: tuple[str, str, list[str]],
 ) -> tuple[list[str], list[str]]:
     """Check a single endpoint and return failures and warnings."""
     path, description, expected_elements = endpoint_info
@@ -103,8 +106,8 @@ async def check_endpoint(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_ui_endpoint_accessibility_playwright(
-    web_test_fixture: Any,
-    console_error_checker: Any,
+    web_test_fixture: WebTestFixture,
+    console_error_checker: ConsoleErrorCollector,
 ) -> None:
     """
     Test that all UI endpoints are accessible via Playwright and render without errors.
@@ -143,8 +146,8 @@ async def test_ui_endpoint_accessibility_playwright(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_navigation_links_work(
-    web_test_fixture: Any,
-    console_error_checker: Any,
+    web_test_fixture: WebTestFixture,
+    console_error_checker: ConsoleErrorCollector,
 ) -> None:
     """Test that navigation links in the UI actually work."""
     page = web_test_fixture.page
@@ -200,8 +203,8 @@ async def test_navigation_links_work(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_responsive_design_mobile(
-    web_test_fixture: Any,
-    console_error_checker: Any,
+    web_test_fixture: WebTestFixture,
+    console_error_checker: ConsoleErrorCollector,
 ) -> None:
     """Test that pages work on mobile viewport sizes."""
     page = web_test_fixture.page
@@ -238,8 +241,8 @@ async def test_responsive_design_mobile(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_form_interactions(
-    web_test_fixture: Any,
-    console_error_checker: Any,
+    web_test_fixture: WebTestFixture,
+    console_error_checker: ConsoleErrorCollector,
 ) -> None:
     """Test basic form interactions work without errors."""
     page = web_test_fixture.page
@@ -282,8 +285,8 @@ async def test_form_interactions(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_loading_states(
-    web_test_fixture: Any,
-    console_error_checker: Any,
+    web_test_fixture: WebTestFixture,
+    console_error_checker: ConsoleErrorCollector,
 ) -> None:
     """Test that pages show appropriate loading states."""
     page = web_test_fixture.page

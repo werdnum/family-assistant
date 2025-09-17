@@ -8,10 +8,13 @@ Starlark scripting environment, allowing scripts to discover and execute tools.
 import asyncio
 import json
 import logging
+from collections.abc import Coroutine
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from threading import Thread
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
+
+T = TypeVar("T")
 
 if TYPE_CHECKING:
     from family_assistant.tools.infrastructure import ToolsProvider
@@ -104,7 +107,7 @@ class ToolsAPI:
 
         return self._loop
 
-    def _run_async(self, coro: Any) -> Any:
+    def _run_async(self, coro: Coroutine[Any, Any, T]) -> T:
         """Run an async coroutine from sync context."""
         import threading
 
@@ -127,7 +130,7 @@ class ToolsAPI:
                     # See docs/postgres-test-failures-analysis.md for details.
                     import concurrent.futures
 
-                    def run_in_main_loop() -> Any:
+                    def run_in_main_loop() -> T:
                         assert self._main_loop is not None  # Already checked above
                         future = asyncio.run_coroutine_threadsafe(coro, self._main_loop)
                         return future.result(timeout=30.0)
@@ -252,7 +255,7 @@ class ToolsAPI:
                 return tool
         return None
 
-    def execute(self, tool_name: str, *args: Any, **kwargs: Any) -> str:
+    def execute(self, tool_name: str, *args: Any, **kwargs: Any) -> str:  # noqa: ANN401
         """
         Execute a tool with the given arguments.
 
@@ -389,7 +392,7 @@ class StarlarkToolsAPI:
             }
         return None
 
-    def execute(self, tool_name: str, *args: Any, **kwargs: Any) -> str:
+    def execute(self, tool_name: str, *args: Any, **kwargs: Any) -> str:  # noqa: ANN401
         """Execute a tool."""
         return self._api.execute(tool_name, *args, **kwargs)
 

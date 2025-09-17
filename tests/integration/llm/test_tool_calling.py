@@ -2,13 +2,13 @@
 
 import json
 import os
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
 import pytest_asyncio
 
-from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
+from family_assistant.llm import LLMInterface, LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.llm.factory import LLMClientFactory
 
 from .vcr_helpers import sanitize_response
@@ -44,10 +44,10 @@ def skip_if_google_tool_calling(provider: str) -> None:
 
 
 @pytest_asyncio.fixture
-async def llm_client_with_tools() -> Callable[[str, str], Any]:
+async def llm_client_with_tools() -> Callable[[str, str], Awaitable[LLMInterface]]:
     """Factory fixture for creating LLM clients configured for tool calling."""
 
-    async def _create_client(provider: str, model: str) -> Any:
+    async def _create_client(provider: str, model: str) -> LLMInterface:
         """Create an LLM client for tool calling tests."""
         if provider == "openai":
             api_key = os.getenv("OPENAI_API_KEY", "test-openai-key")
@@ -129,7 +129,9 @@ def calculate_tool() -> dict[str, Any]:
     ],
 )
 async def test_single_tool_call(
-    provider: str, model: str, llm_client_with_tools: Any
+    provider: str,
+    model: str,
+    llm_client_with_tools: Callable[[str, str], Awaitable[LLMInterface]],
 ) -> None:
     """Test calling a single tool."""
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
@@ -173,7 +175,9 @@ async def test_single_tool_call(
     ],
 )
 async def test_multiple_tool_options(
-    provider: str, model: str, llm_client_with_tools: Any
+    provider: str,
+    model: str,
+    llm_client_with_tools: Callable[[str, str], Awaitable[LLMInterface]],
 ) -> None:
     """Test choosing between multiple available tools."""
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
@@ -212,7 +216,9 @@ async def test_multiple_tool_options(
     ],
 )
 async def test_no_tool_needed(
-    provider: str, model: str, llm_client_with_tools: Any
+    provider: str,
+    model: str,
+    llm_client_with_tools: Callable[[str, str], Awaitable[LLMInterface]],
 ) -> None:
     """Test that the model doesn't call tools when not needed."""
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
@@ -247,7 +253,9 @@ async def test_no_tool_needed(
     ],
 )
 async def test_parallel_tool_calls(
-    provider: str, model: str, llm_client_with_tools: Any
+    provider: str,
+    model: str,
+    llm_client_with_tools: Callable[[str, str], Awaitable[LLMInterface]],
 ) -> None:
     """Test calling multiple tools in parallel (if supported by provider)."""
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
@@ -290,7 +298,9 @@ async def test_parallel_tool_calls(
     ],
 )
 async def test_tool_call_with_conversation_history(
-    provider: str, model: str, llm_client_with_tools: Any
+    provider: str,
+    model: str,
+    llm_client_with_tools: Callable[[str, str], Awaitable[LLMInterface]],
 ) -> None:
     """Test tool calling with conversation history."""
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
@@ -341,7 +351,9 @@ async def test_tool_call_with_conversation_history(
     ],
 )
 async def test_tool_response_handling(
-    provider: str, model: str, llm_client_with_tools: Any
+    provider: str,
+    model: str,
+    llm_client_with_tools: Callable[[str, str], Awaitable[LLMInterface]],
 ) -> None:
     """Test handling of tool responses in conversation."""
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
@@ -416,7 +428,9 @@ async def test_tool_response_handling(
     ],
 )
 async def test_tool_call_id_format(
-    provider: str, model: str, llm_client_with_tools: Any
+    provider: str,
+    model: str,
+    llm_client_with_tools: Callable[[str, str], Awaitable[LLMInterface]],
 ) -> None:
     """Test that tool call IDs are properly formatted."""
     if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):

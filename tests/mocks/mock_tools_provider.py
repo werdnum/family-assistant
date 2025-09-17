@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import Any
 
 from family_assistant.tools.infrastructure import ToolsProvider
+from family_assistant.tools.types import ToolExecutionContext
 
 
 class MockToolsProvider(ToolsProvider):
@@ -59,8 +60,8 @@ class MockToolsProvider(ToolsProvider):
         self,
         name: str,
         arguments: dict[str, Any],
-        context: Any | None = None,
-    ) -> Any:
+        context: ToolExecutionContext | None = None,  # noqa: ANN401 # Mock needs to be flexible
+    ) -> Any:  # noqa: ANN401 # Mock tool can return anything
         """Execute a tool by name."""
         if name not in self.tools:
             raise ValueError(f"Tool not found: {name}")

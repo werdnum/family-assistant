@@ -9,7 +9,7 @@ import re
 import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import homeassistant_api as ha_api
 import janus
@@ -28,6 +28,12 @@ logger = logging.getLogger(__name__)
 # Very permissive - actual validation via API is more important
 # Allows letters, numbers, underscore in both parts
 ENTITY_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$")
+
+
+class HasDataAttr(Protocol):
+    """Protocol for objects that have a data attribute."""
+
+    data: Any
 
 
 class HomeAssistantSource(BaseEventSource, EventSource):
@@ -202,12 +208,19 @@ class HomeAssistantSource(BaseEventSource, EventSource):
             logger.error(f"WebSocket connection error: {e}")
             raise
 
-    def _handle_event_sync(self, event_type: str, event: Any) -> None:
+    def _handle_event_sync(
+        self, event_type: str, event: dict[str, Any] | HasDataAttr
+    ) -> None:
         """Handle an event synchronously from the thread."""
         try:
             # FiredEvent object may have attributes instead of dict access
             # Try to access as attributes first, fall back to dict access
-            event_data = event.data if hasattr(event, "data") else event.get("data", {})
+            if hasattr(event, "data"):
+                event_data = cast("HasDataAttr", event).data
+            elif hasattr(event, "get"):
+                event_data = cast("dict[str, Any]", event).get("data", {})
+            else:
+                event_data = {}
 
             # Convert event_data to dict if it's not already
             if not isinstance(event_data, dict):
@@ -236,7 +249,9 @@ class HomeAssistantSource(BaseEventSource, EventSource):
                 new_state = event_data.get("new_state", {})
 
                 # Helper function to extract state info from dict or object
-                def extract_state_info(state_obj: Any) -> dict[str, Any] | None:
+                def extract_state_info(
+                    state_obj: dict[str, Any] | object | None,
+                ) -> dict[str, Any] | None:
                     if not state_obj:
                         return None
 

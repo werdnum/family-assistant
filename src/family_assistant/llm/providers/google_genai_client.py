@@ -48,7 +48,7 @@ class GoogleGenAIClient(BaseLLMClient):
         model: str,
         model_parameters: dict[str, dict[str, Any]] | None = None,
         api_base: str | None = None,
-        **kwargs: Any,
+        **kwargs: Any,  # noqa: ANN401 # Accepts arbitrary Google GenAI API parameters
     ) -> None:
         """
         Initialize Google GenAI client.

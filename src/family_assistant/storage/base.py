@@ -21,6 +21,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool, StaticPool
+from sqlalchemy.pool.base import _ConnectionRecord
 from sqlalchemy.sql import func
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,10 @@ def create_engine_with_sqlite_optimizations(database_url: str) -> AsyncEngine:
 
     # Add SQLite-specific optimizations using dialect detection
     @event.listens_for(engine.sync_engine, "connect")
-    def set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
+    def set_sqlite_pragma(
+        dbapi_connection: Any,  # noqa: ANN401 # DBAPI connection type varies
+        connection_record: _ConnectionRecord,
+    ) -> None:
         # Check if this is actually a SQLite connection
         if hasattr(dbapi_connection, "execute"):
             # Use a more robust check

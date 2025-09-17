@@ -89,7 +89,7 @@ def create_mock_update_with_photo(
     message_id: int = 101,
     photo_file_id: str = "test_photo_123",
     photo_bytes: bytes | None = None,
-    bot: Any | None = None,
+    bot: Any | None = None,  # noqa: ANN401  # telegram bot object
 ) -> Update:
     """Creates a mock Telegram Update object for a message with a photo."""
     from telegram import PhotoSize
