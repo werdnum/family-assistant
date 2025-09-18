@@ -146,11 +146,17 @@ async def lint_python_file(file_path: str) -> list[LintResult]:
 async def lint_javascript_file(file_path: str) -> list[LintResult]:
     """Run fast JavaScript/TypeScript linters on a file in parallel."""
     # Check if we're in a frontend directory
-    if not Path(file_path).is_relative_to(Path.cwd() / "frontend"):
+    file_path_obj = Path(file_path)
+    frontend_dir = Path.cwd() / "frontend"
+
+    if not file_path_obj.is_relative_to(frontend_dir):
         return []
 
+    # Convert to relative path from frontend directory for npm commands
+    relative_path = str(file_path_obj.relative_to(frontend_dir))
+
     async def run_biome_format() -> LintResult:
-        cmd = ["npm", "run", "format", "--prefix", "frontend", "--", file_path]
+        cmd = ["npm", "run", "format", "--prefix", "frontend", "--", relative_path]
         returncode, stdout, stderr, duration = await run_command(cmd, timeout=5.0)
 
         if returncode != 0:
@@ -165,7 +171,7 @@ async def lint_javascript_file(file_path: str) -> list[LintResult]:
             return LintResult("biome format", True, duration)
 
     async def run_eslint() -> LintResult:
-        cmd = ["npm", "run", "lint:fix", "--prefix", "frontend", "--", file_path]
+        cmd = ["npm", "run", "lint:fix", "--prefix", "frontend", "--", relative_path]
         returncode, stdout, stderr, duration = await run_command(cmd, timeout=8.0)
 
         if returncode != 0:
@@ -244,6 +250,8 @@ async def main() -> None:
         tool_input = tool_data.get("tool_input", {})
 
         # Only process file editing tools
+        # Note: NotebookEdit is included but .ipynb files are skipped later
+        # since they require special cell-based linting that's not yet implemented
         if tool_name not in ["Edit", "MultiEdit", "Write", "NotebookEdit"]:
             return
 
@@ -252,6 +260,7 @@ async def main() -> None:
 
         if tool_name == "NotebookEdit":
             # NotebookEdit uses notebook_path
+            # We extract the path here but .ipynb files are skipped in process_file
             notebook_path = tool_input.get("notebook_path")
             if notebook_path:
                 file_paths.append(notebook_path)
