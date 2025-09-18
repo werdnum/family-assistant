@@ -250,25 +250,17 @@ async def main() -> None:
         tool_input = tool_data.get("tool_input", {})
 
         # Only process file editing tools
-        # Note: NotebookEdit is included but .ipynb files are skipped later
-        # since they require special cell-based linting that's not yet implemented
-        if tool_name not in ["Edit", "MultiEdit", "Write", "NotebookEdit"]:
+        # NotebookEdit is excluded since it only works with .ipynb files,
+        # which require special cell-based linting not yet implemented
+        if tool_name not in ["Edit", "MultiEdit", "Write"]:
             return
 
-        # Extract file paths based on tool type
-        file_paths = []
+        # Extract file path from tool input
+        file_path = tool_input.get("file_path")
+        if not file_path:
+            return
 
-        if tool_name == "NotebookEdit":
-            # NotebookEdit uses notebook_path
-            # We extract the path here but .ipynb files are skipped in process_file
-            notebook_path = tool_input.get("notebook_path")
-            if notebook_path:
-                file_paths.append(notebook_path)
-        else:
-            # Edit, Write, and MultiEdit all use file_path
-            file_path = tool_input.get("file_path")
-            if file_path:
-                file_paths.append(file_path)
+        file_paths = [file_path]
 
         # Define async function to process a single file
         async def process_file(file_path: str) -> tuple[str, list[LintResult]] | None:
@@ -283,8 +275,8 @@ async def main() -> None:
             elif file_ext in [".js", ".jsx", ".ts", ".tsx"]:
                 results = await lint_javascript_file(file_path)
             else:
-                # Skip unsupported file types (including .ipynb notebooks)
-                # Notebooks have special cell-based format that requires different handling
+                # Skip unsupported file types
+                # Note: .ipynb notebooks would need special cell-based linting
                 return None
 
             return (file_path, results) if results else None
