@@ -1,6 +1,9 @@
 # Use the official UV image as the base
 FROM ghcr.io/astral-sh/uv:debian-slim AS base
 
+# Create non-root user and group early in the build with specific UID/GID
+RUN groupadd -r -g 1001 appuser && useradd -r -u 1001 -g appuser -m -d /home/appuser -s /bin/bash appuser
+
 # Install system dependencies: npm for Node.js MCP servers and frontend build
 # Using --mount for caching apt downloads
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -18,15 +21,20 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # Clean up apt cache to reduce image size
     rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+# Set working directory and prepare directories with proper permissions
 WORKDIR /app
 
-# --- Install Python Dependencies ---
-# Define the cache directory for uv
-ENV UV_CACHE_DIR=/uv-cache
+# Create necessary directories and set ownership
+RUN mkdir -p /home/appuser/.cache/uv /uv/tools /uv/bin /opt/playwright-browsers && \
+    chown -R appuser:appuser /app /home/appuser /uv /opt/playwright-browsers
 
-# Create virtual environment
-RUN uv venv /app/.venv
+# --- Install Python Dependencies ---
+# Define the cache directory for uv - use user's home directory
+ENV UV_CACHE_DIR=/home/appuser/.cache/uv
+
+# Create virtual environment (still as root for system packages)
+RUN uv venv /app/.venv && \
+    chown -R appuser:appuser /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
 # --- Install Deno ---
@@ -52,12 +60,23 @@ RUN ARCHITECTURE="" && \
 # --- Install MCP Tools ---
 # Install Python MCP tools using uv tool install (these go into /uv/tools, separate from the venv)
 # These will be available via `uvx` or directly if UV_TOOL_BIN_DIR is in PATH
+# Ensure cache directory is writable before switching to appuser
+RUN rm -rf /home/appuser/.cache/uv && \
+    mkdir -p /home/appuser/.cache/uv && \
+    chown -R appuser:appuser /home/appuser/.cache
+
+# Switch to appuser for UV tool installations
+USER appuser
+ENV HOME=/home/appuser
 RUN uv tool install mcp-server-time
 RUN uv tool install mcp-server-fetch
 
 # Install Node.js MCP tools globally using Deno, providing explicit names
 RUN deno install --global -A --name playwright-mcp npm:@playwright/mcp@latest && \
     deno install --global -A --name brave-search-mcp-server npm:@modelcontextprotocol/server-brave-search
+
+# Switch back to root for remaining system-level operations
+USER root
 
 # --- Configure Environment ---
 # Set environment variables
@@ -72,65 +91,80 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_TOOL_BIN_DIR=/uv/bin \
     UV_TOOL_DIR=/uv/tools \
-    UV_CACHE_DIR=/uv-cache \
+    UV_CACHE_DIR=/home/appuser/.cache/uv \
     UV_HTTP_TIMEOUT=300 \
     ALEMBIC_CONFIG=/app/alembic.ini \
     DOCS_USER_DIR=/app/docs/user \
     PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
 
-# Update PATH separately
-ENV PATH="${UV_TOOL_BIN_DIR}:/root/.deno/bin:/usr/local/bin:${PATH}"
+# Update PATH separately (use home directory agnostic path)
+ENV PATH="${UV_TOOL_BIN_DIR}:/home/appuser/.deno/bin:/usr/local/bin:${PATH}"
 
 # --- Install Python dependencies for contrib/scrape_mcp.py and Playwright browsers ---
 # Install playwright and markitdown packages first
 # Pin playwright to match pyproject.toml version to ensure browser compatibility
-RUN --mount=type=cache,target=${UV_CACHE_DIR} \
-    uv pip install "playwright==1.55.0" "markitdown[html]>=0.1.0"
+USER appuser
+RUN uv pip install "playwright==1.55.0" "markitdown[html]>=0.1.0"
 
 # Install Playwright browsers with system dependencies
-# This must be done after the playwright package is installed
-# The PLAYWRIGHT_BROWSERS_PATH env var ensures browsers go to /opt/playwright-browsers
-RUN playwright install --with-deps chromium && \
+# Switch back to root for system dependencies installation
+USER root
+RUN playwright install-deps chromium
+
+# Switch to appuser for browser installation
+USER appuser
+RUN playwright install chromium && \
     # Verify the browser was installed correctly - build should fail if this fails
     ls -la ${PLAYWRIGHT_BROWSERS_PATH}/
 
+USER root
+
 # Copy only pyproject.toml first to leverage Docker layer caching for dependencies
-COPY pyproject.toml ./
+COPY --chown=appuser:appuser pyproject.toml ./
 
 # --- Frontend Build Stage ---
 # Copy frontend package files first for layer caching
-COPY frontend/package*.json ./frontend/
+COPY --chown=appuser:appuser frontend/package*.json ./frontend/
 
-# Install frontend dependencies
-RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+# Install frontend dependencies as appuser
+USER appuser
+RUN --mount=type=cache,target=/home/appuser/.npm,uid=1001,gid=1001,sharing=locked \
     cd frontend && npm ci
 
 # Copy frontend source files
-COPY frontend/ ./frontend/
+USER root
+COPY --chown=appuser:appuser frontend/ ./frontend/
 
-RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+USER appuser
+RUN --mount=type=cache,target=/home/appuser/.npm,uid=1001,gid=1001,sharing=locked \
     cd frontend && npm run build
 
+USER root
+
 # --- Copy Application Code ---
-# Copy the source code into the image
-COPY src/ /app/src/
-COPY docs/ /app/docs/
+# Copy the source code into the image with proper ownership
+COPY --chown=appuser:appuser src/ /app/src/
+COPY --chown=appuser:appuser docs/ /app/docs/
 
 # Copy configuration files, templates, and static assets to the WORKDIR
 # These need to be accessible relative to the WORKDIR at runtime when running the app
-COPY logging.conf alembic.ini config.yaml prompts.yaml mcp_config.json ./
-COPY alembic /app/alembic/
-COPY contrib /app/contrib
+COPY --chown=appuser:appuser logging.conf alembic.ini config.yaml prompts.yaml mcp_config.json ./
+COPY --chown=appuser:appuser alembic /app/alembic/
+COPY --chown=appuser:appuser contrib /app/contrib
 
 # --- Install the Package ---
 # Install the package using uv from pyproject.toml. This ensures that the package
 # is installed with all its source code.
-RUN --mount=type=cache,target=${UV_CACHE_DIR} \
-    uv pip install .
+USER appuser
+RUN uv pip install .
 
 # --- Runtime Configuration ---
 # Expose the port the web server listens on
 EXPOSE 8000
+
+# Run as non-root user for security
+# The application will run with reduced privileges
+USER appuser
 
 # Define the default command to run the application using the installed entry point
 # This uses the [project.scripts] defined in pyproject.toml
