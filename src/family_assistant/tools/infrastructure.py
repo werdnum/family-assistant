@@ -13,7 +13,7 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any, Protocol, get_type_hints
 
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.embeddings import EmbeddingGenerator
@@ -99,7 +99,7 @@ class ToolsProvider(Protocol):
         arguments: dict[str, Any],
         context: ToolExecutionContext,
         call_id: str | None = None,
-    ) -> str:
+    ) -> str | ToolResult:
         """Executes a specific tool by name with given arguments.
 
         Args:
@@ -164,7 +164,7 @@ class LocalToolsProvider:
         arguments: dict[str, Any],
         context: ToolExecutionContext,
         call_id: str | None = None,
-    ) -> str:
+    ) -> str | ToolResult:
         if name not in self._implementations:
             raise ToolNotFoundError(f"Local tool '{name}' not found.")
 
@@ -299,8 +299,14 @@ class LocalToolsProvider:
             # Execute the function with prepared arguments
             result = await callable_func(**call_args)
 
-            # Ensure result is a string
-            if result is None:  # Handle None case explicitly
+            # Handle different result types
+            if isinstance(result, ToolResult):
+                # Return ToolResult as-is to preserve multimodal content
+                logger.info(
+                    f"Local tool '{name}' returned ToolResult with attachment: {result.attachment is not None}"
+                )
+                return result
+            elif result is None:  # Handle None case explicitly
                 result_str = "Tool executed successfully (returned None)."
                 logger.info(f"Local tool '{name}' returned None.")
             elif isinstance(result, dict | list):
@@ -362,7 +368,7 @@ class CompositeToolsProvider:
         arguments: dict[str, Any],
         context: ToolExecutionContext,
         call_id: str | None = None,
-    ) -> str:
+    ) -> str | ToolResult:
         """Executes a tool by trying each provider until one succeeds."""
         last_error = None
         for provider in self._providers:
@@ -450,7 +456,7 @@ class FilteredToolsProvider(ToolsProvider):
         arguments: dict[str, Any],
         context: ToolExecutionContext,
         call_id: str | None = None,
-    ) -> str:
+    ) -> str | ToolResult:
         """Execute a tool if it's allowed."""
         if (
             self._allowed_tool_names is not None
@@ -551,7 +557,7 @@ class ConfirmingToolsProvider(ToolsProvider):
         arguments: dict[str, Any],
         context: ToolExecutionContext,
         call_id: str | None = None,
-    ) -> str:
+    ) -> str | ToolResult:
         """Executes tool with confirmation if required."""
         # Skip type alias here to avoid the error
 

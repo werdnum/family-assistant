@@ -1,6 +1,7 @@
 """Repository for message history storage operations."""
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -10,6 +11,8 @@ from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.base import BaseRepository
+
+logger = logging.getLogger(__name__)
 
 
 class MessageHistoryRepository(BaseRepository):
@@ -40,6 +43,8 @@ class MessageHistoryRepository(BaseRepository):
         ) = None,  # Added: ID linking tool response to assistant request
         processing_profile_id: str | None = None,  # Added: Profile ID
         attachments: list[dict[str, Any]] | None = None,  # Attachment metadata
+        tool_name: str | None = None,  # Added: Function/tool name for tool messages
+        name: str | None = None,  # OpenAI API compatibility (mapped to tool_name)
     ) -> dict[str, Any] | None:  # Changed to return Optional[Dict]
         """
         Stores a message in the history table.
@@ -59,6 +64,10 @@ class MessageHistoryRepository(BaseRepository):
             tool_call_id: ID linking tool response to request
             processing_profile_id: Processing profile used
             attachments: Attachment metadata list
+            tool_name: Function/tool name for tool messages (required for OpenAI API compatibility)
+            name: Function/tool name (alias for tool_name, for OpenAI API compatibility).
+                  If both 'name' and 'tool_name' are provided, 'tool_name' takes precedence.
+                  If only 'name' is provided, it will be mapped to 'tool_name' for storage.
 
         Returns:
             The stored message data including generated internal_id, or None on error
@@ -66,6 +75,15 @@ class MessageHistoryRepository(BaseRepository):
         # Ensure timestamp is timezone-aware
         if timestamp.tzinfo is None:
             raise ValueError("Timestamp must be timezone-aware")
+
+        # Handle mapping from 'name' to 'tool_name' for OpenAI API compatibility
+        if name is not None and tool_name is None:
+            tool_name = name
+        elif name is not None and tool_name is not None and name != tool_name:
+            # Log warning if both provided but different
+            logger.warning(
+                f"Both 'name' and 'tool_name' provided with different values: name='{name}', tool_name='{tool_name}'. Using tool_name."
+            )
 
         values = {
             "interface_type": interface_type,
@@ -82,6 +100,7 @@ class MessageHistoryRepository(BaseRepository):
             "error_traceback": error_traceback,
             "processing_profile_id": processing_profile_id,
             "attachments": attachments,
+            "tool_name": tool_name,
         }
 
         # Remove None values except for fields that explicitly allow None
@@ -101,6 +120,7 @@ class MessageHistoryRepository(BaseRepository):
                 "error_traceback",
                 "processing_profile_id",
                 "attachments",
+                "tool_name",
             ]
         }
 

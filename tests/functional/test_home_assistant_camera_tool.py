@@ -172,15 +172,35 @@ async def test_get_camera_snapshot_success(
     )
 
     def final_response_matcher(kwargs: MatcherArgs) -> bool:
+        """Verify the LLM receives the tool result with actual image data."""
         messages = kwargs.get("messages", [])
         if len(messages) < 2:
             return False
         last_message = messages[-1]
-        return (
+
+        # Check basic tool message structure
+        if not (
             last_message.get("role") == "tool"
             and last_message.get("tool_call_id") == tool_call_id
-            and f"Retrieved snapshot from camera '{camera_entity_id}'"
-            in last_message.get("content", "")
+        ):
+            return False
+
+        # Check that the content contains the expected text
+        content = last_message.get("content", "")
+        if f"Retrieved snapshot from camera '{camera_entity_id}'" not in content:
+            return False
+
+        # CRITICAL: Check that the LLM receives the actual image attachment data
+        # The tool message should have an _attachment with the image content
+        attachment = last_message.get("_attachment")
+        if not attachment:
+            return False
+
+        # Verify the attachment has the expected structure and image data
+        return (
+            attachment.mime_type == "image/jpeg"
+            and attachment.content
+            and len(attachment.content) == len(test_jpeg_data)
         )
 
     final_llm_response = MockLLMOutput(
