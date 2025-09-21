@@ -1,13 +1,15 @@
 """Home Assistant integration tools.
 
 This module contains tools for interacting with Home Assistant, including
-rendering templates.
+rendering templates and retrieving camera snapshots.
 """
 
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
+
+from family_assistant.tools.types import ToolAttachment, ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
@@ -46,6 +48,35 @@ HOME_ASSISTANT_TOOLS_DEFINITION: list[dict[str, Any]] = [
                     },
                 },
                 "required": ["template"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_camera_snapshot",
+            "description": (
+                "Retrieves a current snapshot/image from a Home Assistant camera entity. "
+                "The image will be displayed to you for analysis. "
+                "If no camera_entity_id is provided, returns a list of available cameras.\n\n"
+                "Common camera entities include doorbell cameras, security cameras, and webcams. "
+                "Examples: camera.front_door, camera.doorbell_camera, camera.backyard_cam\n\n"
+                "Returns: On success with entity_id, returns the camera image. "
+                "Without entity_id, returns list of available cameras. "
+                "On errors, returns descriptive error messages."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "camera_entity_id": {
+                        "type": "string",
+                        "description": (
+                            "The Home Assistant entity ID of the camera (e.g., 'camera.front_door'). "
+                            "If not provided, returns a list of all available camera entities."
+                        ),
+                    },
+                },
+                "required": [],
             },
         },
     },
@@ -106,3 +137,107 @@ async def render_home_assistant_template_tool(
     except Exception as e:
         logger.error(f"Unexpected error rendering template: {e}", exc_info=True)
         return f"Error: Failed to render template - {str(e)}"
+
+
+async def get_camera_snapshot_tool(
+    exec_context: ToolExecutionContext,
+    camera_entity_id: str | None = None,
+) -> ToolResult:
+    """
+    Retrieves a snapshot from a Home Assistant camera or lists available cameras.
+
+    Args:
+        exec_context: The tool execution context containing HA client
+        camera_entity_id: The entity ID of the camera (e.g., 'camera.front_door')
+                         If not provided, returns list of available cameras.
+
+    Returns:
+        ToolResult with image attachment when entity_id is provided,
+        or string with list of available cameras when entity_id is omitted
+    """
+    logger.info(f"Getting camera snapshot: entity_id={camera_entity_id}")
+
+    # Check if Home Assistant client is available
+    if (
+        not hasattr(exec_context, "home_assistant_client")
+        or not exec_context.home_assistant_client
+    ):
+        logger.error("Home Assistant client not available in execution context")
+        return ToolResult(
+            text="Error: Home Assistant integration is not configured or available."
+        )
+
+    ha_client = exec_context.home_assistant_client
+
+    # If no entity_id provided, list available cameras
+    if not camera_entity_id:
+        try:
+            # Get all entities to find cameras
+            states = await ha_client.async_get_states()
+
+            # Filter for camera entities
+            cameras = []
+            for entity in states:
+                if entity.entity_id.startswith("camera."):
+                    # Get friendly name if available
+                    friendly_name = entity.attributes.get(
+                        "friendly_name", entity.entity_id
+                    )
+                    cameras.append(f"- {entity.entity_id} ({friendly_name})")
+
+            if not cameras:
+                return ToolResult(text="No camera entities found in Home Assistant.")
+
+            return ToolResult(
+                text="Available cameras in Home Assistant:\n" + "\n".join(cameras)
+            )
+
+        except Exception as e:
+            logger.error(f"Error listing cameras: {e}", exc_info=True)
+            return ToolResult(text=f"Error listing available cameras: {str(e)}")
+
+    # Use the HA client's async_request method to get the camera snapshot
+    try:
+        response = await ha_client.async_request(
+            method="GET", path=f"camera_proxy/{camera_entity_id}", timeout=30.0
+        )
+
+        # The async_request method returns the binary content directly for image requests
+        image_content = response
+
+        # Check image size (20MB limit for multimodal)
+        image_size = len(image_content)
+        if image_size > 20 * 1024 * 1024:
+            logger.warning(
+                f"Camera image is {image_size / (1024 * 1024):.1f}MB, exceeds 20MB limit"
+            )
+            return ToolResult(
+                text=f"Error: Camera image too large ({image_size / (1024 * 1024):.1f}MB), exceeds 20MB limit"
+            )
+
+        logger.info(f"Successfully retrieved camera snapshot: {image_size} bytes")
+
+        # Detect MIME type from image content
+        mime_type = "image/jpeg"  # Default fallback
+        if image_content.startswith(b"\x89PNG\r\n\x1a\n"):
+            mime_type = "image/png"
+        elif image_content.startswith(b"\xff\xd8\xff"):
+            mime_type = "image/jpeg"
+        elif image_content.startswith(b"GIF87a") or image_content.startswith(b"GIF89a"):
+            mime_type = "image/gif"
+        elif image_content.startswith(b"RIFF") and b"WEBP" in image_content[:12]:
+            mime_type = "image/webp"
+
+        # Return image as attachment
+        return ToolResult(
+            text=f"Retrieved snapshot from camera '{camera_entity_id}'",
+            attachment=ToolAttachment(
+                mime_type=mime_type,
+                content=image_content,
+                description=f"Camera snapshot from {camera_entity_id}",
+            ),
+        )
+
+    except Exception as e:
+        logger.error(f"Error getting camera snapshot: {e}", exc_info=True)
+        return ToolResult(text=f"Error: Failed to retrieve camera snapshot: {str(e)}")
