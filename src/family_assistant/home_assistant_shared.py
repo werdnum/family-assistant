@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import homeassistant_api
+    from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ def create_home_assistant_client(
     api_url: str,
     token: str,
     verify_ssl: bool = True,
-) -> "homeassistant_api.Client | None":
+) -> "HomeAssistantClientWrapper | None":
     """
     Create a shared Home Assistant client instance.
 
@@ -25,7 +25,7 @@ def create_home_assistant_client(
         verify_ssl: Whether to verify SSL certificates
 
     Returns:
-        Home Assistant client instance or None if library not available
+        Home Assistant client wrapper instance or None if library not available
     """
     try:
         import homeassistant_api
@@ -45,5 +45,16 @@ def create_home_assistant_client(
         verify_ssl=verify_ssl,
     )
 
-    logger.info(f"Created Home Assistant client for URL: {ha_api_url_with_path}")
-    return client
+    # Import the wrapper at runtime to avoid circular imports
+    from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
+
+    # Create wrapper with the original api_url (without /api) and the raw client
+    wrapper = HomeAssistantClientWrapper(
+        api_url=api_url,  # Use original URL without /api suffix
+        token=token,
+        client=client,
+        verify_ssl=verify_ssl,
+    )
+
+    logger.info(f"Created Home Assistant client wrapper for URL: {api_url}")
+    return wrapper
