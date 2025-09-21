@@ -119,6 +119,49 @@ class ToolResult:
         """Convert to string for backward compatibility"""
         return self.text  # Message injection handled by providers
 
+    def to_llm_message(
+        self,
+        tool_call_id: str,
+        function_name: str,
+    ) -> dict[str, Any]:
+        """Convert to message format for LLM (includes _attachment for provider handling)"""
+        message = {
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": self.text,
+            "error_traceback": None,
+            "name": function_name,  # OpenAI API compatibility
+        }
+
+        # Add attachment metadata for provider to handle
+        if self.attachment:
+            message["_attachment"] = self.attachment
+            # Store in history metadata
+            message["attachments"] = [
+                {
+                    "type": "tool_result",
+                    "mime_type": self.attachment.mime_type,
+                    "description": self.attachment.description,
+                }
+            ]
+
+        return message
+
+    def to_history_message(
+        self,
+        tool_call_id: str,
+        function_name: str,
+    ) -> dict[str, Any]:
+        """Convert to message format for database history (excludes raw attachment data)"""
+        llm_message = self.to_llm_message(tool_call_id, function_name)
+        history_message = llm_message.copy()
+
+        # Remove raw attachment data but keep metadata
+        history_message.pop("_attachment", None)
+        history_message["tool_name"] = function_name  # Store tool name for database
+
+        return history_message
+
 
 # Type alias for tool function return types (backward compatibility)
 ToolReturnType = str | ToolResult

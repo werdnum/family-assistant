@@ -465,12 +465,12 @@ class ProcessingService:
             # Process results as they complete
             for completed_task in asyncio.as_completed(tool_tasks):
                 try:
-                    event, tool_response_message, llm_message = await completed_task
+                    event, llm_message, history_message = await completed_task
 
-                    # Yield tool result event
-                    yield (event, tool_response_message)
+                    # Yield tool result event (history_message for database storage)
+                    yield (event, history_message)
 
-                    # Add to messages for LLM
+                    # Add to messages for LLM (llm_message with _attachment)
                     tool_response_messages_for_llm.append(llm_message)
 
                 except Exception as e:
@@ -550,12 +550,17 @@ class ProcessingService:
             error_content = "Error: Invalid tool call structure."
             error_traceback = "Invalid tool call structure received from LLM."
 
-            tool_response_message = {
+            llm_message = {
                 "role": "tool",
                 "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
                 "content": error_content,
                 "error_traceback": error_traceback,
+                "name": function_name or "unknown_function",
             }
+
+            # Create history message (same as LLM message for errors)
+            history_message = llm_message.copy()
+            history_message["tool_name"] = function_name or "unknown_function"
 
             return (
                 LLMStreamEvent(
@@ -564,13 +569,8 @@ class ProcessingService:
                     tool_result=error_content,
                     error=error_traceback,
                 ),
-                tool_response_message,
-                {
-                    "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
-                    "role": "tool",
-                    "name": function_name or "unknown_function",
-                    "content": error_content,
-                },
+                llm_message,
+                history_message,
             )
 
         # Parse arguments
@@ -583,12 +583,17 @@ class ProcessingService:
             error_content = f"Error: Invalid arguments format for {function_name}."
             error_traceback = f"JSONDecodeError: {function_args_str}"
 
-            tool_response_message = {
+            llm_message = {
                 "role": "tool",
                 "tool_call_id": call_id,
                 "content": error_content,
                 "error_traceback": error_traceback,
+                "name": function_name,
             }
+
+            # Create history message (same as LLM message for errors)
+            history_message = llm_message.copy()
+            history_message["tool_name"] = function_name
 
             return (
                 LLMStreamEvent(
@@ -597,12 +602,8 @@ class ProcessingService:
                     tool_result=error_content,
                     error=error_traceback,
                 ),
-                tool_response_message,
-                {
-                    "tool_call_id": call_id,
-                    "role": "tool",
-                    "content": error_content,
-                },
+                llm_message,
+                history_message,
             )
 
         # Execute tool
@@ -634,42 +635,22 @@ class ProcessingService:
 
             # Handle both string and ToolResult
             if isinstance(result, ToolResult):
-                # Extract attachment for provider handling
-                tool_response_message = {
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "content": result.text,
-                    "error_traceback": None,
-                }
-
-                # Add attachment metadata for provider to handle
-                if result.attachment:
-                    tool_response_message["_attachment"] = result.attachment
-
-                    # Store in history metadata
-                    tool_response_message["attachments"] = [
-                        {
-                            "type": "tool_result",
-                            "mime_type": result.attachment.mime_type,
-                            "description": result.attachment.description,
-                        }
-                    ]
-
+                llm_message = result.to_llm_message(call_id, function_name)
+                history_message = result.to_history_message(call_id, function_name)
                 content_for_stream = result.text
             else:
                 # Backward compatible string handling
                 content_for_stream = str(result)
-                tool_response_message = {
+                llm_message = {
                     "role": "tool",
                     "tool_call_id": call_id,
                     "content": content_for_stream,
                     "error_traceback": None,
+                    "name": function_name,  # OpenAI API compatibility
                 }
-
-            # Create history message from tool_response_message but remove _attachment
-            history_message = tool_response_message.copy()
-            history_message.pop("_attachment", None)  # Remove raw attachment data
-            history_message["name"] = function_name  # Ensure tool name is included
+                # Create history message for string results
+                history_message = llm_message.copy()
+                history_message["tool_name"] = function_name
 
             return (
                 LLMStreamEvent(
@@ -677,7 +658,7 @@ class ProcessingService:
                     tool_call_id=call_id,
                     tool_result=content_for_stream,
                 ),
-                tool_response_message,
+                llm_message,
                 history_message,
             )
 
@@ -875,7 +856,7 @@ class ProcessingService:
                 if (
                     tool_call_id
                 ):  # Only include if tool_call_id is present (retrieved from DB)
-                    messages.append({
+                    tool_message = {
                         "role": "tool",
                         "tool_call_id": (
                             tool_call_id
@@ -883,7 +864,14 @@ class ProcessingService:
                         "content": (
                             content or ""
                         ),  # Ensure content is a string, default empty
-                    })
+                    }
+
+                    # Add name field for OpenAI API compatibility (from database tool_name field)
+                    tool_name = msg.get("tool_name")
+                    if tool_name:
+                        tool_message["name"] = tool_name
+
+                    messages.append(tool_message)
                 else:
                     # Log a warning if a tool message is found without an ID (indicates logging issue)
                     logger.warning(
@@ -1333,6 +1321,9 @@ class ProcessingService:
                     # Add processing_profile_id for turn messages
                     msg_to_save["processing_profile_id"] = self.service_config.id
 
+                    # Remove fields that shouldn't be saved to database
+                    msg_to_save.pop("_attachment", None)  # Remove raw attachment data
+
                     saved_turn_msg_record = await db_context.message_history.add(
                         **msg_to_save
                     )
@@ -1686,6 +1677,9 @@ class ProcessingService:
                     )
                     msg_to_save.setdefault("interface_message_id", None)
                     msg_to_save["processing_profile_id"] = self.service_config.id
+
+                    # Remove fields that shouldn't be saved to database
+                    msg_to_save.pop("_attachment", None)  # Remove raw attachment data
 
                     # Save each message in its own transaction to avoid PostgreSQL transaction issues
                     async with get_db_context(engine=db_context.engine) as msg_db:

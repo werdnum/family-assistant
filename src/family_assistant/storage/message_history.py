@@ -77,6 +77,9 @@ message_history_table = Table(
     Column(
         "attachments", JSON().with_variant(JSONB, "postgresql"), nullable=True
     ),  # Attachment metadata for files associated with this message
+    Column(
+        "tool_name", String(255), nullable=True, index=True
+    ),  # Function/tool name for tool messages (OpenAI API compatibility)
 )
 
 

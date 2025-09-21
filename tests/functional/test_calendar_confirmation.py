@@ -382,10 +382,13 @@ async def test_confirming_tools_provider_with_calendar_events(
         )
 
         # The tool should have executed successfully
+        from family_assistant.tools.types import ToolResult
+
+        result_text = result.text if isinstance(result, ToolResult) else str(result)
         assert (
-            "updated" in result.lower()
-            or "successfully" in result.lower()
-            or "modified" in result.lower()
+            "updated" in result_text.lower()
+            or "successfully" in result_text.lower()
+            or "modified" in result_text.lower()
         ), f"Tool execution failed: {result}"
 
 
