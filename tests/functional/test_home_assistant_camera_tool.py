@@ -1,11 +1,13 @@
 """Test Home Assistant camera snapshot tool."""
 
+import io
 import json
 import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
@@ -40,10 +42,41 @@ TEST_CHAT_ID = "ha_camera_test_123"
 TEST_USER_NAME = "HACameraTestUser"
 TEST_TIMEZONE_STR = "UTC"
 
-# Mock image data - small JPEG header for testing
-MOCK_JPEG_DATA = (
-    b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00H\x00H\x00\x00\xff\xdb\x00C\x00"
-)
+
+def create_test_image(format_name: str, size: tuple[int, int] = (10, 10)) -> bytes:
+    """Create a small test image in the specified format using PIL.
+
+    Args:
+        format_name: Image format (PNG, JPEG, GIF, WEBP)
+        size: Image dimensions (width, height)
+
+    Returns:
+        Bytes of the generated image
+    """
+    # Create a simple 10x10 test image with a gradient pattern
+    image = Image.new("RGB", size, color="red")
+
+    # Add some simple pattern to make it a valid image
+    for x in range(size[0]):
+        for y in range(size[1]):
+            # Create a simple gradient pattern
+            color_value = (x * 25) % 256
+            image.putpixel((x, y), (color_value, color_value, 255))
+
+    # Convert to bytes
+    buffer = io.BytesIO()
+
+    # Handle format-specific options
+    if format_name == "JPEG":
+        image.save(buffer, format=format_name, quality=85)
+    elif format_name == "GIF":
+        # Convert to palette mode for GIF
+        image = image.convert("P")
+        image.save(buffer, format=format_name)
+    else:
+        image.save(buffer, format=format_name)
+
+    return buffer.getvalue()
 
 
 async def create_processing_service_for_camera_tests(
@@ -109,7 +142,8 @@ async def test_get_camera_snapshot_success(
 
     # Create mock Home Assistant client
     mock_ha_client = MagicMock()
-    mock_ha_client.async_request = AsyncMock(return_value=MOCK_JPEG_DATA)
+    test_jpeg_data = create_test_image("JPEG")
+    mock_ha_client.async_request = AsyncMock(return_value=test_jpeg_data)
 
     tool_call_id = f"call_camera_snapshot_{uuid.uuid4()}"
 
@@ -499,34 +533,21 @@ async def test_get_camera_snapshot_api_error(
 
 
 # Test the helper function directly
-def test_detect_image_mime_type_png() -> None:
-    """Test PNG detection."""
-    png_header = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
-    assert detect_image_mime_type(png_header) == "image/png"
-
-
-def test_detect_image_mime_type_jpeg() -> None:
-    """Test JPEG detection."""
-    jpeg_header = b"\xff\xd8\xff\xe0\x00\x10JFIF"
-    assert detect_image_mime_type(jpeg_header) == "image/jpeg"
-
-
-def test_detect_image_mime_type_gif87() -> None:
-    """Test GIF87a detection."""
-    gif87_header = b"GIF87a\x01\x00\x01\x00"
-    assert detect_image_mime_type(gif87_header) == "image/gif"
-
-
-def test_detect_image_mime_type_gif89() -> None:
-    """Test GIF89a detection."""
-    gif89_header = b"GIF89a\x01\x00\x01\x00"
-    assert detect_image_mime_type(gif89_header) == "image/gif"
-
-
-def test_detect_image_mime_type_webp() -> None:
-    """Test WebP detection."""
-    webp_header = b"RIFF\x00\x00\x00\x00WEBP"
-    assert detect_image_mime_type(webp_header) == "image/webp"
+@pytest.mark.parametrize(
+    "image_format,expected_mime_type",
+    [
+        ("PNG", "image/png"),
+        ("JPEG", "image/jpeg"),
+        ("GIF", "image/gif"),
+        ("WEBP", "image/webp"),
+    ],
+)
+def test_detect_image_mime_type_formats(
+    image_format: str, expected_mime_type: str
+) -> None:
+    """Test image format detection using PIL-generated images."""
+    image_data = create_test_image(image_format)
+    assert detect_image_mime_type(image_data) == expected_mime_type
 
 
 def test_detect_image_mime_type_unknown() -> None:
