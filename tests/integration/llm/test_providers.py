@@ -607,9 +607,7 @@ async def test_tool_message_with_pdf_attachment(
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.vcr(before_record_response=sanitize_response)
-async def test_gemini_url_grounding(
-    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
-) -> None:
+async def test_gemini_url_grounding() -> None:
     """Test Gemini URL grounding feature with real URL."""
     # Skip if running in CI without API key
     if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):

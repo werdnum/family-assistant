@@ -282,7 +282,10 @@ class GoogleGenAIClient(BaseLLMClient):
                                 args = json.loads(args)
 
                             parts.append({
-                                "functionCall": {"name": func.get("name"), "args": args}
+                                "functionCall": {
+                                    "name": func.get("name"),
+                                    "args": args,
+                                }
                             })
 
                 if parts:
@@ -317,7 +320,6 @@ class GoogleGenAIClient(BaseLLMClient):
 
     def _convert_tools_to_genai_format(self, tools: list[dict[str, Any]]) -> list[Any]:
         """Convert OpenAI-style tools to Gemini format."""
-        from google.genai import types
 
         function_declarations = []
 
@@ -376,8 +378,6 @@ class GoogleGenAIClient(BaseLLMClient):
 
     def _create_grounding_tools(self) -> list[Any]:
         """Create grounding tools (URL context and Google Search) based on configuration."""
-        from google.genai import types
-
         grounding_tools = []
 
         # Add URL context tool if enabled
