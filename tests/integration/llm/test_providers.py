@@ -602,3 +602,93 @@ async def test_tool_message_with_pdf_attachment(
     ), (
         f"Response should mention software update topics from the PDF content, got: {response.content}"
     )
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=sanitize_response)
+async def test_gemini_url_grounding(
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+) -> None:
+    """Test Gemini URL grounding feature with real URL."""
+    # Skip if running in CI without API key
+    if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
+        pytest.skip("Skipping Gemini URL grounding test in CI without API key")
+
+    # Create Gemini client with URL context enabled
+    config = {
+        "provider": "google",
+        "model": "gemini-2.5-flash",
+        "api_key": os.getenv("GEMINI_API_KEY", "test-gemini-key"),
+        "enable_url_context": True,
+    }
+
+    client = LLMClientFactory.create_client(config)
+
+    # Test with the GitHub release page for llm-openrouter
+    messages = [
+        {
+            "role": "user",
+            "content": "Look at this URL https://github.com/simonw/llm-openrouter/releases/tag/0.5 and tell me what example prompt is mentioned for testing reasoning options support.",
+        }
+    ]
+
+    response = await client.generate_response(messages)
+
+    # Validate response structure
+    assert isinstance(response, LLMOutput)
+    assert response.content is not None
+    assert isinstance(response.content, str)
+    assert len(response.content) > 0
+
+    # Check that it found the specific example about dogs
+    response_lower = response.content.lower()
+    assert "dogs" in response_lower or "prove" in response_lower, (
+        f"Response should mention the 'prove dogs exist' example from the URL, got: {response.content}"
+    )
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=sanitize_response)
+async def test_gemini_google_search_grounding(
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+) -> None:
+    """Test Gemini Google Search grounding for real-time information."""
+    # Skip if running in CI without API key
+    if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
+        pytest.skip(
+            "Skipping Gemini Google Search grounding test in CI without API key"
+        )
+
+    # Create Gemini client with Google Search grounding enabled
+    config = {
+        "provider": "google",
+        "model": "gemini-2.5-flash",
+        "api_key": os.getenv("GEMINI_API_KEY", "test-gemini-key"),
+        "enable_google_search": True,
+    }
+
+    client = LLMClientFactory.create_client(config)
+
+    # Test with a query that requires current information
+    messages = [
+        {
+            "role": "user",
+            "content": "What is the current version of Python available for download?",
+        }
+    ]
+
+    response = await client.generate_response(messages)
+
+    # Validate response structure
+    assert isinstance(response, LLMOutput)
+    assert response.content is not None
+    assert isinstance(response.content, str)
+    assert len(response.content) > 0
+
+    # Check that it mentions Python version information
+    response_lower = response.content.lower()
+    assert any(keyword in response_lower for keyword in ["python", "version", "3."]), (
+        f"Response should mention Python version information, got: {response.content}"
+    )
