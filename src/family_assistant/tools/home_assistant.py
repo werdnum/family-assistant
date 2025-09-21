@@ -206,7 +206,10 @@ async def get_camera_snapshot_tool(
                     friendly_name = entity.attributes.get(
                         "friendly_name", entity.entity_id
                     )
-                    cameras.append(f"- {entity.entity_id} ({friendly_name})")
+                    if friendly_name and friendly_name != entity.entity_id:
+                        cameras.append(f"- {entity.entity_id} ({friendly_name})")
+                    else:
+                        cameras.append(f"- {entity.entity_id}")
 
             if not cameras:
                 return ToolResult(text="No camera entities found in Home Assistant.")
