@@ -48,6 +48,8 @@ class GoogleGenAIClient(BaseLLMClient):
         model: str,
         model_parameters: dict[str, dict[str, Any]] | None = None,
         api_base: str | None = None,
+        enable_url_context: bool = False,
+        enable_google_search: bool = False,
         **kwargs: Any,  # noqa: ANN401 # Accepts arbitrary Google GenAI API parameters
     ) -> None:
         """
@@ -58,6 +60,8 @@ class GoogleGenAIClient(BaseLLMClient):
             model: Model identifier (e.g., "gemini-2.0-flash-001", "gemini-1.5-pro")
             model_parameters: Pattern-based parameters matching existing config format
             api_base: Optional API base URL for custom endpoints.
+            enable_url_context: Enable URL understanding (supports up to 20 URLs per request)
+            enable_google_search: Enable Google Search grounding for real-time information
             **kwargs: Default parameters for generation
         """
         # Initialize the google-genai client
@@ -74,9 +78,14 @@ class GoogleGenAIClient(BaseLLMClient):
         self.model_parameters = model_parameters or {}
         self.default_kwargs = kwargs
 
+        # New configuration options
+        self.enable_url_context = enable_url_context
+        self.enable_google_search = enable_google_search
+
         logger.info(
             f"GoogleGenAIClient initialized for model: {model} with default kwargs: {kwargs}, "
-            f"model-specific parameters: {model_parameters}"
+            f"model-specific parameters: {model_parameters}, "
+            f"URL context: {enable_url_context}, Google Search: {enable_google_search}"
         )
 
     def _get_model_specific_params(self, model: str) -> dict[str, Any]:
@@ -365,6 +374,43 @@ class GoogleGenAIClient(BaseLLMClient):
             return [types.Tool(function_declarations=function_declarations)]
         return []
 
+    def _create_grounding_tools(self) -> list[Any]:
+        """Create grounding tools (URL context and Google Search) based on configuration."""
+        from google.genai import types
+
+        grounding_tools = []
+
+        # Add URL context tool if enabled
+        if self.enable_url_context:
+            url_context_tool = types.Tool(url_context=types.UrlContext())
+            grounding_tools.append(url_context_tool)
+            logger.debug("Added URL context tool")
+
+        # Add Google Search tool if enabled
+        if self.enable_google_search:
+            google_search_tool = types.Tool(google_search=types.GoogleSearch())
+            grounding_tools.append(google_search_tool)
+            logger.debug("Added Google Search grounding tool")
+
+        return grounding_tools
+
+    def _prepare_all_tools(
+        self, tools: list[dict[str, Any]] | None = None
+    ) -> list[Any]:
+        """Prepare all tools including function tools and grounding tools."""
+        all_tools = []
+
+        # Add function tools if provided
+        if tools:
+            function_tools = self._convert_tools_to_genai_format(tools)
+            all_tools.extend(function_tools)
+
+        # Add grounding tools (URL context and Google Search)
+        grounding_tools = self._create_grounding_tools()
+        all_tools.extend(grounding_tools)
+
+        return all_tools
+
     async def generate_response(
         self,
         messages: list[dict[str, Any]],
@@ -393,15 +439,12 @@ class GoogleGenAIClient(BaseLLMClient):
             if "top_k" in config_params:
                 generation_config.top_k = config_params["top_k"]
 
-            # Handle tools if provided
-            google_tools = None
-            if tools:
-                google_tools = self._convert_tools_to_genai_format(tools)
+            # Prepare all tools (function tools + grounding tools)
+            all_tools = self._prepare_all_tools(tools)
 
-            # Make API call using the client
-            # Add tools to config if provided
-            if google_tools:
-                generation_config.tools = google_tools
+            # Add tools to config if any are available
+            if all_tools:
+                generation_config.tools = all_tools
 
             response = await self.client.aio.models.generate_content(
                 model=self.model_name,
@@ -593,14 +636,12 @@ class GoogleGenAIClient(BaseLLMClient):
             if "top_k" in config_params:
                 generation_config.top_k = config_params["top_k"]
 
-            # Handle tools if provided
-            google_tools = None
-            if tools:
-                google_tools = self._convert_tools_to_genai_format(tools)
+            # Prepare all tools (function tools + grounding tools)
+            all_tools = self._prepare_all_tools(tools)
 
-            # Add tools to config if provided
-            if google_tools:
-                generation_config.tools = google_tools
+            # Add tools to config if any are available
+            if all_tools:
+                generation_config.tools = all_tools
                 # TODO: The tool_choice parameter is not currently mapped to Google's API
                 # This matches the behavior of the non-streaming implementation
 
