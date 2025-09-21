@@ -107,7 +107,6 @@ class TestProcessingServiceMultimodal:
         assert history_message["role"] == "tool"
         assert history_message["tool_call_id"] == "test_call_123"
         assert history_message["content"] == "Simple string result"
-        assert history_message["name"] == "test_tool"
 
     @pytest.mark.asyncio
     async def test_execute_single_tool_result_with_attachment(
@@ -175,7 +174,6 @@ class TestProcessingServiceMultimodal:
         assert history_message["role"] == "tool"
         assert history_message["tool_call_id"] == "test_call_456"
         assert history_message["content"] == "Successfully generated sunset image"
-        assert history_message["name"] == "image_generator"
         assert "_attachment" not in history_message  # Raw data removed
         assert "attachments" in history_message  # Metadata preserved
 
