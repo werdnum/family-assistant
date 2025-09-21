@@ -16,6 +16,29 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def detect_image_mime_type(content: bytes) -> str:
+    """
+    Detect MIME type from image content based on file signatures.
+
+    Args:
+        content: The binary image content
+
+    Returns:
+        The detected MIME type string, defaults to "image/jpeg"
+    """
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    elif content.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    elif content.startswith(b"GIF87a") or content.startswith(b"GIF89a"):
+        return "image/gif"
+    elif content.startswith(b"RIFF") and b"WEBP" in content[:12]:
+        return "image/webp"
+    else:
+        return "image/jpeg"  # Default fallback
+
+
 # Tool Definitions
 HOME_ASSISTANT_TOOLS_DEFINITION: list[dict[str, Any]] = [
     {
@@ -218,15 +241,7 @@ async def get_camera_snapshot_tool(
         logger.info(f"Successfully retrieved camera snapshot: {image_size} bytes")
 
         # Detect MIME type from image content
-        mime_type = "image/jpeg"  # Default fallback
-        if image_content.startswith(b"\x89PNG\r\n\x1a\n"):
-            mime_type = "image/png"
-        elif image_content.startswith(b"\xff\xd8\xff"):
-            mime_type = "image/jpeg"
-        elif image_content.startswith(b"GIF87a") or image_content.startswith(b"GIF89a"):
-            mime_type = "image/gif"
-        elif image_content.startswith(b"RIFF") and b"WEBP" in image_content[:12]:
-            mime_type = "image/webp"
+        mime_type = detect_image_mime_type(image_content)
 
         # Return image as attachment
         return ToolResult(

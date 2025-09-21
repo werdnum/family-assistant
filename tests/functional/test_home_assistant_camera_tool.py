@@ -22,6 +22,7 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
 )
+from family_assistant.tools.home_assistant import detect_image_mime_type
 
 if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface
@@ -495,3 +496,45 @@ async def test_get_camera_snapshot_api_error(
         "camera not found" in final_reply.lower()
         or "trouble accessing" in final_reply.lower()
     ), f"Expected error message not in reply: '{final_reply}'"
+
+
+# Test the helper function directly
+def test_detect_image_mime_type_png() -> None:
+    """Test PNG detection."""
+    png_header = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+    assert detect_image_mime_type(png_header) == "image/png"
+
+
+def test_detect_image_mime_type_jpeg() -> None:
+    """Test JPEG detection."""
+    jpeg_header = b"\xff\xd8\xff\xe0\x00\x10JFIF"
+    assert detect_image_mime_type(jpeg_header) == "image/jpeg"
+
+
+def test_detect_image_mime_type_gif87() -> None:
+    """Test GIF87a detection."""
+    gif87_header = b"GIF87a\x01\x00\x01\x00"
+    assert detect_image_mime_type(gif87_header) == "image/gif"
+
+
+def test_detect_image_mime_type_gif89() -> None:
+    """Test GIF89a detection."""
+    gif89_header = b"GIF89a\x01\x00\x01\x00"
+    assert detect_image_mime_type(gif89_header) == "image/gif"
+
+
+def test_detect_image_mime_type_webp() -> None:
+    """Test WebP detection."""
+    webp_header = b"RIFF\x00\x00\x00\x00WEBP"
+    assert detect_image_mime_type(webp_header) == "image/webp"
+
+
+def test_detect_image_mime_type_unknown() -> None:
+    """Test unknown format defaults to JPEG."""
+    unknown_header = b"UNKNOWN\x00\x00\x00\x00"
+    assert detect_image_mime_type(unknown_header) == "image/jpeg"
+
+
+def test_detect_image_mime_type_empty() -> None:
+    """Test empty content defaults to JPEG."""
+    assert detect_image_mime_type(b"") == "image/jpeg"
