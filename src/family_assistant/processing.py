@@ -17,11 +17,11 @@ from typing import (
     Any,
 )
 
+if TYPE_CHECKING:
+    from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
+
 import aiofiles
 import pytz  # Added
-
-if TYPE_CHECKING:
-    import homeassistant_api
 
 from family_assistant.services.attachments import AttachmentService
 
@@ -122,7 +122,7 @@ class ProcessingService:
         self.attachment_service = attachment_service  # Store the attachment service
         self.processing_services_registry: dict[str, ProcessingService] | None = None
         # Store the confirmation callback function if provided at init? No, get from context.
-        self.home_assistant_client: homeassistant_api.Client | None = (
+        self.home_assistant_client: HomeAssistantClientWrapper | None = (
             None  # Store HA client if available
         )
         self.event_sources = event_sources  # Store event sources for validation

@@ -9,11 +9,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-    import homeassistant_api
-
     from family_assistant.embeddings import EmbeddingGenerator
     from family_assistant.events.indexing_source import IndexingSource
     from family_assistant.events.sources import EventSource
+    from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface  # Import the new interface
     from family_assistant.processing import ProcessingService
     from family_assistant.storage.context import DatabaseContext
@@ -82,7 +81,7 @@ class ToolExecutionContext:
     )
     clock: Optional["Clock"] = None  # Add clock
     indexing_source: Optional["IndexingSource"] = None  # Add indexing_source
-    home_assistant_client: Optional["homeassistant_api.Client"] = (
+    home_assistant_client: Optional["HomeAssistantClientWrapper"] = (
         None  # Add home_assistant_client
     )
     event_sources: dict[str, "EventSource"] | None = (

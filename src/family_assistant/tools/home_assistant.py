@@ -222,14 +222,9 @@ async def get_camera_snapshot_tool(
             logger.error(f"Error listing cameras: {e}", exc_info=True)
             return ToolResult(text=f"Error listing available cameras: {str(e)}")
 
-    # Use the HA client's async_request method to get the camera snapshot
+    # Use the HA client's custom camera snapshot method to get raw binary data
     try:
-        response = await ha_client.async_request(
-            method="GET", path=f"camera_proxy/{camera_entity_id}", timeout=30.0
-        )
-
-        # The async_request method returns the binary content directly for image requests
-        image_content = response
+        image_content = await ha_client.async_get_camera_snapshot(camera_entity_id)
 
         # Check image size (20MB limit for multimodal)
         image_size = len(image_content)
