@@ -140,10 +140,10 @@ async def test_get_camera_snapshot_success(
     """
     camera_entity_id = "camera.front_door"
 
-    # Create mock Home Assistant client
+    # Create mock Home Assistant client wrapper
     mock_ha_client = MagicMock()
     test_jpeg_data = create_test_image("JPEG")
-    mock_ha_client.async_request = AsyncMock(return_value=test_jpeg_data)
+    mock_ha_client.async_get_camera_snapshot = AsyncMock(return_value=test_jpeg_data)
 
     tool_call_id = f"call_camera_snapshot_{uuid.uuid4()}"
 
@@ -442,9 +442,11 @@ async def test_get_camera_snapshot_api_error(
     """
     Test handling of Home Assistant API errors.
     """
-    # Create mock Home Assistant client that raises an error
+    # Create mock Home Assistant client wrapper that raises an error
     mock_ha_client = MagicMock()
-    mock_ha_client.async_request = AsyncMock(side_effect=Exception("Camera not found"))
+    mock_ha_client.async_get_camera_snapshot = AsyncMock(
+        side_effect=Exception("Camera not found")
+    )
 
     tool_call_id = f"call_camera_error_{uuid.uuid4()}"
 
