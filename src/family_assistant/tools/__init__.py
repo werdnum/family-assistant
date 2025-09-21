@@ -56,6 +56,7 @@ from family_assistant.tools.execute_script import (
 )
 from family_assistant.tools.home_assistant import (
     HOME_ASSISTANT_TOOLS_DEFINITION,
+    get_camera_snapshot_tool,
     render_home_assistant_template_tool,
 )
 from family_assistant.tools.infrastructure import (
@@ -158,6 +159,7 @@ __all__ = [
     "storage",
     "execute_script_tool",
     "SCRIPT_TOOLS_DEFINITION",
+    "get_camera_snapshot_tool",
 ]
 
 
@@ -220,6 +222,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "validate_event_listener_script": validate_event_listener_script_tool,
     "test_event_listener_script": test_event_listener_script_tool,
     "render_home_assistant_template": render_home_assistant_template_tool,
+    "get_camera_snapshot": get_camera_snapshot_tool,
     "execute_script": execute_script_tool,
 }
 
