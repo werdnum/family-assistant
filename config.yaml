@@ -154,6 +154,7 @@ default_profile_settings:
       - "query_recent_events" # Event system tool
       - "create_event_listener" # Event system tool
       - "render_home_assistant_template" # Home Assistant template rendering
+      - "get_camera_snapshot" # Get camera snapshots from Home Assistant
       - "list_event_listeners" # Event system tool
       - "delete_event_listener" # Event system tool
       - "toggle_event_listener" # Event system tool
