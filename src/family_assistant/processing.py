@@ -625,6 +625,7 @@ class ProcessingService:
             indexing_source=(
                 self.event_sources.get("indexing") if self.event_sources else None
             ),
+            attachment_service=self.attachment_service,
         )
 
         try:

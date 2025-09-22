@@ -71,15 +71,17 @@ class AttachmentMetadata:
 
 #### 3. Script Attachment API
 
+**Unified API Approach**: Extend existing script functions to seamlessly handle attachments rather
+than creating parallel APIs.
+
 Enhanced Starlark functions:
 
-- `attachment_get(attachment_id)` - Get metadata (works for user & tool attachments)
-- `attachment_get_content(attachment_id)` - Get actual content for processing
-- `attachment_create(content, mime_type, description)` - Create new attachment
-- `attachment_to_llm(attachment_id, context)` - Pass to LLM for analysis
-- `attachment_to_tool(attachment_id, tool_name, **kwargs)` - Pass to tool
-- `attachment_send(attachment_id, message=None)` - Send to user
-- `list_attachments(source_type=None)` - List available attachments
+- `wake_llm(context)` - Extended to accept `attachments` in context dict
+- `tools.execute(tool_name, **kwargs)` - Extended to accept attachment IDs as parameters
+- `attachment.get(attachment_id)` - Get metadata (utility function)
+- `attachment.list(source_type=None)` - List available attachments (utility function)
+- `attachment.create(content, mime_type, description)` - Create new attachment (utility function)
+- `attachment.send(attachment_id, message=None)` - Send to user (utility function)
 
 #### 4. LLM Attachment Tools
 
@@ -220,45 +222,42 @@ CREATE INDEX idx_attachment_source ON attachment_metadata(source_type, source_id
 # User: "Edit this image to be black and white"
 # User sends image attachment
 
-# LLM receives message with attachment_id
-attachment_id = get_user_attachment_id()
+# Get user's attachment (unified API)
+attachments = attachment.list(source_type="user")
+if attachments:
+    attachment_id = attachments[0]["attachment_id"]
 
-# Forward to editing tool
-result = forward_attachment(
-    attachment_id=attachment_id,
-    tool="edit_image",
-    operation="grayscale"
-)
+    # Forward to editing tool (unified API)
+    result = tools.execute("edit_image",
+                          attachment_id=attachment_id,
+                          operation="grayscale")
 
-# Send result back
-send_attachment(result.attachment_id, "Here's your black and white image")
+    # Send result back (utility function)
+    attachment.send(result["attachment_id"], "Here's your black and white image")
 ```
 
 ### Script Processing User Image
 
 ```starlark
-# Get user's attachment
-attachments = list_attachments(source_type="user")
+# Get user's attachment (unified API)
+attachments = attachment.list(source_type="user")
 if len(attachments) > 0:
     img_id = attachments[0]["attachment_id"]
 
-    # Analyze with LLM
-    analysis = attachment_to_llm(
-        img_id,
-        "What objects are in this image?"
-    )
+    # Analyze with LLM (unified API)
+    wake_llm({
+        "message": "What objects are in this image?",
+        "attachments": [img_id]
+    })
 
-    # Forward to another tool if needed
-    if "document" in analysis:
-        extracted = attachment_to_tool(
-            img_id,
-            "extract_text_from_image"
-        )
-        print("Extracted text:", extracted)
+    # Forward to another tool if needed (unified API)
+    result = tools.execute("extract_text_from_image",
+                          attachment_id=img_id)
+    if result:
+        print("Extracted text:", result)
 
-    # Send results
-    attachment_send(img_id)
-    print("Analysis:", analysis)
+    # Send results (utility function)
+    attachment.send(img_id)
 ```
 
 ### Cross-Profile Processing
@@ -267,11 +266,14 @@ if len(attachments) > 0:
 # User sends complex image for analysis
 # Default profile forwards to vision specialist
 
-result = forward_attachment(
-    attachment_id=user_attachment_id,
-    profile="vision_expert",
-    prompt="Provide detailed analysis of this image"
-)
+attachments = attachment.list(source_type="user")
+if attachments:
+    # Use profile delegation (unified API)
+    wake_llm({
+        "message": "Provide detailed analysis of this image",
+        "attachments": [attachments[0]["attachment_id"]],
+        "profile": "vision_expert"
+    })
 ```
 
 ## Success Criteria
@@ -301,27 +303,29 @@ result = forward_attachment(
 
 ## Implementation Status
 
-### Phase 1: Foundation (Mostly Complete)
+### Phase 1: Foundation (Complete)
 
 - [x] Design document created
 - [x] Centralized attachment configuration in config.yaml
 - [x] Enhanced AttachmentService with configurable limits
 - [x] Updated tools to use centralized limits (home_assistant, documents)
 - [x] Message history already has attachments JSON column
-- [ ] Database schema migration for attachment_metadata table
-- [ ] Unified AttachmentRegistry class
+- [x] Database schema migration for attachment_metadata table
+- [x] Unified AttachmentRegistry class
 
-### Phase 2: User Attachment Processing (Next)
+### Phase 2: User Attachment Processing (Complete)
 
-- [ ] Chat API modification for user attachment storage
-- [ ] Processing pipeline updates
-- [ ] Message metadata enhancement
+- [x] Chat API modification for user attachment storage
+- [x] Processing pipeline updates with attachment claiming
+- [x] Message metadata enhancement with attachment IDs
+- [x] Proper authentication and authorization
 
-### Phase 3: Script API (Planned)
+### Phase 3: Unified Script API (Current)
 
-- [ ] Starlark attachment functions
-- [ ] Permission checking
-- [ ] Tool forwarding capabilities
+- [ ] Extend wake_llm function to accept attachments in context
+- [ ] Extend tools.execute function to handle attachment parameters
+- [ ] Add core attachment utility functions (get, list, create, send)
+- [ ] Permission checking and conversation scoping
 
 ### Phase 4: LLM Tools (Planned)
 
@@ -337,17 +341,19 @@ result = forward_attachment(
 
 ## Current Commits
 
-- `798e813c`: Implement configurable attachment limits across tools and services
-- `f221e8b6`: Centralize attachment size limits in config.yaml
+- `df4914b3`: Implement multimodal attachment registry with proper authentication (Phase 1 & 2
+  complete)
+- `936555ae`: Implement configurable attachment limits across tools and services
+- `c95ab3c6`: Centralize attachment size limits in config.yaml
 - `472549e7`: Implement multimodal tool result support for chat and history UIs
 
 ## Next Steps (In Order)
 
-1. Create `attachment_metadata` database table
-2. Implement `AttachmentRegistry` class
-3. Update chat API to generate attachment IDs for user uploads
-4. Add Starlark attachment manipulation functions
-5. Create LLM attachment tools
+1. Extend wake_llm function to accept attachments in context
+2. Extend tools.execute function to handle attachment parameters
+3. Add core attachment utility functions (get, list, create, send)
+4. Add permission checking and conversation scoping
+5. Write comprehensive tests for unified attachment API
 
 ## Design Notes
 
@@ -355,36 +361,3 @@ result = forward_attachment(
 - Focus on core functionality before optimization
 - Maintain strong permission boundaries
 - Keep memory usage efficient with lazy loading
-
-## Implementation Status
-
-### Phase 1: Foundation (Current)
-
-- [x] Design document created
-- [ ] Database schema migration
-- [ ] Unified AttachmentRegistry class
-- [ ] Enhanced AttachmentService
-
-### Phase 2: User Attachment Processing
-
-- [ ] Chat API modification for user attachment storage
-- [ ] Processing pipeline updates
-- [ ] Message metadata enhancement
-
-### Phase 3: Script API
-
-- [ ] Starlark attachment functions
-- [ ] Permission checking
-- [ ] Tool forwarding capabilities
-
-### Phase 4: LLM Tools
-
-- [ ] Attachment manipulation tools
-- [ ] Cross-profile forwarding
-- [ ] Edit capabilities
-
-### Phase 5: Testing & Documentation
-
-- [ ] Comprehensive testing
-- [ ] User documentation
-- [ ] API documentation
