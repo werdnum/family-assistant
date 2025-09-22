@@ -107,6 +107,7 @@ check_test_status() {
         echo "You MUST fix failing tests before finishing" >&2
         echo "Reminder: commits are not accepted without a passing run of poe test." >&2
         echo "If you believe the failure to be a flake, prove it by rerunning poe test to get a passing result." >&2
+        echo "If you have other feedback to address, do that first – you will need to re-run tests after making any further tests." >&2
         return 1
     fi
 }
