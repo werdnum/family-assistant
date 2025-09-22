@@ -188,10 +188,10 @@ describe('DynamicToolUI', () => {
       const endTime = performance.now();
       const processingTime = endTime - startTime;
 
-      // Should have processed ~333 valid attachments (every 3rd one)
+      // Should have processed 334 valid attachments (every 3rd one)
       expect(screen.getByTestId('attachments-count')).toHaveTextContent('334');
 
-      // Should have logged warnings for ~667 invalid attachments
+      // Should have logged warnings for 666 invalid attachments
       expect(consoleWarnSpy).toHaveBeenCalledTimes(666);
 
       // Processing should be reasonably fast (less than 500ms for 1000 items)
