@@ -6,18 +6,49 @@ import { ToolWithConfirmation } from './ToolWithConfirmation';
  * Dynamic tool UI component that automatically wraps tools with confirmation UI
  * when a confirmation request is received via SSE.
  */
-export const DynamicToolUI: React.FC<{
+// Props interface matching @assistant-ui/react tool component props
+interface AssistantUIToolProps {
+  type: 'tool-call';
+  toolCallId: string;
   toolName: string;
-  toolCallId?: string;
   args: Record<string, unknown>;
+  argsText: string;
   result?: string | Record<string, unknown>;
-  status?: { type: string };
-}> = (props) => {
-  const { toolName } = props;
+  isError?: boolean;
+  status: { type: string };
+  addResult?: (result: unknown) => void;
+  artifact?: Record<string, unknown>;
+  attachments?: Array<Record<string, unknown>>;
+}
+
+export const DynamicToolUI: React.FC<AssistantUIToolProps> = (props) => {
+  const {
+    toolName,
+    toolCallId,
+    args,
+    result,
+    status,
+    artifact,
+    attachments: directAttachments,
+  } = props;
+
+  // Extract attachments from artifact if present, otherwise use direct attachments prop
+  const attachments =
+    (artifact?.attachments as Array<Record<string, unknown>> | undefined) || directAttachments;
 
   // Get the specific tool UI component or fallback
   const ToolComponent = toolUIsByName[toolName] || ToolFallback;
 
   // Always wrap with ToolWithConfirmation which will conditionally show confirmation UI
-  return <ToolWithConfirmation {...props} ToolComponent={ToolComponent} />;
+  return (
+    <ToolWithConfirmation
+      toolName={toolName}
+      toolCallId={toolCallId}
+      args={args}
+      result={result}
+      status={status}
+      attachments={attachments}
+      ToolComponent={ToolComponent}
+    />
+  );
 };

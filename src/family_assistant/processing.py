@@ -638,6 +638,41 @@ class ProcessingService:
                 llm_message = result.to_llm_message(call_id, function_name)
                 history_message = result.to_history_message(call_id, function_name)
                 content_for_stream = result.text
+
+                # Extract attachment metadata for streaming
+                stream_metadata = None
+                if result.attachment:
+                    attachment_data = {
+                        "type": "tool_result",
+                        "mime_type": result.attachment.mime_type,
+                        "description": result.attachment.description,
+                    }
+
+                    # Store attachment and generate URL if attachment service is available
+                    if self.attachment_service and result.attachment.content:
+                        try:
+                            # Store the attachment content with proper file extension
+                            file_extension = self._get_file_extension_from_mime_type(
+                                result.attachment.mime_type
+                            )
+                            attachment_metadata = self.attachment_service.store_bytes_as_attachment(
+                                file_content=result.attachment.content,
+                                filename=f"tool_result_{uuid.uuid4()}{file_extension}",
+                                content_type=result.attachment.mime_type,
+                            )
+                            # Add the content URL and attachment ID to the attachment data
+                            attachment_data["content_url"] = attachment_metadata["url"]
+                            attachment_data["attachment_id"] = attachment_metadata[
+                                "attachment_id"
+                            ]
+                            logger.info(
+                                f"Stored tool result attachment: {attachment_metadata['attachment_id']}"
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to store tool result attachment: {e}")
+                            # Continue without URL if storage fails
+
+                    stream_metadata = {"attachments": [attachment_data]}
             else:
                 # Backward compatible string handling
                 content_for_stream = str(result)
@@ -651,12 +686,14 @@ class ProcessingService:
                 # Create history message for string results
                 history_message = llm_message.copy()
                 history_message["tool_name"] = function_name
+                stream_metadata = None
 
             return (
                 LLMStreamEvent(
                     type="tool_result",
                     tool_call_id=call_id,
                     tool_result=content_for_stream,
+                    metadata=stream_metadata,
                 ),
                 llm_message,
                 history_message,
@@ -1690,3 +1727,55 @@ class ProcessingService:
             yield LLMStreamEvent(
                 type="error", error=str(e), metadata={"error_id": str(uuid.uuid4())}
             )
+
+    def _get_file_extension_from_mime_type(self, mime_type: str) -> str:
+        """Get appropriate file extension from MIME type with proper mapping."""
+        # Common MIME type to extension mappings
+        mime_to_ext = {
+            # Images
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/gif": ".gif",
+            "image/webp": ".webp",
+            "image/bmp": ".bmp",
+            "image/tiff": ".tiff",
+            "image/svg+xml": ".svg",
+            # Documents
+            "application/pdf": ".pdf",
+            "application/msword": ".doc",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+            "application/vnd.ms-excel": ".xls",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+            "application/vnd.ms-powerpoint": ".ppt",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+            # Text files
+            "text/plain": ".txt",
+            "text/csv": ".csv",
+            "text/html": ".html",
+            "application/json": ".json",
+            "application/xml": ".xml",
+            # Audio
+            "audio/mpeg": ".mp3",
+            "audio/wav": ".wav",
+            "audio/ogg": ".ogg",
+            # Video
+            "video/mp4": ".mp4",
+            "video/webm": ".webm",
+            "video/ogg": ".ogv",
+        }
+
+        # Try exact match first
+        if mime_type in mime_to_ext:
+            return mime_to_ext[mime_type]
+
+        # Fallback to generic extension based on main type
+        main_type = mime_type.split("/")[0] if "/" in mime_type else "application"
+        fallback_extensions = {
+            "image": ".img",
+            "audio": ".audio",
+            "video": ".video",
+            "text": ".txt",
+            "application": ".bin",
+        }
+
+        return fallback_extensions.get(main_type, ".bin")

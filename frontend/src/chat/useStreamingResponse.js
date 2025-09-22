@@ -134,6 +134,10 @@ export const useStreamingResponse = ({
                       );
                       if (toolCallIndex !== -1) {
                         toolCalls[toolCallIndex].result = payload.result;
+                        // Add attachments if present
+                        if (payload.attachments && payload.attachments.length > 0) {
+                          toolCalls[toolCallIndex].attachments = payload.attachments;
+                        }
                         // Don't set status on individual tool calls - it's managed at message level
                         // Notify about the update with all tool calls
                         onToolCall([...toolCalls]);

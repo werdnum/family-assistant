@@ -47,4 +47,5 @@ export interface MessageContent {
   args?: Record<string, unknown>;
   argsText?: string;
   result?: string | Record<string, unknown>;
+  attachments?: Array<Record<string, unknown>>;
 }
