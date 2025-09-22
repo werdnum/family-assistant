@@ -169,3 +169,34 @@ ToolReturnType = str | ToolResult
 
 class ToolNotFoundError(LookupError):
     """Custom exception raised when a tool cannot be found by any provider."""
+
+
+def get_attachment_limits(exec_context: ToolExecutionContext) -> tuple[int, int]:
+    """
+    Get attachment size limits from execution context.
+
+    Args:
+        exec_context: Tool execution context
+
+    Returns:
+        Tuple of (max_file_size, max_multimodal_size) in bytes
+    """
+    # Default values
+    default_max_file_size = 100 * 1024 * 1024  # 100MB
+    default_max_multimodal_size = 20 * 1024 * 1024  # 20MB
+
+    # Try to get from processing service config
+    if exec_context.processing_service and hasattr(
+        exec_context.processing_service, "app_config"
+    ):
+        attachment_config = exec_context.processing_service.app_config.get(
+            "attachment_config", {}
+        )
+        max_file_size = attachment_config.get("max_file_size", default_max_file_size)
+        max_multimodal_size = attachment_config.get(
+            "max_multimodal_size", default_max_multimodal_size
+        )
+        return max_file_size, max_multimodal_size
+
+    # Fallback to defaults
+    return default_max_file_size, default_max_multimodal_size

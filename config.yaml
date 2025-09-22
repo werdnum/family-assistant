@@ -261,6 +261,37 @@ service_profiles:
       confirm_tools: [] # No confirmation needed for automated operations
     slash_commands: [] # Not accessible via slash commands
 # Other global settings like llm_parameters, indexing_pipeline_config remain at top level.
+# Attachment handling configuration
+attachment_config:
+  # Maximum file size for general attachments (in bytes)
+  # Default: 100MB to handle large documents/images
+  max_file_size: 104857600 # 100 * 1024 * 1024
+
+  # Maximum file size for multimodal LLM processing (in bytes)
+  # This is typically lower due to LLM provider limits
+  # Default: 20MB (most LLM providers support up to 20MB images)
+  max_multimodal_size: 20971520 # 20 * 1024 * 1024
+
+  # Storage path for chat attachments
+  # Can be overridden by chat_attachment_storage_path for backward compatibility
+  storage_path: "/tmp/chat_attachments"
+
+  # Allowed MIME types for attachments
+  allowed_mime_types:
+    - "image/jpeg"
+    - "image/png"
+    - "image/gif"
+    - "image/webp"
+    - "image/bmp"
+    - "image/tiff"
+    - "application/pdf"
+    - "text/plain"
+    - "application/json"
+    - "text/csv"
+    - "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    - "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    - "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
 # Secrets (telegram_token, api_keys, database_url) are primarily from env.
 # Model, embedding_model, server_url, storage_paths are also top-level or env.
 
