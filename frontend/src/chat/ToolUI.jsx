@@ -1,6 +1,7 @@
 import React from 'react';
 import { CheckCircleIcon, ClockIcon, AlertCircleIcon, DownloadIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { getAttachmentKey } from '../types/attachments';
 
 // Simple attachment display component for tool results
 const ToolAttachmentDisplay = ({ attachment }) => {
@@ -92,7 +93,10 @@ const ToolFallback = ({ toolName, args, result, status, attachments }) => {
           <div className="tool-section-label">Attachments:</div>
           <div className="tool-attachments-list space-y-2">
             {attachments.map((attachment, index) => (
-              <ToolAttachmentDisplay key={index} attachment={attachment} />
+              <ToolAttachmentDisplay
+                key={getAttachmentKey(attachment, index)}
+                attachment={attachment}
+              />
             ))}
           </div>
         </div>

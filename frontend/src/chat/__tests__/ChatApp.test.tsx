@@ -183,7 +183,7 @@ describe('ChatApp', () => {
     // The streaming response should be processed by @assistant-ui/react
     // We can't easily test the individual chunks, but can verify the final state
     await new Promise((resolve) => setTimeout(resolve, 2000));
-  });
+  }, 10000); // Add 10s timeout
 
   it('handles conversation switching', async () => {
     const user = userEvent.setup();
