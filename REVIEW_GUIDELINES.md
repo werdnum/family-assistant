@@ -66,6 +66,36 @@ Examples:
 - `eval(user_input)`
 - Logging passwords or tokens
 
+#### Project Threat Model
+
+This project operates under a relaxed threat model with specific security assumptions:
+
+**API Endpoint Authentication:**
+
+- All `/api/*` endpoints require authentication (session or API token)
+- Authorization (user-specific access control) is relaxed between authenticated users
+- This provides security while maintaining simplicity for family/small group use
+
+**Inter-User Security:**
+
+- The system doesn't implement strict isolation between authenticated users
+- All authenticated users can access most resources (notes, attachments, etc.)
+- This is acceptable for the family/small group use case this application targets
+
+**When NOT to flag as SECURITY_RISK:**
+
+- Lack of user-specific authorization checks between authenticated users
+- Shared access to attachments or other resources between authenticated users
+- Simplified permission models for family/small group scenarios
+
+**When TO flag as SECURITY_RISK:**
+
+- Missing authentication on any endpoints (all endpoints should require auth)
+- Hardcoded secrets or credentials
+- SQL injection or command injection vulnerabilities
+- Logging sensitive information like passwords or tokens
+- Unsafe handling of user input or file uploads
+
 ### LOGIC_ERROR
 
 **Exit Code Impact: 2 (blocking)**

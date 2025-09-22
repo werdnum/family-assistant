@@ -207,24 +207,28 @@ async def test_chat_api_attachment_format_validation(
         ],
     }
 
-    # API should handle gracefully
+    # API should properly validate and return 400 for missing content
     response = await api_test_client.post(
         "/api/v1/chat/send_message_stream", json=payload
     )
-    assert response.status_code == 200
+    assert response.status_code == 400
 
-    # Test with invalid base64
+    # Test with invalid base64 (also should return 400)
     payload = {
         "prompt": "Test message",
         "attachments": [
-            {"type": "image", "content": "invalid-base64-data", "name": "test.png"}
+            {
+                "type": "image",
+                "content": "123",
+                "name": "test.png",
+            }  # Invalid base64 padding
         ],
     }
 
     response = await api_test_client.post(
         "/api/v1/chat/send_message_stream", json=payload
     )
-    assert response.status_code == 200
+    assert response.status_code == 400
 
 
 @pytest.mark.asyncio

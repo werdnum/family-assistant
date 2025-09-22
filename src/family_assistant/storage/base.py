@@ -10,13 +10,16 @@ import os
 from typing import Any
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
+    Index,
     Integer,
     MetaData,
     String,
     Table,
+    Text,
     event,
 )
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -127,3 +130,30 @@ api_tokens_table = Table(
 )
 
 logger.info("Defined api_tokens table schema.")
+
+
+# Define the attachment_metadata table for unified attachment tracking
+attachment_metadata_table = Table(
+    "attachment_metadata",
+    metadata,
+    Column("attachment_id", String(36), primary_key=True),  # UUID
+    Column("source_type", String(20), nullable=False),  # "user", "tool", "script"
+    Column("source_id", String(255), nullable=False),  # user_id, tool_name, script_id
+    Column("mime_type", String(100), nullable=False),
+    Column("description", Text, nullable=True),
+    Column("size", Integer, nullable=False),
+    Column("content_url", Text, nullable=True),  # URL for retrieval
+    Column("storage_path", Text, nullable=True),  # File system path
+    Column("conversation_id", String(255), nullable=True),
+    Column("message_id", Integer, nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("accessed_at", DateTime(timezone=True), nullable=True),
+    Column("metadata", JSON, nullable=True),
+    # Indexes for common queries
+    Index("idx_attachment_conversation", "conversation_id"),
+    Index("idx_attachment_source", "source_type", "source_id"),
+    Index("idx_attachment_created", "created_at"),
+    extend_existing=True,
+)
+
+logger.info("Defined attachment_metadata table schema.")

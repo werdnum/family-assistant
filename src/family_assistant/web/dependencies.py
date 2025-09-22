@@ -5,11 +5,12 @@ from typing import TYPE_CHECKING
 from fastapi import HTTPException, Request, status
 
 from family_assistant.embeddings import EmbeddingGenerator
+from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.tools import ToolsProvider
 
 if TYPE_CHECKING:
     from family_assistant.processing import ProcessingService  # Import for type hinting
-from family_assistant.storage.context import DatabaseContext, get_db_context
-from family_assistant.tools import ToolsProvider
 
 logger = logging.getLogger(__name__)
 
@@ -72,20 +73,43 @@ async def get_processing_service(request: Request) -> "ProcessingService":
     return service
 
 
-async def get_current_api_user(request: Request) -> dict:
+async def get_current_user(request: Request) -> dict:
     """
-    Dependency to get the current user from an API token.
-    Validates the token and fetches user details.
+    Dependency to get the current user from either session (web UI) or API token.
+    Validates authentication and returns user details.
+
+    This dependency supports both:
+    - Session-based auth (web UI with cookies)
+    - API token auth (API clients with Authorization header)
     """
     # Get AuthService from app state
     auth_service = getattr(request.app.state, "auth_service", None)
-    if not auth_service:
-        logger.error("AuthService not found in app state.")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Authentication service not configured.",
-        )
+    if not auth_service or not auth_service.auth_enabled:
+        # Return test user when auth is disabled (e.g., in tests)
+        logger.debug("Auth is disabled, returning test user.")
+        return {
+            "user_identifier": "test_user",
+            "token_id": 0,
+            "token_name": "test_token",
+            "expires_at": None,
+        }
 
+    # First try session auth (for web UI)
+    try:
+        session_user = request.session.get("user")
+        if session_user:
+            logger.debug("User authenticated via session.")
+            return {
+                "user_identifier": session_user.get(
+                    "sub", session_user.get("email", "session_user")
+                ),
+                **session_user,
+            }
+    except AssertionError:
+        # Session middleware not available
+        pass
+
+    # Fall back to API token auth (for API clients)
     token_value: str | None = None
     auth_header = request.headers.get("Authorization")
 
@@ -99,10 +123,10 @@ async def get_current_api_user(request: Request) -> dict:
             logger.debug("Attempting API token auth using X-API-Token header.")
 
     if not token_value:
-        logger.warning("API token not provided in Authorization or X-API-Token header.")
+        logger.warning("No authentication provided (session or API token).")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated: API token required.",
+            detail="Not authenticated: session or API token required.",
             headers={"WWW-Authenticate": 'Bearer realm="api", error="missing_token"'},
         )
 
@@ -125,7 +149,18 @@ async def get_current_api_user(request: Request) -> dict:
         )
 
     logger.info(f"API user authenticated: {api_user.get('sub')}")
-    return api_user
+    return {
+        "user_identifier": api_user.get("sub", "api_user"),
+        **api_user,
+    }
+
+
+async def get_current_api_user(request: Request) -> dict:
+    """
+    Legacy dependency for API token authentication only.
+    Use get_current_user for endpoints that support both session and API token auth.
+    """
+    return await get_current_user(request)
 
 
 async def get_current_active_user(request: Request) -> dict:
@@ -190,3 +225,24 @@ async def get_current_active_user(request: Request) -> dict:
     # User is authenticated via OIDC (or another primary method)
     logger.debug("Current active user (OIDC): %s", user.get("sub"))
     return user
+
+
+async def get_attachment_registry(request: Request) -> AttachmentRegistry:
+    """Retrieves the AttachmentRegistry instance from app state."""
+    # Try to get cached registry first
+    if hasattr(request.app.state, "attachment_registry"):
+        return request.app.state.attachment_registry
+
+    # Create and cache if not exists
+    attachment_service = getattr(request.app.state, "attachment_service", None)
+    if not attachment_service:
+        logger.error("AttachmentService not found in app state.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="AttachmentService not configured or available.",
+        )
+
+    # Create and cache AttachmentRegistry
+    registry = AttachmentRegistry(attachment_service)
+    request.app.state.attachment_registry = registry
+    return registry

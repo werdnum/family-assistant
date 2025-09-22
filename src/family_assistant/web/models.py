@@ -62,6 +62,7 @@ class ChatPromptRequest(BaseModel):
 
 
 class ChatMessageResponse(BaseModel):
-    reply: str
+    reply: str  # Back to original field name to minimize disruption
     conversation_id: str
     turn_id: str
+    attachments: list[dict[str, Any]] | None = None  # Add attachments field
