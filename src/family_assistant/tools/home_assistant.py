@@ -9,7 +9,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.tools.types import (
+    ToolAttachment,
+    ToolResult,
+    get_attachment_limits,
+)
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
@@ -228,14 +232,16 @@ async def get_camera_snapshot_tool(
     try:
         image_content = await ha_client.async_get_camera_snapshot(camera_entity_id)
 
-        # Check image size (20MB limit for multimodal)
+        # Check image size (multimodal limit from config)
         image_size = len(image_content)
-        if image_size > 20 * 1024 * 1024:
+        _, max_multimodal_size = get_attachment_limits(exec_context)
+        if image_size > max_multimodal_size:
+            max_mb = max_multimodal_size / (1024 * 1024)
             logger.warning(
-                f"Camera image is {image_size / (1024 * 1024):.1f}MB, exceeds 20MB limit"
+                f"Camera image is {image_size / (1024 * 1024):.1f}MB, exceeds {max_mb:.0f}MB limit"
             )
             return ToolResult(
-                text=f"Error: Camera image too large ({image_size / (1024 * 1024):.1f}MB), exceeds 20MB limit"
+                text=f"Error: Camera image too large ({image_size / (1024 * 1024):.1f}MB), exceeds {max_mb:.0f}MB limit"
             )
 
         logger.info(f"Successfully retrieved camera snapshot: {image_size} bytes")

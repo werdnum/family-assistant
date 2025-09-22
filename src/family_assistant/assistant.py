@@ -256,9 +256,15 @@ class Assistant:
 
         # Initialize AttachmentService
         attachment_storage_path = self.config.get(
-            "chat_attachment_storage_path", "/tmp/chat_attachments"
+            "chat_attachment_storage_path",
+            self.config.get("attachment_config", {}).get(
+                "storage_path", "/tmp/chat_attachments"
+            ),
         )
-        self.attachment_service = AttachmentService(attachment_storage_path)
+        attachment_config = self.config.get("attachment_config")
+        self.attachment_service = AttachmentService(
+            attachment_storage_path, attachment_config
+        )
         logger.info(
             f"AttachmentService initialized with path: {attachment_storage_path}"
         )
