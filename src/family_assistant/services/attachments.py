@@ -16,11 +16,10 @@ from fastapi import HTTPException, UploadFile
 
 logger = logging.getLogger(__name__)
 
-# Maximum file size: 100MB
-MAX_FILE_SIZE = 100 * 1024 * 1024
-
-# Allowed MIME types for attachments
-ALLOWED_MIME_TYPES = {
+# Default configuration values (fallbacks)
+DEFAULT_MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
+DEFAULT_MAX_MULTIMODAL_SIZE = 20 * 1024 * 1024  # 20MB
+DEFAULT_ALLOWED_MIME_TYPES = {
     "image/png",
     "image/jpeg",
     "image/gif",
@@ -34,17 +33,39 @@ ALLOWED_MIME_TYPES = {
 class AttachmentService:
     """Service for managing chat attachment files."""
 
-    def __init__(self, storage_path: str) -> None:
+    def __init__(self, storage_path: str, config: dict[str, Any] | None = None) -> None:
         """
         Initialize the attachment service.
 
         Args:
             storage_path: Base directory for storing attachment files
+            config: Optional configuration dictionary (attachment_config section)
         """
         self.storage_path = Path(storage_path)
         self.storage_path.mkdir(parents=True, exist_ok=True)
+
+        # Set up configuration with defaults
+        attachment_config = config or {}
+        self.max_file_size = attachment_config.get(
+            "max_file_size", DEFAULT_MAX_FILE_SIZE
+        )
+        self.max_multimodal_size = attachment_config.get(
+            "max_multimodal_size", DEFAULT_MAX_MULTIMODAL_SIZE
+        )
+        allowed_types = attachment_config.get(
+            "allowed_mime_types", list(DEFAULT_ALLOWED_MIME_TYPES)
+        )
+        self.allowed_mime_types = (
+            set(allowed_types)
+            if isinstance(allowed_types, list)
+            else DEFAULT_ALLOWED_MIME_TYPES
+        )
+
         logger.info(
-            f"AttachmentService initialized with storage path: {self.storage_path}"
+            f"AttachmentService initialized with storage path: {self.storage_path}, "
+            f"max_file_size: {self.max_file_size // (1024 * 1024)}MB, "
+            f"max_multimodal_size: {self.max_multimodal_size // (1024 * 1024)}MB, "
+            f"allowed_types: {len(self.allowed_mime_types)} types"
         )
 
     def _calculate_content_hash(self, content: bytes) -> str:
@@ -78,11 +99,11 @@ class AttachmentService:
             HTTPException: If file validation fails
         """
         # Check MIME type
-        if file.content_type not in ALLOWED_MIME_TYPES:
+        if file.content_type not in self.allowed_mime_types:
             raise HTTPException(
                 status_code=400,
                 detail=f"File type '{file.content_type}' not allowed. "
-                f"Allowed types: {', '.join(ALLOWED_MIME_TYPES)}",
+                f"Allowed types: {', '.join(self.allowed_mime_types)}",
             )
 
         # Check file size
@@ -95,10 +116,10 @@ class AttachmentService:
             # Seek back to original position
             file.file.seek(current_pos)
 
-            if file_size > MAX_FILE_SIZE:
+            if file_size > self.max_file_size:
                 raise HTTPException(
                     status_code=413,
-                    detail=f"File size {file_size} bytes exceeds maximum allowed size of {MAX_FILE_SIZE} bytes",
+                    detail=f"File size {file_size} bytes exceeds maximum allowed size of {self.max_file_size} bytes",
                 )
 
     def _sanitize_filename(self, filename: str) -> str:
@@ -151,14 +172,14 @@ class AttachmentService:
             ValueError: If file validation fails
         """
         # Basic validation
-        if len(file_content) > MAX_FILE_SIZE:
+        if len(file_content) > self.max_file_size:
             raise ValueError(
-                f"File size {len(file_content)} bytes exceeds maximum allowed size of {MAX_FILE_SIZE} bytes"
+                f"File size {len(file_content)} bytes exceeds maximum allowed size of {self.max_file_size} bytes"
             )
 
-        if content_type not in ALLOWED_MIME_TYPES:
+        if content_type not in self.allowed_mime_types:
             raise ValueError(
-                f"File type '{content_type}' not allowed. Allowed types: {', '.join(ALLOWED_MIME_TYPES)}"
+                f"File type '{content_type}' not allowed. Allowed types: {', '.join(self.allowed_mime_types)}"
             )
 
         # Generate unique attachment ID

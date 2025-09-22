@@ -21,7 +21,11 @@ from family_assistant.storage.vector_search import (
     VectorSearchQuery,
     query_vector_store,
 )
-from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.tools.types import (
+    ToolAttachment,
+    ToolResult,
+    get_attachment_limits,
+)
 
 if TYPE_CHECKING:
     from family_assistant.embeddings import EmbeddingGenerator
@@ -376,11 +380,13 @@ async def get_full_document_content_tool(
                 file_path_obj = pathlib.Path(file_path)
                 file_size = file_path_obj.stat().st_size
 
-                # Check 20MB limit for multimodal attachments
-                if file_size > 20 * 1024 * 1024:  # 20MB
+                # Check multimodal size limit from config
+                _, max_multimodal_size = get_attachment_limits(exec_context)
+                if file_size > max_multimodal_size:
+                    max_mb = max_multimodal_size / (1024 * 1024)
                     logger.warning(
                         f"File for document ID {document_id} is {file_size / (1024 * 1024):.1f}MB, "
-                        "exceeding 20MB limit for multimodal attachments. Returning text content only."
+                        f"exceeding {max_mb:.0f}MB limit for multimodal attachments. Returning text content only."
                     )
                 else:
                     # Read file content and detect MIME type
