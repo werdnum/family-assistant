@@ -301,6 +301,63 @@ result = forward_attachment(
 
 ## Implementation Status
 
+### Phase 1: Foundation (Mostly Complete)
+
+- [x] Design document created
+- [x] Centralized attachment configuration in config.yaml
+- [x] Enhanced AttachmentService with configurable limits
+- [x] Updated tools to use centralized limits (home_assistant, documents)
+- [x] Message history already has attachments JSON column
+- [ ] Database schema migration for attachment_metadata table
+- [ ] Unified AttachmentRegistry class
+
+### Phase 2: User Attachment Processing (Next)
+
+- [ ] Chat API modification for user attachment storage
+- [ ] Processing pipeline updates
+- [ ] Message metadata enhancement
+
+### Phase 3: Script API (Planned)
+
+- [ ] Starlark attachment functions
+- [ ] Permission checking
+- [ ] Tool forwarding capabilities
+
+### Phase 4: LLM Tools (Planned)
+
+- [ ] Attachment manipulation tools
+- [ ] Cross-profile forwarding
+- [ ] Edit capabilities
+
+### Phase 5: Testing & Documentation (Planned)
+
+- [ ] Comprehensive testing
+- [ ] User documentation
+- [ ] API documentation
+
+## Current Commits
+
+- `798e813c`: Implement configurable attachment limits across tools and services
+- `f221e8b6`: Centralize attachment size limits in config.yaml
+- `472549e7`: Implement multimodal tool result support for chat and history UIs
+
+## Next Steps (In Order)
+
+1. Create `attachment_metadata` database table
+2. Implement `AttachmentRegistry` class
+3. Update chat API to generate attachment IDs for user uploads
+4. Add Starlark attachment manipulation functions
+5. Create LLM attachment tools
+
+## Design Notes
+
+- Attachment cleanup will be conservative (better to keep than delete by mistake)
+- Focus on core functionality before optimization
+- Maintain strong permission boundaries
+- Keep memory usage efficient with lazy loading
+
+## Implementation Status
+
 ### Phase 1: Foundation (Current)
 
 - [x] Design document created

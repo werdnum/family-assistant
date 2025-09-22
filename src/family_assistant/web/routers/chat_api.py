@@ -1,10 +1,12 @@
 import asyncio
+import base64
+import binascii
 import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -13,11 +15,205 @@ from pydantic import BaseModel, Field
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.web.confirmation_manager import web_confirmation_manager
-from family_assistant.web.dependencies import get_db, get_processing_service
+from family_assistant.web.dependencies import (
+    get_attachment_registry,
+    get_current_user,
+    get_db,
+    get_processing_service,
+)
 from family_assistant.web.models import ChatMessageResponse, ChatPromptRequest
+
+if TYPE_CHECKING:
+    from family_assistant.services.attachment_registry import AttachmentRegistry
 
 logger = logging.getLogger(__name__)
 chat_api_router = APIRouter()
+
+
+async def _process_user_attachments(
+    payload: ChatPromptRequest,
+    conversation_id: str,
+    attachment_registry: "AttachmentRegistry",
+    db_context: DatabaseContext,
+    user_id: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None]:
+    """
+    Process user attachments from the request payload.
+
+    Args:
+        payload: Chat request with potential attachments
+        conversation_id: Conversation ID for attachment association
+        attachment_registry: Registry for storing attachments
+        db_context: Database context
+
+    Returns:
+        Tuple of (trigger_content_parts, trigger_attachments)
+    """
+    trigger_content_parts: list[dict[str, Any]] = [
+        {"type": "text", "text": payload.prompt}
+    ]
+    trigger_attachments: list[dict[str, Any]] | None = None
+
+    if payload.attachments:
+        trigger_attachments = []
+        for attachment in payload.attachments:
+            if attachment.get("type") == "image":
+                # Validate that content is present and not empty
+                content_data = attachment.get("content")
+                if not content_data:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Attachment content is required",
+                    )
+                if not content_data.strip():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Attachment content cannot be empty",
+                    )
+                # Handle attachment content - either URL reference or base64 data
+                try:
+                    content_data = attachment["content"]
+
+                    # New flow: Handle URL references to uploaded attachments
+                    if content_data.startswith("/api/attachments/"):
+                        # Content is a URL reference to an already uploaded attachment
+                        # Extract attachment ID from URL like "/api/attachments/12345"
+                        attachment_id = content_data.split("/")[-1]
+
+                        # First try to atomically claim unlinked attachment for this conversation
+                        attachment_record = (
+                            await attachment_registry.claim_unlinked_attachment(
+                                db_context=db_context,
+                                attachment_id=attachment_id,
+                                conversation_id=conversation_id,
+                                required_source_id=user_id,
+                            )
+                        )
+
+                        # If not claimed (already linked), get existing attachment record
+                        if not attachment_record:
+                            attachment_record = (
+                                await attachment_registry.get_attachment(
+                                    db_context=db_context,
+                                    attachment_id=attachment_id,
+                                )
+                            )
+
+                        if not attachment_record:
+                            raise HTTPException(
+                                status_code=status.HTTP_404_NOT_FOUND,
+                                detail=f"Attachment not found: {attachment_id}",
+                            )
+
+                        # Add image content for LLM processing using the content_url
+                        trigger_content_parts.append({
+                            "type": "image_url",
+                            "image_url": {"url": attachment_record.content_url},
+                        })
+
+                        # Store attachment metadata for message history
+                        trigger_attachments.append({
+                            "type": attachment.get("type", "image"),
+                            "attachment_id": attachment_record.attachment_id,
+                            "url": attachment_record.content_url,
+                            "content_url": attachment_record.content_url,
+                            "mime_type": attachment_record.mime_type,
+                            "description": attachment_record.description,
+                            "filename": attachment_record.metadata.get(
+                                "original_filename", "unknown"
+                            ),
+                            "size": attachment_record.size,
+                        })
+
+                    else:
+                        # Legacy flow: Handle base64 data (for backwards compatibility)
+                        if content_data.startswith("data:"):
+                            # Extract MIME type and base64 data
+                            header, b64_data = content_data.split(",", 1)
+                            mime_type = header.split(":")[1].split(";")[0]
+                            content_bytes = base64.b64decode(b64_data)
+                            filename = attachment.get(
+                                "filename", f"upload_{uuid.uuid4().hex[:8]}"
+                            )
+                        else:
+                            # Assume direct base64 content
+                            content_bytes = base64.b64decode(content_data)
+                            # For security, don't trust client-provided filenames for MIME type
+                            # Instead, try to detect from content magic bytes or use safe default
+                            filename = attachment.get(
+                                "filename", f"upload_{uuid.uuid4().hex[:8]}"
+                            )
+
+                            # Basic content-based MIME type detection for common image formats
+                            # Check magic bytes at the beginning of the content
+                            if content_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+                                mime_type = "image/png"
+                            elif content_bytes.startswith(b"\xff\xd8\xff"):
+                                mime_type = "image/jpeg"
+                            elif content_bytes.startswith(b"GIF8"):
+                                mime_type = "image/gif"
+                            elif (
+                                content_bytes.startswith(b"RIFF")
+                                and b"WEBP" in content_bytes[:12]
+                            ):
+                                mime_type = "image/webp"
+                            elif content_bytes.startswith(b"BM"):
+                                mime_type = "image/bmp"
+                            else:
+                                # Unknown format, use safe generic type
+                                mime_type = "application/octet-stream"
+
+                        # Filename was determined above with fallback
+
+                        # Store attachment via AttachmentRegistry
+                        attachment_record = (
+                            await attachment_registry.register_user_attachment(
+                                db_context=db_context,
+                                content=content_bytes,
+                                filename=filename,
+                                mime_type=mime_type,
+                                conversation_id=conversation_id,
+                                message_id=None,  # Will be set when message is stored
+                                user_id=user_id,
+                                description=attachment.get(
+                                    "description", f"User uploaded: {filename}"
+                                ),
+                            )
+                        )
+
+                        # Add image content for LLM processing using the content_url
+                        trigger_content_parts.append({
+                            "type": "image_url",
+                            "image_url": {"url": attachment_record.content_url},
+                        })
+
+                        # Store attachment metadata for message history with stable attachment_id
+                        trigger_attachments.append({
+                            "type": attachment.get("type", "image"),
+                            "attachment_id": attachment_record.attachment_id,
+                            "url": attachment_record.content_url,
+                            "content_url": attachment_record.content_url,
+                            "mime_type": attachment_record.mime_type,
+                            "description": attachment_record.description,
+                            "filename": filename,
+                            "size": attachment_record.size,
+                        })
+
+                except (ValueError, binascii.Error) as e:
+                    # Invalid base64 or data URL format
+                    logger.error(f"Invalid attachment content: {e}")
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Invalid base64 attachment content: {str(e)}",
+                    ) from e
+                except Exception as e:
+                    logger.error(f"Error processing user attachment: {e}")
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Failed to process attachment",
+                    ) from e
+
+    return trigger_content_parts, trigger_attachments
 
 
 class ConversationSummary(BaseModel):
@@ -121,6 +317,7 @@ class ProfilesResponse(BaseModel):
 async def api_chat_send_message(
     payload: ChatPromptRequest,
     request: Request,  # To access app.state for config and service registry
+    current_user: Annotated[dict, Depends(get_current_user)],
     default_processing_service: Annotated[
         ProcessingService, Depends(get_processing_service)
     ],  # Renamed for clarity
@@ -161,8 +358,22 @@ async def api_chat_send_message(
             f"API chat request (no profile_id specified). Using default profile: '{default_processing_service.service_config.id}'. Conversation ID: {conversation_id}, Prompt: '{payload.prompt[:100]}...'"
         )
 
-    # Prepare trigger_content_parts for the new service method
-    trigger_content_parts = [{"type": "text", "text": payload.prompt}]
+    # Process user attachments if present
+    trigger_content_parts: list[dict[str, Any]] = [
+        {"type": "text", "text": payload.prompt}
+    ]
+    trigger_attachments: list[dict[str, Any]] | None = None
+
+    if payload.attachments:
+        # Only get attachment registry when we actually have attachments
+        attachment_registry = await get_attachment_registry(request)
+        trigger_content_parts, trigger_attachments = await _process_user_attachments(
+            payload,
+            conversation_id,
+            attachment_registry,
+            db_context,
+            current_user["user_identifier"],
+        )
 
     # Determine interface type - default to "api" if not specified
     interface_type = payload.interface_type or "api"
@@ -203,6 +414,7 @@ async def api_chat_send_message(
         replied_to_interface_id=None,  # payload.replied_to_message_id is not available on ChatPromptRequest
         chat_interface=None,  # API doesn't use interactive chat elements for confirmation (yet)
         request_confirmation_callback=None,  # No confirmation callback for API (yet)
+        trigger_attachments=trigger_attachments,  # Pass attachment metadata
     )
 
     if error_traceback:
@@ -224,9 +436,10 @@ async def api_chat_send_message(
         )
 
     return ChatMessageResponse(
-        reply=final_reply_content,
+        reply=final_reply_content,  # Back to original field name
         conversation_id=conversation_id,  # Return the used/generated conversation_id
         turn_id=response_turn_id,  # Return the turn_id generated for the response model
+        attachments=trigger_attachments,  # Include processed attachments in response
     )
 
 
@@ -424,9 +637,11 @@ async def get_conversation_messages(
 async def api_chat_send_message_stream(
     payload: ChatPromptRequest,
     request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
     default_processing_service: Annotated[
         ProcessingService, Depends(get_processing_service)
     ],
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
 ) -> StreamingResponse:
     """
     Stream chat responses using Server-Sent Events format.
@@ -471,35 +686,22 @@ async def api_chat_send_message_stream(
             f"Conversation ID: {conversation_id}, Prompt: '{payload.prompt[:100]}...'"
         )
 
-    # Prepare trigger content for processing
+    # Process user attachments if present
     trigger_content_parts: list[dict[str, Any]] = [
         {"type": "text", "text": payload.prompt}
     ]
-
-    # Prepare attachment metadata for message history
     attachment_metadata: list[dict[str, Any]] | None = None
 
-    # Add attachments if present
     if payload.attachments:
-        attachment_metadata = []
-        for attachment in payload.attachments:
-            if attachment.get("type") == "image" and attachment.get("content"):
-                # Add image content in same format as Telegram interface
-                trigger_content_parts.append({
-                    "type": "image_url",
-                    "image_url": {"url": attachment["content"]},
-                })
-                # Store attachment metadata for message history
-                attachment_metadata.append({
-                    "type": attachment["type"],
-                    "content_url": attachment["content"],
-                    # Include other metadata if available
-                    **{
-                        k: v
-                        for k, v in attachment.items()
-                        if k not in {"type", "content"}
-                    },
-                })
+        # Only get attachment registry when we actually have attachments
+        attachment_registry = await get_attachment_registry(request)
+        trigger_content_parts, attachment_metadata = await _process_user_attachments(
+            payload,
+            conversation_id,
+            attachment_registry,
+            db_context,
+            current_user["user_identifier"],
+        )
 
     interface_type = payload.interface_type or "api"
     user_name_for_api = "API User"
@@ -611,6 +813,20 @@ async def api_chat_send_message_stream(
                     # Queue error event
                     logger.error(f"Error in process_stream: {e}", exc_info=True)
                     await confirmation_queue.put({"type": "error", "error": str(e)})
+
+            # Emit attachment events for user-uploaded attachments first
+            if attachment_metadata:
+                for attachment in attachment_metadata:
+                    attachment_event_data = {
+                        "type": "attachment",
+                        "attachment_id": attachment["attachment_id"],
+                        "url": attachment["content_url"],
+                        "content_url": attachment["content_url"],
+                        "mime_type": attachment["mime_type"],
+                        "description": attachment["description"],
+                        "size": attachment["size"],
+                    }
+                    yield f"event: attachment\ndata: {json.dumps(attachment_event_data)}\n\n"
 
             # Start the stream processing task
             stream_task = asyncio.create_task(process_stream())
