@@ -673,8 +673,17 @@ async def api_chat_send_message_stream(
                                 yield f"event: tool_call\ndata: {json.dumps({'tool_call': tool_call_dict})}\n\n"
 
                         elif event.type == "tool_result":
-                            # Include tool_call_id for correlation
-                            yield f"event: tool_result\ndata: {json.dumps({'tool_call_id': event.tool_call_id, 'result': event.tool_result})}\n\n"
+                            # Include tool_call_id for correlation and attachment metadata if present
+                            tool_result_data = {
+                                "tool_call_id": event.tool_call_id,
+                                "result": event.tool_result,
+                            }
+                            # Add attachment metadata if present
+                            if event.metadata and "attachments" in event.metadata:
+                                tool_result_data["attachments"] = event.metadata[
+                                    "attachments"
+                                ]
+                            yield f"event: tool_result\ndata: {json.dumps(tool_result_data)}\n\n"
 
                         elif event.type == "done":
                             # Send completion event with optional metadata

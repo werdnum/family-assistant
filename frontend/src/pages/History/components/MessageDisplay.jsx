@@ -128,7 +128,47 @@ const MessageDisplay = ({ message }) => {
           </div>
         )}
 
-        {message.attachments && message.attachments.length > 0 && (
+        {/* Display tool result attachments for tool role messages */}
+        {message.role === 'tool' && message.attachments && message.attachments.length > 0 && (
+          <div className={styles.toolResultAttachments}>
+            <h4 className={styles.attachmentsHeader}>Tool Result Attachments:</h4>
+            <div className={styles.attachmentsList}>
+              {message.attachments.map((attachment, index) => (
+                <div key={attachment.attachment_id || index} className={styles.attachment}>
+                  {attachment.type === 'tool_result' &&
+                  attachment.mime_type?.startsWith('image/') ? (
+                    <div className={styles.imageAttachment}>
+                      <img
+                        src={attachment.content_url}
+                        alt={attachment.description || 'Tool result image'}
+                        className={styles.attachmentImage}
+                      />
+                      <div className={styles.attachmentInfo}>
+                        <span className={styles.attachmentName}>
+                          {attachment.description || 'Tool result image'}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className={styles.fileAttachment}>
+                      <div className={styles.attachmentIcon}>🔧</div>
+                      <div className={styles.attachmentInfo}>
+                        <span className={styles.attachmentName}>
+                          {attachment.description || 'Tool result attachment'}
+                        </span>
+                        {attachment.mime_type && (
+                          <span className={styles.attachmentType}>({attachment.mime_type})</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {message.attachments && message.attachments.length > 0 && message.role !== 'tool' && (
           <div className={styles.attachments}>
             <h4 className={styles.attachmentsHeader}>Attachments:</h4>
             <div className={styles.attachmentsList}>

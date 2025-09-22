@@ -2,8 +2,51 @@ import React from 'react';
 import { CheckCircleIcon, ClockIcon, AlertCircleIcon, DownloadIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
+// Simple attachment display component for tool results
+const ToolAttachmentDisplay = ({ attachment }) => {
+  const isImage = attachment.mime_type?.startsWith('image/');
+
+  if (isImage && attachment.content_url) {
+    return (
+      <div className="tool-attachment-item">
+        <div className="tool-attachment-image">
+          <img
+            src={attachment.content_url}
+            alt={attachment.description || 'Tool result image'}
+            className="max-w-full max-h-64 rounded border"
+            style={{ width: 'auto', height: 'auto' }}
+          />
+          {attachment.description && (
+            <p className="text-sm text-muted-foreground mt-1">{attachment.description}</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // For non-image attachments, show a file link
+  return (
+    <div className="tool-attachment-item">
+      <div className="flex items-center gap-2 p-2 border rounded">
+        <DownloadIcon size={16} />
+        <span className="text-sm">{attachment.description || 'Attachment'}</span>
+        {attachment.content_url && (
+          <a
+            href={attachment.content_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-600 hover:underline text-sm"
+          >
+            Download
+          </a>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // Generic fallback tool UI that handles any tool call
-const ToolFallback = ({ toolName, args, result, status }) => {
+const ToolFallback = ({ toolName, args, result, status, attachments }) => {
   // Determine the icon and styling based on status
   let statusIcon = null;
   let statusClass = '';
@@ -41,6 +84,17 @@ const ToolFallback = ({ toolName, args, result, status }) => {
           ) : (
             <pre className="tool-code-block">{JSON.stringify(result, null, 2)}</pre>
           )}
+        </div>
+      )}
+
+      {attachments && attachments.length > 0 && (
+        <div className="tool-call-attachments">
+          <div className="tool-section-label">Attachments:</div>
+          <div className="tool-attachments-list space-y-2">
+            {attachments.map((attachment, index) => (
+              <ToolAttachmentDisplay key={index} attachment={attachment} />
+            ))}
+          </div>
         </div>
       )}
 
