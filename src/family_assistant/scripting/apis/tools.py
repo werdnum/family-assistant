@@ -15,6 +15,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from threading import Thread
 from typing import TYPE_CHECKING, Any, TypeVar
+from uuid import UUID
 
 T = TypeVar("T")
 
@@ -181,6 +182,106 @@ class ToolsAPI:
         # Otherwise, all tools are allowed
         return True
 
+    def _is_attachment_id(self, value: Any) -> bool:  # noqa: ANN401
+        """
+        Check if a value is a valid attachment ID (UUID format).
+
+        Args:
+            value: The value to check
+
+        Returns:
+            True if value is a valid UUID string, False otherwise
+        """
+        if not isinstance(value, str):
+            return False
+
+        try:
+            UUID(value)
+            return True
+        except ValueError:
+            return False
+
+    async def _fetch_attachment_content(self, attachment_id: str) -> bytes | None:
+        """
+        Fetch attachment content by ID.
+
+        Args:
+            attachment_id: The attachment ID to fetch
+
+        Returns:
+            Attachment content bytes if found, None otherwise
+        """
+        try:
+            # Import here to avoid circular dependencies
+            from family_assistant.services.attachment_registry import AttachmentRegistry
+
+            # Get attachment service from context
+            attachment_service = self.execution_context.attachment_service
+            if attachment_service is None:
+                logger.error(
+                    f"AttachmentService not available in context for attachment {attachment_id}"
+                )
+                return None
+
+            # Create attachment registry
+            attachment_registry = AttachmentRegistry(attachment_service)
+
+            # Fetch attachment content
+            content = await attachment_registry.get_attachment_content(
+                self.execution_context.db_context, attachment_id
+            )
+
+            if content is None:
+                logger.warning(
+                    f"Attachment not found or access denied: {attachment_id}"
+                )
+
+            return content
+
+        except Exception as e:
+            logger.error(
+                f"Error fetching attachment {attachment_id}: {e}", exc_info=True
+            )
+            return None
+
+    async def _process_attachment_arguments(
+        self, kwargs: dict[str, Any]
+    ) -> dict[str, Any]:
+        """
+        Process tool arguments to replace attachment IDs with actual content.
+
+        Args:
+            kwargs: Original tool arguments
+
+        Returns:
+            Processed arguments with attachment content
+        """
+        processed_kwargs = {}
+
+        for key, value in kwargs.items():
+            if self._is_attachment_id(value):
+                logger.debug(f"Processing attachment ID {value} for parameter {key}")
+
+                # Fetch attachment content
+                content = await self._fetch_attachment_content(value)
+                if content is not None:
+                    # Replace attachment ID with content bytes
+                    processed_kwargs[key] = content
+                    logger.debug(
+                        f"Replaced attachment ID {value} with {len(content)} bytes for parameter {key}"
+                    )
+                else:
+                    # Remove parameter if attachment not found to avoid passing invalid data
+                    logger.error(
+                        f"Could not fetch attachment {value} for parameter {key}, removing parameter"
+                    )
+                    # Don't add this parameter to processed_kwargs - let the tool handle the missing parameter
+            else:
+                # Keep original value for non-attachment parameters
+                processed_kwargs[key] = value
+
+        return processed_kwargs
+
     def list_tools(self) -> list[ToolInfo]:
         """
         List all available tools.
@@ -299,11 +400,16 @@ class ToolsAPI:
                 f"Executing tool '{tool_name}' from Starlark with args: {kwargs}"
             )
 
+            # Process attachment arguments to replace attachment IDs with content
+            processed_kwargs = self._run_async(
+                self._process_attachment_arguments(kwargs)
+            )
+
             # Create the coroutine directly - _run_async expects a coroutine
             result = self._run_async(
                 self.tools_provider.execute_tool(
                     name=tool_name,
-                    arguments=kwargs,
+                    arguments=processed_kwargs,
                     context=self.execution_context,
                 )
             )

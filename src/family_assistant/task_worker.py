@@ -184,6 +184,9 @@ async def handle_llm_callback(
     # chat_id is now from context
     callback_context = payload.get("callback_context")
     scheduling_timestamp_str = payload.get("scheduling_timestamp")
+    trigger_attachments = payload.get(
+        "trigger_attachments"
+    )  # From script wake_llm calls
 
     # Extract reminder configuration if present
     reminder_config = payload.get("reminder_config", {})
@@ -299,6 +302,7 @@ async def handle_llm_callback(
             user_name="System",  # Callback initiated by system
             replied_to_interface_id=None,  # Not a reply
             request_confirmation_callback=None,  # No confirmation for system callbacks
+            trigger_attachments=trigger_attachments,  # Pass attachments from script wake_llm
         )
 
         if final_llm_content_to_send:
@@ -542,6 +546,7 @@ class TaskWorker:
                 clock=self.clock,  # Pass the clock instance
                 indexing_source=self.indexing_source,  # Pass the indexing source
                 event_sources=self.event_sources,  # Pass event sources directly
+                attachment_service=self.processing_service.attachment_service,  # Pass attachment service
             )
             # --- Execute Handler with Context ---
             logger.debug(
@@ -918,7 +923,86 @@ async def _process_script_wake_llm(
         event_data: The original event data that triggered the script
         listener_id: ID of the event listener that ran the script
     """
+    from family_assistant.services.attachment_registry import AttachmentRegistry
+
     listener_id = listener_id or "scheduled"
+
+    # Extract attachment IDs from all wake contexts
+    all_attachment_ids: list[str] = []
+    for ctx in wake_contexts:
+        context_dict = ctx.get("context", {})
+        attachments = context_dict.get("attachments", [])
+        if isinstance(attachments, list):
+            all_attachment_ids.extend(attachments)
+
+    # Fetch attachment metadata if any attachments are referenced
+    trigger_attachments: list[dict[str, Any]] | None = None
+    if all_attachment_ids:
+        # Get attachment service and registry
+        attachment_service = getattr(exec_context, "attachment_service", None)
+        if not attachment_service:
+            # Try to get from app state or create if needed
+            # For now, skip attachment processing if service not available
+            logger.warning(
+                "AttachmentService not available for script wake_llm with attachments"
+            )
+        else:
+            attachment_registry = AttachmentRegistry(attachment_service)
+            trigger_attachments = []
+
+            for attachment_id in all_attachment_ids:
+                try:
+                    # Get attachment metadata
+                    attachment_metadata = await attachment_registry.get_attachment(
+                        db_context=exec_context.db_context,
+                        attachment_id=attachment_id,
+                    )
+
+                    if attachment_metadata:
+                        # Determine attachment type from MIME type
+                        attachment_type = "document"  # Default fallback
+                        mime_type = attachment_metadata.mime_type
+                        if mime_type.startswith("image/"):
+                            attachment_type = "image"
+                        elif mime_type.startswith("audio/"):
+                            attachment_type = "audio"
+                        elif mime_type.startswith("video/"):
+                            attachment_type = "video"
+                        elif mime_type.startswith("text/"):
+                            attachment_type = "text"
+                        elif mime_type in [
+                            "application/pdf",
+                            "application/msword",
+                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        ]:
+                            attachment_type = "document"
+
+                        # Add to trigger_attachments list in expected format
+                        trigger_attachments.append({
+                            "type": attachment_type,
+                            "attachment_id": attachment_metadata.attachment_id,
+                            "url": attachment_metadata.content_url,
+                            "content_url": attachment_metadata.content_url,
+                            "mime_type": attachment_metadata.mime_type,
+                            "description": attachment_metadata.description,
+                            "filename": attachment_metadata.metadata.get(
+                                "original_filename", "attachment"
+                            ),
+                            "size": attachment_metadata.size,
+                        })
+                        logger.debug(
+                            f"Added attachment {attachment_id} to wake_llm context"
+                        )
+                    else:
+                        logger.warning(
+                            f"Attachment {attachment_id} not found for script wake_llm"
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"Error fetching attachment {attachment_id} for script wake_llm: {e}"
+                    )
+                    # Continue with other attachments
+
     # Combine all wake contexts into a single message
     combined_context = {
         "source": "script_wake_llm",
@@ -931,18 +1015,29 @@ async def _process_script_wake_llm(
     if include_event:
         combined_context["event_data"] = event_data
 
-    # Format the wake message
+    # Format the wake message (excluding attachments from text since they'll be handled separately)
     wake_message = "Script wake_llm call:\n\n"
 
     if len(wake_contexts) == 1:
-        # Single context - show it directly
+        # Single context - show it directly (filter out attachments from display)
         ctx = wake_contexts[0]
-        wake_message += json.dumps(ctx.get("context", {}), indent=2)
+        context_for_display = {
+            k: v for k, v in ctx.get("context", {}).items() if k != "attachments"
+        }
+        if all_attachment_ids:
+            context_for_display["attachment_ids"] = all_attachment_ids
+        wake_message += json.dumps(context_for_display, indent=2)
     else:
         # Multiple contexts - show them as a list
         wake_message += f"Multiple wake requests ({len(wake_contexts)}):\n"
         for i, ctx in enumerate(wake_contexts, 1):
-            wake_message += f"\n{i}. {json.dumps(ctx.get('context', {}), indent=2)}"
+            context_for_display = {
+                k: v for k, v in ctx.get("context", {}).items() if k != "attachments"
+            }
+            ctx_attachments = ctx.get("context", {}).get("attachments", [])
+            if ctx_attachments:
+                context_for_display["attachment_ids"] = ctx_attachments
+            wake_message += f"\n{i}. {json.dumps(context_for_display, indent=2)}"
 
     if include_event:
         wake_message += f"\n\nTriggering event:\n{json.dumps(event_data, indent=2)}"
@@ -953,17 +1048,26 @@ async def _process_script_wake_llm(
     # Get current timestamp for scheduling
     scheduling_timestamp = datetime.now(timezone.utc).isoformat()
 
-    # Enqueue LLM callback task
+    # Enqueue LLM callback task with attachment support
+    payload = {
+        "interface_type": exec_context.interface_type,
+        "conversation_id": exec_context.conversation_id,
+        "callback_context": wake_message,
+        "scheduling_timestamp": scheduling_timestamp,
+        "metadata": combined_context,
+    }
+
+    # Add attachments to payload if any were found
+    if trigger_attachments:
+        payload["trigger_attachments"] = trigger_attachments
+        logger.info(
+            f"Added {len(trigger_attachments)} attachments to wake_llm callback"
+        )
+
     await exec_context.db_context.tasks.enqueue(
         task_id=callback_task_id,
         task_type="llm_callback",
-        payload={
-            "interface_type": exec_context.interface_type,
-            "conversation_id": exec_context.conversation_id,
-            "callback_context": wake_message,
-            "scheduling_timestamp": scheduling_timestamp,
-            "metadata": combined_context,
-        },
+        payload=payload,
     )
 
     logger.info(

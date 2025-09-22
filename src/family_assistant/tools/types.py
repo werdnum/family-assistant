@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface  # Import the new interface
     from family_assistant.processing import ProcessingService
+    from family_assistant.services.attachments import AttachmentService
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.tools import ToolsProvider
     from family_assistant.utils.clock import Clock
@@ -90,6 +91,9 @@ class ToolExecutionContext:
     )
     tools_provider: Optional["ToolsProvider"] = (
         None  # Add tools_provider for API access
+    )
+    attachment_service: Optional["AttachmentService"] = (
+        None  # Add attachment_service for file operations
     )
 
 

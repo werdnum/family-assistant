@@ -351,7 +351,15 @@ class StarlarkEngine:
         """Create a wake_llm function for scripts."""
 
         def wake_llm(context: dict[str, Any] | str, include_event: bool = True) -> None:
-            """Request to wake the LLM with context."""
+            """Request to wake the LLM with context.
+
+            Args:
+                context: Either a string message or a dictionary containing:
+                    - message: The text message for the LLM
+                    - attachments: Optional list of attachment IDs to include
+                    - Other custom context fields
+                include_event: Whether to include the triggering event data
+            """
             # Convert string context to dict format
             if isinstance(context, str):
                 context_dict = {"message": context}
@@ -359,6 +367,25 @@ class StarlarkEngine:
                 context_dict = dict(context)  # Make a copy
             else:
                 raise TypeError("wake_llm context must be a dictionary or string")
+
+            # Validate attachment IDs if provided
+            if "attachments" in context_dict:
+                attachments = context_dict["attachments"]
+                if not isinstance(attachments, list):
+                    raise TypeError("attachments must be a list of attachment IDs")
+
+                for attachment_id in attachments:
+                    if not isinstance(attachment_id, str):
+                        raise TypeError("attachment IDs must be strings")
+                    # Basic UUID format validation
+                    import uuid
+
+                    try:
+                        uuid.UUID(attachment_id)
+                    except ValueError as e:
+                        raise ValueError(
+                            f"Invalid attachment ID format: {attachment_id}"
+                        ) from e
 
             # Store the wake request
             wake_request = {
