@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import React from 'react';
 import { DynamicToolUI } from '../DynamicToolUI';
+import { getAttachmentKey } from '../../types/attachments';
 
 // Mock the ToolWithConfirmation component since we're testing DynamicToolUI logic
 vi.mock('../ToolWithConfirmation', () => ({
@@ -16,7 +17,7 @@ vi.mock('../ToolWithConfirmation', () => ({
       <span data-testid="tool-name">{toolName}</span>
       <span data-testid="attachments-count">{attachments.length}</span>
       {attachments.map((attachment, index) => (
-        <div key={index} data-testid={`attachment-${index}`}>
+        <div key={getAttachmentKey(attachment, index)} data-testid={`attachment-${index}`}>
           {JSON.stringify(attachment)}
         </div>
       ))}
