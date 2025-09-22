@@ -116,7 +116,7 @@ default_profile_settings:
     #   # ... other prompts ...
 
     # Default values, can be overridden by environment variables.
-    timezone: "UTC"
+    timezone: "Australia/Sydney"
     max_history_messages: 3
     history_max_age_hours: 2
     # Web-specific history settings for better conversation context
@@ -196,7 +196,7 @@ service_profiles:
           model: "gemini-2.5-pro"
         fallback:
           provider: "openai"
-          model: "o4-mini"
+          model: "gpt-5"
   - id: "browser_profile"
     description: "Assistant profile with web browsing capabilities for complex browser interactions like filling forms or navigating JavaScript-heavy sites. For simple web scraping, consider using the ingest_document_from_url tool or direct MCP browser tools."
     processing_config:
