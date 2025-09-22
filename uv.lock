@@ -2044,16 +2044,16 @@ wheels = [
 
 [[package]]
 name = "llm-openrouter"
-version = "0.4.1"
+version = "0.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "llm" },
     { name = "openai" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8c/f2/87955102c1ce53e70043ec43f2736cea3c5064cc6209058504e8ce6daf75/llm_openrouter-0.4.1.tar.gz", hash = "sha256:21855a85cee3bc2bf61aacc0b25a2f695be855d672d38b94cb7ef762b5fce5fe", size = 11962, upload-time = "2025-04-23T21:38:21.659Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3d/36/bd3fd40317982b4405a855f236582ca5f7834f8bf42b004b328bb31514bc/llm_openrouter-0.5.tar.gz", hash = "sha256:9edc30cb104ab482ab55cd6922715860405a2900e8b51190facf0b7747051a7b", size = 12934, upload-time = "2025-09-20T23:44:22.239Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/71/45/f24107b02118632836af2ca18dcd2aaa816b698fcdad2b0f16c2c20554f2/llm_openrouter-0.4.1-py3-none-any.whl", hash = "sha256:d9dff9f6cdb5a95f9547a9c2eab854035478ed86e9f3fcae836673954b73ac80", size = 11608, upload-time = "2025-04-23T21:38:20.46Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/3c/3f4cc507dfb3ef6639b5e25db22aee7a51372c461cfe7d4bccb4d4ac7e92/llm_openrouter-0.5-py3-none-any.whl", hash = "sha256:293b74486ccac3763706baeabde82886625503bd1d5f86ba09fda33016eda3c7", size = 12211, upload-time = "2025-09-20T23:44:20.933Z" },
 ]
 
 [[package]]
