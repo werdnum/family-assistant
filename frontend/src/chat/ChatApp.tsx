@@ -277,6 +277,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
                   argsText:
                     typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments),
                   ...(tc.result && { result: tc.result as string }),
+                  ...(tc.attachments && { attachments: tc.attachments }),
                   // Note: status is on the message level, not on individual tool calls
                 };
               });
@@ -321,6 +322,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
                   argsText:
                     typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments),
                   ...(tc.result && { result: tc.result as string }),
+                  ...(tc.attachments && { attachments: tc.attachments }),
                   // Note: status is on the message level, not on individual tool calls
                 };
               });

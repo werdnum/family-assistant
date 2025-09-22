@@ -8,11 +8,13 @@ interface ToolWithConfirmationProps {
   args: Record<string, unknown>;
   result?: string | Record<string, unknown>;
   status?: { type: string };
+  attachments?: Array<Record<string, unknown>>;
   ToolComponent: React.ComponentType<{
     toolName: string;
     args: Record<string, unknown>;
     result?: string | Record<string, unknown>;
     status?: { type: string };
+    attachments?: Array<Record<string, unknown>>;
   }>;
 }
 
@@ -22,6 +24,7 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
   args,
   result,
   status,
+  attachments,
   ToolComponent,
 }) => {
   const context = useContext(ToolConfirmationContext);
@@ -83,7 +86,13 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
   return (
     <>
       {/* Always render the tool UI */}
-      <ToolComponent toolName={toolName} args={args} result={result} status={status} />
+      <ToolComponent
+        toolName={toolName}
+        args={args}
+        result={result}
+        status={status}
+        attachments={attachments}
+      />
 
       {/* Show confirmation UI if there's a pending confirmation */}
       {pendingConfirmation && (
