@@ -649,7 +649,11 @@ class ProcessingService:
                     }
 
                     # Store attachment and generate URL if attachment service is available
-                    if self.attachment_service and result.attachment.content:
+                    if (
+                        self.attachment_service
+                        and result.attachment
+                        and result.attachment.content
+                    ):
                         try:
                             # Store the attachment content with proper file extension
                             file_extension = self._get_file_extension_from_mime_type(
