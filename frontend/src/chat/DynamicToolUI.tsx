@@ -39,14 +39,16 @@ export const DynamicToolUI: React.FC<AssistantUIToolProps> = (props) => {
       return [];
     }
 
-    return attachmentsData.filter((item): item is Attachment => {
+    const validAttachments: Attachment[] = [];
+    for (const item of attachmentsData) {
       if (isAttachment(item)) {
-        return true;
+        validAttachments.push(item);
+      } else {
+        // Log invalid attachments for debugging
+        console.warn('Invalid attachment structure:', item);
       }
-      // Log invalid attachments for debugging
-      console.warn('Invalid attachment structure:', item);
-      return false;
-    });
+    }
+    return validAttachments;
   };
 
   const attachments = extractAttachments(artifact?.attachments || directAttachments);
