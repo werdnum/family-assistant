@@ -1,6 +1,7 @@
 import React from 'react';
 import { toolUIsByName, ToolFallback } from './ToolUI';
 import { ToolWithConfirmation } from './ToolWithConfirmation';
+import { Attachment, isAttachment } from '../types/attachments';
 
 /**
  * Dynamic tool UI component that automatically wraps tools with confirmation UI
@@ -32,9 +33,23 @@ export const DynamicToolUI: React.FC<AssistantUIToolProps> = (props) => {
     attachments: directAttachments,
   } = props;
 
-  // Extract attachments from artifact if present, otherwise use direct attachments prop
-  const attachments =
-    (artifact?.attachments as Array<Record<string, unknown>> | undefined) || directAttachments;
+  // Extract and validate attachments from artifact if present, otherwise use direct attachments prop
+  const extractAttachments = (attachmentsData: unknown): Attachment[] => {
+    if (!Array.isArray(attachmentsData)) {
+      return [];
+    }
+
+    return attachmentsData.filter((item): item is Attachment => {
+      if (isAttachment(item)) {
+        return true;
+      }
+      // Log invalid attachments for debugging
+      console.warn('Invalid attachment structure:', item);
+      return false;
+    });
+  };
+
+  const attachments = extractAttachments(artifact?.attachments || directAttachments);
 
   // Get the specific tool UI component or fallback
   const ToolComponent = toolUIsByName[toolName] || ToolFallback;

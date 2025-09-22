@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import styles from './MessageDisplay.module.css';
+import { getAttachmentKey } from '../../../types/attachments';
 
 const MessageDisplay = ({ message }) => {
   const [expandedToolCalls, setExpandedToolCalls] = useState(new Set());
@@ -134,7 +135,7 @@ const MessageDisplay = ({ message }) => {
             <h4 className={styles.attachmentsHeader}>Tool Result Attachments:</h4>
             <div className={styles.attachmentsList}>
               {message.attachments.map((attachment, index) => (
-                <div key={attachment.attachment_id || index} className={styles.attachment}>
+                <div key={getAttachmentKey(attachment, index)} className={styles.attachment}>
                   {attachment.type === 'tool_result' &&
                   attachment.mime_type?.startsWith('image/') ? (
                     <div className={styles.imageAttachment}>
@@ -173,7 +174,7 @@ const MessageDisplay = ({ message }) => {
             <h4 className={styles.attachmentsHeader}>Attachments:</h4>
             <div className={styles.attachmentsList}>
               {message.attachments.map((attachment, index) => (
-                <div key={attachment.attachment_id || index} className={styles.attachment}>
+                <div key={getAttachmentKey(attachment, index)} className={styles.attachment}>
                   {attachment.type === 'image' && attachment.content_url ? (
                     <div className={styles.imageAttachment}>
                       <img
