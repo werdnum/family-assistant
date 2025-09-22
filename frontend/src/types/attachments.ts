@@ -3,6 +3,8 @@
  * These interfaces define the structure of attachments received from the API.
  */
 
+import hash from 'string-hash';
+
 export interface BaseAttachment {
   attachment_id: string;
   mime_type: string;
@@ -97,15 +99,11 @@ export function getAttachmentKey(attachment: unknown, fallbackIndex?: number): s
     ].filter(Boolean);
 
     if (keyParts.length > 0) {
-      // Create a simple hash from the combined properties
+      // Create a hash from the combined properties using the string-hash library
+      // This provides a fast, reliable, non-cryptographic hash for React key generation
       const combined = keyParts.join('|');
-      let hash = 0;
-      for (let i = 0; i < combined.length; i++) {
-        const char = combined.charCodeAt(i);
-        hash = (hash << 5) - hash + char;
-        hash = hash & hash; // Convert to 32-bit integer
-      }
-      return `attachment-${Math.abs(hash)}`;
+      const hashValue = hash(combined);
+      return `attachment-${Math.abs(hashValue)}`;
     }
   }
 
