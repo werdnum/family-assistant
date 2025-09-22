@@ -1729,7 +1729,15 @@ class ProcessingService:
             )
 
     def _get_file_extension_from_mime_type(self, mime_type: str) -> str:
-        """Get appropriate file extension from MIME type with proper mapping."""
+        """
+        Return the appropriate file extension (with leading dot) for a given MIME type.
+
+        If the MIME type has an exact match in the internal mapping, the corresponding extension is returned.
+        If there is no exact match, a generic extension is returned based on the main type (e.g., '.img' for images, '.audio' for audio).
+        If the main type is unrecognized, '.bin' is returned as a default.
+
+        All returned extensions include a leading dot (e.g., '.jpg', '.bin').
+        """
         # Common MIME type to extension mappings
         mime_to_ext = {
             # Images
