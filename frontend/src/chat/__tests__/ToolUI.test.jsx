@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import React from 'react';
 import { toolUIsByName, ToolFallback } from '../ToolUI';
 import { toolTestCases } from '../../test/toolTestData';
+import { getAttachmentKey } from '../../types/attachments';
 
 // Helper component that mimics how tools are rendered in the app
 const ToolUI = ({ toolCall, toolResponse }) => {
@@ -241,6 +242,117 @@ describe('ToolUI Component', () => {
 
         unmount();
       });
+    });
+  });
+
+  describe('Attachment Key Generation', () => {
+    it('generates stable keys for attachments using getAttachmentKey', () => {
+      // Test with valid attachment
+      const validAttachment = {
+        attachment_id: 'test-attachment-123',
+        type: 'image',
+        mime_type: 'image/png',
+        content_url: 'https://example.com/image.png',
+      };
+
+      const key1 = getAttachmentKey(validAttachment, 0);
+      const key2 = getAttachmentKey(validAttachment, 0);
+
+      // Should be stable and use attachment_id
+      expect(key1).toBe('test-attachment-123');
+      expect(key2).toBe('test-attachment-123');
+    });
+
+    it('handles attachments without attachment_id gracefully', () => {
+      const attachmentWithoutId = {
+        type: 'user',
+        mime_type: 'text/plain',
+        filename: 'test.txt',
+        size: 100,
+      };
+
+      const key = getAttachmentKey(attachmentWithoutId, 5);
+
+      // Should generate a fallback key but not use the index
+      expect(key).toMatch(/^attachment-\d+$/);
+      expect(key).not.toContain('index');
+    });
+
+    it('falls back to index-based key for completely invalid attachments', () => {
+      const invalidAttachment = { not_an_attachment: true };
+
+      const key = getAttachmentKey(invalidAttachment, 3);
+
+      expect(key).toBe('attachment-index-3');
+    });
+
+    it('renders tool with attachments using stable keys', () => {
+      const toolCall = {
+        id: 'test-with-attachments',
+        type: 'function',
+        function: {
+          name: 'add_or_update_note',
+          arguments: '{"title": "Note with attachments"}',
+        },
+      };
+
+      const toolResponse = {
+        tool_call_id: 'test-with-attachments',
+        content: 'Note created successfully',
+      };
+
+      // Mock attachments data
+      const mockAttachments = [
+        {
+          attachment_id: 'attachment-1',
+          type: 'image',
+          mime_type: 'image/png',
+          content_url: 'https://example.com/image1.png',
+        },
+        {
+          attachment_id: 'attachment-2',
+          type: 'user',
+          mime_type: 'text/plain',
+          filename: 'document.txt',
+          size: 1024,
+        },
+      ];
+
+      // Create a modified ToolUI component that accepts attachments
+      const ToolUIWithAttachments = ({ toolCall, toolResponse, attachments }) => {
+        const toolName = toolCall?.function?.name;
+        let args = {};
+        try {
+          args = toolCall?.function?.arguments ? JSON.parse(toolCall.function.arguments) : {};
+        } catch (_e) {
+          args = { _raw: toolCall?.function?.arguments };
+        }
+
+        const status = toolResponse ? { type: 'complete' } : { type: 'running' };
+        const result = toolResponse?.content || null;
+        const ToolComponent = toolUIsByName[toolName] || ToolFallback;
+
+        return (
+          <ToolComponent
+            toolName={toolName}
+            args={args}
+            result={result}
+            status={status}
+            attachments={attachments}
+          />
+        );
+      };
+
+      render(
+        <ToolUIWithAttachments
+          toolCall={toolCall}
+          toolResponse={toolResponse}
+          attachments={mockAttachments}
+        />
+      );
+
+      // Should render without errors
+      expect(document.querySelector('.tool-call-container')).toBeInTheDocument();
     });
   });
 });
