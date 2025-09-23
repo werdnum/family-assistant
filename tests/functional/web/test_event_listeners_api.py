@@ -214,7 +214,7 @@ class TestEventListenersAPI:
 
         # Verify condition_script was cleared (API returns empty string, not None)
         assert not cleared_data["condition_script"]
-
+        assert not cleared_data["condition_script"]
     async def test_delete_listener(self, api_test_client: AsyncClient) -> None:
         """Test deleting an event listener with condition_script."""
         # Create initial listener with condition_script
