@@ -399,12 +399,7 @@ async def api_chat_send_message(
         str(uuid.uuid4())  # This is for the *response model only*
     )
 
-    (
-        final_reply_content,
-        _final_assistant_message_internal_id,  # Not used by API response
-        _final_reasoning_info,  # Not used by API response
-        error_traceback,
-    ) = await selected_processing_service.handle_chat_interaction(
+    result = await selected_processing_service.handle_chat_interaction(
         db_context=db_context,
         interface_type=interface_type,  # Use the interface_type from request or default "api"
         conversation_id=conversation_id,
@@ -416,6 +411,14 @@ async def api_chat_send_message(
         request_confirmation_callback=None,  # No confirmation callback for API (yet)
         trigger_attachments=trigger_attachments,  # Pass attachment metadata
     )
+
+    final_reply_content = result.text_reply
+    _final_assistant_message_internal_id = (
+        result.assistant_message_internal_id
+    )  # Not used by API response
+    _final_reasoning_info = result.reasoning_info  # Not used by API response
+    error_traceback = result.error_traceback
+    _response_attachment_ids = result.attachment_ids  # Not yet included in API response
 
     if error_traceback:
         logger.error(

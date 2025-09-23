@@ -21,7 +21,10 @@ if TYPE_CHECKING:
 # _generate_llm_response_for_chat was moved to ProcessingService
 # Import DatabaseContext and getter
 from family_assistant.llm import ToolCallFunction, ToolCallItem
-from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.processing import (
+    ProcessingService,
+    ProcessingServiceConfig,
+)
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
@@ -202,13 +205,7 @@ async def test_add_and_retrieve_note_rule_mock(
     # Note: db_engine fixture comes from the root conftest.py
     async with DatabaseContext(engine=db_engine) as db_context:
         # Call the method on the ProcessingService instance
-        # Unpack the 4 return values correctly
-        (
-            add_final_text_reply,
-            _add_final_assistant_msg_id,  # Not used here
-            _add_reasoning_info,  # Not used here
-            add_error,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",  # Added interface type
@@ -220,6 +217,14 @@ async def test_add_and_retrieve_note_rule_mock(
             ),  # Added missing argument
             user_name=TEST_USER_NAME,
         )
+
+        add_final_text_reply = result.text_reply
+        _add_final_assistant_msg_id = (
+            result.assistant_message_internal_id
+        )  # Not used here
+        _add_reasoning_info = result.reasoning_info  # Not used here
+        add_error = result.error_traceback
+        _response_attachment_ids = result.attachment_ids  # Not used in test
     # Assertions remain outside the context manager
     assert add_error is None, f"Error during add note: {add_error}"
     assert add_final_text_reply is not None, (
@@ -259,12 +264,7 @@ async def test_add_and_retrieve_note_rule_mock(
     # Create a new context for the retrieval part (or reuse if appropriate, but new is safer for isolation)
     async with DatabaseContext(engine=db_engine) as db_context:
         # Call the method on the ProcessingService instance again
-        (
-            retrieve_final_text_reply,
-            _retrieve_final_assistant_msg_id,  # Not used
-            _retrieve_final_reasoning_info,  # Not used
-            retrieve_error,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",  # Added missing interface type
@@ -276,6 +276,14 @@ async def test_add_and_retrieve_note_rule_mock(
             ),  # Added missing argument
             user_name=TEST_USER_NAME,
         )
+
+        retrieve_final_text_reply = result.text_reply
+        _retrieve_final_assistant_msg_id = (
+            result.assistant_message_internal_id
+        )  # Not used
+        _retrieve_final_reasoning_info = result.reasoning_info  # Not used
+        retrieve_error = result.error_traceback
+        _response_attachment_ids = result.attachment_ids  # Not used in test
 
         # model_name argument removed
     assert retrieve_error is None, (

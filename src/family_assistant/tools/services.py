@@ -191,12 +191,7 @@ async def delegate_to_service_tool(
 
     logger.info(f"Delegating request to service profile: '{target_service_id}'")
     try:
-        (
-            final_text_reply,
-            _final_assistant_message_id,  # Ignored
-            _final_reasoning_info,  # Ignored
-            error_traceback,
-        ) = await target_service.handle_chat_interaction(
+        result = await target_service.handle_chat_interaction(
             db_context=exec_context.db_context,
             interface_type=exec_context.interface_type,  # Use current interface type
             conversation_id=exec_context.conversation_id,  # Use current conversation ID
@@ -207,6 +202,14 @@ async def delegate_to_service_tool(
             chat_interface=exec_context.chat_interface,  # Pass through for nested actions
             request_confirmation_callback=exec_context.request_confirmation_callback,  # Pass through
         )
+
+        final_text_reply = result.text_reply
+        _final_assistant_message_id = result.assistant_message_internal_id  # Ignored
+        _final_reasoning_info = result.reasoning_info  # Ignored
+        error_traceback = result.error_traceback
+        _response_attachment_ids = (
+            result.attachment_ids
+        )  # Not used in delegation response
 
         if error_traceback:
             logger.error(

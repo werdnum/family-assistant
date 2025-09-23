@@ -10,10 +10,12 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
+from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.storage.context import DatabaseContext
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
-    from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -70,7 +72,6 @@ class AttachmentAPI:
 
     async def _get_async(self, attachment_id: str) -> dict[str, Any] | None:
         """Async implementation of get."""
-        from family_assistant.storage.context import DatabaseContext
 
         async with DatabaseContext(engine=self.db_engine) as db_context:
             attachment = await self.attachment_registry.get_attachment(
@@ -135,7 +136,6 @@ class AttachmentAPI:
         self, source_type: str | None = None, limit: int = 20
     ) -> list[dict[str, Any]]:
         """Async implementation of list."""
-        from family_assistant.storage.context import DatabaseContext
 
         async with DatabaseContext(engine=self.db_engine) as db_context:
             attachments = await self.attachment_registry.list_attachments(
@@ -189,7 +189,6 @@ class AttachmentAPI:
 
     async def _send_async(self, attachment_id: str, message: str | None = None) -> str:
         """Async implementation of send."""
-        from family_assistant.storage.context import DatabaseContext
 
         async with DatabaseContext(engine=self.db_engine) as db_context:
             # Verify attachment exists and is accessible
@@ -239,8 +238,6 @@ def create_attachment_api(
     conversation_id = execution_context.conversation_id
 
     # Create attachment registry from the service (following the pattern from tools.py)
-    from family_assistant.services.attachment_registry import AttachmentRegistry
-
     attachment_registry = AttachmentRegistry(execution_context.attachment_service)
 
     return AttachmentAPI(

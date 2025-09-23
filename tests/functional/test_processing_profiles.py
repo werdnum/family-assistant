@@ -136,12 +136,7 @@ async def test_reply_with_different_profile_includes_history(
     )
     # --- 1. Simulate initial message from Profile A ---
     async with get_db_context(db_engine) as db_context:
-        (
-            _,
-            initial_assistant_message_id,
-            _,
-            _,
-        ) = await profile_a_service.handle_chat_interaction(
+        result = await profile_a_service.handle_chat_interaction(
             db_context=db_context,
             interface_type="telegram",
             conversation_id=str(chat_id),
@@ -150,6 +145,7 @@ async def test_reply_with_different_profile_includes_history(
             user_name=user_name,
         )
         # Manually update the interface_message_id for the assistant's reply
+        initial_assistant_message_id = result.assistant_message_internal_id
         if initial_assistant_message_id:
             await db_context.message_history.update_interface_id(
                 internal_id=initial_assistant_message_id,

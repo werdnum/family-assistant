@@ -17,6 +17,8 @@ from threading import Thread
 from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
+from family_assistant.services.attachment_registry import AttachmentRegistry
+
 T = TypeVar("T")
 
 if TYPE_CHECKING:
@@ -212,9 +214,6 @@ class ToolsAPI:
             Attachment content bytes if found, None otherwise
         """
         try:
-            # Import here to avoid circular dependencies
-            from family_assistant.services.attachment_registry import AttachmentRegistry
-
             # Get attachment service from context
             attachment_service = self.execution_context.attachment_service
             if attachment_service is None:
