@@ -54,10 +54,9 @@ class ToolExecutionContext:
     turn_id: str | None  # The ID of the current processing turn
     db_context: "DatabaseContext"
     chat_interface: Optional["ChatInterface"] = None  # Replaced application
-    # Add other context elements as needed, e.g., timezone_str
+    timezone_str: str = "UTC"  # Timezone string for localization
     # Processing profile associated with the request
     processing_profile_id: str | None = None
-    )
     request_confirmation_callback: (
         Callable[
             [
