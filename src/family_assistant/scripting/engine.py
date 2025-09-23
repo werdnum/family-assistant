@@ -184,6 +184,24 @@ class StarlarkEngine:
             # Add wake_llm function
             module.add_callable("wake_llm", self._create_wake_llm_function())
 
+            # Add attachment API if we have execution context with attachment service
+            if execution_context and execution_context.attachment_service:
+                from .apis.attachments import create_attachment_api
+
+                try:
+                    attachment_api = create_attachment_api(
+                        execution_context, main_loop=self._main_loop
+                    )
+
+                    # Add attachment functions
+                    module.add_callable("attachment_get", attachment_api.get)
+                    module.add_callable("attachment_list", attachment_api.list)
+                    module.add_callable("attachment_send", attachment_api.send)
+
+                    logger.debug("Added attachment API to Starlark module")
+                except Exception as e:
+                    logger.warning(f"Failed to add attachment API: {e}")
+
             # Add tools API if we have both provider and context
             if self.tools_provider and execution_context:
                 tools_api = create_tools_api(
