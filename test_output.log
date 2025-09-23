@@ -1,0 +1,14 @@
+2025-09-23 11:15:44,344 - family_assistant.storage.base - INFO - Defined api_tokens table schema.
+2025-09-23 11:15:44,344 - family_assistant.storage.base - INFO - Defined attachment_metadata table schema.
+2025-09-23 11:15:44,470 - family_assistant.storage - INFO - Vector storage module imported successfully.
+2025-09-23 11:15:48,216 - family_assistant.llm - INFO - LiteLLM verbose logging is disabled (LITELLM_DEBUG not set or false).
+2025-09-23 11:15:48,959 - family_assistant.embeddings - WARNING - sentence-transformers library not found. SentenceTransformerEmbeddingGenerator will not be fully available.
+bringing up nodes...
+bringing up nodes...
+
+RRRF
+=========================== short test summary info ============================
+FAILED tests/functional/test_smoke_callback.py::test_schedule_reminder_with_follow_up[sqlite]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!!!!!!!!! xdist.dsession.Interrupted: stopping after 1 failures !!!!!!!!!!!!!
+1 failed, 3 rerun in 20.03s

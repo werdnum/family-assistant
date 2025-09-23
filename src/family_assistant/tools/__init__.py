@@ -10,6 +10,10 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from family_assistant import storage
+from family_assistant.tools.attachments import (
+    ATTACHMENT_TOOLS_DEFINITION,
+    attach_to_response_tool,
+)
 from family_assistant.tools.calendar import (
     CALENDAR_TOOLS_DEFINITION,
     add_calendar_event_tool,
@@ -160,6 +164,8 @@ __all__ = [
     "execute_script_tool",
     "SCRIPT_TOOLS_DEFINITION",
     "get_camera_snapshot_tool",
+    "ATTACHMENT_TOOLS_DEFINITION",
+    "attach_to_response_tool",
 ]
 
 
@@ -224,6 +230,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "render_home_assistant_template": render_home_assistant_template_tool,
     "get_camera_snapshot": get_camera_snapshot_tool,
     "execute_script": execute_script_tool,
+    "attach_to_response": attach_to_response_tool,
 }
 
 
@@ -239,4 +246,5 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
     + CALENDAR_TOOLS_DEFINITION
     + COMMUNICATION_TOOLS_DEFINITION
     + SCRIPT_TOOLS_DEFINITION
+    + ATTACHMENT_TOOLS_DEFINITION
 )

@@ -735,12 +735,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
                     # Use the wrapper function as the callback
                     # Call the refactored handle_chat_interaction method
-                    (
-                        final_llm_content_to_send,
-                        last_assistant_internal_id,  # Renamed from final_assistant_message_internal_id for brevity here
-                        _final_reasoning_info,  # Not directly used in this handler for now
-                        processing_error_traceback,
-                    ) = await selected_processing_service.handle_chat_interaction(
+                    result = await selected_processing_service.handle_chat_interaction(
                         db_context=db_context,
                         interface_type=interface_type,
                         conversation_id=conversation_id,
@@ -752,6 +747,16 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         request_confirmation_callback=confirmation_callback_wrapper,
                         trigger_attachments=trigger_attachments,
                     )
+
+                    final_llm_content_to_send = result.text_reply
+                    last_assistant_internal_id = result.assistant_message_internal_id  # Renamed from final_assistant_message_internal_id for brevity here
+                    _final_reasoning_info = (
+                        result.reasoning_info
+                    )  # Not directly used in this handler for now
+                    processing_error_traceback = result.error_traceback
+                    _response_attachment_ids = (
+                        result.attachment_ids
+                    )  # Not yet implemented in telegram handler
                     # Message saving is now handled within handle_chat_interaction.
                     # We only need to send the final reply and update its interface_id.
 
@@ -1172,12 +1177,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     )
 
                 async with self._typing_notifications(context, chat_id):
-                    (
-                        final_llm_content_to_send,
-                        last_assistant_internal_id,
-                        _final_reasoning_info,  # Not directly used here
-                        processing_error_traceback,
-                    ) = await targeted_processing_service.handle_chat_interaction(
+                    result = await targeted_processing_service.handle_chat_interaction(
                         db_context=db_ctx,
                         interface_type="telegram",
                         conversation_id=str(chat_id),
@@ -1191,6 +1191,16 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         request_confirmation_callback=confirmation_callback_wrapper,
                         trigger_attachments=None,  # TODO: Update slash command photo handling to use AttachmentService
                     )
+
+                    final_llm_content_to_send = result.text_reply
+                    last_assistant_internal_id = result.assistant_message_internal_id
+                    _final_reasoning_info = (
+                        result.reasoning_info
+                    )  # Not directly used here
+                    processing_error_traceback = result.error_traceback
+                    _response_attachment_ids = (
+                        result.attachment_ids
+                    )  # Not yet implemented in telegram handler
 
                 # --- Sending and Updating Logic ---
                 force_reply_markup = ForceReply(selective=False)
@@ -1916,6 +1926,7 @@ class TelegramChatInterface(ChatInterface):
         text: str,
         parse_mode: str | None = None,
         reply_to_interface_id: str | None = None,
+        attachment_ids: list[str] | None = None,
     ) -> str | None:
         """
         Sends a message to the specified Telegram chat.
@@ -1925,6 +1936,7 @@ class TelegramChatInterface(ChatInterface):
             text: The message text to send.
             parse_mode: Optional string indicating the formatting mode ("MarkdownV2", "HTML").
             reply_to_interface_id: Optional Telegram message_id (as a string) to reply to.
+            attachment_ids: Optional list of attachment IDs to send with the message.
 
         Returns:
             The Telegram message_id of the sent message as a string, or None if sending failed.
@@ -1967,6 +1979,13 @@ class TelegramChatInterface(ChatInterface):
             # Always use ForceReply to ensure user replies to the most recent message
             force_reply_markup = ForceReply(selective=False)
 
+            # Send attachments first if any are provided
+            if attachment_ids:
+                await self._send_attachments(
+                    chat_id_int, attachment_ids, reply_to_msg_id_int
+                )
+
+            # Send the text message
             sent_msg = await self.application.bot.send_message(
                 chat_id=chat_id_int,
                 text=text_to_send,
@@ -1974,6 +1993,8 @@ class TelegramChatInterface(ChatInterface):
                 reply_to_message_id=reply_to_msg_id_int,
                 reply_markup=force_reply_markup,
             )
+
+            # Return the text message ID (attachments are sent separately)
             return str(sent_msg.message_id)
         except ValueError:
             logger.error(
@@ -1986,3 +2007,41 @@ class TelegramChatInterface(ChatInterface):
                 exc_info=True,
             )
             return None
+
+    async def _send_attachments(
+        self,
+        chat_id: int,
+        attachment_ids: list[str],
+        reply_to_msg_id: int | None = None,
+    ) -> list[str]:
+        """
+        Send attachments to a Telegram chat.
+
+        Args:
+            chat_id: The Telegram chat ID.
+            attachment_ids: List of attachment IDs to send.
+            reply_to_msg_id: Optional message ID to reply to.
+
+        Returns:
+            List of message IDs for sent attachments.
+        """
+
+        message_ids = []
+
+        # Get attachment service from the application's context
+        # Note: This assumes the attachment service is available from the bot context
+        # In a real implementation, this would need to be properly dependency-injected
+        try:
+            # We need access to the attachment service here
+            # For now, we'll skip sending attachments and log a warning
+            # This will need to be properly implemented with DI
+            logger.warning(
+                f"TelegramChatInterface: Cannot send {len(attachment_ids)} attachments - "
+                "AttachmentService not available. This feature needs proper dependency injection."
+            )
+            return message_ids
+
+        except Exception as e:
+            logger.error(f"Error in _send_attachments: {e}", exc_info=True)
+
+        return message_ids

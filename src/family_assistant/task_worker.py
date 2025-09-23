@@ -27,6 +27,7 @@ from family_assistant.scripting import (
     StarlarkEngine,
 )
 from family_assistant.scripting.engine import StarlarkConfig
+from family_assistant.services.attachment_registry import AttachmentRegistry
 
 if TYPE_CHECKING:
     from family_assistant.events.indexing_source import IndexingSource
@@ -78,12 +79,18 @@ async def _schedule_reminder_follow_up(
     clock = exec_context.clock or SystemClock()
     next_reminder_time = clock.now() + delta
 
+    # Use current time as scheduling timestamp for this follow-up task
+    # When this follow-up runs, it will check for intervening messages since THIS timestamp,
+    # not since the original reminder. This ensures each follow-up only cancels if user
+    # responded after the previous follow-up was scheduled.
+    current_scheduling_timestamp = clock.now().isoformat()
+
     task_id = f"llm_callback_{uuid.uuid4()}"
     payload = {
         "interface_type": exec_context.interface_type,
         "conversation_id": exec_context.conversation_id,
         "callback_context": original_context,
-        "scheduling_timestamp": clock.now().isoformat(),
+        "scheduling_timestamp": current_scheduling_timestamp,
         "reminder_config": {
             "is_reminder": True,
             "follow_up": True,
@@ -221,10 +228,11 @@ async def handle_llm_callback(
         )
         raise ValueError("Invalid scheduling_timestamp format") from e
 
-    # For reminders with follow-up, check if user responded
+    # For reminders with follow-up enabled, check if user responded since original scheduling
     intervening_messages = []
     if is_reminder and follow_up_enabled:
-        # Check for intervening user messages
+        # Check for intervening user messages since the original scheduling
+        # If found, we'll cancel this reminder (initial or follow-up)
         stmt = (
             select(message_history_table.c.internal_id)
             .where(message_history_table.c.interface_type == interface_type)
@@ -236,11 +244,12 @@ async def handle_llm_callback(
         intervening_messages = await db_context.fetch_all(stmt)
 
         if intervening_messages:
-            # Reminder with follow-up - user responded, so no follow-up needed
+            # Follow-up reminder - user responded since scheduling, cancel this follow-up
             logger.info(
-                f"User has responded since reminder was scheduled at {scheduling_timestamp_str} for conversation {interface_type}:{conversation_id}. Skipping follow-up."
+                f"User has responded since reminder was scheduled at {scheduling_timestamp_str} for conversation {interface_type}:{conversation_id}. Cancelling follow-up reminder (attempt {current_attempt})."
             )
-            # Note: We still proceed with the current reminder, just don't schedule follow-up
+            # User responded, so cancel this follow-up entirely
+            return
     else:
         logger.info(
             f"Callback for conversation {interface_type}:{conversation_id} (scheduled at {scheduling_timestamp_str}) proceeding without checking for user response."
@@ -286,12 +295,7 @@ async def handle_llm_callback(
 
         # Call the ProcessingService.
         # NOTE: `handle_chat_interaction` now handles saving of all messages in the turn.
-        (
-            final_llm_content_to_send,
-            final_assistant_message_internal_id,
-            _final_reasoning_info,  # Not used directly by this handler
-            processing_error_traceback,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=chat_interface,
             interface_type=interface_type,
@@ -305,23 +309,52 @@ async def handle_llm_callback(
             trigger_attachments=trigger_attachments,  # Pass attachments from script wake_llm
         )
 
-        if final_llm_content_to_send:
+        final_llm_content_to_send = result.text_reply
+        final_assistant_message_internal_id = result.assistant_message_internal_id
+        _final_reasoning_info = (
+            result.reasoning_info
+        )  # Not used directly by this handler
+        processing_error_traceback = result.error_traceback
+        response_attachment_ids = result.attachment_ids
+
+        logger.debug(
+            f"LLM callback result: text_reply='{final_llm_content_to_send}', "
+            f"error='{processing_error_traceback}'"
+        )
+
+        sent_message_id_str = None
+        # Send message if there's text content OR attachments
+        if final_llm_content_to_send or response_attachment_ids:
             sent_message_id_str = await chat_interface.send_message(
                 conversation_id=conversation_id,
-                text=final_llm_content_to_send,
+                text=final_llm_content_to_send
+                or "",  # Use empty string if no text but have attachments
                 parse_mode="MarkdownV2",
+                attachment_ids=response_attachment_ids,
             )
             logger.info(
                 f"Sent LLM response for callback to {interface_type}:{conversation_id}."
             )
+        else:
+            # Case: No final_llm_content_to_send and no attachments.
+            logger.warning(
+                f"LLM turn completed for callback in {interface_type}:{conversation_id}, but final message had no content or attachments."
+            )
 
-            # Schedule follow-up reminder if needed
-            if (
-                is_reminder
-                and follow_up_enabled
-                and current_attempt < max_follow_ups + 1
-                and not intervening_messages
-            ):
+        # Schedule follow-up reminder if needed (moved outside of text reply condition)
+        logger.info(
+            f"Follow-up scheduling check: is_reminder={is_reminder}, "
+            f"follow_up_enabled={follow_up_enabled}, "
+            f"current_attempt={current_attempt}, max_follow_ups={max_follow_ups}, "
+            f"intervening_messages={len(intervening_messages) if intervening_messages else 0}, "
+            f"has_text_reply={bool(final_llm_content_to_send)}"
+        )
+        if is_reminder and follow_up_enabled and current_attempt < max_follow_ups + 1:
+            logger.info(
+                f"Scheduling follow-up reminder for {interface_type}:{conversation_id} "
+                f"(attempt {current_attempt + 1} of {max_follow_ups + 1})"
+            )
+            try:
                 await _schedule_reminder_follow_up(
                     exec_context=exec_context,
                     original_context=callback_context,
@@ -329,54 +362,58 @@ async def handle_llm_callback(
                     current_attempt=current_attempt,
                     max_follow_ups=max_follow_ups,
                 )
-
-            if sent_message_id_str and final_assistant_message_internal_id is not None:
-                try:
-                    await db_context.message_history.update_interface_id(
-                        internal_id=final_assistant_message_internal_id,
-                        interface_message_id=sent_message_id_str,
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"Failed to update interface_message_id for callback response: {e}",
-                        exc_info=True,
-                    )
-            elif sent_message_id_str:  # Message sent but no internal_id to update
-                logger.warning(
-                    f"Sent LLM callback response to {interface_type}:{conversation_id}, but could not find internal_id ({final_assistant_message_internal_id}) to update its interface_message_id."
-                )
-            else:  # Message sending failed
+                logger.info("Successfully scheduled follow-up reminder")
+            except Exception as e:
                 logger.error(
-                    f"Failed to send LLM callback response to {interface_type}:{conversation_id}"
-                )
-                # Raise an exception to mark the task as failed
-                raise RuntimeError(
-                    f"Failed to send LLM callback response to {interface_type}:{conversation_id} via chat interface."
+                    f"Failed to schedule follow-up reminder: {e}", exc_info=True
                 )
         else:
-            # Case: No final_llm_content_to_send.
-            interface_type = exec_context.interface_type
-            conversation_id = exec_context.conversation_id
+            logger.debug(
+                f"Not scheduling follow-up reminder for {interface_type}:{conversation_id}: "
+                f"conditions not met"
+            )
 
+        # Update interface message ID if we sent a message successfully
+        if sent_message_id_str and final_assistant_message_internal_id is not None:
+            try:
+                await db_context.message_history.update_interface_id(
+                    internal_id=final_assistant_message_internal_id,
+                    interface_message_id=sent_message_id_str,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to update interface_message_id for callback response: {e}",
+                    exc_info=True,
+                )
+        elif sent_message_id_str:  # Message sent but no internal_id to update
             logger.warning(
-                f"LLM turn completed for callback in {interface_type}:{conversation_id}, but final message had no content."
+                f"Sent LLM callback response to {interface_type}:{conversation_id}, but could not find internal_id ({final_assistant_message_internal_id}) to update its interface_message_id."
             )
-            # Optionally send a generic failure message to the chat
-            await chat_interface.send_message(
-                conversation_id=conversation_id,
-                text="Sorry, I couldn't process the scheduled callback.",
+        elif (
+            final_llm_content_to_send or response_attachment_ids
+        ):  # We expected to send a message but failed
+            logger.error(
+                f"Failed to send LLM callback response to {interface_type}:{conversation_id}"
+            )
+            # Raise an exception to mark the task as failed
+            raise RuntimeError(
+                f"Failed to send LLM callback response to {interface_type}:{conversation_id} via chat interface."
             )
 
-            # Raise an error to mark the task as failed if no response was generated
-            # Check if there was a processing_error_traceback first
-            if processing_error_traceback:
-                raise RuntimeError(
-                    f"LLM callback failed. Traceback: {processing_error_traceback}"
-                )
-            else:  # No specific error from processing, but also no content
-                raise RuntimeError(
-                    "LLM failed to generate response content for callback."
-                )
+        # Check if we should fail the task due to processing errors
+        if processing_error_traceback:
+            logger.error(
+                f"LLM callback had processing errors for {interface_type}:{conversation_id}"
+            )
+            raise RuntimeError(
+                f"LLM callback failed. Traceback: {processing_error_traceback}"
+            )
+        elif not final_llm_content_to_send and not is_reminder:
+            # For non-reminder callbacks, we expect content to be generated
+            logger.error(
+                f"No content generated for non-reminder callback in {interface_type}:{conversation_id}"
+            )
+            raise RuntimeError("LLM failed to generate response content for callback.")
 
     except Exception as e:
         # Catch errors during the generate_llm_response_for_chat call or sending/saving messages
@@ -923,7 +960,6 @@ async def _process_script_wake_llm(
         event_data: The original event data that triggered the script
         listener_id: ID of the event listener that ran the script
     """
-    from family_assistant.services.attachment_registry import AttachmentRegistry
 
     listener_id = listener_id or "scheduled"
 
@@ -970,11 +1006,11 @@ async def _process_script_wake_llm(
                             attachment_type = "video"
                         elif mime_type.startswith("text/"):
                             attachment_type = "text"
-                        elif mime_type in [
+                        elif mime_type in {
                             "application/pdf",
                             "application/msword",
                             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        ]:
+                        }:
                             attachment_type = "document"
 
                         # Add to trigger_attachments list in expected format

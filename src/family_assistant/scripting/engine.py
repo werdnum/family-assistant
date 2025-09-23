@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import re
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -16,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import starlark
 
 from .apis import time as time_api
+from .apis.attachments import create_attachment_api
 from .apis.tools import create_tools_api
 from .errors import ScriptExecutionError, ScriptSyntaxError, ScriptTimeoutError
 
@@ -186,8 +188,6 @@ class StarlarkEngine:
 
             # Add attachment API if we have execution context with attachment service
             if execution_context and execution_context.attachment_service:
-                from .apis.attachments import create_attachment_api
-
                 try:
                     attachment_api = create_attachment_api(
                         execution_context, main_loop=self._main_loop
@@ -396,8 +396,6 @@ class StarlarkEngine:
                     if not isinstance(attachment_id, str):
                         raise TypeError("attachment IDs must be strings")
                     # Basic UUID format validation
-                    import uuid
-
                     try:
                         uuid.UUID(attachment_id)
                     except ValueError as e:
