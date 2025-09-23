@@ -30,8 +30,8 @@ ATTACHMENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
                 "properties": {
                     "attachment_ids": {
                         "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of attachment UUIDs to include with this response",
+                        "items": {"type": "attachment"},
+                        "description": "List of attachment IDs to include with this response",
                     }
                 },
                 "required": ["attachment_ids"],

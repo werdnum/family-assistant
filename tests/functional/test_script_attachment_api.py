@@ -12,6 +12,7 @@ from family_assistant.scripting.apis.attachments import (
     create_attachment_api,
 )
 from family_assistant.scripting.engine import StarlarkConfig, StarlarkEngine
+from family_assistant.scripting.errors import ScriptExecutionError
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.services.attachments import AttachmentService
 from family_assistant.storage.context import DatabaseContext
@@ -341,20 +342,21 @@ print("Hello world")
             engine = StarlarkEngine(config=config)
 
             # Test script that uses attachment functions
-            script = """
-# List all attachments
-all_attachments = attachment_list()
-print("Found", len(all_attachments), "attachments")
+            # Note: attachment_list is not available for security, so we test with known attachment ID
+            script = f"""
+# Test attachment_get with known ID from test setup
+attachment_id = "{sample_attachment}"
+metadata = attachment_get(attachment_id)
 
-# Should have at least our test attachment
-result = len(all_attachments) >= 1
-
-if len(all_attachments) > 0:
-    # Get specific attachment
-    attachment_id = all_attachments[0]["attachment_id"]
-    metadata = attachment_get(attachment_id)
-    if metadata:
-        print("First attachment:", metadata.get("description", "No description"))
+if metadata:
+    print("Found attachment:", metadata.get("description", "No description"))
+    # Test sending the attachment
+    send_result = attachment_send(attachment_id, "Test message")
+    print("Send result:", send_result)
+    result = True
+else:
+    print("No attachment found")
+    result = False
 
 result
 """
@@ -364,7 +366,7 @@ result
                 execution_context=execution_context,
             )
 
-            # Should return True since we have at least one attachment
+            # Should return True since we found attachment
             assert result is True
 
     async def test_script_attachment_error_handling(
@@ -400,3 +402,37 @@ result == None
 
             # Should return True (result is None)
             assert result is True
+
+    async def test_attachment_list_not_available(
+        self,
+        db_engine: AsyncEngine,
+        attachment_service: AttachmentService,
+    ) -> None:
+        """Test that attachment_list function is not available in scripts for security."""
+        async with DatabaseContext(engine=db_engine) as db_context:
+            execution_context = ToolExecutionContext(
+                interface_type="test",
+                conversation_id="test_conversation",
+                user_name="test_user",
+                turn_id="test_turn",
+                db_context=db_context,
+                attachment_service=attachment_service,
+            )
+
+            config = StarlarkConfig(enable_print=True)
+            engine = StarlarkEngine(config=config)
+
+            # Script that tries to call attachment_list (should fail)
+            script = """
+# This should raise a NameError since attachment_list is not available
+attachment_list()
+"""
+
+            # Expect ScriptExecutionError due to NameError
+            with pytest.raises(
+                ScriptExecutionError, match="Variable.*attachment_list.*not found"
+            ):
+                await engine.evaluate_async(
+                    script=script,
+                    execution_context=execution_context,
+                )
