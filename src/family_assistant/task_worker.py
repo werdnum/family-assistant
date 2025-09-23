@@ -531,6 +531,11 @@ class TaskWorker:
                 db_context=db_context,
                 chat_interface=self.chat_interface,
                 timezone_str=self.timezone_str,
+                processing_profile_id=(
+                    self.processing_service.service_config.id
+                    if self.processing_service
+                    else None
+                ),
                 update_activity_callback=self._update_last_activity,  # Pass activity callback
                 processing_service=self.processing_service,
                 embedding_generator=self.embedding_generator,
