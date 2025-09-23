@@ -616,6 +616,7 @@ class ProcessingService:
             db_context=db_context,
             chat_interface=chat_interface,
             timezone_str=self.timezone_str,
+            processing_profile_id=self.service_config.id,
             request_confirmation_callback=request_confirmation_callback,
             processing_service=self,
             clock=self.clock,

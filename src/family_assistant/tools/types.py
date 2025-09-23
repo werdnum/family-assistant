@@ -56,6 +56,9 @@ class ToolExecutionContext:
     chat_interface: Optional["ChatInterface"] = None  # Replaced application
     # Add other context elements as needed, e.g., timezone_str
     timezone_str: str = "UTC"  # Default, should be overridden
+    processing_profile_id: str | None = (
+        None  # Processing profile associated with the request
+    )
     request_confirmation_callback: (
         Callable[
             [
