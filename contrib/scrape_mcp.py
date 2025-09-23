@@ -254,7 +254,7 @@ if __name__ == "__main__":
                 await check_playwright_async_wrapper()
                 result: ScrapeResult = await scraper_instance.scrape(args.url)
 
-                if result.type == "markdown" or result.type == "text":
+                if result.type in {"markdown", "text"}:
                     if result.content is None:
                         logger.error(
                             f"Error: Scraper returned type {result.type} but content is None."

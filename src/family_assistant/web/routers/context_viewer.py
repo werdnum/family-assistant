@@ -1,6 +1,7 @@
 import logging
 import re
 from datetime import datetime, timezone
+from string import Formatter
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -171,8 +172,6 @@ async def _get_context_data(
         # Format the system prompt safely
         try:
             # Use a safer approach that only formats valid variable placeholders
-            from string import Formatter
-
             formatter = Formatter()
 
             # Parse the template to find all field names

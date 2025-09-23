@@ -60,7 +60,7 @@ class TestToolAttachment:
         attachment = ToolAttachment(mime_type="text/plain", content=b"")
 
         result = attachment.get_content_as_base64()
-        assert result == ""  # Base64 of empty bytes is empty string
+        assert not result  # Base64 of empty bytes is empty string
 
 
 class TestToolResult:

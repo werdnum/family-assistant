@@ -1,11 +1,14 @@
 """Repository for events storage operations."""
 
 import json
-from datetime import datetime, timedelta
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import String, insert, select, update
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import String, cast, delete, insert, select, update
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.events import (
     EventActionType,
@@ -35,8 +38,6 @@ class EventsRepository(BaseRepository):
             Tuple of (is_allowed, error_message)
         """
         try:
-            from datetime import timezone
-
             now = datetime.now(timezone.utc)
 
             # Get current listener state
@@ -132,10 +133,6 @@ class EventsRepository(BaseRepository):
         Returns:
             ID of the created listener
         """
-        from datetime import timezone
-
-        from sqlalchemy.exc import IntegrityError
-
         try:
             stmt = (
                 insert(event_listeners_table)
@@ -312,7 +309,6 @@ class EventsRepository(BaseRepository):
         Returns:
             True if deleted, False if not found
         """
-        from sqlalchemy import delete
 
         # First get the listener name for logging
         listener = await self.get_event_listener_by_id(listener_id, conversation_id)
@@ -372,7 +368,6 @@ class EventsRepository(BaseRepository):
         Returns:
             True if updated successfully, False if not found or unauthorized
         """
-        from sqlalchemy import update
 
         # First verify the listener exists and belongs to the conversation
         existing = await self.get_event_listener_by_id(listener_id, conversation_id)
@@ -503,9 +498,6 @@ class EventsRepository(BaseRepository):
             triggered_listener_ids: IDs of listeners that were triggered
             timestamp: Event timestamp (defaults to now)
         """
-        import time
-        from datetime import timezone
-
         try:
             if timestamp is None:
                 timestamp = datetime.now(timezone.utc)
@@ -545,8 +537,6 @@ class EventsRepository(BaseRepository):
         Returns:
             List of event dictionaries
         """
-        from datetime import timezone
-
         try:
             cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
 
@@ -589,10 +579,6 @@ class EventsRepository(BaseRepository):
         Returns:
             Number of deleted events
         """
-        from datetime import timezone
-
-        from sqlalchemy import delete
-
         try:
             cutoff_time = datetime.now(timezone.utc) - timedelta(hours=retention_hours)
 
@@ -664,10 +650,6 @@ class EventsRepository(BaseRepository):
         only_triggered: bool = False,
     ) -> tuple[list[dict], int]:
         """Get events with listener information."""
-        from datetime import timezone
-
-        from sqlalchemy.sql import functions as func
-
         try:
             cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
 
@@ -728,9 +710,6 @@ class EventsRepository(BaseRepository):
         listener_id: int,
     ) -> dict:
         """Get execution statistics for a listener."""
-        from sqlalchemy import cast
-        from sqlalchemy.dialects.postgresql import JSONB
-        from sqlalchemy.sql import functions as func
 
         try:
             # Get the listener first
@@ -829,8 +808,6 @@ class EventsRepository(BaseRepository):
         offset: int = 0,
     ) -> tuple[list[dict], int]:
         """Get all event listeners (admin view) with pagination."""
-        from sqlalchemy.sql import functions as func
-
         try:
             # Build base query
             stmt = select(event_listeners_table)

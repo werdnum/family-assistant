@@ -290,7 +290,7 @@ async def test_react_form_validation(web_test_fixture: WebTestFixture) -> None:
         validation_message = await title_input.evaluate(
             "element => element.validationMessage"
         )
-        assert validation_message != "", (
+        assert validation_message, (
             "Title field should have validation message when empty"
         )
 
@@ -304,7 +304,7 @@ async def test_react_form_validation(web_test_fixture: WebTestFixture) -> None:
         content_validation = await content_textarea.evaluate(
             "element => element.validationMessage"
         )
-        assert content_validation != "", (
+        assert content_validation, (
             "Content field should have validation message when empty"
         )
 

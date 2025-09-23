@@ -9,6 +9,7 @@ import pytest_asyncio
 
 from family_assistant.llm import LLMInterface, LLMOutput
 from family_assistant.llm.base import (
+    InvalidRequestError,
     ProviderTimeoutError,
     RateLimitError,
     ServiceUnavailableError,
@@ -189,7 +190,6 @@ async def test_non_retriable_error_goes_to_fallback(
     retry_client_factory: Any,  # noqa: ANN401 # Factory returns different client types
 ) -> None:
     """Test that non-retriable errors skip retry and go to fallback."""
-    from family_assistant.llm.base import InvalidRequestError
 
     # Create mocks
     mock_primary = AsyncMock()

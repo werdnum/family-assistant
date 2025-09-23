@@ -21,6 +21,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 # Removed storage import - using repository pattern
 from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.interfaces import ChatInterface  # Import ChatInterface
+from family_assistant.scripting import (
+    ScriptError,
+    ScriptTimeoutError,
+    StarlarkEngine,
+)
+from family_assistant.scripting.engine import StarlarkConfig
 
 if TYPE_CHECKING:
     from family_assistant.events.indexing_source import IndexingSource
@@ -29,6 +35,7 @@ if TYPE_CHECKING:
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.message_history import message_history_table
+from family_assistant.storage.tasks import get_task_event
 from family_assistant.tools import ToolExecutionContext
 from family_assistant.utils.clock import Clock, SystemClock
 
@@ -749,8 +756,6 @@ class TaskWorker:
         """
         # Use provided event or get the global task event
         if wake_up_event is None:
-            from family_assistant.storage.tasks import get_task_event
-
             wake_up_event = get_task_event()
 
         logger.info(f"Task worker {self.worker_id} run loop started.")
@@ -941,8 +946,6 @@ async def _process_script_wake_llm(
     callback_task_id = f"script_wake_llm_{listener_id}_{uuid.uuid4().hex[:8]}"
 
     # Get current timestamp for scheduling
-    from datetime import datetime, timezone
-
     scheduling_timestamp = datetime.now(timezone.utc).isoformat()
 
     # Enqueue LLM callback task
@@ -987,12 +990,6 @@ async def handle_script_execution(
         ScriptTimeoutError: If script execution exceeds the timeout
         ScriptError: If script has syntax errors or runtime errors
     """
-    from family_assistant.scripting import (
-        ScriptError,
-        ScriptTimeoutError,
-        StarlarkEngine,
-    )
-    from family_assistant.scripting.engine import StarlarkConfig
 
     # Extract required fields from payload
     script_code = payload.get("script_code")

@@ -11,6 +11,8 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
+from family_assistant.telegram_bot import telegramify_markdown
+
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -81,8 +83,6 @@ async def delegate_to_service_tool(
     """
     Delegates a user request to another specialized assistant profile (service).
     """
-    from family_assistant.telegram_bot import telegramify_markdown
-
     logger.info(
         f"Executing delegate_to_service_tool: target='{target_service_id}', request='{user_request[:50]}...', confirm={confirm_delegation}"
     )

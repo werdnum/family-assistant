@@ -37,6 +37,8 @@ from family_assistant.tools import (  # Import tool components
     ToolExecutionContext,  # To get tool definitions (though not strictly needed for execution)
     search_documents_tool,
 )
+from family_assistant.tools.documents import get_full_document_content_tool
+from family_assistant.tools.types import ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -426,9 +428,6 @@ async def test_get_full_document_content_with_raw_content(
     to chunk reconstruction when necessary.
     """
     logger.info("\n--- Running Get Full Document Content Test ---")
-
-    from family_assistant.tools.documents import get_full_document_content_tool
-    from family_assistant.tools.types import ToolResult
 
     # Test content
     test_title = f"Full Content Test Doc {uuid.uuid4()}"

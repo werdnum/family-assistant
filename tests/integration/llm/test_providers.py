@@ -2,6 +2,7 @@
 
 import base64
 import os
+import pathlib
 from collections.abc import Awaitable, Callable
 from io import BytesIO
 
@@ -11,6 +12,7 @@ from PIL import Image
 
 from family_assistant.llm import LLMInterface, LLMOutput
 from family_assistant.llm.factory import LLMClientFactory
+from family_assistant.tools.types import ToolAttachment
 
 from .vcr_helpers import sanitize_response
 
@@ -463,7 +465,6 @@ async def test_tool_message_with_image_attachment(
     client = await llm_client_factory(provider, model, None)
 
     # Import here to avoid circular imports
-    from family_assistant.tools.types import ToolAttachment
 
     # Create a small test image (1x1 red pixel PNG)
     png_data = base64.b64decode(
@@ -536,9 +537,6 @@ async def test_tool_message_with_pdf_attachment(
 
     # Import here to avoid circular imports
     # Read the actual test PDF file about software updates
-    import pathlib
-
-    from family_assistant.tools.types import ToolAttachment
 
     pdf_path = pathlib.Path(__file__).parent.parent.parent / "data" / "test_doc.pdf"
     pdf_data = pdf_path.read_bytes()

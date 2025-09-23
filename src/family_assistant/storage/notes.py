@@ -3,6 +3,7 @@ Handles storage and retrieval of notes.
 """
 
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -20,7 +21,8 @@ from sqlalchemy import (
     select,
     update,
 )
-from sqlalchemy.exc import SQLAlchemyError  # Use broader exception
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError  # Use broader exception
 
 # Use absolute package path
 from family_assistant.storage.base import metadata  # Keep metadata
@@ -187,8 +189,6 @@ async def add_or_update_note(
     if db_context.engine.dialect.name == "postgresql":
         # Use PostgreSQL's ON CONFLICT DO UPDATE for atomic upsert
         try:
-            from sqlalchemy.dialects.postgresql import insert as pg_insert
-
             stmt = pg_insert(notes_table).values(
                 title=title,
                 content=content,
@@ -239,8 +239,6 @@ async def add_or_update_note(
             return "Success"
         except SQLAlchemyError as e:
             # Check specifically for unique constraint violation (IntegrityError in SQLAlchemy)
-            from sqlalchemy.exc import IntegrityError
-
             if isinstance(e, IntegrityError):  # Check only for IntegrityError
                 logger.info(
                     f"Note '{title}' already exists (SQLite fallback), attempting update."
@@ -312,8 +310,6 @@ async def _enqueue_note_indexing_task(db_context: DatabaseContext, title: str) -
         note_row = await db_context.fetch_one(note_stmt)
         if note_row:
             # Use UUID to ensure unique task IDs for re-indexing
-            import uuid
-
             await db_context.tasks.enqueue(
                 task_id=f"index_note_{note_row['id']}_{uuid.uuid4()}",
                 task_type="index_note",

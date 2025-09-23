@@ -46,10 +46,10 @@ logger = logging.getLogger(__name__)
 # --- Vector Storage Imports ---
 try:
     # Use absolute package path
-    from family_assistant.storage.vector import (
+    from family_assistant.storage.vector import (  # noqa: PLC0415
         Base as VectorBase,  # For ORM
     )
-    from family_assistant.storage.vector import (
+    from family_assistant.storage.vector import (  # noqa: PLC0415
         Document,  # Protocol for document structure
     )
 
@@ -232,7 +232,9 @@ async def _initialize_vector_storage(engine: AsyncEngine) -> None:
             async with DatabaseContext(engine=engine) as vector_init_context:
                 # Assuming init_vector_db performs necessary table checks/creations
                 # TODO: migrate init_vector_db to repository pattern
-                from family_assistant.storage.vector import init_vector_db
+                from family_assistant.storage.vector import (  # noqa: PLC0415
+                    init_vector_db,
+                )
 
                 await init_vector_db(db_context=vector_init_context)
             logger.info("Vector DB components initialized successfully.")

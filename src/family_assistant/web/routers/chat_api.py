@@ -497,7 +497,7 @@ async def api_chat_send_message_stream(
                     **{
                         k: v
                         for k, v in attachment.items()
-                        if k not in ["type", "content"]
+                        if k not in {"type", "content"}
                     },
                 })
 
@@ -740,7 +740,6 @@ async def api_chat_send_message_stream(
 @chat_api_router.get("/v1/debug/test_stream")
 async def debug_test_stream() -> StreamingResponse:
     """Simple test endpoint to verify SSE streaming works."""
-    import asyncio
 
     async def simple_event_generator() -> AsyncGenerator[str, None]:
         logger.info("Starting simple stream test")

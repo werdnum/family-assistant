@@ -1,5 +1,7 @@
 """Test complete notes management flows using Playwright and Page Object Model."""
 
+import uuid
+
 import pytest
 from playwright.async_api import expect
 
@@ -119,7 +121,6 @@ async def test_delete_note_flow(web_test_fixture: WebTestFixture) -> None:
 @pytest.mark.asyncio
 async def test_search_notes_flow(web_test_fixture: WebTestFixture) -> None:
     """Test searching for notes through the UI."""
-    import uuid
 
     page = web_test_fixture.page
     notes_page = NotesPage(page, web_test_fixture.base_url)
@@ -246,7 +247,7 @@ async def test_note_form_validation(web_test_fixture: WebTestFixture) -> None:
         )
     else:
         validation_message = ""
-    assert validation_message != ""  # Should have a validation message
+    assert validation_message  # Should have a validation message
 
     # Fill only title and try to submit
     await notes_page.fill_form_field(notes_page.NOTE_TITLE_INPUT, "Title Only")
@@ -260,7 +261,7 @@ async def test_note_form_validation(web_test_fixture: WebTestFixture) -> None:
         )
     else:
         content_validation = ""
-    assert content_validation != ""  # Content is also required
+    assert content_validation  # Content is also required
 
     # Fill both fields and submit
     await notes_page.fill_form_field(notes_page.NOTE_CONTENT_TEXTAREA, "Test content")

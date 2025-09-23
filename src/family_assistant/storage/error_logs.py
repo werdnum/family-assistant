@@ -11,6 +11,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    delete,
     select,
 )
 from sqlalchemy.sql import functions as func
@@ -99,8 +100,6 @@ async def cleanup_old_error_logs(
     db_context: DatabaseContext, retention_days: int = 30
 ) -> int:
     """Remove error logs older than retention period. Returns number of deleted rows."""
-    from sqlalchemy import delete
-
     cutoff_date = datetime.now() - timedelta(days=retention_days)
 
     stmt = delete(error_logs_table).where(error_logs_table.c.timestamp < cutoff_date)

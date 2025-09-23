@@ -17,6 +17,7 @@ from family_assistant.tools.event_listeners import (
     test_event_listener_script_tool as script_test_tool,  # Rename to avoid pytest confusion
 )
 from family_assistant.tools.types import ToolExecutionContext
+from tests.mocks.mock_tools_provider import MockToolsProvider
 
 
 @pytest_asyncio.fixture
@@ -25,7 +26,6 @@ async def mock_exec_context(
 ) -> AsyncGenerator[ToolExecutionContext, None]:
     """Create a mock execution context for tool testing."""
     # Import here to avoid issues during collection
-    from tests.mocks.mock_tools_provider import MockToolsProvider
 
     mock_tools_provider = MockToolsProvider()
 

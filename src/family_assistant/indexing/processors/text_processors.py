@@ -35,9 +35,7 @@ class TextChunker(ContentProcessor):
     ) -> None:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-        if (
-            chunk_overlap >= chunk_size and chunk_size > 0
-        ):  # Ensure overlap is less than chunk size
+        if 0 < chunk_size <= chunk_overlap:  # Ensure overlap is less than chunk size
             logger.warning(
                 f"Chunk overlap ({chunk_overlap}) is >= chunk size ({chunk_size}). Setting overlap to {chunk_size // 2}."
             )
@@ -63,7 +61,7 @@ class TextChunker(ContentProcessor):
 
         # If the current separator is empty, it's the last resort (character-level split)
         # but we don't split by char here, just return the text for the merge step.
-        if current_separator == "":
+        if not current_separator:
             return [text]
 
         try:
@@ -113,7 +111,8 @@ class TextChunker(ContentProcessor):
             if (
                 current_pos >= end_pos
             ):  # If no progress or went backward due to large overlap
-                current_pos = end_pos  # Force move to the end of the current chunk to ensure next one starts after.
+                current_pos = min(end_pos, current_pos)
+                # Force move to the end of the current chunk to ensure next one starts after.
                 # This effectively means less or no overlap if step is too small.
         return [c for c in final_chunks if c.strip()]
 

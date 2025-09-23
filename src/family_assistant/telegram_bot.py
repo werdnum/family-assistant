@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import base64
 import contextlib
@@ -8,13 +10,8 @@ import os  # Added for environment variable access
 import traceback
 import uuid
 from collections import defaultdict
-from collections.abc import AsyncIterator, Callable  # Added cast
 from datetime import datetime, timezone
-from typing import (
-    Any,
-    Protocol,
-    runtime_checkable,
-)
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import telegramify_markdown  # type: ignore[import-untyped]
 from sqlalchemy import update as sqlalchemy_update
@@ -47,12 +44,16 @@ from telegram.ext import (
 # Import necessary types for type hinting
 from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.interfaces import ChatInterface  # Import the new interface
-from family_assistant.processing import ProcessingService
-from family_assistant.services.attachments import AttachmentService
-from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.message_history import (
     message_history_table,  # For error handling db update
 )
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Callable
+
+    from family_assistant.processing import ProcessingService
+    from family_assistant.services.attachments import AttachmentService
+    from family_assistant.storage.context import DatabaseContext
 
 logger = logging.getLogger(__name__)
 
@@ -244,16 +245,16 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
     def __init__(
         self,
-        telegram_service: "TelegramService",  # Accept the service instance
+        telegram_service: TelegramService,  # Accept the service instance
         allowed_user_ids: list[int],
         developer_chat_id: int | None,
-        processing_service: "ProcessingService",  # Use string quote for forward reference
+        processing_service: ProcessingService,  # Use string quote for forward reference
         get_db_context_func: Callable[
-            ..., contextlib.AbstractAsyncContextManager["DatabaseContext"]
+            ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
         ],
         message_batcher: MessageBatcher
         | None,  # Inject the batcher, can be None initially
-        confirmation_manager: "TelegramConfirmationUIManager",  # Inject confirmation manager
+        confirmation_manager: TelegramConfirmationUIManager,  # Inject confirmation manager
     ) -> None:
         """Initializes the TelegramUpdateHandler.
 
@@ -709,7 +710,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     ) -> bool:
                         logger.debug("confirmation_callback_wrapper called!")
                         # Render the confirmation prompt
-                        from family_assistant.tools.confirmation import (
+                        from family_assistant.tools.confirmation import (  # noqa: PLC0415
                             TOOL_CONFIRMATION_RENDERERS,
                         )
 
@@ -1150,7 +1151,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     timeout_cb: float,
                 ) -> bool:
                     # Render the confirmation prompt
-                    from family_assistant.tools.confirmation import (
+                    from family_assistant.tools.confirmation import (  # noqa: PLC0415
                         TOOL_CONFIRMATION_RENDERERS,
                     )
 

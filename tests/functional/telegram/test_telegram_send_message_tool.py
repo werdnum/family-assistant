@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 import telegramify_markdown  # type: ignore[import-untyped]
 from assertpy import assert_that, soft_assertions  # type: ignore[import-untyped]
-from telegram import Chat, Message, Update, User
+from telegram import Chat, ForceReply, Message, Update, User
 from telegram.ext import ContextTypes
 
 from family_assistant.context_providers import KnownUsersContextProvider
@@ -241,7 +241,6 @@ async def test_send_message_to_user_tool(
                 "Parse mode for message to Bob"
             ).is_none()  # Tool sends plain text via ChatInterface
             # The TelegramChatInterface always adds ForceReply markup to ensure replies go to the most recent message
-            from telegram import ForceReply
 
             assert_that(kwargs_to_bob.get("reply_markup")).described_as(
                 "Reply markup for message to Bob"

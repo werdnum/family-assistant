@@ -1,5 +1,6 @@
 """Test conversation history endpoints for the chat API."""
 
+import json
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
@@ -8,9 +9,10 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
+from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.storage.context import get_db_context
 from family_assistant.web.app_creator import app as fastapi_app
-from tests.mocks.mock_llm import RuleBasedMockLLMClient
+from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 
 
 @pytest.mark.asyncio
@@ -35,7 +37,6 @@ async def test_get_conversations_with_data(
 ) -> None:
     """Test getting conversations with existing conversation data."""
     # Configure mock LLM to respond appropriately
-    from tests.mocks.mock_llm import LLMOutput
 
     # Set up dynamic rules based on conversation content
     def matches_conv(i: int) -> Callable[[dict], bool]:
@@ -97,7 +98,6 @@ async def test_get_conversations_pagination(
 ) -> None:
     """Test pagination of conversations list."""
     # Configure mock LLM
-    from tests.mocks.mock_llm import LLMOutput
 
     # Simple response for all messages
     mock_llm_client.rules = [
@@ -166,10 +166,6 @@ async def test_get_conversation_messages_with_data(
     web_only_assistant: Assistant, mock_llm_client: RuleBasedMockLLMClient
 ) -> None:
     """Test getting messages for an existing conversation."""
-    import json
-
-    from family_assistant.llm import ToolCallFunction, ToolCallItem
-    from tests.mocks.mock_llm import LLMOutput
 
     conv_id = "test_conv_messages"
 
@@ -448,7 +444,6 @@ async def test_get_conversations_date_filters(
     web_only_assistant: Assistant, db_engine: AsyncEngine
 ) -> None:
     """Test filtering conversations by date range."""
-    from datetime import timedelta
 
     # Create test conversations with different timestamps
     base_time = datetime.now(timezone.utc)
@@ -551,7 +546,6 @@ async def test_get_conversations_combined_filters(
     db_engine: AsyncEngine,
 ) -> None:
     """Test using multiple filters together."""
-    from datetime import timedelta
 
     base_time = datetime.now(timezone.utc)
 

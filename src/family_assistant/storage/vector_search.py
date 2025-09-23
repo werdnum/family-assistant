@@ -57,11 +57,11 @@ class VectorSearchQuery:
 
     def __post_init__(self) -> None:
         """Basic validation."""
-        if self.search_type in ["semantic", "hybrid"] and not self.semantic_query:
+        if self.search_type in {"semantic", "hybrid"} and not self.semantic_query:
             raise ValueError(
                 "semantic_query is required for 'semantic' or 'hybrid' search."
             )
-        if self.search_type in ["semantic", "hybrid"] and not self.embedding_model:
+        if self.search_type in {"semantic", "hybrid"} and not self.embedding_model:
             raise ValueError(
                 "embedding_model is required for 'semantic' or 'hybrid' search."
             )
@@ -117,7 +117,7 @@ async def query_vector_store(
         A list of dictionaries representing the search results.
     """
     # --- Validation specific to embedding presence ---
-    if query.search_type in ["semantic", "hybrid"] and not query_embedding:
+    if query.search_type in {"semantic", "hybrid"} and not query_embedding:
         raise ValueError(
             "query_embedding is required for semantic/hybrid search execution."
         )
@@ -126,7 +126,7 @@ async def query_vector_store(
     is_sqlite = db_context.engine.dialect.name == "sqlite"
 
     # Vector search and full-text search require PostgreSQL-specific features
-    if is_sqlite and query.search_type in ["semantic", "keyword", "hybrid"]:
+    if is_sqlite and query.search_type in {"semantic", "keyword", "hybrid"}:
         # For SQLite, we can only support basic title filtering
         # Return empty results for semantic/keyword/hybrid search
         logger.warning(
@@ -178,7 +178,7 @@ async def query_vector_store(
         # Ensure the key is validated/sanitized before embedding in the query string.
         # For now, assuming the key is safe or comes from a controlled source.
         # Basic sanity check: Allow alphanumeric, underscore, hyphen, period
-        if not all(c.isalnum() or c in ["_", "-", "."] for c in meta_key):
+        if not all(c.isalnum() or c in {"_", "-", "."} for c in meta_key):
             logger.warning(f"Potentially unsafe metadata key used: {meta_key}")
             # Depending on security requirements, you might raise ValueError here
 
@@ -231,7 +231,7 @@ async def query_vector_store(
     final_order_by = ""
 
     # Vector Search CTE
-    if query.search_type in ["semantic", "hybrid"]:
+    if query.search_type in {"semantic", "hybrid"}:
         if (
             not query.embedding_model
         ):  # Should be caught by dataclass validation, but double-check
@@ -263,7 +263,7 @@ async def query_vector_store(
             final_order_by = "ORDER BY vr.distance ASC"
 
     # FTS Search CTE
-    if query.search_type in ["keyword", "hybrid"]:
+    if query.search_type in {"keyword", "hybrid"}:
         if not query.keywords:  # Should be caught by dataclass validation
             raise ValueError("keywords are missing for keyword search")
         params["query_keywords"] = query.keywords

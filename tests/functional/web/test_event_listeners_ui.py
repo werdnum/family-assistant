@@ -126,9 +126,9 @@ async def test_event_listeners_filters_interaction(
     action_value = await action_select.input_value()
     conv_value = await conv_input.input_value()
 
-    assert source_value == ""
-    assert action_value == ""
-    assert conv_value == ""
+    assert not source_value
+    assert not action_value
+    assert not conv_value
 
 
 @pytest.mark.playwright

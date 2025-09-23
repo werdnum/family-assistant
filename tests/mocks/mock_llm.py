@@ -4,6 +4,7 @@ Mock LLM implementations for testing purposes.
 
 import asyncio
 import logging
+import os
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -194,7 +195,6 @@ class RuleBasedMockLLMClient(LLMInterface):
         Mock implementation for formatting a user message with file.
         This mock provides a direct, non-rule-based implementation.
         """
-        import os  # For os.path.basename
 
         actual_kwargs: MatcherArgs = {
             "prompt_text": prompt_text,

@@ -6,6 +6,7 @@ This script uses ast-grep scan to automatically update test functions to use the
 parameterized db_engine fixture instead of relying on the autouse test_db_engine.
 """
 
+import argparse
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +22,18 @@ rule:
   pattern: test_db_engine
 fix: db_engine
 """
+
+
+def _count_matches_from_output(output: str) -> int:
+    """Approximate the number of matches reported by ast-grep output."""
+    matches = 0
+    if output:
+        for line in output.split("\n"):
+            if "test_" in line and (
+                "add-db-engine" in line or "replace-test-db-engine" in line
+            ):
+                matches += 1
+    return matches
 
 
 def run_ast_grep_scan(paths: list[Path], dry_run: bool = False) -> tuple[bool, int]:
@@ -39,23 +52,20 @@ def run_ast_grep_scan(paths: list[Path], dry_run: bool = False) -> tuple[bool, i
     cmd.extend(str(p) for p in paths)
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
-
-        # Count matches from output
-        matches = 0
-        if result.stdout:
-            # Simple heuristic: count lines that look like match reports
-            for line in result.stdout.split("\n"):
-                if "test_" in line and (
-                    "add-db-engine" in line or "replace-test-db-engine" in line
-                ):
-                    matches += 1
-
-        if result.returncode != 0 and result.stderr:
-            print(f"Error: {result.stderr}")
-            return False, matches
-
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        matches = _count_matches_from_output(result.stdout)
         return True, matches
+    except subprocess.CalledProcessError as err:
+        stderr = err.stderr or ""
+        if stderr:
+            print(f"Error: {stderr}")
+        matches = _count_matches_from_output(err.stdout or "")
+        return False, matches
     except Exception as e:
         print(f"Exception running ast-grep: {e}")
         return False, 0
@@ -70,7 +80,7 @@ def count_tests_needing_migration(file_path: Path) -> int:
     """Count how many tests in a file need migration."""
     # This is a simple grep-based count
     try:
-        with open(file_path) as f:
+        with open(file_path, encoding="utf-8") as f:
             content = f.read()
             return content.count("async def test_")
     except Exception:
@@ -90,9 +100,6 @@ def main() -> None:
     print("=== Test Migration Script ===")
     print(f"Repository root: {repo_root}")
     print(f"Tests directory: {tests_dir}")
-
-    # Parse command line arguments
-    import argparse
 
     parser = argparse.ArgumentParser(
         description="Migrate tests to use db_engine fixture"

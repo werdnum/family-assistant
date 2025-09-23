@@ -6,6 +6,7 @@ scripts with access to family assistant tools and state.
 """
 
 import asyncio
+import json
 import logging
 import re
 from collections.abc import Callable
@@ -14,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import starlark
 
+from .apis import time as time_api
 from .apis.tools import create_tools_api
 from .errors import ScriptExecutionError, ScriptSyntaxError, ScriptTimeoutError
 
@@ -107,14 +109,10 @@ class StarlarkEngine:
             # Only add APIs if not disabled
             if not self.config.disable_apis:
                 # Add JSON functions
-                import json
-
                 module.add_callable("json_decode", json.loads)
                 module.add_callable("json_encode", json.dumps)
 
                 # Add time API functions
-                from .apis import time as time_api
-
                 # Time creation functions
                 module.add_callable("time_now", time_api.time_now)
                 module.add_callable("time_now_utc", time_api.time_now_utc)

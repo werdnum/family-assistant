@@ -10,7 +10,11 @@ from sqlalchemy import and_, func, select
 
 from family_assistant.events.indexing_source import IndexingEventType
 from family_assistant.storage.tasks import tasks_table
-from family_assistant.storage.vector import add_embedding, get_document_by_id
+from family_assistant.storage.vector import (
+    DocumentEmbeddingRecord,
+    add_embedding,
+    get_document_by_id,
+)
 
 if TYPE_CHECKING:
     from family_assistant.storage.context import DatabaseContext
@@ -225,10 +229,6 @@ async def handle_embed_and_store_batch(
                 doc_info = await get_document_by_id(db_context, document_id)
 
                 # Count embeddings for metadata
-                from sqlalchemy import func, select
-
-                from family_assistant.storage.vector import DocumentEmbeddingRecord
-
                 embeddings_result = await db_context.fetch_one(
                     select(
                         func.count().label("total_embeddings"),  # pylint: disable=not-callable

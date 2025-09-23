@@ -7,7 +7,7 @@ import pytest
 
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.infrastructure import LocalToolsProvider
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 
 @pytest.mark.asyncio
@@ -131,7 +131,6 @@ async def test_calendar_tool_without_config() -> None:
     )
 
     # Verify the tool returned an error
-    from family_assistant.tools.types import ToolResult
 
     result_text = result.text if isinstance(result, ToolResult) else str(result)
     assert (

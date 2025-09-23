@@ -929,59 +929,58 @@ class ProcessingService:
                     "role": "assistant",
                     "content": error_content,
                 })
-            else:
+            elif role == "user":
                 # Handle user messages with potential attachments
-                if role == "user":
-                    user_message_content = content or ""
-                    attachments = msg.get("attachments")
+                user_message_content = content or ""
+                attachments = msg.get("attachments")
 
-                    if attachments and len(attachments) > 0:
-                        # Format user message with attachments as content parts
-                        content_parts = []
+                if attachments and len(attachments) > 0:
+                    # Format user message with attachments as content parts
+                    content_parts = []
 
-                        # Add text content if present
-                        if user_message_content:
+                    # Add text content if present
+                    if user_message_content:
+                        content_parts.append({
+                            "type": "text",
+                            "text": user_message_content,
+                        })
+
+                    # Add image attachments as image_url content parts
+                    for attachment in attachments:
+                        if attachment.get("type") == "image" and attachment.get(
+                            "content_url"
+                        ):
                             content_parts.append({
-                                "type": "text",
-                                "text": user_message_content,
+                                "type": "image_url",
+                                "image_url": {"url": attachment["content_url"]},
                             })
 
-                        # Add image attachments as image_url content parts
-                        for attachment in attachments:
-                            if attachment.get("type") == "image" and attachment.get(
-                                "content_url"
-                            ):
-                                content_parts.append({
-                                    "type": "image_url",
-                                    "image_url": {"url": attachment["content_url"]},
-                                })
-
-                        # Convert attachment URLs to data URIs if we have content parts with images
-                        if content_parts:
-                            content_parts = (
-                                await self._convert_attachment_urls_to_data_uris(
-                                    content_parts
-                                )
+                    # Convert attachment URLs to data URIs if we have content parts with images
+                    if content_parts:
+                        content_parts = (
+                            await self._convert_attachment_urls_to_data_uris(
+                                content_parts
                             )
+                        )
 
-                        messages.append({
-                            "role": "user",
-                            "content": content_parts
-                            if content_parts
-                            else user_message_content,
-                        })
-                    else:
-                        # User message without attachments
-                        messages.append({
-                            "role": "user",
-                            "content": user_message_content,
-                        })
-                else:
-                    # Append other non-user messages directly
                     messages.append({
-                        "role": role,
-                        "content": content or "",
-                    })  # Ensure content is string
+                        "role": "user",
+                        "content": content_parts
+                        if content_parts
+                        else user_message_content,
+                    })
+                else:
+                    # User message without attachments
+                    messages.append({
+                        "role": "user",
+                        "content": user_message_content,
+                    })
+            else:
+                # Append other non-user messages directly
+                messages.append({
+                    "role": role,
+                    "content": content or "",
+                })  # Ensure content is string
 
         logger.debug(
             f"Formatted {len(history_messages)} DB history messages into {len(messages)} LLM messages."
@@ -1781,7 +1780,9 @@ class ProcessingService:
             return mime_to_ext[mime_type]
 
         # Fallback to generic extension based on main type
-        main_type = mime_type.split("/")[0] if "/" in mime_type else "application"
+        main_type = (
+            mime_type.split("/", maxsplit=1)[0] if "/" in mime_type else "application"
+        )
         fallback_extensions = {
             "image": ".img",
             "audio": ".audio",

@@ -21,6 +21,7 @@ from sqlalchemy import (
     select,
     update,
 )
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 
 # Use absolute package path
@@ -128,7 +129,7 @@ async def enqueue_task(
     values_to_insert = {
         k: v
         for k, v in values_to_insert.items()
-        if v is not None or k in ["payload", "error"]
+        if v is not None or k in {"payload", "error"}
     }
 
     try:
@@ -139,8 +140,6 @@ async def enqueue_task(
             # For system tasks, do an upsert to handle re-scheduling
             if db_context.engine.dialect.name == "postgresql":
                 # PostgreSQL: Use ON CONFLICT DO UPDATE
-                from sqlalchemy.dialects.postgresql import insert as pg_insert
-
                 stmt = pg_insert(tasks_table).values(**values_to_insert)
                 # Only update fields that might change for system tasks
                 update_dict = {
