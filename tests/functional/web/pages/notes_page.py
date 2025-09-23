@@ -244,12 +244,12 @@ class NotesPage(BasePage):
         titles = []
         for element in title_elements:
             text = await element.text_content()
-            if text and text.strip() not in [
+            if text and text.strip() not in {
                 "No notes found",
                 "No notes found.",
                 "No results.",
                 "No results",
-            ]:
+            }:
                 titles.append(text.strip())
         return titles
 

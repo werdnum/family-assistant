@@ -3,6 +3,8 @@ Comprehensive tests for vector search functionality.
 Tests advanced search features, error conditions, and edge cases.
 """
 
+import asyncio
+import time
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from typing import Any
@@ -379,7 +381,7 @@ async def test_vector_search_special_characters(
             "/api/vector-search/", json={"query_text": query, "limit": 5}
         )
         # Should not crash, might return 200 with empty results
-        assert resp.status_code in [200, 422]  # Either success or validation error
+        assert resp.status_code in {200, 422}  # Either success or validation error
 
         if resp.status_code == 200:
             results = resp.json()
@@ -392,7 +394,6 @@ async def test_vector_search_concurrent_requests(
     comprehensive_vector_client: httpx.AsyncClient,
 ) -> None:
     """Test concurrent search requests."""
-    import asyncio
 
     async def single_search(query: str) -> list[dict[str, Any]]:
         resp = await comprehensive_vector_client.post(
@@ -446,7 +447,6 @@ async def test_vector_search_performance_with_large_dataset(
     comprehensive_vector_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
 ) -> None:
     """Test search performance with a larger dataset."""
-    import time
 
     # Add more documents for performance testing
     async with DatabaseContext(engine=pg_vector_db_engine) as db:

@@ -466,7 +466,7 @@ async def test_sidebar_functionality(
 
     # Verify conversation has preview text
     latest_conv = conversations[0]
-    assert latest_conv["preview"] != ""
+    assert latest_conv["preview"]
     # Ideally would check for exact text, but preview might be truncated or formatted differently
     assert "Test" in latest_conv["preview"] or "message" in latest_conv["preview"]
 

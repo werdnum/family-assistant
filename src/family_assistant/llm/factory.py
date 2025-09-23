@@ -2,6 +2,7 @@
 Factory for creating appropriate LLM clients based on model configuration.
 """
 
+import importlib
 import logging
 import os
 from typing import TYPE_CHECKING, Any
@@ -83,7 +84,9 @@ class LLMClientFactory:
                 fallback_model = retry_config["fallback"]["model"]
 
             # Return retrying wrapper
-            from .retrying_client import RetryingLLMClient
+            from .retrying_client import (  # noqa: PLC0415
+                RetryingLLMClient,
+            )
 
             return RetryingLLMClient(
                 primary_client=primary_client,
@@ -130,7 +133,7 @@ class LLMClientFactory:
         # Extract provider-specific parameters
         # Remove keys that are handled separately
         provider_params = {
-            k: v for k, v in config.items() if k not in ["model", "provider", "api_key"]
+            k: v for k, v in config.items() if k not in {"model", "provider", "api_key"}
         }
 
         # Get model_parameters from llm_parameters config
@@ -141,8 +144,6 @@ class LLMClientFactory:
         module_path, class_name = client_class_path.rsplit(".", 1)
 
         # Import the module and get the class
-        import importlib
-
         module = importlib.import_module(module_path)
         client_class = getattr(module, class_name)
 

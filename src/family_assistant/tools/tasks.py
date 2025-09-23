@@ -16,6 +16,8 @@ from dateutil import rrule
 from dateutil.parser import isoparse
 from sqlalchemy import select, update
 
+from family_assistant import storage
+from family_assistant.actions import ActionType, execute_action
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
@@ -429,7 +431,7 @@ async def schedule_reminder_tool(
             try:
                 int(interval_parts[0])  # Validate it's a number
                 unit = interval_parts[1].rstrip("s")
-                if unit not in ["minute", "hour", "day"]:
+                if unit not in {"minute", "hour", "day"}:
                     raise ValueError(f"Unknown time unit: {unit}")
             except ValueError as e:
                 raise ValueError(
@@ -542,7 +544,7 @@ async def schedule_recurring_task_tool(
         base_id = f"recurring_{task_type}"
         if description:
             safe_desc = "".join(
-                c if c.isalnum() or c in ["-", "_"] else "_"
+                c if c.isalnum() or c in {"-", "_"} else "_"
                 for c in description.lower()
             )
             base_id += f"_{safe_desc}"
@@ -665,8 +667,6 @@ async def list_pending_callbacks_tool(
     Returns:
         A string listing pending callbacks or a message if none are found.
     """
-    from family_assistant import storage
-
     db_context = exec_context.db_context
     conversation_id = exec_context.conversation_id
     interface_type = exec_context.interface_type
@@ -760,8 +760,6 @@ async def modify_pending_callback_tool(
     Returns:
         A string confirming modification or an error message.
     """
-    from family_assistant import storage
-
     db_context = exec_context.db_context
     conversation_id = exec_context.conversation_id
     interface_type = exec_context.interface_type
@@ -857,8 +855,6 @@ async def cancel_pending_callback_tool(
     Returns:
         A string confirming cancellation or an error message.
     """
-    from family_assistant import storage
-
     db_context = exec_context.db_context
     conversation_id = exec_context.conversation_id
     interface_type = exec_context.interface_type
@@ -924,8 +920,6 @@ async def schedule_action_tool(
     Returns:
         Success message or error description
     """
-    from family_assistant.actions import ActionType, execute_action
-
     if action_config is None:
         action_config = {}
 
@@ -997,8 +991,6 @@ async def schedule_recurring_action_tool(
     Returns:
         Success message or error description
     """
-    from family_assistant.actions import ActionType, execute_action
-
     if action_config is None:
         action_config = {}
 

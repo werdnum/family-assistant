@@ -60,7 +60,7 @@ async def dump_routes(request: Request) -> dict[str, Any]:
         # Track auth-related routes specifically
         if hasattr(route, "path"):
             path = route.path
-            if path in ["/login", "/logout", "/auth"]:
+            if path in {"/login", "/logout", "/auth"}:
                 auth_routes_found.append(path)
 
         routes_info.append(route_info)
@@ -91,7 +91,7 @@ async def dump_routes(request: Request) -> dict[str, Any]:
                     r
                     for r in routes_info
                     if not r["path"].startswith("/api")
-                    and r["path"] not in ["/login", "/logout", "/auth"]
+                    and r["path"] not in {"/login", "/logout", "/auth"}
                 ]),
             },
         },

@@ -9,6 +9,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from family_assistant import calendar_integration
+from family_assistant.telegram_bot import telegramify_markdown
+
 logger = logging.getLogger(__name__)
 
 
@@ -16,8 +19,6 @@ def _format_event_details_for_confirmation(
     details: dict[str, Any] | None, timezone_str: str
 ) -> str:
     """Formats fetched event details for inclusion in confirmation prompts."""
-    from family_assistant import calendar_integration
-
     if not details:
         return "Event details not found."
     summary = details.get("summary", "No Title")
@@ -50,8 +51,6 @@ def render_delete_calendar_event_confirmation(
     args: dict[str, Any], event_details: dict[str, Any] | None, timezone_str: str
 ) -> str:
     """Renders the confirmation message for deleting a calendar event."""
-    from family_assistant.telegram_bot import telegramify_markdown
-
     event_desc = _format_event_details_for_confirmation(
         event_details, timezone_str
     )  # Pass timezone
@@ -68,8 +67,6 @@ def render_modify_calendar_event_confirmation(
     args: dict[str, Any], event_details: dict[str, Any] | None, timezone_str: str
 ) -> str:
     """Renders the confirmation message for modifying a calendar event."""
-    from family_assistant.telegram_bot import telegramify_markdown
-
     event_desc = _format_event_details_for_confirmation(
         event_details, timezone_str
     )  # Pass timezone

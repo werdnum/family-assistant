@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from family_assistant.events.sources import BaseEventSource, EventSource
 from family_assistant.events.validation import ValidationError, ValidationResult
 
 if TYPE_CHECKING:
@@ -162,7 +163,6 @@ class TestEventSourceValidation:
     @pytest.mark.asyncio
     async def test_default_validation_implementation(self) -> None:
         """Test that BaseEventSource has default validate_match_conditions implementation."""
-        from family_assistant.events.sources import BaseEventSource, EventSource
 
         # Create a minimal implementation of EventSource using BaseEventSource
         class TestSource(BaseEventSource, EventSource):
@@ -189,7 +189,6 @@ class TestEventSourceValidation:
     @pytest.mark.asyncio
     async def test_base_event_source_validation(self) -> None:
         """Test that BaseEventSource provides validate_match_conditions."""
-        from family_assistant.events.sources import BaseEventSource
 
         base_source = BaseEventSource()
         result = await base_source.validate_match_conditions({"test": "value"})
@@ -202,7 +201,6 @@ class TestEventSourceValidation:
     @pytest.mark.asyncio
     async def test_protocol_instance_check(self) -> None:
         """Test that EventSource protocol works with isinstance."""
-        from family_assistant.events.sources import BaseEventSource, EventSource
 
         class ValidSource(BaseEventSource, EventSource):
             async def start(self, processor: "EventProcessor") -> None:

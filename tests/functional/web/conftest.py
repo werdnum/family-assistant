@@ -16,7 +16,7 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from playwright.async_api import Page
+from playwright.async_api import Page, async_playwright
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
@@ -43,6 +43,7 @@ from family_assistant.tools import (
     ToolsProvider,
 )
 from family_assistant.web.app_creator import app as actual_app
+from family_assistant.web.app_creator import configure_app_debug
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
@@ -394,7 +395,6 @@ async def web_only_assistant(
     )
 
     # Enable debug mode for tests to get detailed error messages
-    from family_assistant.web.app_creator import configure_app_debug
 
     configure_app_debug(debug=True)
 
@@ -693,7 +693,6 @@ async def playwright() -> AsyncGenerator[Any, None]:
 
     This is part of the workaround for pytest-asyncio session-scoped event loops.
     """
-    from playwright.async_api import async_playwright
 
     # Start playwright using the context manager
     pw_context_manager = async_playwright()

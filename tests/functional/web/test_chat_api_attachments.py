@@ -2,6 +2,7 @@
 
 import base64
 import io
+import json
 
 import pytest
 from httpx import AsyncClient
@@ -79,8 +80,6 @@ async def test_chat_api_with_image_attachment(
     for line in lines:
         if line.startswith("data: "):
             try:
-                import json
-
                 data = json.loads(line[6:])  # Remove 'data: ' prefix
                 if "content" in data:
                     text_content += data["content"]
@@ -179,8 +178,6 @@ async def test_chat_api_multiple_attachments(
     for line in lines:
         if line.startswith("data: "):
             try:
-                import json
-
                 data = json.loads(line[6:])
                 if "content" in data:
                     text_content += data["content"]

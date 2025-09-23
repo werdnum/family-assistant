@@ -17,7 +17,7 @@ class VectorRepository(BaseRepository):
         super().__init__(db_context)
         # Import here to avoid circular dependencies
         try:
-            from family_assistant.storage import vector
+            from family_assistant.storage import vector  # noqa: PLC0415
 
             self._vector_module = vector
             self._enabled = True

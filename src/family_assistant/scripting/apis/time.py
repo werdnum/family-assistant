@@ -6,6 +6,7 @@ following patterns from starlark-go but adapted for starlark-pyo3's constraints.
 """
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -253,7 +254,7 @@ def time_format(time_dict: dict[str, Any], format_string: str) -> str:
     """
     dt = _dict_to_datetime(time_dict)
 
-    if format_string in ("RFC3339", "ISO8601"):
+    if format_string in {"RFC3339", "ISO8601"}:
         return dt.isoformat()
 
     return dt.strftime(format_string)
@@ -397,8 +398,6 @@ def duration_parse(duration_string: str) -> float:
     Returns:
         Duration in seconds
     """
-    import re
-
     total_seconds = 0.0
 
     # Pattern to match number + unit pairs

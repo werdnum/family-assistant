@@ -9,6 +9,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from family_assistant.scripting.engine import StarlarkConfig, StarlarkEngine
 from family_assistant.scripting.errors import (
     ScriptExecutionError,
     ScriptSyntaxError,
@@ -37,9 +38,6 @@ async def execute_script_tool(
     Returns:
         A string containing the script result or error message
     """
-    # Import here to avoid circular imports
-    from family_assistant.scripting.engine import StarlarkConfig, StarlarkEngine
-
     try:
         # Create a configuration with reasonable defaults
         config = StarlarkConfig(

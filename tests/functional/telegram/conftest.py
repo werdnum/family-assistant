@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
+from telegram.ext import Application, JobQueue
 
 from family_assistant.assistant import Assistant
 from family_assistant.llm import LLMInterface
@@ -145,7 +146,6 @@ async def telegram_handler_fixture(
     # This mock_application will be passed to create_mock_context.
     # It needs to provide the same mock_bot_instance for context.bot.
     # It also needs bot_data and job_queue attributes for CallbackContext.
-    from telegram.ext import Application, JobQueue  # Required for spec
 
     mock_application_for_context = AsyncMock(
         spec=Application, name="MockApplicationForContext"

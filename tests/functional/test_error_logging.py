@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, insert, select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage import error_logs_table
@@ -21,8 +21,6 @@ async def test_error_logging_integration(db_engine: AsyncEngine) -> None:
     """Test that errors are logged to the database correctly."""
     # Clear all existing error logs first to ensure test isolation
     async with DatabaseContext(engine=db_engine) as db_context:
-        from sqlalchemy import delete
-
         # Clear all error logs
         await db_context.execute_with_retry(delete(error_logs_table))
 
@@ -136,8 +134,6 @@ async def test_error_logging_integration(db_engine: AsyncEngine) -> None:
 async def test_error_log_cleanup(db_engine: AsyncEngine) -> None:
     """Test that old error logs are cleaned up correctly."""
     async with DatabaseContext(engine=db_engine) as db_context:
-        from sqlalchemy import insert
-
         # Insert error logs with different ages
         now = datetime.now()
 

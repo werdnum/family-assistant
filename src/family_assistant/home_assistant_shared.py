@@ -28,7 +28,7 @@ def create_home_assistant_client(
         Home Assistant client wrapper instance or None if library not available
     """
     try:
-        import homeassistant_api
+        import homeassistant_api  # noqa: PLC0415 - optional dependency import
     except ImportError:
         logger.warning(
             "homeassistant_api library is not installed. Home Assistant features will be disabled."
@@ -46,7 +46,9 @@ def create_home_assistant_client(
     )
 
     # Import the wrapper at runtime to avoid circular imports
-    from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
+    from family_assistant.home_assistant_wrapper import (  # noqa: PLC0415
+        HomeAssistantClientWrapper,
+    )
 
     # Create wrapper with the original api_url (without /api) and the raw client
     wrapper = HomeAssistantClientWrapper(

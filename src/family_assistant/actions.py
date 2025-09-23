@@ -3,7 +3,8 @@ Shared action execution logic for both event listeners and scheduled tasks.
 """
 
 import logging
-from datetime import datetime
+import time
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -43,9 +44,6 @@ async def execute_action(
         scheduled_at: When to execute the action (None for immediate)
         recurrence_rule: RRULE for recurring tasks (None for one-time)
     """
-    import time
-    from datetime import datetime, timezone
-
     if context is None:
         context = {}
 

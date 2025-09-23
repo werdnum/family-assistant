@@ -324,10 +324,36 @@ select = [
     "FAST",
     # Type Checking
     "TC",
+    # pylint convention checks
+    "PLC",
+    # pylint error checks
+    "PLE",
+    # pylint refactor checks
+    "PLR",
+    # pylint warning checks
+    "PLW",
 ]
 ignore = [
-	# Line length - fornatter can deal with it
-	"E501",
+        # Line length - fornatter can deal with it
+        "E501",
+        # Allow short loops to avoid invasive refactors
+        "PLR1702",
+        # Disabled in pylint configuration
+        "PLE1132",
+        "PLE1141",
+        "PLR0904",
+        "PLR0911",
+        "PLR0912",
+        "PLR0913",
+        "PLR0914",
+        "PLR0915",
+        "PLR0916",
+        "PLR0917",
+        "PLR2004",
+        "PLR6301",
+        "PLW0108",
+        "PLW0602",
+        "PLW0603",
 ]
 
 [tool.pyright]

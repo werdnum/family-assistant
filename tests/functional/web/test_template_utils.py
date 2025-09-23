@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from unittest.mock import patch
 
+from family_assistant.web import template_utils
 from family_assistant.web.template_utils import get_static_asset
 
 logger = logging.getLogger(__name__)
@@ -68,7 +69,6 @@ class TestTemplateUtils:
     def test_get_static_asset_production_mode_js(self) -> None:
         """Test getting JS assets in production mode."""
         # Force production mode and clear cache
-        import family_assistant.web.template_utils as template_utils
 
         template_utils._manifest_cache = None
 
@@ -87,7 +87,6 @@ class TestTemplateUtils:
     def test_get_static_asset_production_mode_css(self) -> None:
         """Test getting CSS assets in production mode."""
         # Force production mode and clear cache
-        import family_assistant.web.template_utils as template_utils
 
         template_utils._manifest_cache = None
 
@@ -117,13 +116,12 @@ class TestTemplateUtils:
 
         # CSS returns empty string in dev mode (handled by Vite JS)
         result = get_static_asset("main.css", dev_mode=True)
-        assert result == ""
+        assert not result
 
     @patch.dict(os.environ, {"DEV_MODE": "false"})
     def test_get_static_asset_missing_file(self) -> None:
         """Test behavior when requested file is not in manifest."""
         # Force production mode and clear cache
-        import family_assistant.web.template_utils as template_utils
 
         template_utils._manifest_cache = None
 
@@ -136,7 +134,6 @@ class TestTemplateUtils:
     @patch.dict(os.environ, {"DEV_MODE": "false"})
     def test_manifest_cache_behavior(self) -> None:
         """Test that manifest is cached and reloaded when changed."""
-        import family_assistant.web.template_utils as template_utils
 
         # Clear cache
         template_utils._manifest_cache = None
@@ -155,7 +152,6 @@ class TestTemplateUtils:
     @patch.dict(os.environ, {"DEV_MODE": "false"})
     def test_manifest_error_handling(self) -> None:
         """Test behavior when manifest.json cannot be read."""
-        import family_assistant.web.template_utils as template_utils
 
         # Clear cache
         template_utils._manifest_cache = None
@@ -204,7 +200,6 @@ class TestTemplateUtils:
     @patch.dict(os.environ, {"DEV_MODE": "false"})
     def test_print_actual_paths(self) -> None:
         """Debug test to print actual paths returned by get_static_asset."""
-        import family_assistant.web.template_utils as template_utils
 
         template_utils._manifest_cache = None
 

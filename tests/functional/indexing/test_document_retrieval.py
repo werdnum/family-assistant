@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.indexing.ingestion import process_document_ingestion_request
+from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.vector import add_embedding
 from family_assistant.tools.documents import (
     get_full_document_content_tool,
     search_documents_tool,
@@ -83,7 +85,6 @@ class TestDocumentRetrieval:
         mock_embedding_generator: MockEmbeddingGenerator,
     ) -> None:
         """Test uploading a PDF and retrieving it with multimodal support."""
-        from family_assistant.storage.context import DatabaseContext
 
         async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
             # Create execution context
@@ -113,7 +114,6 @@ class TestDocumentRetrieval:
             document_id = result["document_id"]
 
             # Add a test embedding for search to work
-            from family_assistant.storage.vector import add_embedding
 
             embedding_result = await mock_embedding_generator.generate_embeddings([
                 "test PDF document"
@@ -166,7 +166,6 @@ class TestDocumentRetrieval:
         mock_embedding_generator: MockEmbeddingGenerator,
     ) -> None:
         """Test uploading an image and retrieving it with multimodal support."""
-        from family_assistant.storage.context import DatabaseContext
 
         async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
             # Create execution context
@@ -195,7 +194,6 @@ class TestDocumentRetrieval:
             document_id = result["document_id"]
 
             # Add a test embedding for the image
-            from family_assistant.storage.vector import add_embedding
 
             embedding_result = await mock_embedding_generator.generate_embeddings([
                 "test image"
@@ -234,7 +232,6 @@ class TestDocumentRetrieval:
         mock_embedding_generator: MockEmbeddingGenerator,
     ) -> None:
         """Test retrieving a document that has no original file."""
-        from family_assistant.storage.context import DatabaseContext
 
         async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
             # Create execution context
@@ -261,7 +258,6 @@ class TestDocumentRetrieval:
             document_id = result["document_id"]
 
             # Add a test embedding for the text document
-            from family_assistant.storage.vector import add_embedding
 
             embedding_result = await mock_embedding_generator.generate_embeddings([
                 "test text document"
@@ -307,7 +303,6 @@ class TestDocumentRetrieval:
         mock_embedding_generator: MockEmbeddingGenerator,
     ) -> None:
         """Test that retrieval falls back to text when file is missing."""
-        from family_assistant.storage.context import DatabaseContext
 
         async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
             # Create execution context
@@ -335,7 +330,6 @@ class TestDocumentRetrieval:
             document_id = result["document_id"]
 
             # Add a test embedding for the document
-            from family_assistant.storage.vector import add_embedding
 
             embedding_result = await mock_embedding_generator.generate_embeddings([
                 "missing PDF document"
@@ -373,7 +367,6 @@ class TestDocumentRetrieval:
         mock_embedding_generator: MockEmbeddingGenerator,
     ) -> None:
         """Test that large files fall back to text content."""
-        from family_assistant.storage.context import DatabaseContext
 
         async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
             # Create execution context
@@ -404,7 +397,6 @@ class TestDocumentRetrieval:
             document_id = result["document_id"]
 
             # Add a test embedding for the large document
-            from family_assistant.storage.vector import add_embedding
 
             embedding_result = await mock_embedding_generator.generate_embeddings([
                 "large document"
@@ -436,7 +428,6 @@ class TestDocumentRetrieval:
         sample_pdf_content: bytes,
     ) -> None:
         """Test that file paths are correctly stored in the database."""
-        from family_assistant.storage.context import DatabaseContext
 
         async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
             # Ingest PDF document

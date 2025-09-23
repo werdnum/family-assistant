@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import text
 
 # get_db_context import removed - using exec_context.db_context for dependency injection
+from family_assistant.events.validation import format_validation_errors
 from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -254,10 +255,6 @@ async def test_event_listener_tool(
         event_source = exec_context.event_sources[source]
 
     if event_source:
-        from family_assistant.events.validation import (
-            format_validation_errors,
-        )
-
         validate_fn = getattr(event_source, "validate_match_conditions", None)
         if validate_fn:
             validation = await validate_fn(match_conditions)

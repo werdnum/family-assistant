@@ -1,5 +1,7 @@
 """Mock tools provider for testing."""
 
+import asyncio
+import inspect
 from collections.abc import Callable
 from typing import Any
 
@@ -25,7 +27,6 @@ class MockToolsProvider(ToolsProvider):
             self.tool_definitions.append(tool_def)
         else:
             # Try to introspect the function to create a basic definition
-            import inspect
 
             sig = inspect.signature(func)
             properties = {}
@@ -33,7 +34,7 @@ class MockToolsProvider(ToolsProvider):
 
             for param_name, param in sig.parameters.items():
                 # Skip exec_context as it's injected automatically
-                if param_name in ["exec_context", "db_context"]:
+                if param_name in {"exec_context", "db_context"}:
                     continue
 
                 properties[param_name] = {
@@ -69,7 +70,6 @@ class MockToolsProvider(ToolsProvider):
         func = self.tools[name]
 
         # Check if the function expects exec_context
-        import inspect
 
         sig = inspect.signature(func)
         call_args = arguments.copy()
@@ -79,7 +79,6 @@ class MockToolsProvider(ToolsProvider):
             call_args["exec_context"] = context
 
         # Handle both sync and async functions
-        import asyncio
 
         if asyncio.iscoroutinefunction(func):
             return await func(**call_args)

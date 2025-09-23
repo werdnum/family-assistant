@@ -2,11 +2,15 @@
 
 import asyncio
 import logging
+import sys
 import traceback
 from datetime import datetime
 
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
+
+from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.error_logs import error_logs_table
 
 
 class SQLAlchemyErrorHandler(logging.Handler):
@@ -48,9 +52,6 @@ class SQLAlchemyErrorHandler(logging.Handler):
 
     async def _async_emit(self, record: logging.LogRecord) -> None:
         """Write log record to database."""
-        from family_assistant.storage.context import DatabaseContext
-        from family_assistant.storage.error_logs import error_logs_table
-
         try:
             async with DatabaseContext(engine=self.engine) as db_context:
                 error_log = self._create_error_log_dict(record)
@@ -60,8 +61,6 @@ class SQLAlchemyErrorHandler(logging.Handler):
         except Exception as e:
             self.consecutive_failures += 1
             # Log to stderr as fallback
-            import sys
-
             print(f"Failed to log error to database: {e}", file=sys.stderr)
 
     def _create_error_log_dict(self, record: logging.LogRecord) -> dict:

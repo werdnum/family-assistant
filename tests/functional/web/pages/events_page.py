@@ -1,5 +1,6 @@
 """Events Page Object Model for Playwright tests."""
 
+import re
 from typing import Any
 
 from .base_page import BasePage
@@ -252,7 +253,6 @@ class EventsPage(BasePage):
             return {"start": 0, "end": 0, "total": 0}
         text = await info_element.text_content()
         # Parse text like "Showing 1-20 of 45 events"
-        import re
 
         match = re.search(r"Showing (\d+)-(\d+) of (\d+) events", text or "")
         if match:

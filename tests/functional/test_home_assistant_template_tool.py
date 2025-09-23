@@ -3,13 +3,13 @@
 import json
 import logging
 import uuid
-from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from homeassistant_api.errors import HomeassistantAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
@@ -23,10 +23,6 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
 )
-
-if TYPE_CHECKING:
-    from family_assistant.llm import LLMInterface
-
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
 )
@@ -492,7 +488,6 @@ async def test_render_home_assistant_template_api_error(
     logger.info("\n--- Test: Render Home Assistant Template API Error ---")
 
     # Import the error type
-    from homeassistant_api.errors import HomeassistantAPIError
 
     # Create mock Home Assistant client that raises an error
     mock_ha_client = MagicMock()

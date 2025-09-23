@@ -87,7 +87,7 @@ async def test_create_document_via_api_and_view_in_react_ui(
                 "metadata": TEST_DOC_METADATA_JSON,
             },
         )
-        assert response.status_code in [200, 202], (
+        assert response.status_code in {200, 202}, (
             f"Failed to create document: {response.text}"
         )
 
@@ -169,7 +169,7 @@ async def test_multiple_documents_display_in_react_ui(
                     "metadata": json.dumps({"index": i}),
                 },
             )
-            assert response.status_code in [200, 202]
+            assert response.status_code in {200, 202}
             doc_ids.append(doc_id)
 
     # Navigate to the React documents page
@@ -294,7 +294,7 @@ async def test_document_detail_navigation_in_react_ui(
                 "metadata": TEST_DOC_METADATA_JSON,
             },
         )
-        assert response.status_code in [200, 202], (
+        assert response.status_code in {200, 202}, (
             f"Failed to create document: {response.text}"
         )
 

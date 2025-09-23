@@ -17,7 +17,7 @@ def load_config() -> dict[str, Any] | None:
     """Load formatter configuration."""
     config_path = Path(__file__).parent / "file-formatters.json"
     try:
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
         print(f"Error loading formatter config: {e}", file=sys.stderr)
@@ -48,7 +48,13 @@ def format_file(file_path: str, formatter: dict[str, Any]) -> None:
         command = f"{command} '{file_path}'"
 
     try:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True)
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         if result.returncode != 0:
             print(f"Formatter failed for {file_path}: {result.stderr}", file=sys.stderr)
     except Exception as e:
@@ -69,7 +75,7 @@ def main() -> None:
     tool_input = tool_data.get("tool_input", {})
 
     # We're interested in Edit, MultiEdit, Write, NotebookEdit, and Update tools
-    if tool_name not in ["Edit", "MultiEdit", "Write", "NotebookEdit", "Update"]:
+    if tool_name not in {"Edit", "MultiEdit", "Write", "NotebookEdit", "Update"}:
         return
 
     # Load configuration
@@ -81,7 +87,7 @@ def main() -> None:
     file_paths = []
 
     if (
-        tool_name in ["Edit", "Write", "NotebookEdit", "Update"]
+        tool_name in {"Edit", "Write", "NotebookEdit", "Update"}
         or tool_name == "MultiEdit"
     ):
         file_path = tool_input.get("file_path")

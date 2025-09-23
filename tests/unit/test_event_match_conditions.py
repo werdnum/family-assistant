@@ -2,11 +2,7 @@
 Unit tests for event matching logic.
 """
 
-from family_assistant.tools.events import (
-    _check_match_conditions,
-    _get_event_structure,
-    _get_nested_value,
-)
+from family_assistant.tools import events as events_module
 
 
 def test_get_nested_value() -> None:
@@ -24,21 +20,28 @@ def test_get_nested_value() -> None:
     }
 
     # Test basic access
-    assert _get_nested_value(data, "entity_id") == "person.alex"
-    assert _get_nested_value(data, "old_state") == "Away"
+    assert events_module._get_nested_value(data, "entity_id") == "person.alex"
+    assert events_module._get_nested_value(data, "old_state") == "Away"
 
     # Test nested access
-    assert _get_nested_value(data, "new_state.state") == "Home"
-    assert _get_nested_value(data, "new_state.attributes.friendly_name") == "Alex"
-    assert _get_nested_value(data, "new_state.attributes.latitude") == 42.0
+    assert events_module._get_nested_value(data, "new_state.state") == "Home"
+    assert (
+        events_module._get_nested_value(data, "new_state.attributes.friendly_name")
+        == "Alex"
+    )
+    assert (
+        events_module._get_nested_value(data, "new_state.attributes.latitude") == 42.0
+    )
 
     # Test non-existent keys
-    assert _get_nested_value(data, "missing") is None
-    assert _get_nested_value(data, "new_state.missing") is None
-    assert _get_nested_value(data, "new_state.attributes.missing") is None
+    assert events_module._get_nested_value(data, "missing") is None
+    assert events_module._get_nested_value(data, "new_state.missing") is None
+    assert events_module._get_nested_value(data, "new_state.attributes.missing") is None
 
     # Test invalid paths
-    assert _get_nested_value(data, "old_state.state") is None  # old_state is a string
+    assert (
+        events_module._get_nested_value(data, "old_state.state") is None
+    )  # old_state is a string
 
 
 def test_check_match_conditions() -> None:
@@ -50,13 +53,24 @@ def test_check_match_conditions() -> None:
     }
 
     # Test exact matches
-    assert _check_match_conditions(event_data, {"entity_id": "person.alex"}) is True
-    assert _check_match_conditions(event_data, {"new_state.state": "Home"}) is True
-    assert _check_match_conditions(event_data, {"old_state.state": "Away"}) is True
+    assert (
+        events_module._check_match_conditions(
+            event_data, {"entity_id": "person.alex"}
+        )
+        is True
+    )
+    assert (
+        events_module._check_match_conditions(event_data, {"new_state.state": "Home"})
+        is True
+    )
+    assert (
+        events_module._check_match_conditions(event_data, {"old_state.state": "Away"})
+        is True
+    )
 
     # Test multiple conditions (AND logic)
     assert (
-        _check_match_conditions(
+        events_module._check_match_conditions(
             event_data,
             {
                 "entity_id": "person.alex",
@@ -67,12 +81,18 @@ def test_check_match_conditions() -> None:
     )
 
     # Test non-matches
-    assert _check_match_conditions(event_data, {"entity_id": "person.bob"}) is False
-    assert _check_match_conditions(event_data, {"new_state.state": "Away"}) is False
+    assert (
+        events_module._check_match_conditions(event_data, {"entity_id": "person.bob"})
+        is False
+    )
+    assert (
+        events_module._check_match_conditions(event_data, {"new_state.state": "Away"})
+        is False
+    )
 
     # Test partial match with multiple conditions
     assert (
-        _check_match_conditions(
+        events_module._check_match_conditions(
             event_data,
             {
                 "entity_id": "person.alex",  # matches
@@ -83,8 +103,8 @@ def test_check_match_conditions() -> None:
     )
 
     # Test empty conditions (matches all)
-    assert _check_match_conditions(event_data, {}) is True
-    assert _check_match_conditions(event_data, None) is True
+    assert events_module._check_match_conditions(event_data, {}) is True
+    assert events_module._check_match_conditions(event_data, None) is True
 
 
 def test_get_event_structure() -> None:
@@ -118,7 +138,7 @@ def test_get_event_structure() -> None:
         "empty_list": [],
     }
 
-    structure = _get_event_structure(event_data)
+    structure = events_module._get_event_structure(event_data)
 
     # Check top-level structure
     assert isinstance(structure, dict)
@@ -135,6 +155,6 @@ def test_get_event_structure() -> None:
     # Test max depth limiting
     deep_data = {"level1": {"level2": {"level3": {"level4": {"level5": "deep value"}}}}}
 
-    structure = _get_event_structure(deep_data, max_depth=3)
+    structure = events_module._get_event_structure(deep_data, max_depth=3)
     assert isinstance(structure, dict)
     assert structure["level1"]["level2"]["level3"] == "..."  # type: ignore[index]

@@ -24,10 +24,12 @@ from family_assistant.indexing.pipeline import IndexableContent, IndexingPipelin
 from family_assistant.indexing.processors.dispatch_processors import (
     EmbeddingDispatchProcessor,
 )
+from family_assistant.indexing.processors.file_processors import PDFTextExtractor
 from family_assistant.indexing.processors.metadata_processors import TitleExtractor
 from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.storage.context import get_db_context
+from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import (
     Document as DocumentProtocol,
 )
@@ -201,8 +203,6 @@ async def test_indexing_pipeline_e2e(
     """
     # Clean up any leftover tasks from previous tests to ensure isolation
     async with get_db_context(engine=pg_vector_db_engine) as db_ctx:
-        from family_assistant.storage.tasks import tasks_table
-
         await db_ctx.execute_with_retry(
             tasks_table.delete().where(
                 tasks_table.c.task_type == "embed_and_store_batch"
@@ -421,8 +421,6 @@ async def test_indexing_pipeline_pdf_processing(
     """
     # Clean up any leftover tasks from previous tests to ensure isolation
     async with get_db_context(engine=pg_vector_db_engine) as db_ctx:
-        from family_assistant.storage.tasks import tasks_table
-
         await db_ctx.execute_with_retry(
             tasks_table.delete().where(
                 tasks_table.c.task_type == "embed_and_store_batch"
@@ -487,9 +485,6 @@ async def test_indexing_pipeline_pdf_processing(
             )
 
             # Setup Pipeline with PDFTextExtractor
-            from family_assistant.indexing.processors.file_processors import (
-                PDFTextExtractor,  # Local import
-            )
 
             pdf_extractor = PDFTextExtractor()
             # TextChunker to process the markdown output of PDFTextExtractor

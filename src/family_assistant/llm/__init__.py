@@ -2,6 +2,8 @@
 Module defining the interface and implementations for interacting with Large Language Models (LLMs).
 """
 
+import asyncio
+import base64
 import copy  # For deep copying tool definitions
 import io
 import json
@@ -91,11 +93,11 @@ class BaseLLMClient:
 
 
 # --- Conditionally Enable LiteLLM Debug Logging ---
-LITELLM_DEBUG_ENABLED = os.getenv("LITELLM_DEBUG", "false").lower() in (
+LITELLM_DEBUG_ENABLED = os.getenv("LITELLM_DEBUG", "false").lower() in {
     "true",
     "1",
     "yes",
-)
+}
 if LITELLM_DEBUG_ENABLED:
     litellm.set_verbose = True  # type: ignore[reportPrivateImportUsage]
     logger.info(
@@ -182,7 +184,7 @@ def _sanitize_tools_for_litellm(tools: list[dict[str, Any]]) -> list[dict[str, A
                 if (
                     param_type == "string"
                     and param_format
-                    and param_format not in ["enum", "date-time"]
+                    and param_format not in {"enum", "date-time"}
                 ):
                     logger.warning(
                         f"Sanitizing tool '{tool_name}': Removing unsupported format '{param_format}' from string parameter '{param_name}' for LiteLLM compatibility."
@@ -648,9 +650,6 @@ class LiteLLMClient(BaseLLMClient):
         mime_type: str | None,
         max_text_length: int | None,
     ) -> dict[str, Any]:
-        import asyncio  # For running sync litellm.create_file in thread
-        import base64  # Import here as it's only used in this method
-
         user_content_parts: list[dict[str, Any]] = []
         actual_prompt_text = prompt_text or "Process the provided file."
 
@@ -1137,9 +1136,9 @@ class PlaybackLLMClient:
             # For async loading, this would need to be an async factory or method
             with open(self.recording_path, encoding="utf-8") as f:
                 line_num = 0
-                for line in f:
+                for raw_line in f:
                     line_num += 1
-                    line = line.strip()
+                    line = raw_line.strip()
                     if not line:
                         continue
                     try:

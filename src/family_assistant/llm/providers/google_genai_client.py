@@ -2,6 +2,7 @@
 Direct Google Generative AI (Gemini) implementation for LLM interactions.
 """
 
+import base64
 import json
 import logging
 import mimetypes
@@ -107,8 +108,6 @@ class GoogleGenAIClient(BaseLLMClient):
         self, attachment: "ToolAttachment"
     ) -> dict[str, Any]:
         """Create user message with attachment for Gemini"""
-        from google.genai import types
-
         parts: list[dict[str, Any] | types.Part] = [
             {"text": "[System: File from previous tool response]"}
         ]
@@ -233,8 +232,6 @@ class GoogleGenAIClient(BaseLLMClient):
                                         mime_type = header.split(";")[0].split(":")[1]
 
                                         # Decode base64 to bytes - the SDK will re-encode it
-                                        import base64
-
                                         image_bytes = base64.b64decode(base64_data)
 
                                         # Add as inline data part with raw bytes

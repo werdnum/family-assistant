@@ -147,14 +147,13 @@ class EventProcessor:
 
         if self._db_context:
             await process_with_context(self._db_context)
+        elif self.get_db_context_func:
+            async with self.get_db_context_func() as db_ctx:
+                await process_with_context(db_ctx)
         else:
-            if self.get_db_context_func:
-                async with self.get_db_context_func() as db_ctx:
-                    await process_with_context(db_ctx)
-            else:
-                raise RuntimeError(
-                    "EventProcessor requires get_db_context_func to be provided"
-                )
+            raise RuntimeError(
+                "EventProcessor requires get_db_context_func to be provided"
+            )
 
     def _check_match_conditions(
         self,
@@ -208,14 +207,13 @@ class EventProcessor:
 
         if self._db_context:
             result = await self._db_context.fetch_all(query)
+        elif self.get_db_context_func:
+            async with self.get_db_context_func() as db_ctx:
+                result = await db_ctx.fetch_all(query)
         else:
-            if self.get_db_context_func:
-                async with self.get_db_context_func() as db_ctx:
-                    result = await db_ctx.fetch_all(query)
-            else:
-                raise RuntimeError(
-                    "EventProcessor requires get_db_context_func to be provided"
-                )
+            raise RuntimeError(
+                "EventProcessor requires get_db_context_func to be provided"
+            )
 
         new_cache = {}
         for row in result:

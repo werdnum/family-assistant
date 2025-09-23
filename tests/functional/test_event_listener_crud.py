@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timezone
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.context import DatabaseContext
@@ -480,8 +481,6 @@ async def test_listener_execution_tracking(db_engine: AsyncEngine) -> None:
     """Test that listener execution info is returned in list."""
     # Arrange
     async with DatabaseContext(engine=db_engine) as db_ctx:
-        from sqlalchemy import text
-
         exec_context = ToolExecutionContext(
             interface_type="telegram",
             conversation_id="exec_test",

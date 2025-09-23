@@ -5,24 +5,39 @@ Functional tests for the event listener system.
 import asyncio
 import json
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
+import janus
 import pytest
+from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.events.home_assistant_source import HomeAssistantSource
 from family_assistant.events.processor import EventProcessor
 from family_assistant.events.storage import EventStorage
+from family_assistant.interfaces import ChatInterface
+from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage import get_db_context
-from family_assistant.storage.events import EventSourceType
-from family_assistant.task_worker import TaskWorker
+from family_assistant.storage.events import (
+    EventSourceType,
+    cleanup_old_events,
+    recent_events_table,
+)
+from family_assistant.task_worker import TaskWorker, handle_llm_callback
+from family_assistant.tools import (
+    CompositeToolsProvider,
+    LocalToolsProvider,
+    MCPToolsProvider,
+)
 from family_assistant.tools.events import query_recent_events_tool
 from family_assistant.tools.events import (
     test_event_listener_tool as event_listener_test_tool,
 )
 from family_assistant.tools.types import ToolExecutionContext
+from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
+from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 
 class MockFiredEvent:
@@ -101,8 +116,6 @@ async def test_event_storage_sampling(db_engine: AsyncEngine) -> None:
 
     # Check stored events
     async with get_db_context(db_engine) as db_ctx:
-        from sqlalchemy import text
-
         result = await db_ctx.fetch_all(
             text("SELECT COUNT(*) as count FROM recent_events")
         )
@@ -131,7 +144,6 @@ async def test_home_assistant_event_processing(db_engine: AsyncEngine) -> None:
     processor._running = True
 
     # Initialize the janus queue (normally done by start())
-    import janus
 
     ha_source._event_queue = janus.Queue(maxsize=1000)
 
@@ -199,8 +211,6 @@ async def test_event_listener_matching(db_engine: AsyncEngine) -> None:
     """Test event matching against listener conditions."""
     # Add a test listener
     async with get_db_context(db_engine) as db_ctx:
-        from sqlalchemy import text
-
         await db_ctx.execute_with_retry(
             text("""INSERT INTO event_listeners 
                  (name, match_conditions, source_id, enabled, conversation_id)
@@ -250,8 +260,6 @@ async def test_test_event_listener_tool_matches_person_coming_home(
     """Test that test_event_listener tool correctly matches person coming home."""
     # Arrange
     async with get_db_context(db_engine) as db_ctx:
-        from sqlalchemy import text
-
         await db_ctx.execute_with_retry(text("DELETE FROM recent_events"))
 
         now = datetime.now(timezone.utc)
@@ -335,8 +343,6 @@ async def test_test_event_listener_tool_no_match_wrong_state(
     """Test that test_event_listener tool provides analysis when no events match."""
     # Arrange
     async with get_db_context(db_engine) as db_ctx:
-        from sqlalchemy import text
-
         await db_ctx.execute_with_retry(text("DELETE FROM recent_events"))
 
         now = datetime.now(timezone.utc)
@@ -422,8 +428,6 @@ async def test_event_type_matching(db_engine: AsyncEngine) -> None:
     """Test that event type matching works correctly."""
     # Arrange - store different event types
     async with get_db_context(db_engine) as db_ctx:
-        from sqlalchemy import text
-
         await db_ctx.execute_with_retry(text("DELETE FROM recent_events"))
 
         now = datetime.now(timezone.utc)
@@ -522,9 +526,6 @@ async def test_event_type_matching(db_engine: AsyncEngine) -> None:
 @pytest.mark.asyncio
 async def test_cleanup_old_events(db_engine: AsyncEngine) -> None:
     """Test that old events are cleaned up correctly."""
-    from datetime import timedelta
-
-    from family_assistant.storage.events import cleanup_old_events
 
     # Arrange - create events with different ages
     async with get_db_context(db_engine) as db_ctx:
@@ -562,9 +563,6 @@ async def test_cleanup_old_events(db_engine: AsyncEngine) -> None:
         )
 
         # Update the created_at timestamp for the old event
-        from sqlalchemy import update
-
-        from family_assistant.storage.events import recent_events_table
 
         # Use SQLAlchemy's JSON operators for cross-database compatibility
         stmt = (
@@ -591,7 +589,6 @@ async def test_end_to_end_event_listener_wakes_llm(
     task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
 ) -> None:
     """Test end-to-end flow: event triggers listener which enqueues LLM callback task."""
-    from sqlalchemy import text
 
     # Step 1: Create an event listener that watches for motion detection
     async with get_db_context(db_engine) as db_ctx:
@@ -706,23 +703,6 @@ async def test_end_to_end_event_listener_wakes_llm(
         )
 
     # Step 6: Start a task worker that will process the callback task
-    from typing import Any
-    from unittest.mock import AsyncMock
-
-    from family_assistant.interfaces import ChatInterface
-    from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-    from family_assistant.task_worker import handle_llm_callback
-    from family_assistant.tools import (
-        CompositeToolsProvider,
-        LocalToolsProvider,
-        MCPToolsProvider,
-    )
-    from tests.mocks.mock_llm import (
-        LLMOutput as MockLLMOutput,
-    )
-    from tests.mocks.mock_llm import (
-        RuleBasedMockLLMClient,
-    )
 
     # Setup mock LLM that will handle the callback
     def callback_matcher(kwargs: dict[str, Any]) -> bool:
@@ -811,7 +791,6 @@ async def test_one_time_listener_disables_after_trigger(
     db_engine: AsyncEngine,
 ) -> None:
     """Test that one-time listeners are disabled after they trigger."""
-    from sqlalchemy import text
 
     # Create a one-time listener
     async with get_db_context(db_engine) as db_ctx:
