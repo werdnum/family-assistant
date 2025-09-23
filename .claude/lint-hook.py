@@ -270,7 +270,7 @@ async def main() -> None:
             # Determine file type and run appropriate linters
             file_ext = Path(file_path).suffix.lower()
 
-            if file_ext in {".py"}:
+            if file_ext == ".py":
                 results = await lint_python_file(file_path)
             elif file_ext in {".js", ".jsx", ".ts", ".tsx"}:
                 results = await lint_javascript_file(file_path)
