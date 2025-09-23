@@ -33,7 +33,7 @@ class MockToolsProvider(ToolsProvider):
 
             for param_name, param in sig.parameters.items():
                 # Skip exec_context as it's injected automatically
-                if param_name in ["exec_context", "db_context"]:
+                if param_name in {"exec_context", "db_context"}:
                     continue
 
                 properties[param_name] = {

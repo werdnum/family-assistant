@@ -91,9 +91,9 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
             db_option = "postgres"
 
         db_backends = []
-        if db_option in ("sqlite", "all"):
+        if db_option in {"sqlite", "all"}:
             db_backends.append("sqlite")
-        if db_option in ("postgres", "all"):
+        if db_option in {"postgres", "all"}:
             db_backends.append("postgres")
 
         # Check if the test is requesting pg_vector_db_engine
@@ -105,18 +105,16 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
             else:
                 # Skip this test if postgres is not in the selected backends
                 metafunc.parametrize("db_engine", [], indirect=True)
-        else:
-            # Check if test has postgres marker
-            if metafunc.definition.get_closest_marker("postgres"):
-                # Postgres-only tests
-                if "postgres" in db_backends:
-                    metafunc.parametrize("db_engine", ["postgres"], indirect=True)
-                else:
-                    # Skip this test if postgres is not in the selected backends
-                    metafunc.parametrize("db_engine", [], indirect=True)
+        elif metafunc.definition.get_closest_marker("postgres"):
+            # Postgres-only tests
+            if "postgres" in db_backends:
+                metafunc.parametrize("db_engine", ["postgres"], indirect=True)
             else:
-                # Regular tests get all selected backends
-                metafunc.parametrize("db_engine", db_backends, indirect=True)
+                # Skip this test if postgres is not in the selected backends
+                metafunc.parametrize("db_engine", [], indirect=True)
+        else:
+            # Regular tests get all selected backends
+            metafunc.parametrize("db_engine", db_backends, indirect=True)
 
 
 # Port allocation now handled by worker-specific ranges - no global tracking needed
@@ -347,13 +345,18 @@ def check_container_runtime() -> bool:
     """Check if Docker or Podman is available."""
     for cmd in ["docker", "podman"]:
         try:
-            result = subprocess.run(
-                [cmd, "version"], capture_output=True, text=True, timeout=5, check=False
+            subprocess.run(
+                [cmd, "version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=True,
             )
-            if result.returncode == 0:
-                logger.info(f"Container runtime '{cmd}' is available")
-                return True
+            logger.info(f"Container runtime '{cmd}' is available")
+            return True
         except (subprocess.TimeoutExpired, FileNotFoundError):
+            continue
+        except subprocess.CalledProcessError:
             continue
     return False
 
@@ -375,12 +378,14 @@ def check_postgres_available() -> tuple[bool, str | None]:
                 capture_output=True,
                 text=True,
                 timeout=5,
-                check=False,
+                check=True,
             )
-            if result.returncode == 0 and "17" in result.stdout:
+            if "17" in result.stdout:
                 logger.info(f"Found PostgreSQL 17 at: {pg_ctl}")
                 return True, pg_ctl
         except (subprocess.TimeoutExpired, FileNotFoundError):
+            continue
+        except subprocess.CalledProcessError:
             continue
 
     return False, None
@@ -413,22 +418,25 @@ class SubprocessPostgresContainer:
         initdb_path = self.pg_ctl.replace("pg_ctl", "initdb")
         logger.info(f"Initializing PostgreSQL database in {self.data_dir}")
 
-        result = subprocess.run(
-            [
-                initdb_path,
-                "-D",
-                self.data_dir,
-                "-U",
-                self.user,
-                "--auth-local=trust",
-                "--auth-host=md5",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to initialize PostgreSQL: {result.stderr}")
+        try:
+            subprocess.run(
+                [
+                    initdb_path,
+                    "-D",
+                    self.data_dir,
+                    "-U",
+                    self.user,
+                    "--auth-local=trust",
+                    "--auth-host=md5",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as err:
+            raise RuntimeError(
+                f"Failed to initialize PostgreSQL: {err.stderr}"
+            ) from err
 
         # Update postgresql.conf to listen on the specific port
         conf_path = os.path.join(self.data_dir, "postgresql.conf")
@@ -451,81 +459,87 @@ class SubprocessPostgresContainer:
 
         # Start PostgreSQL
         logger.info(f"Starting PostgreSQL on port {self.port}")
-        result = subprocess.run(
-            [
-                self.pg_ctl,
-                "start",
-                "-D",
-                self.data_dir,
-                "-l",
-                os.path.join(self.data_dir, "logfile"),
-                "-w",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to start PostgreSQL: {result.stderr}")
+        try:
+            subprocess.run(
+                [
+                    self.pg_ctl,
+                    "start",
+                    "-D",
+                    self.data_dir,
+                    "-l",
+                    os.path.join(self.data_dir, "logfile"),
+                    "-w",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as err:
+            raise RuntimeError(f"Failed to start PostgreSQL: {err.stderr}") from err
 
         # Set up the test database and user
         psql_path = self.pg_ctl.replace("pg_ctl", "psql")
 
         # Create user with password
-        result = subprocess.run(
-            [
-                psql_path,
-                "-U",
-                self.user,
-                "-p",
-                str(self.port),
-                "-c",
-                f"ALTER USER {self.user} PASSWORD '{self.password}';",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to set user password: {result.stderr}")
+        try:
+            subprocess.run(
+                [
+                    psql_path,
+                    "-U",
+                    self.user,
+                    "-p",
+                    str(self.port),
+                    "-c",
+                    f"ALTER USER {self.user} PASSWORD '{self.password}';",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as err:
+            raise RuntimeError(f"Failed to set user password: {err.stderr}") from err
 
         # Create test database
-        result = subprocess.run(
-            [
-                psql_path,
-                "-U",
-                self.user,
-                "-p",
-                str(self.port),
-                "-c",
-                f"CREATE DATABASE {self.db_name};",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to create database: {result.stderr}")
+        try:
+            subprocess.run(
+                [
+                    psql_path,
+                    "-U",
+                    self.user,
+                    "-p",
+                    str(self.port),
+                    "-c",
+                    f"CREATE DATABASE {self.db_name};",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as err:
+            raise RuntimeError(f"Failed to create database: {err.stderr}") from err
 
         # Create pgvector extension
-        result = subprocess.run(
-            [
-                psql_path,
-                "-U",
-                self.user,
-                "-p",
-                str(self.port),
-                "-d",
-                self.db_name,
-                "-c",
-                "CREATE EXTENSION IF NOT EXISTS vector;",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to create pgvector extension: {result.stderr}")
+        try:
+            subprocess.run(
+                [
+                    psql_path,
+                    "-U",
+                    self.user,
+                    "-p",
+                    str(self.port),
+                    "-d",
+                    self.db_name,
+                    "-c",
+                    "CREATE EXTENSION IF NOT EXISTS vector;",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as err:
+            raise RuntimeError(
+                f"Failed to create pgvector extension: {err.stderr}"
+            ) from err
 
         logger.info("PostgreSQL started and configured successfully")
 
@@ -533,11 +547,15 @@ class SubprocessPostgresContainer:
         """Stop PostgreSQL and clean up."""
         if self.pg_ctl and os.path.exists(self.data_dir):
             logger.info("Stopping PostgreSQL subprocess...")
-            subprocess.run(
-                [self.pg_ctl, "stop", "-D", self.data_dir, "-m", "fast"],
-                capture_output=True,
-                check=False,
-            )
+            try:
+                subprocess.run(
+                    [self.pg_ctl, "stop", "-D", self.data_dir, "-m", "fast"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError as err:
+                logger.warning("Failed to stop PostgreSQL subprocess: %s", err.stderr)
 
             # Clean up the data directory
             shutil.rmtree(self.data_dir, ignore_errors=True)
@@ -1217,28 +1235,30 @@ def built_frontend() -> Generator[None, None, None]:
         # Run npm install if needed
         if needs_install:
             logger.info("Running npm install...")
-            result = subprocess.run(
-                ["npm", "install"],
-                cwd=frontend_dir,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if result.returncode != 0:
-                pytest.fail(f"npm install failed: {result.stderr}")
+            try:
+                subprocess.run(
+                    ["npm", "install"],
+                    cwd=frontend_dir,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError as err:
+                pytest.fail(f"npm install failed: {err.stderr}")
 
         # Run npm run build
         if needs_build:
             logger.info("Running npm run build...")
-            result = subprocess.run(
-                ["npm", "run", "build"],
-                cwd=frontend_dir,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if result.returncode != 0:
-                pytest.fail(f"npm run build failed: {result.stderr}")
+            try:
+                subprocess.run(
+                    ["npm", "run", "build"],
+                    cwd=frontend_dir,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError as err:
+                pytest.fail(f"npm run build failed: {err.stderr}")
 
             logger.info(
                 f"Frontend built successfully. Files in dist: {list(dist_dir.glob('*.html'))}"
@@ -1300,7 +1320,6 @@ def setup_fastapi_test_config() -> Generator[None, None, None]:
         # Restore original config
         if original_config is not None:
             fastapi_app.state.config = original_config
-        else:
+        elif hasattr(fastapi_app.state, "config"):
             # Remove config if it didn't exist before
-            if hasattr(fastapi_app.state, "config"):
-                del fastapi_app.state.config
+            del fastapi_app.state.config

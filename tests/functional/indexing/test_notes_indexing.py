@@ -892,11 +892,11 @@ async def test_notes_indexing_graceful_degradation(
                 else 0
             )
             if combined_text_len > 30000:  # Matches MAX_CONTENT_LENGTH in tasks.py
-                assert raw_note_embedding["embedding_model"] in [
+                assert raw_note_embedding["embedding_model"] in {
                     "text_only_too_long",
                     "text_only_error",
                     "text_only_empty_result",
-                ], (
+                }, (
                     f"Expected storage-only model, got: {raw_note_embedding['embedding_model']}"
                 )
                 logger.info(

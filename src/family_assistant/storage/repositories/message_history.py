@@ -109,7 +109,7 @@ class MessageHistoryRepository(BaseRepository):
             for k, v in values.items()
             if v is not None
             or k
-            in [
+            in {
                 "content",
                 "interface_message_id",
                 "turn_id",
@@ -121,7 +121,7 @@ class MessageHistoryRepository(BaseRepository):
                 "processing_profile_id",
                 "attachments",
                 "tool_name",
-            ]
+            }
         }
 
         try:

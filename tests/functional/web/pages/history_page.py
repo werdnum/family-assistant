@@ -63,7 +63,7 @@ class HistoryPage:
         await trigger.click(force=True)
 
         # Wait for dropdown to open and click the option
-        if interface_type == "_all" or interface_type == "":
+        if interface_type in {"_all", ""}:
             option_text = "All Interfaces"
         elif interface_type == "web":
             option_text = "Web"

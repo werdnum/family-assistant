@@ -87,7 +87,7 @@ class TasksRepository(BaseRepository):
         values_to_insert = {
             k: v
             for k, v in values_to_insert.items()
-            if v is not None or k in ["payload", "error"]
+            if v is not None or k in {"payload", "error"}
         }
 
         try:

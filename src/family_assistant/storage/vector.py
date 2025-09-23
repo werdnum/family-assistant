@@ -507,7 +507,7 @@ async def add_embedding(
                 update_values_for_embedding = {
                     k: v
                     for k, v in values_to_insert.items()
-                    if k not in ["document_id", "chunk_index", "embedding_type"]
+                    if k not in {"document_id", "chunk_index", "embedding_type"}
                 }
                 update_stmt = (
                     sa.update(DocumentEmbeddingRecord)
@@ -531,7 +531,7 @@ async def add_embedding(
             update_dict = {
                 col: getattr(stmt.excluded, col)
                 for col in values_to_insert
-                if col not in ["document_id", "chunk_index", "embedding_type"]
+                if col not in {"document_id", "chunk_index", "embedding_type"}
             }
             stmt = stmt.on_conflict_do_update(
                 index_elements=["document_id", "chunk_index", "embedding_type"],

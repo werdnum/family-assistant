@@ -110,7 +110,12 @@ class CodeReviewToolbox(llm.Toolbox):
 
         try:
             result = subprocess.run(
-                cmd, cwd=self.repo_root, capture_output=True, timeout=5, text=True
+                cmd,
+                cwd=self.repo_root,
+                capture_output=True,
+                timeout=5,
+                text=True,
+                check=True,
             )
 
             matches = []
@@ -214,52 +219,57 @@ class CodeReviewToolbox(llm.Toolbox):
 
 def get_diff(mode: str = "staged") -> str:
     """Get the git diff based on mode."""
-    if mode == "staged":
+    cmd = ["git", "diff", "--cached"] if mode == "staged" else ["git", "show", "HEAD"]
+
+    try:
         result = subprocess.run(
-            ["git", "diff", "--cached"], capture_output=True, text=True, check=False
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
         )
-    else:  # commit mode
-        result = subprocess.run(
-            ["git", "show", "HEAD"], capture_output=True, text=True, check=False
-        )
+    except subprocess.CalledProcessError:
+        return ""
     return result.stdout
 
 
 def get_diff_stat(mode: str = "staged") -> str:
     """Get the git diff statistics."""
-    if mode == "staged":
+    cmd = (
+        ["git", "diff", "--cached", "--stat"]
+        if mode == "staged"
+        else ["git", "show", "HEAD", "--stat"]
+    )
+
+    try:
         result = subprocess.run(
-            ["git", "diff", "--cached", "--stat"],
+            cmd,
             capture_output=True,
             text=True,
-            check=False,
+            check=True,
         )
-    else:
-        result = subprocess.run(
-            ["git", "show", "HEAD", "--stat"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+    except subprocess.CalledProcessError:
+        return ""
     return result.stdout
 
 
 def get_changed_files(mode: str = "staged") -> list[str]:
     """Get list of changed files."""
-    if mode == "staged":
+    cmd = (
+        ["git", "diff", "--cached", "--name-only"]
+        if mode == "staged"
+        else ["git", "show", "HEAD", "--name-only", "--pretty=format:"]
+    )
+
+    try:
         result = subprocess.run(
-            ["git", "diff", "--cached", "--name-only"],
+            cmd,
             capture_output=True,
             text=True,
-            check=False,
+            check=True,
         )
-    else:
-        result = subprocess.run(
-            ["git", "show", "HEAD", "--name-only", "--pretty=format:"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+    except subprocess.CalledProcessError:
+        return []
     return [f for f in result.stdout.splitlines() if f]
 
 
@@ -462,10 +472,9 @@ def format_human_output(review_data: dict[str, Any], exit_code: int) -> None:
             "SUGGESTION": CYAN,
         }
 
-        for severity in severity_colors:
+        for severity, color in severity_colors.items():
             severity_issues = [i for i in issues if i.get("severity") == severity]
             if severity_issues:
-                color = severity_colors[severity]
                 print(f"\n{color}{BOLD}{severity}:{NC}", file=sys.stderr)
                 for issue in severity_issues:
                     file_path = issue.get("file", "unknown")
@@ -524,14 +533,16 @@ def review_changes(
     """
 
     # Get repo root
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        print("Error: Not in a git repository", file=sys.stderr)
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as err:
+        error_message = err.stderr.strip() if err.stderr else "Not in a git repository"
+        print(f"Error: {error_message}", file=sys.stderr)
         sys.exit(1)
 
     repo_root = Path(result.stdout.strip())
@@ -619,13 +630,13 @@ def review_changes(
     prompt = "\n".join(prompt_parts)
 
     # Load guidelines
-    with open(repo_root / "REVIEW_GUIDELINES.md") as f:
+    with open(repo_root / "REVIEW_GUIDELINES.md", encoding="utf-8") as f:
         guidelines = f.read()
 
     # Load CLAUDE.md if exists
     claude_context = ""
     if (repo_root / "CLAUDE.md").exists():
-        with open(repo_root / "CLAUDE.md") as f:
+        with open(repo_root / "CLAUDE.md", encoding="utf-8") as f:
             claude_context = f.read()
 
     # System prompt

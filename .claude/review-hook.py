@@ -56,7 +56,12 @@ class ReviewHook:
         add_commands = re.findall(add_pattern, command)
 
         for add_cmd in add_commands:
-            result = subprocess.run(add_cmd, shell=True, capture_output=True)
+            result = subprocess.run(
+                add_cmd,
+                shell=True,
+                capture_output=True,
+                check=False,
+            )
             if result.returncode != 0:
                 print(f"❌ {add_cmd} failed", file=sys.stderr)
                 return False
@@ -68,7 +73,9 @@ class ReviewHook:
     def _stash_unstaged_changes(self) -> bool:
         """Stash unstaged changes to isolate staged changes."""
         # Check if there are unstaged changes
-        result = subprocess.run(["git", "diff", "--quiet"], capture_output=True)
+        result = subprocess.run(
+            ["git", "diff", "--quiet"], capture_output=True, check=False
+        )
         if result.returncode == 0:
             # No unstaged changes
             return False
@@ -78,6 +85,7 @@ class ReviewHook:
             ["git", "stash", "create", "review-hook: unstaged changes"],
             capture_output=True,
             text=True,
+            check=False,
         )
 
         if result.stdout.strip():
@@ -111,7 +119,9 @@ class ReviewHook:
 
         print("\nRestoring stashed changes...", file=sys.stderr)
         result = subprocess.run(
-            ["git", "stash", "apply", "--quiet", self.stash_ref], capture_output=True
+            ["git", "stash", "apply", "--quiet", self.stash_ref],
+            capture_output=True,
+            check=False,
         )
 
         if result.returncode == 0:
@@ -135,7 +145,10 @@ class ReviewHook:
 
         # Get staged files
         result = subprocess.run(
-            ["git", "diff", "--cached", "--name-only"], capture_output=True, text=True
+            ["git", "diff", "--cached", "--name-only"],
+            capture_output=True,
+            text=True,
+            check=False,
         )
         staged_files = [f for f in result.stdout.splitlines() if f]
 
@@ -144,7 +157,10 @@ class ReviewHook:
 
         print("Running format-and-lint.sh on staged files...", file=sys.stderr)
         result = subprocess.run(
-            [str(script_path)] + staged_files, capture_output=True, text=True
+            [str(script_path)] + staged_files,
+            capture_output=True,
+            text=True,
+            check=False,
         )
 
         if result.returncode != 0:
@@ -159,7 +175,12 @@ class ReviewHook:
 
     def _run_precommit_hooks(self) -> tuple[bool, str]:
         """Run pre-commit hooks on staged files."""
-        if subprocess.run(["which", "pre-commit"], capture_output=True).returncode != 0:
+        if (
+            subprocess.run(
+                ["which", "pre-commit"], capture_output=True, check=False
+            ).returncode
+            != 0
+        ):
             return True, ""
 
         config_path = self.repo_root / ".pre-commit-config.yaml"
@@ -173,6 +194,7 @@ class ReviewHook:
                 ["git", "diff", "--cached", "--name-only"],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             staged_files = [f for f in result.stdout.splitlines() if f]
 
@@ -183,11 +205,15 @@ class ReviewHook:
                 ["pre-commit", "run", "--files"] + staged_files,
                 capture_output=True,
                 text=True,
+                check=False,
             )
 
             if result.returncode == 0:
                 # Check if any changes were made
-                if subprocess.run(["git", "diff", "--quiet"]).returncode == 0:
+                if (
+                    subprocess.run(["git", "diff", "--quiet"], check=False).returncode
+                    == 0
+                ):
                     print("✅ Pre-commit hooks completed", file=sys.stderr)
                     break
                 else:
@@ -223,6 +249,7 @@ class ReviewHook:
             [sys.executable, str(review_script), "--json"],
             capture_output=True,
             text=True,
+            check=False,
         )
 
         # The human-readable output goes to stderr, JSON to stdout
@@ -261,7 +288,10 @@ class ReviewHook:
         """
         # Get current HEAD
         result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
         )
         head_commit = result.stdout.strip() if result.returncode == 0 else "no-head"
         sentinel = f"Reviewed: HEAD-{head_commit}"
@@ -275,7 +305,7 @@ class ReviewHook:
 
         if bypass_match:
             bypass_reason = bypass_match.group(1).strip()
-            if bypass_reason and bypass_reason not in ["<reason>", "reason"]:
+            if bypass_reason and bypass_reason not in {"<reason>", "reason"}:
                 has_bypass = True
 
         return has_reviewed, has_bypass, bypass_reason, head_commit
@@ -365,30 +395,29 @@ class ReviewHook:
                         f"To acknowledge and proceed, add to your commit message:\n"
                         f"• Reviewed: HEAD-{head_commit}",
                     )
+            elif has_bypass:
+                # Major issues (exit code 2) with bypass request
+                self._output_json_response(
+                    "ask",
+                    f"MAJOR issues found. Bypass requested: {bypass_reason}\n\n"
+                    "These are serious issues that could break the build. Do you want to proceed anyway?",
+                )
+            elif has_reviewed:
+                formatted_issues = self._format_issues(issues)
+                self._output_json_response(
+                    "deny",
+                    f"MAJOR issues found that cannot be bypassed with 'Reviewed' acknowledgment:\n\n"
+                    f"{formatted_issues}\n\n"
+                    "To bypass major issues, use: Bypass-Review: <reason why this is safe>",
+                )
             else:
-                # Major issues (exit code 2)
-                if has_bypass:
-                    self._output_json_response(
-                        "ask",
-                        f"MAJOR issues found. Bypass requested: {bypass_reason}\n\n"
-                        "These are serious issues that could break the build. Do you want to proceed anyway?",
-                    )
-                elif has_reviewed:
-                    formatted_issues = self._format_issues(issues)
-                    self._output_json_response(
-                        "deny",
-                        f"MAJOR issues found that cannot be bypassed with 'Reviewed' acknowledgment:\n\n"
-                        f"{formatted_issues}\n\n"
-                        "To bypass major issues, use: Bypass-Review: <reason why this is safe>",
-                    )
-                else:
-                    formatted_issues = self._format_issues(issues)
-                    self._output_json_response(
-                        "deny",
-                        f"Code review found BLOCKING issues:\n\n{formatted_issues}\n\n"
-                        "These should be fixed before committing.\n\n"
-                        "To override (use with caution): Bypass-Review: <specific reason>",
-                    )
+                formatted_issues = self._format_issues(issues)
+                self._output_json_response(
+                    "deny",
+                    f"Code review found BLOCKING issues:\n\n{formatted_issues}\n\n"
+                    "These should be fixed before committing.\n\n"
+                    "To override (use with caution): Bypass-Review: <specific reason>",
+                )
 
         finally:
             # Always restore stash on exit

@@ -281,7 +281,7 @@ async def create_event_listener_tool(
             })
 
         # Validate action_type
-        if action_type not in ["wake_llm", "script"]:
+        if action_type not in {"wake_llm", "script"}:
             return json.dumps({
                 "success": False,
                 "message": f"Invalid action_type '{action_type}'. Must be 'wake_llm' or 'script'",

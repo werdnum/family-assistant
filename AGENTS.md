@@ -50,8 +50,8 @@ poe dev
 ```
 
 This command starts both the FastAPI backend and the Vite frontend development server. The frontend
-is served on `http://localhost:5173`,
-and all API requests are proxied to the backend running on port 8000.
+is served on `http://localhost:5173`, and all API requests are proxied to the backend running on
+port 8000.
 
 Note that in the dev container this step is unnecessary. The Vite dev server is already running at
 `devcontainer-backend-1:5173` with HMR and the backend uses `hupper`.
@@ -456,7 +456,8 @@ The project includes `tests/mocks/mock_llm.py` with:
 
 When CI tests fail, use these tools and techniques to debug issues efficiently.
 
-Do not use `CI=true` when debugging locally - it is used in CI as a shortcut to skip rebuilding the frontend.
+Do not use `CI=true` when debugging locally - it is used in CI as a shortcut to skip rebuilding the
+frontend.
 
 #### CI Status Monitoring
 
@@ -988,10 +989,11 @@ Once you've implemented a change, you ALWAYS go through the following algorithm:
 1. Run scripts/format-and-lint.sh to check for linter errors.
 2. Make sure that you have tests covering the new functionality, and that they pass.
 3. Run a broad subset of tests related to your fixes.
-4. Run `poe test` for final verification - this is what runs in CI and it runs all tests and linters.
+4. Run `poe test` for final verification - this is what runs in CI and it runs all tests and
+   linters.
 
-You NEVER push new changes or make a PR if `poe test` does not pass. We do not merge PRs with failing
-tests or linter errors.
+You NEVER push new changes or make a PR if `poe test` does not pass. We do not merge PRs with
+failing tests or linter errors.
 
 ### Planning guidelines
 

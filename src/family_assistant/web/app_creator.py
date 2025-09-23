@@ -251,11 +251,10 @@ class DevModeTemplates(Jinja2Templates):
                     args = (args[0], context) + args[2:]
                 else:
                     kwargs["context"] = context
-            else:  # new style
-                if len(args) > 2:
-                    args = args[:2] + (context,) + args[3:]
-                else:
-                    kwargs["context"] = context
+            elif len(args) > 2:  # new style with explicit context arg
+                args = args[:2] + (context,) + args[3:]
+            else:
+                kwargs["context"] = context
         else:
             kwargs["context"] = context
 

@@ -429,7 +429,7 @@ async def schedule_reminder_tool(
             try:
                 int(interval_parts[0])  # Validate it's a number
                 unit = interval_parts[1].rstrip("s")
-                if unit not in ["minute", "hour", "day"]:
+                if unit not in {"minute", "hour", "day"}:
                     raise ValueError(f"Unknown time unit: {unit}")
             except ValueError as e:
                 raise ValueError(
@@ -542,7 +542,7 @@ async def schedule_recurring_task_tool(
         base_id = f"recurring_{task_type}"
         if description:
             safe_desc = "".join(
-                c if c.isalnum() or c in ["-", "_"] else "_"
+                c if c.isalnum() or c in {"-", "_"} else "_"
                 for c in description.lower()
             )
             base_id += f"_{safe_desc}"
