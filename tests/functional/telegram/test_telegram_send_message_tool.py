@@ -213,6 +213,17 @@ async def test_send_message_to_user_tool(
     try:
         await fix.handler.message_handler(update_alice, context_alice)
 
+        async with fix.get_db_context_func() as db_context:
+            bob_history_all = await db_context.message_history.get_recent(
+                interface_type="telegram",
+                conversation_id=str(bob_chat_id),
+            )
+            bob_history_filtered = await db_context.message_history.get_recent(
+                interface_type="telegram",
+                conversation_id=str(bob_chat_id),
+                processing_profile_id=fix.processing_service.service_config.id,
+            )
+
         # Assert
         with soft_assertions():  # type: ignore[attr-defined]
             # 1. LLM Calls
@@ -270,6 +281,17 @@ async def test_send_message_to_user_tool(
 
             # 3. Confirmation Manager (should not be called for this tool by default)
             fix.mock_confirmation_manager.request_confirmation.assert_not_awaited()
+
+            # 4. Message history records include processing profile identifier
+            assert_that(bob_history_all).described_as(
+                "History entries for Bob's conversation"
+            ).is_not_empty()
+            assert_that(bob_history_filtered).described_as(
+                "History entries when filtering by processing profile"
+            ).is_not_empty()
+            assert_that([
+                msg.get("processing_profile_id") for msg in bob_history_all
+            ]).contains(fix.processing_service.service_config.id)
     finally:
         # Restore original context providers
         fix.processing_service.context_providers = original_providers
