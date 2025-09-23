@@ -503,7 +503,7 @@ class ConfirmingToolsProvider(ToolsProvider):
         This is specifically for calendar tools that need to fetch event details
         before showing confirmation.
         """
-        if tool_name in ["modify_calendar_event", "delete_calendar_event"]:
+        if tool_name in {"modify_calendar_event", "delete_calendar_event"}:
             # Import here to avoid circular dependencies
             from family_assistant import calendar_integration
 

@@ -253,7 +253,7 @@ def time_format(time_dict: dict[str, Any], format_string: str) -> str:
     """
     dt = _dict_to_datetime(time_dict)
 
-    if format_string in ("RFC3339", "ISO8601"):
+    if format_string in {"RFC3339", "ISO8601"}:
         return dt.isoformat()
 
     return dt.strftime(format_string)

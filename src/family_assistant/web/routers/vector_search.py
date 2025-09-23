@@ -153,10 +153,10 @@ async def document_detail_view(
                     full_text = embedding.content
                     full_text_type = embedding.embedding_type
                     # Check if this was stored without embedding due to size
-                    if embedding.embedding_model in [
+                    if embedding.embedding_model in {
                         "text_only_too_long",
                         "text_only_error",
-                    ]:
+                    }:
                         full_text_warning = (
                             f"Note: This content was too large to embed "
                             f"(reason: {embedding.embedding_model})"
@@ -341,7 +341,7 @@ async def handle_vector_search(
         )
 
         # --- Generate Embedding ---
-        if query_obj.search_type in ["semantic", "hybrid"]:
+        if query_obj.search_type in {"semantic", "hybrid"}:
             # Basic check, might need more robust model matching/selection
             # Assert semantic_query is not None due to VectorSearchQuery.__post_init__ validation
             assert query_obj.semantic_query is not None, (

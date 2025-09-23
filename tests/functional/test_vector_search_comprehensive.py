@@ -379,7 +379,7 @@ async def test_vector_search_special_characters(
             "/api/vector-search/", json={"query_text": query, "limit": 5}
         )
         # Should not crash, might return 200 with empty results
-        assert resp.status_code in [200, 422]  # Either success or validation error
+        assert resp.status_code in {200, 422}  # Either success or validation error
 
         if resp.status_code == 200:
             results = resp.json()

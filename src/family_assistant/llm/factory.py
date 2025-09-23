@@ -130,7 +130,7 @@ class LLMClientFactory:
         # Extract provider-specific parameters
         # Remove keys that are handled separately
         provider_params = {
-            k: v for k, v in config.items() if k not in ["model", "provider", "api_key"]
+            k: v for k, v in config.items() if k not in {"model", "provider", "api_key"}
         }
 
         # Get model_parameters from llm_parameters config

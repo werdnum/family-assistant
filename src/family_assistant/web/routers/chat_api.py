@@ -497,7 +497,7 @@ async def api_chat_send_message_stream(
                     **{
                         k: v
                         for k, v in attachment.items()
-                        if k not in ["type", "content"]
+                        if k not in {"type", "content"}
                     },
                 })
 

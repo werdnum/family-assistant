@@ -246,7 +246,7 @@ async def test_note_form_validation(web_test_fixture: WebTestFixture) -> None:
         )
     else:
         validation_message = ""
-    assert validation_message != ""  # Should have a validation message
+    assert validation_message  # Should have a validation message
 
     # Fill only title and try to submit
     await notes_page.fill_form_field(notes_page.NOTE_TITLE_INPUT, "Title Only")
@@ -260,7 +260,7 @@ async def test_note_form_validation(web_test_fixture: WebTestFixture) -> None:
         )
     else:
         content_validation = ""
-    assert content_validation != ""  # Content is also required
+    assert content_validation  # Content is also required
 
     # Fill both fields and submit
     await notes_page.fill_form_field(notes_page.NOTE_CONTENT_TEXTAREA, "Test content")

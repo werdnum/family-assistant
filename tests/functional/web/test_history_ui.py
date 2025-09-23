@@ -279,9 +279,9 @@ async def test_history_filters_interface(
     to_value_after = await date_to_input.input_value()
 
     assert interface_value == "_all"
-    assert conv_value == ""
-    assert from_value_after == ""
-    assert to_value_after == ""
+    assert not conv_value
+    assert not from_value_after
+    assert not to_value_after
 
 
 @pytest.mark.playwright
@@ -958,8 +958,8 @@ async def test_history_combined_filters_interaction(
     conv_value = await conv_input.input_value()
 
     assert interface_value == "_all"
-    assert date_value == ""
-    assert conv_value == ""
+    assert not date_value
+    assert not conv_value
 
     # URL should be clean
     cleared_url = page.url

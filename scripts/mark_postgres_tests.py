@@ -47,13 +47,13 @@ rule:
 def run_ast_grep(rule_content: str, file_path: Path) -> bool:
     """Run ast-grep with the given rule on a file."""
     with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".yaml", delete=False
+        mode="w", suffix=".yaml", delete=False, encoding="utf-8"
     ) as rule_file:
         rule_file.write(rule_content)
         rule_file.flush()
 
         try:
-            result = subprocess.run(
+            subprocess.run(
                 [
                     "ast-grep",
                     "scan",
@@ -64,26 +64,41 @@ def run_ast_grep(rule_content: str, file_path: Path) -> bool:
                 ],
                 capture_output=True,
                 text=True,
+                check=True,
             )
-
-            if result.returncode != 0 and result.stderr:
-                print(f"Error processing {file_path}: {result.stderr}")
-                return False
-
             return True
+        except subprocess.CalledProcessError as err:
+            error_output = err.stderr or ""
+            if error_output:
+                print(f"Error processing {file_path}: {error_output}")
+            return False
         finally:
             Path(rule_file.name).unlink()
 
 
 def find_files_with_pg_vector(root_dir: Path) -> list[Path]:
     """Find all files that use pg_vector_db_engine."""
-    result = subprocess.run(
-        ["grep", "-r", "-l", "pg_vector_db_engine", str(root_dir), "--include=*.py"],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "grep",
+                "-r",
+                "-l",
+                "pg_vector_db_engine",
+                str(root_dir),
+                "--include=*.py",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as err:
+        error_output = err.stderr or ""
+        if error_output:
+            print(f"Error searching for pg_vector_db_engine: {error_output}")
+        return []
 
-    if result.returncode == 0 and result.stdout:
+    if result.stdout:
         return [Path(f) for f in result.stdout.strip().split("\n") if f]
     return []
 

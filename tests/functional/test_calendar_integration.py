@@ -1448,7 +1448,7 @@ END:VCALENDAR"""
     event_summaries = [
         e["summary"]
         for e in events
-        if e["summary"] in ["Timed Event Test", "All Day Event Test"]
+        if e["summary"] in {"Timed Event Test", "All Day Event Test"}
     ]
     timed_idx = event_summaries.index("Timed Event Test")
     all_day_idx = event_summaries.index("All Day Event Test")

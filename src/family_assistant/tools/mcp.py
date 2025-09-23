@@ -1,5 +1,5 @@
 import asyncio
-import contextlib  # Added contextlib
+import contextlib
 import logging
 import os  # Import os for environment variable resolution
 from typing import (
@@ -43,8 +43,7 @@ class MCPToolsProvider:
         self._tool_map: dict[str, str] = {}  # Map tool name -> server_id
         self._definitions: list[dict[str, Any]] = []
         self._initialized = False
-        # Store the context managers directly instead of using AsyncExitStack
-        self._connection_contexts: dict[str, list[Any]] = {}
+        self._connection_contexts: dict[str, contextlib.AsyncExitStack] = {}
         self._server_statuses: dict[str, str] = {
             server_id: MCP_SERVER_STATUS_PENDING
             for server_id in self._mcp_server_configs
@@ -80,7 +79,10 @@ class MCPToolsProvider:
                             sid
                             for sid, status in self._server_statuses.items()
                             if status
-                            in [MCP_SERVER_STATUS_PENDING, MCP_SERVER_STATUS_CONNECTING]
+                            in {
+                                MCP_SERVER_STATUS_PENDING,
+                                MCP_SERVER_STATUS_CONNECTING,
+                            }
                         ]
                         logger.info(
                             f"Still initializing MCP tools... "
@@ -108,6 +110,7 @@ class MCPToolsProvider:
         discovered_tools = []
         tool_map = {}
         session = None
+        exit_stack = contextlib.AsyncExitStack()
 
         transport_type = server_conf.get("transport", "stdio").lower()
         url = server_conf.get("url")  # Needed for SSE
@@ -179,6 +182,8 @@ class MCPToolsProvider:
                         f"MCP server '{server_id}' (stdio): 'command' is missing."
                     )
                     self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
+                    with contextlib.suppress(Exception):
+                        await exit_stack.aclose()
                     return None, [], {}
                 server_params = StdioServerParameters(
                     command=command,
@@ -186,21 +191,22 @@ class MCPToolsProvider:
                     env=resolved_env_stdio,  # Use stdio-specific env vars
                 )
 
-                # Create the stdio client context manager
-                stdio_cm = stdio_client(server_params)
-                read_stream, write_stream = await stdio_cm.__aenter__()  # pylint: disable=no-member
+                read_stream, write_stream = await exit_stack.enter_async_context(
+                    stdio_client(server_params)
+                )
 
-                # Create the session context manager
-                session_cm = ClientSession(read_stream, write_stream)
-                session = await session_cm.__aenter__()
+                session = await exit_stack.enter_async_context(
+                    ClientSession(read_stream, write_stream)
+                )
 
-                # Store the context managers for cleanup
-                self._connection_contexts[server_id] = [stdio_cm, session_cm]
+                self._connection_contexts[server_id] = exit_stack
 
             elif transport_type == "sse":
                 if not url:
                     logger.error(f"MCP server '{server_id}' (sse): 'url' is missing.")
                     self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
+                    with contextlib.suppress(Exception):
+                        await exit_stack.aclose()
                     return None, [], {}
 
                 # Construct headers using the resolved token
@@ -216,22 +222,23 @@ class MCPToolsProvider:
                     )
                     # Add other potential header mappings here if needed
 
-                # Create the SSE client context manager
-                sse_cm = sse_client(url=url, headers=headers)
-                read_stream, write_stream = await sse_cm.__aenter__()  # pylint: disable=no-member
+                read_stream, write_stream = await exit_stack.enter_async_context(
+                    sse_client(url=url, headers=headers)
+                )
 
-                # Create the session context manager
-                session_cm = ClientSession(read_stream, write_stream)
-                session = await session_cm.__aenter__()
+                session = await exit_stack.enter_async_context(
+                    ClientSession(read_stream, write_stream)
+                )
 
-                # Store the context managers for cleanup
-                self._connection_contexts[server_id] = [sse_cm, session_cm]
+                self._connection_contexts[server_id] = exit_stack
 
             else:
                 logger.error(
                     f"Unsupported transport type '{transport_type}' for MCP server '{server_id}'."
                 )
                 self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
+                with contextlib.suppress(Exception):
+                    await exit_stack.aclose()
                 return None, [], {}
 
             # --- Initialize Session and Discover Tools (Common Logic) ---
@@ -269,6 +276,8 @@ class MCPToolsProvider:
                 exc_info=True,
             )
             self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
+            with contextlib.suppress(Exception):
+                await exit_stack.aclose()
             # Clean up any partially created contexts
             if server_id in self._connection_contexts:
                 await self._close_server_connections(server_id)
@@ -390,10 +399,10 @@ class MCPToolsProvider:
                         f"Gather caught exception for server '{server_id}': {res_item}"
                     )
                     # Status should have been set to FAILED by _connect_and_discover_mcp
-                    if self._server_statuses[server_id] not in [
+                    if self._server_statuses[server_id] not in {
                         MCP_SERVER_STATUS_FAILED,
                         MCP_SERVER_STATUS_CANCELLED,
-                    ]:
+                    }:
                         self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
             elif res_item is None:
                 logger.warning(
@@ -773,31 +782,27 @@ class MCPToolsProvider:
 
         # Then handle the context managers with proper error handling
         if server_id in self._connection_contexts:
-            contexts = self._connection_contexts[server_id]
-            # Try to close gracefully, but handle cross-task issues
-            for i, cm in enumerate(reversed(contexts)):
-                try:
-                    await cm.__aexit__(None, None, None)
-                    logger.debug(f"Closed context manager {i} for server '{server_id}'")
-                except RuntimeError as e:
-                    # Handle the specific error about cancel scope in different task
-                    if "cancel scope in a different task" in str(e):
-                        logger.debug(
-                            f"Ignoring expected cancel scope error for server '{server_id}' during shutdown"
-                        )
-                    else:
-                        logger.warning(
-                            f"RuntimeError closing context manager for server '{server_id}': {e}"
-                        )
-                except asyncio.CancelledError:
+            exit_stack = self._connection_contexts.pop(server_id)
+            try:
+                await exit_stack.aclose()
+                logger.debug(f"Closed contexts for server '{server_id}'")
+            except RuntimeError as e:
+                if "cancel scope in a different task" in str(e):
                     logger.debug(
-                        f"Context manager closure cancelled for server '{server_id}'"
+                        f"Ignoring expected cancel scope error for server '{server_id}' during shutdown"
                     )
-                except Exception as e:
+                else:
                     logger.warning(
-                        f"Error closing context manager for server '{server_id}': {type(e).__name__}: {e}"
+                        f"RuntimeError closing context manager for server '{server_id}': {e}"
                     )
-            del self._connection_contexts[server_id]
+            except asyncio.CancelledError:
+                logger.debug(
+                    f"Context manager closure cancelled for server '{server_id}'"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Error closing context manager for server '{server_id}': {type(e).__name__}: {e}"
+                )
 
     def get_tool_to_server_mapping(self) -> dict[str, str]:
         """Returns a mapping of tool names to their server IDs.
