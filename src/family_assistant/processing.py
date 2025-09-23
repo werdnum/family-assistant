@@ -45,6 +45,22 @@ from .utils.clock import Clock, SystemClock
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class ChatInteractionResult:
+    """Result of a chat interaction from ProcessingService.handle_chat_interaction."""
+
+    text_reply: str | None = None
+    assistant_message_internal_id: int | None = None
+    reasoning_info: dict[str, Any] | None = None
+    error_traceback: str | None = None
+    attachment_ids: list[str] | None = None
+
+    @property
+    def has_error(self) -> bool:
+        """Check if this result represents an error."""
+        return self.error_traceback is not None
+
+
 # --- Configuration for ProcessingService ---
 @dataclass
 class ProcessingServiceConfig:
@@ -243,12 +259,12 @@ class ProcessingService:
             ]
             | None
         ) = None,
-    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
 
         This method maintains backward compatibility by collecting all streaming events
-        and returning the complete list of messages and final reasoning info.
+        and returning the complete list of messages, final reasoning info, and attachment IDs.
 
         Args:
             db_context: The database context.
@@ -265,10 +281,12 @@ class ProcessingService:
             - A list of all message dictionaries generated during this turn
               (assistant requests, tool responses, final answer).
             - A dictionary containing reasoning/usage info from the final LLM call (or None).
+            - A list of attachment IDs to send with the response (or None).
         """
         # Use the streaming generator and collect all messages
         turn_messages: list[dict[str, Any]] = []
         final_reasoning_info: dict[str, Any] | None = None
+        final_attachment_ids: list[str] | None = None
 
         async for event, message_dict in self.process_message_stream(
             db_context=db_context,
@@ -284,13 +302,17 @@ class ProcessingService:
             if message_dict and message_dict.get("role"):
                 turn_messages.append(message_dict)
 
-            # Extract reasoning info from done events
+            # Extract reasoning info and attachment IDs from done events
             if event.type == "done" and event.metadata and "message" in event.metadata:
                 assistant_msg = event.metadata["message"]
                 if assistant_msg.get("reasoning_info"):
                     final_reasoning_info = assistant_msg["reasoning_info"]
 
-        return turn_messages, final_reasoning_info
+                # Extract attachment IDs if present
+                if "attachment_ids" in event.metadata:
+                    final_attachment_ids = event.metadata["attachment_ids"]
+
+        return turn_messages, final_reasoning_info, final_attachment_ids
 
     async def process_message_stream(
         self,
@@ -322,6 +344,9 @@ class ProcessingService:
         final_reasoning_info: dict[str, Any] | None = None
         max_iterations = 5
         current_iteration = 1
+        pending_attachment_ids: list[
+            str
+        ] = []  # Track attachment IDs from attach_to_response calls
 
         # Get tool definitions
         all_tool_definitions = await self.tools_provider.get_tool_definitions()
@@ -420,10 +445,16 @@ class ProcessingService:
             }
 
             # Yield a synthetic "done" event with the complete assistant message
+            # Include attachment IDs if any were captured from attach_to_response calls
+            done_metadata: dict[str, Any] = {"message": assistant_message_for_turn}
+            if pending_attachment_ids:
+                done_metadata["attachment_ids"] = pending_attachment_ids
+                logger.info(
+                    f"Including {len(pending_attachment_ids)} attachment IDs in done event"
+                )
+
             yield (
-                LLMStreamEvent(
-                    type="done", metadata={"message": assistant_message_for_turn}
-                ),
+                LLMStreamEvent(type="done", metadata=done_metadata),
                 assistant_message_for_turn,
             )
 
@@ -466,6 +497,25 @@ class ProcessingService:
             for completed_task in asyncio.as_completed(tool_tasks):
                 try:
                     event, llm_message, history_message = await completed_task
+
+                    # Check if this is an attach_to_response tool call
+                    tool_name = history_message.get("tool_name")
+                    if tool_name == "attach_to_response" and event.tool_result:
+                        try:
+                            result_data = json.loads(event.tool_result)
+                            if (
+                                result_data.get("status") == "attachments_queued"
+                                and "attachment_ids" in result_data
+                            ):
+                                attachment_ids = result_data["attachment_ids"]
+                                pending_attachment_ids.extend(attachment_ids)
+                                logger.info(
+                                    f"Captured {len(attachment_ids)} attachment IDs from attach_to_response"
+                                )
+                        except (json.JSONDecodeError, KeyError) as e:
+                            logger.warning(
+                                f"Failed to parse attach_to_response result: {e}"
+                            )
 
                     # Yield tool result event (history_message for database storage)
                     yield (event, history_message)
@@ -1007,45 +1057,41 @@ class ProcessingService:
             | None
         ) = None,
         trigger_attachments: list[dict[str, Any]] | None = None,
-    ) -> tuple[str | None, int | None, dict[str, Any] | None, str | None]:
+    ) -> ChatInteractionResult:
         """
-        Handles a complete chat interaction turn.
+        Handles a complete chat interaction from user input to final response.
 
-        This method orchestrates:
-        1. Generating a unique turn ID.
-        2. Determining conversation thread context.
-        3. Saving the initial user trigger message.
-        4. Preparing full context for the LLM (history, system prompt, etc.).
-        5. Calling the core LLM processing logic (`self.process_message`).
-        6. Saving all messages generated during the LLM interaction turn.
-        7. Extracting the final textual reply and assistant message ID.
+        This method orchestrates the entire conversation flow:
+        1. Context aggregation (messages, attachments, calendar, etc.)
+        2. LLM processing with tool execution
+        3. Message saving and final response extraction
+        4. Error handling and recovery
 
         Args:
-            db_context: The database context.
-            interface_type: Identifier for the interaction interface (e.g., 'telegram', 'api').
-            conversation_id: Identifier for the conversation (e.g., chat ID string).
-            trigger_content_parts: List of content parts for the triggering message (e.g., text, image).
-            trigger_interface_message_id: The interface-specific ID of the triggering message (if any).
-            user_name: The name of the user initiating the interaction.
-            replied_to_interface_id: Optional interface-specific ID of a message being replied to.
-            chat_interface: Optional interface for sending messages (e.g., for tool confirmations).
-            request_confirmation_callback: Optional callback for requesting user confirmation for tools.
+            db_context: Database context for operations
+            interface_type: Type of interface (e.g., "telegram", "web")
+            conversation_id: Unique conversation identifier
+            trigger_content_parts: User's message content parts
+            trigger_interface_message_id: Interface-specific message ID
+            user_name: Name of the user
+            replied_to_interface_id: ID of message being replied to
+            chat_interface: Interface for sending messages
+            request_confirmation_callback: Callback for tool confirmations
+            trigger_attachments: Attachments from the user
 
         Returns:
-            A tuple containing:
-            - final_text_reply (str | None): The textual content of the assistant's final response.
-            - final_assistant_message_internal_id (int | None): The internal DB ID of the assistant's final message.
-            - final_reasoning_info (dict | None): Reasoning/usage info from the final LLM call.
-            - error_traceback (str | None): A string containing the traceback if an error occurred.
+            ChatInteractionResult containing:
+            - text_reply: Final LLM content to send to user (str | None)
+            - assistant_message_internal_id: Internal message ID of assistant's response (int | None)
+            - reasoning_info: Final reasoning information (dict | None)
+            - error_traceback: Processing error traceback if any (str | None)
+            - attachment_ids: Response attachment IDs (list[str] | None)
         """
+
         turn_id = str(uuid.uuid4())
         logger.info(
-            f"Handling chat interaction for {interface_type}:{conversation_id}, Turn ID: {turn_id}"
+            f"Starting handle_chat_interaction for conversation {conversation_id}, turn {turn_id}"
         )
-        processing_error_traceback: str | None = None
-        final_text_reply: str | None = None
-        final_assistant_message_internal_id: int | None = None
-        final_reasoning_info: dict[str, Any] | None = None
 
         try:
             # --- 1. Determine Thread Root ID & Save User Trigger Message ---
@@ -1118,10 +1164,6 @@ class ProcessingService:
                     logger.info(
                         f"Established new thread_root_id: {thread_root_id_for_turn}"
                     )
-                    # Update the user message record itself if its thread_root_id was initially None
-                    # This is usually handled by add_message_to_history if thread_root_id is passed as None initially
-                    # and then set, but double-checking or an explicit update might be needed if that's not the case.
-                    # For now, assuming add_message_to_history handles setting its own ID as root if None is passed.
 
             # --- 2. Prepare LLM Context (History, System Prompt) ---
             # Use interface-specific history limits
@@ -1145,7 +1187,6 @@ class ProcessingService:
                 raw_history_messages = []  # Continue with empty history on error
 
             logger.debug(f"Raw history messages fetched ({len(raw_history_messages)}).")
-            # (Detailed logging of raw history messages can be added here if needed for debugging)
 
             # Filter out the *current* user trigger message if it somehow got included in history
             filtered_history_messages = []
@@ -1319,7 +1360,6 @@ class ProcessingService:
             )
 
             # Add current user trigger message
-            llm_user_content: str | list[dict[str, Any]]
             if (
                 len(converted_trigger_parts) == 1
                 and converted_trigger_parts[0].get("type") == "text"
@@ -1334,6 +1374,7 @@ class ProcessingService:
             (
                 generated_turn_messages,
                 final_reasoning_info_from_process_msg,
+                response_attachment_ids,
             ) = await self.process_message(
                 db_context=db_context,
                 messages=messages_for_llm,
@@ -1347,6 +1388,9 @@ class ProcessingService:
             final_reasoning_info = final_reasoning_info_from_process_msg
 
             # --- 4. Save Generated Turn Messages & Extract Final Reply ---
+            final_text_reply = None
+            final_assistant_message_internal_id = None
+
             if generated_turn_messages:
                 for msg_dict in generated_turn_messages:
                     msg_to_save = msg_dict.copy()
@@ -1380,60 +1424,45 @@ class ProcessingService:
                     f"No messages generated by self.process_message for turn {turn_id}."
                 )
 
-            return (
-                final_text_reply,
-                final_assistant_message_internal_id,
-                final_reasoning_info,
-                None,
+            return ChatInteractionResult(
+                text_reply=final_text_reply,
+                assistant_message_internal_id=final_assistant_message_internal_id,
+                reasoning_info=final_reasoning_info,
+                error_traceback=None,
+                attachment_ids=response_attachment_ids,
             )
 
         except Exception:
-            processing_error_traceback = traceback.format_exc()
             logger.error(
-                f"Exception in handle_chat_interaction for {interface_type}:{conversation_id}, turn {turn_id}: {processing_error_traceback}"
+                f"Error in handle_chat_interaction for conversation {conversation_id}, turn {turn_id}",
+                exc_info=True,
             )
-            # Attempt to save the error to the user trigger message if possible
-            # Ensure saved_user_msg_record is accessible here; it's defined at the start of the try block.
-            if (
-                "saved_user_msg_record" in locals()
-                and saved_user_msg_record
-                and saved_user_msg_record.get("internal_id")
-            ):
-                try:
-                    await db_context.message_history.update_error_traceback(
-                        internal_id=saved_user_msg_record["internal_id"],
-                        error_traceback=processing_error_traceback,
-                    )
-                except Exception as db_err_update:
-                    logger.error(
-                        f"Failed to update user message with error traceback: {db_err_update}"
-                    )
+            # Capture the full traceback as a string
+            processing_error_traceback = traceback.format_exc()
 
-            # Generate and store an error message in message history so LLM can see it
+            # Create a user-friendly error message
             error_message = (
-                "Sorry, an unexpected error occurred while processing your request."
+                "I encountered an error while processing your message. "
+                "Please try again, and if the problem persists, contact support."
             )
-            error_message_internal_id = None
+
+            # Save error message to conversation history
             try:
-                saved_error_msg_record = await db_context.message_history.add(
+                error_message_record = await db_context.message_history.add_message(
                     interface_type=interface_type,
                     conversation_id=conversation_id,
-                    interface_message_id=None,  # No interface message ID for generated error
-                    turn_id=turn_id,  # Use the same turn_id
-                    thread_root_id=thread_root_id_for_turn,  # Use the same thread_root_id
+                    interface_message_id=None,  # Will be set when sent
+                    turn_id=turn_id,
+                    thread_root_id=thread_root_id_for_turn,
                     timestamp=datetime.now(timezone.utc),
-                    role="error",
+                    role="assistant",
                     content=error_message,
-                    error_traceback=processing_error_traceback,
-                    processing_profile_id=self.service_config.id,
                 )
-                if saved_error_msg_record:
-                    error_message_internal_id = saved_error_msg_record.get(
-                        "internal_id"
-                    )
-                    logger.info(
-                        f"Stored error message in history with internal_id {error_message_internal_id}"
-                    )
+                error_message_internal_id = (
+                    error_message_record.get("internal_id")
+                    if error_message_record
+                    else None
+                )
             except Exception as error_save_err:
                 logger.error(
                     f"Failed to save error message to history: {error_save_err}",
@@ -1441,11 +1470,12 @@ class ProcessingService:
                 )
 
             # Return the error message and its ID so the caller can send it to the user
-            return (
-                error_message,
-                error_message_internal_id,
-                None,
-                processing_error_traceback,
+            return ChatInteractionResult(
+                text_reply=error_message,
+                assistant_message_internal_id=error_message_internal_id,
+                reasoning_info=None,
+                error_traceback=processing_error_traceback,
+                attachment_ids=None,
             )
 
     async def handle_chat_interaction_stream(

@@ -160,12 +160,7 @@ async def test_render_home_assistant_template_success(
     # --- Simulate User Interaction ---
     user_message = "What's the current temperature in the living room?"
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_reply,
-            _,
-            _,
-            error,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -174,6 +169,8 @@ async def test_render_home_assistant_template_success(
             trigger_interface_message_id="msg_ha_template_test",
             user_name=TEST_USER_NAME,
         )
+        final_reply = result.text_reply
+        error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply and expected_result in final_reply, (
@@ -291,12 +288,7 @@ async def test_render_home_assistant_template_no_client(
     # --- Simulate User Interaction ---
     user_message = "Check the sensor status"
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_reply,
-            _,
-            _,
-            error,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -305,6 +297,8 @@ async def test_render_home_assistant_template_no_client(
             trigger_interface_message_id="msg_ha_no_client_test",
             user_name=TEST_USER_NAME,
         )
+        final_reply = result.text_reply
+        error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply and "not currently available" in final_reply, (
@@ -449,12 +443,7 @@ Status: Comfortable"""
         "What's the weather like outside? Include the feels like temperature."
     )
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_reply,
-            _,
-            _,
-            error,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -463,6 +452,8 @@ Status: Comfortable"""
             trigger_interface_message_id="msg_ha_complex_test",
             user_name=TEST_USER_NAME,
         )
+        final_reply = result.text_reply
+        error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply, "No reply received"
@@ -593,12 +584,7 @@ async def test_render_home_assistant_template_api_error(
     # --- Simulate User Interaction ---
     user_message = "What's the alarm status?"
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_reply,
-            _,
-            _,
-            error,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -607,6 +593,8 @@ async def test_render_home_assistant_template_api_error(
             trigger_interface_message_id="msg_ha_api_error_test",
             user_name=TEST_USER_NAME,
         )
+        final_reply = result.text_reply
+        error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply and "connection timeout" in final_reply.lower(), (

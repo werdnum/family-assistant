@@ -136,12 +136,7 @@ async def test_add_note_with_include_in_prompt(db_engine: AsyncEngine) -> None:
 
     # Act
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_text_reply,
-            _,
-            _,
-            error,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -155,6 +150,8 @@ async def test_add_note_with_include_in_prompt(db_engine: AsyncEngine) -> None:
             trigger_interface_message_id="msg_001",
             user_name=TEST_USER_NAME,
         )
+        final_text_reply = result.text_reply
+        error = result.error_traceback
 
     # Assert
     assert error is None
@@ -223,12 +220,7 @@ async def test_get_note_that_exists(db_engine: AsyncEngine) -> None:
 
     # Act
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_text_reply,
-            _,
-            _,
-            error,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -239,6 +231,8 @@ async def test_get_note_that_exists(db_engine: AsyncEngine) -> None:
             trigger_interface_message_id="msg_002",
             user_name=TEST_USER_NAME,
         )
+        final_text_reply = result.text_reply
+        error = result.error_traceback
 
     # Assert
     assert error is None
@@ -282,12 +276,7 @@ async def test_get_note_that_does_not_exist(db_engine: AsyncEngine) -> None:
 
     # Act
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_text_reply,
-            _,
-            _,
-            error,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -298,6 +287,8 @@ async def test_get_note_that_does_not_exist(db_engine: AsyncEngine) -> None:
             trigger_interface_message_id="msg_003",
             user_name=TEST_USER_NAME,
         )
+        final_text_reply = result.text_reply
+        error = result.error_traceback
 
     # Assert
     assert error is None
@@ -354,12 +345,7 @@ async def test_list_all_notes(db_engine: AsyncEngine) -> None:
 
     # Act
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_text_reply,
-            _,
-            _,
-            error,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -368,6 +354,8 @@ async def test_list_all_notes(db_engine: AsyncEngine) -> None:
             trigger_interface_message_id="msg_004",
             user_name=TEST_USER_NAME,
         )
+        final_text_reply = result.text_reply
+        error = result.error_traceback
 
     # Assert
     assert error is None
@@ -427,12 +415,7 @@ async def test_list_notes_with_filter(db_engine: AsyncEngine) -> None:
 
     # Act
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_text_reply,
-            _,
-            _,
-            error,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -443,6 +426,8 @@ async def test_list_notes_with_filter(db_engine: AsyncEngine) -> None:
             trigger_interface_message_id="msg_005",
             user_name=TEST_USER_NAME,
         )
+        final_text_reply = result.text_reply
+        error = result.error_traceback
 
     # Assert
     assert error is None
@@ -498,12 +483,7 @@ async def test_delete_note(db_engine: AsyncEngine) -> None:
 
     # Act
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_text_reply,
-            _,
-            _,
-            error,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -514,6 +494,8 @@ async def test_delete_note(db_engine: AsyncEngine) -> None:
             trigger_interface_message_id="msg_006",
             user_name=TEST_USER_NAME,
         )
+        final_text_reply = result.text_reply
+        error = result.error_traceback
 
     # Assert
     assert error is None
@@ -585,12 +567,7 @@ async def test_update_existing_note(db_engine: AsyncEngine) -> None:
 
     # Act
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_text_reply,
-            _,
-            _,
-            error,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -604,6 +581,8 @@ async def test_update_existing_note(db_engine: AsyncEngine) -> None:
             trigger_interface_message_id="msg_007",
             user_name=TEST_USER_NAME,
         )
+        final_text_reply = result.text_reply
+        error = result.error_traceback
 
     # Assert
     assert error is None

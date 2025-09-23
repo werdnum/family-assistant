@@ -16,8 +16,10 @@ class ChatInterface(Protocol):
         text: str,
         parse_mode: str | None = None,  # e.g., "MarkdownV2", "HTML", "PlainText"
         reply_to_interface_id: str | None = None,
+        attachment_ids: list[str]
+        | None = None,  # Attachment IDs to send with the message
         # Potentially add other common parameters like inline keyboard markup
-        # For now, keeping it simple with text, parse_mode, and reply_to.
+        # For now, keeping it simple with text, parse_mode, reply_to, and attachments.
     ) -> str | None:  # Returns interface-specific message ID if successful, else None
         """
         Sends a message to the specified conversation.
@@ -27,6 +29,7 @@ class ChatInterface(Protocol):
             text: The message text to send.
             parse_mode: Optional string indicating the formatting mode (e.g., "MarkdownV2").
             reply_to_interface_id: Optional interface-specific ID of the message to reply to.
+            attachment_ids: Optional list of attachment IDs to send with the message.
 
         Returns:
             The interface-specific ID of the sent message, or None if sending failed.

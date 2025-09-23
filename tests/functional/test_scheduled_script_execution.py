@@ -158,7 +158,7 @@ print("Script executed - note created: " + str(result))
     try:
         # Act - Schedule the script
         async with DatabaseContext(engine=db_engine) as db_context:
-            resp, _, _, error = await processing_service.handle_chat_interaction(
+            result = await processing_service.handle_chat_interaction(
                 db_context=db_context,
                 chat_interface=mock_chat_interface,
                 interface_type="test",
@@ -169,6 +169,8 @@ print("Script executed - note created: " + str(result))
                 trigger_interface_message_id="501",
                 user_name=TEST_USER_NAME,
             )
+            resp = result.text_reply
+            error = result.error_traceback
 
         # Assert - Script was scheduled
         assert error is None
@@ -324,7 +326,7 @@ print("Recurring script executed - note created")
         await asyncio.sleep(0.1)  # Give worker time to start
         # Act - Schedule the recurring script
         async with DatabaseContext(engine=db_engine) as db_context:
-            resp, _, _, error = await processing_service.handle_chat_interaction(
+            result = await processing_service.handle_chat_interaction(
                 db_context=db_context,
                 chat_interface=mock_chat_interface,
                 interface_type="test",
@@ -335,6 +337,8 @@ print("Recurring script executed - note created")
                 trigger_interface_message_id="601",
                 user_name=TEST_USER_NAME,
             )
+            resp = result.text_reply
+            error = result.error_traceback
 
         # Assert - Recurring script was scheduled
         assert error is None
@@ -486,7 +490,7 @@ if True  # Missing colon
         await asyncio.sleep(0.1)  # Give worker time to start
         # Act - Schedule the invalid script
         async with DatabaseContext(engine=db_engine) as db_context:
-            resp, _, _, error = await processing_service.handle_chat_interaction(
+            result = await processing_service.handle_chat_interaction(
                 db_context=db_context,
                 chat_interface=mock_chat_interface,
                 interface_type="test",
@@ -497,6 +501,7 @@ if True  # Missing colon
                 trigger_interface_message_id="701",
                 user_name=TEST_USER_NAME,
             )
+            error = result.error_traceback
 
         # Assert - Script was scheduled (tool doesn't validate syntax)
         assert error is None

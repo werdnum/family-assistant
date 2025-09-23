@@ -11,7 +11,10 @@ from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
-from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.processing import (
+    ProcessingService,
+    ProcessingServiceConfig,
+)
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
@@ -226,12 +229,7 @@ async def test_get_camera_snapshot_success(
     # --- Simulate User Interaction ---
     user_message = "Can you get a snapshot from the front door camera?"
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_reply,
-            _,
-            _,
-            error,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -240,6 +238,8 @@ async def test_get_camera_snapshot_success(
             trigger_interface_message_id="msg_ha_camera_test",
             user_name=TEST_USER_NAME,
         )
+        final_reply = result.text_reply
+        error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply and "snapshot" in final_reply.lower(), (
@@ -346,12 +346,7 @@ async def test_get_camera_snapshot_list_cameras(
     # --- Simulate User Interaction ---
     user_message = "What cameras are available?"
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_reply,
-            _,
-            _,
-            error,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -360,6 +355,8 @@ async def test_get_camera_snapshot_list_cameras(
             trigger_interface_message_id="msg_ha_list_cameras_test",
             user_name=TEST_USER_NAME,
         )
+        final_reply = result.text_reply
+        error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply, "No reply received"
@@ -434,12 +431,7 @@ async def test_get_camera_snapshot_no_client(
     # --- Simulate User Interaction ---
     user_message = "Check the camera"
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_reply,
-            _,
-            _,
-            error,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -448,6 +440,8 @@ async def test_get_camera_snapshot_no_client(
             trigger_interface_message_id="msg_ha_camera_no_client_test",
             user_name=TEST_USER_NAME,
         )
+        final_reply = result.text_reply
+        error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply and "not currently available" in final_reply, (
@@ -532,12 +526,7 @@ async def test_get_camera_snapshot_api_error(
     # --- Simulate User Interaction ---
     user_message = "Check the broken camera"
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_reply,
-            _,
-            _,
-            error,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -546,6 +535,8 @@ async def test_get_camera_snapshot_api_error(
             trigger_interface_message_id="msg_ha_camera_api_error_test",
             user_name=TEST_USER_NAME,
         )
+        final_reply = result.text_reply
+        error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply and (

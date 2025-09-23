@@ -105,6 +105,7 @@ class NullChatInterface:
         text: str,
         parse_mode: str | None = None,
         reply_to_interface_id: str | None = None,
+        attachment_ids: list[str] | None = None,
     ) -> str | None:
         """Does nothing, returns None."""
         logger.debug(

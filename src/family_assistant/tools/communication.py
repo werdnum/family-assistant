@@ -11,6 +11,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
+from family_assistant.services.attachment_registry import AttachmentRegistry
+
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -57,7 +59,8 @@ COMMUNICATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "function": {
             "name": "send_message_to_user",
             "description": (
-                "Sends a textual message to another known user on Telegram. You MUST use their Chat ID as the target, which is provided in the 'Known users' section of the system prompt.\n\n"
+                "Sends a textual message to another known user on Telegram. You MUST use their Chat ID as the target, which is provided in the 'Known users' section of the system prompt. "
+                "Optionally, you can include attachments with the message.\n\n"
                 "Returns: A string indicating the result. "
                 "On success, returns 'Message sent successfully to user with Chat ID [chat_id].'. "
                 "If message is sent but history recording fails, returns 'Message sent to user with Chat ID [chat_id], but failed to record in history.'. "
@@ -73,6 +76,11 @@ COMMUNICATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
                     "message_content": {
                         "type": "string",
                         "description": "The content of the message to send to the user.",
+                    },
+                    "attachment_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of attachment UUIDs to send along with the message. These must be accessible in the current conversation.",
                     },
                 },
                 "required": ["target_chat_id", "message_content"],
@@ -162,7 +170,10 @@ async def get_message_history_tool(
 
 
 async def send_message_to_user_tool(
-    exec_context: ToolExecutionContext, target_chat_id: int, message_content: str
+    exec_context: ToolExecutionContext,
+    target_chat_id: int,
+    message_content: str,
+    attachment_ids: list[str] | None = None,
 ) -> str:
     """
     Sends a message to another known user via Telegram.
@@ -171,13 +182,14 @@ async def send_message_to_user_tool(
         exec_context: The execution context.
         target_chat_id: The Telegram Chat ID of the recipient.
         message_content: The text of the message to send.
+        attachment_ids: Optional list of attachment UUIDs to send with the message.
 
     Returns:
         A string indicating success or failure.
     """
 
     logger.info(
-        f"Executing send_message_to_user_tool to chat_id {target_chat_id} with content: '{message_content[:50]}...'"
+        f"Executing send_message_to_user_tool to chat_id {target_chat_id} with content: '{message_content[:50]}...' and {len(attachment_ids) if attachment_ids else 0} attachment(s)"
     )
     chat_interface = exec_context.chat_interface
     db_context = exec_context.db_context
@@ -199,6 +211,46 @@ async def send_message_to_user_tool(
         )
         return "Error: Cannot send a message to yourself. Please specify a different recipient."
 
+    # Validate attachment IDs if provided
+    validated_attachment_ids: list[str] | None = None
+    if attachment_ids:
+        validated_attachment_ids = []
+        if exec_context.attachment_service:
+            attachment_registry = AttachmentRegistry(exec_context.attachment_service)
+
+            for attachment_id in attachment_ids:
+                try:
+                    attachment = await attachment_registry.get_attachment(
+                        exec_context.db_context, attachment_id
+                    )
+
+                    if not attachment:
+                        logger.warning(f"Attachment {attachment_id} not found")
+                        continue
+
+                    # Check conversation scoping
+                    if (
+                        exec_context.conversation_id
+                        and attachment.conversation_id != exec_context.conversation_id
+                    ):
+                        logger.warning(
+                            f"Attachment {attachment_id} not accessible from conversation {exec_context.conversation_id}"
+                        )
+                        continue
+
+                    validated_attachment_ids.append(attachment_id)
+                    logger.debug(f"Validated attachment {attachment_id} for sending")
+
+                except Exception as e:
+                    logger.error(f"Error validating attachment {attachment_id}: {e}")
+                    continue
+        else:
+            logger.warning(
+                "AttachmentService not available - cannot validate attachment IDs"
+            )
+            # Still proceed but without attachments
+            validated_attachment_ids = None
+
     try:
         # Use the ChatInterface to send the message.
         # Assuming the target_chat_id is for the same interface type as the current context.
@@ -206,6 +258,7 @@ async def send_message_to_user_tool(
         sent_message_id_str = await chat_interface.send_message(
             conversation_id=str(target_chat_id),  # Pass as string
             text=message_content,
+            attachment_ids=validated_attachment_ids,
             # parse_mode can be added if needed, default is plain text
         )
 
@@ -215,8 +268,12 @@ async def send_message_to_user_tool(
             )
             return f"Error: Could not send message to Chat ID {target_chat_id} (sending failed)."
 
+        attachment_msg = ""
+        if validated_attachment_ids:
+            attachment_msg = f" with {len(validated_attachment_ids)} attachment(s)"
+
         logger.info(
-            f"Message sent to chat_id {target_chat_id}. Interface Message ID: {sent_message_id_str}"
+            f"Message sent to chat_id {target_chat_id}{attachment_msg}. Interface Message ID: {sent_message_id_str}"
         )
 
         # Record the sent message in history for the target user's chat
@@ -246,14 +303,14 @@ async def send_message_to_user_tool(
             logger.info(
                 f"Message sent to chat_id {target_chat_id} was recorded in history."
             )
-            return f"Message sent successfully to user with Chat ID {target_chat_id}."
+            return f"Message sent successfully to user with Chat ID {target_chat_id}{attachment_msg}."
         except Exception as db_err:
             logger.error(
                 f"Message sent to chat_id {target_chat_id}, but failed to record in history: {db_err}",
                 exc_info=True,
             )
             # Still return success for sending, but note the history failure.
-            return f"Message sent to user with Chat ID {target_chat_id}, but failed to record in history."
+            return f"Message sent to user with Chat ID {target_chat_id}{attachment_msg}, but failed to record in history."
 
     except Exception as e:
         logger.error(

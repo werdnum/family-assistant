@@ -203,7 +203,7 @@ async def test_recurring_task_respects_user_timezone(
     # Part 1: Schedule the recurring task
     logger.info("--- Part 1: Scheduling recurring task ---")
     async with DatabaseContext(engine=db_engine) as db_context:
-        _, _, _, error = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=mock_chat_interface,
             interface_type="test",
@@ -217,6 +217,7 @@ async def test_recurring_task_respects_user_timezone(
             trigger_interface_message_id="msg_001",
             user_name=test_user_name,
         )
+        error = result.error_traceback
     assert error is None, f"Error scheduling recurring task: {error}"
 
     # Give time for the task to be written to database

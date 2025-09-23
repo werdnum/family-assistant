@@ -238,12 +238,7 @@ async def test_schedule_and_execute_callback(
 
     async with DatabaseContext(engine=db_engine) as db_context:
         # Correct unpacking to 4 values now
-        (
-            schedule_final_text_reply,
-            _schedule_final_assistant_msg_id,  # Not used here
-            _schedule_final_reasoning_info,  # Not used here
-            schedule_error,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=mock_chat_interface_for_worker,
             interface_type="test",
@@ -255,6 +250,8 @@ async def test_schedule_and_execute_callback(
             ),  # Added missing argument
             user_name=TEST_USER_NAME,
         )
+        schedule_final_text_reply = result.text_reply
+        schedule_error = result.error_traceback
 
     assert schedule_error is None, f"Error during schedule request: {schedule_error}"
     logger.info(
@@ -507,7 +504,7 @@ async def test_modify_pending_callback(
     logger.info("--- Part 1: Scheduling initial callback for modification test ---")
     async with DatabaseContext(engine=db_engine) as db_context:
         # mock_clock.now() is used by schedule_future_callback_tool via exec_context
-        _resp, _, _, schedule_error = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=mock_chat_interface_for_worker,
             interface_type="test",
@@ -518,6 +515,7 @@ async def test_modify_pending_callback(
             trigger_interface_message_id=str(user_message_id_schedule),
             user_name=TEST_USER_NAME,
         )
+        schedule_error = result.error_traceback
     assert schedule_error is None, (
         f"Error scheduling initial callback: {schedule_error}"
     )
@@ -568,7 +566,7 @@ async def test_modify_pending_callback(
         # Optionally, raise an error or handle as appropriate for the test.
 
     async with DatabaseContext(engine=db_engine) as db_context:
-        _resp, _, _, modify_error = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=mock_chat_interface_for_worker,
             interface_type="test",
@@ -579,6 +577,7 @@ async def test_modify_pending_callback(
             trigger_interface_message_id=str(user_message_id_modify),
             user_name=TEST_USER_NAME,
         )
+        modify_error = result.error_traceback
     assert modify_error is None, f"Error modifying callback: {modify_error}"
 
     # Verify task is updated in DB
@@ -830,7 +829,7 @@ async def test_cancel_pending_callback(
     logger.info("--- Part 1: Scheduling initial callback for cancellation test ---")
     async with DatabaseContext(engine=db_engine) as db_context:
         # mock_clock.now() is used by schedule_future_callback_tool via exec_context
-        _resp, _, _, schedule_error = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=mock_chat_interface_for_worker,
             interface_type="test",
@@ -841,6 +840,7 @@ async def test_cancel_pending_callback(
             trigger_interface_message_id=str(user_message_id_schedule),
             user_name=TEST_USER_NAME,
         )
+        schedule_error = result.error_traceback
     assert schedule_error is None, (
         f"Error scheduling initial callback for cancel test: {schedule_error}"
     )
@@ -890,7 +890,7 @@ async def test_cancel_pending_callback(
         # Optionally, raise an error or handle as appropriate for the test.
 
     async with DatabaseContext(engine=db_engine) as db_context:
-        _resp, _, _, cancel_error = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=mock_chat_interface_for_worker,
             interface_type="test",
@@ -901,6 +901,7 @@ async def test_cancel_pending_callback(
             trigger_interface_message_id=str(user_message_id_cancel),
             user_name=TEST_USER_NAME,
         )
+        cancel_error = result.error_traceback
     assert cancel_error is None, f"Error cancelling callback: {cancel_error}"
 
     # Verify task is marked as 'failed' in DB
@@ -1124,7 +1125,7 @@ async def test_schedule_reminder_with_follow_up(
     # --- Part 1: Schedule the reminder ---
     logger.info("--- Part 1: Scheduling reminder with follow-up ---")
     async with DatabaseContext(engine=db_engine) as db_context:
-        resp, _, _, error = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=mock_chat_interface,
             interface_type="test",
@@ -1135,6 +1136,8 @@ async def test_schedule_reminder_with_follow_up(
             trigger_interface_message_id=str(user_message_id_schedule),
             user_name=TEST_USER_NAME,
         )
+        resp = result.text_reply
+        error = result.error_traceback
     assert error is None, f"Error scheduling reminder: {error}"
     logger.info(f"Reminder scheduled. Response: {resp}")
 
@@ -1256,11 +1259,11 @@ async def test_schedule_reminder_with_follow_up(
         )
     logger.info("User response recorded")
 
-    # Execute the final follow-up (should still send but not schedule more)
+    # Execute the final follow-up (should be cancelled since user responded)
     mock_clock.advance(timedelta(seconds=follow_up_interval_seconds + 1))
     test_new_task_event.set()
 
-    # Wait for the final follow-up task to complete
+    # Wait for the final follow-up task to complete (it should be cancelled)
     await wait_for_tasks_to_complete(
         engine=db_engine,
         task_ids={second_follow_up["task_id"]},
@@ -1268,15 +1271,12 @@ async def test_schedule_reminder_with_follow_up(
         poll_interval_seconds=0.1,
     )
 
-    # Wait for the final follow-up to be sent with a timeout
-    for _i in range(20):  # 20 * 0.1 = 2 second timeout
-        if mock_chat_interface.send_message.call_count == 3:
-            break
-        await asyncio.sleep(0.1)
+    # Wait a bit to ensure no additional message is sent
+    await asyncio.sleep(0.5)
 
-    # Verify final follow-up was sent
-    assert mock_chat_interface.send_message.call_count == 3
-    logger.info("Final follow-up sent")
+    # Verify final follow-up was NOT sent since user responded
+    assert mock_chat_interface.send_message.call_count == 2
+    logger.info("Final follow-up correctly cancelled since user responded")
 
     # Verify no more follow-ups scheduled (reached max_follow_ups)
     async with DatabaseContext(engine=db_engine) as db_context:
@@ -1477,7 +1477,7 @@ async def test_schedule_recurring_callback(
     # --- Part 1: Schedule the recurring callback ---
     logger.info("--- Part 1: Scheduling recurring callback ---")
     async with DatabaseContext(engine=db_engine) as db_context:
-        resp, _, _, error = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=mock_chat_interface,
             interface_type="test",
@@ -1491,6 +1491,8 @@ async def test_schedule_recurring_callback(
             trigger_interface_message_id=str(user_message_id_schedule),
             user_name=TEST_USER_NAME,
         )
+        resp = result.text_reply
+        error = result.error_traceback
     assert error is None, f"Error scheduling recurring callback: {error}"
     logger.info(f"Recurring callback scheduled. Response: {resp}")
 
@@ -1734,7 +1736,7 @@ async def test_list_pending_callbacks(db_engine: AsyncEngine) -> None:
     # --- Part 2: Test list_pending_callbacks ---
     logger.info("--- Part 2: Testing list_pending_callbacks ---")
     async with DatabaseContext(engine=db_engine) as db_context:
-        resp, _, _, error = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=mock_chat_interface,
             interface_type="test",
@@ -1743,6 +1745,8 @@ async def test_list_pending_callbacks(db_engine: AsyncEngine) -> None:
             trigger_interface_message_id=str(user_message_id),
             user_name=TEST_USER_NAME,
         )
+        resp = result.text_reply
+        error = result.error_traceback
 
     assert error is None, f"Error listing callbacks: {error}"
     logger.info(f"List response: {resp}")

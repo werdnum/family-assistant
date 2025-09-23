@@ -14,6 +14,7 @@ from family_assistant.scripting.apis.attachments import (
 from family_assistant.scripting.engine import StarlarkConfig, StarlarkEngine
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.services.attachments import AttachmentService
+from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.types import ToolExecutionContext
 
 if TYPE_CHECKING:
@@ -45,8 +46,6 @@ async def sample_attachment(
     db_engine: AsyncEngine, attachment_registry: AttachmentRegistry
 ) -> str:
     """Create a real attachment in the database and return its ID."""
-    from family_assistant.storage.context import DatabaseContext
-
     async with DatabaseContext(engine=db_engine) as db_context:
         # Register a user attachment
         attachment_record = await attachment_registry.register_user_attachment(
@@ -253,8 +252,6 @@ class TestCreateAttachmentAPI:
         attachment_service: AttachmentService,
     ) -> None:
         """Test creating AttachmentAPI from execution context."""
-        from family_assistant.storage.context import DatabaseContext
-
         async with DatabaseContext(engine=db_engine) as db_context:
             execution_context = ToolExecutionContext(
                 interface_type="test",
@@ -275,8 +272,6 @@ class TestCreateAttachmentAPI:
         db_engine: AsyncEngine,
     ) -> None:
         """Test creating AttachmentAPI fails without attachment service."""
-        from family_assistant.storage.context import DatabaseContext
-
         async with DatabaseContext(engine=db_engine) as db_context:
             execution_context = ToolExecutionContext(
                 interface_type="test",
@@ -299,8 +294,6 @@ class TestStarlarkIntegration:
         db_engine: AsyncEngine,
     ) -> None:
         """Test that scripts work without attachment service (functions not available)."""
-        from family_assistant.storage.context import DatabaseContext
-
         async with DatabaseContext(engine=db_engine) as db_context:
             execution_context = ToolExecutionContext(
                 interface_type="test",
@@ -334,8 +327,6 @@ print("Hello world")
         sample_attachment: str,
     ) -> None:
         """Test that attachment functions are available in Starlark scripts."""
-        from family_assistant.storage.context import DatabaseContext
-
         async with DatabaseContext(engine=db_engine) as db_context:
             execution_context = ToolExecutionContext(
                 interface_type="test",
@@ -382,8 +373,6 @@ result
         attachment_service: AttachmentService,
     ) -> None:
         """Test that attachment function errors are handled gracefully."""
-        from family_assistant.storage.context import DatabaseContext
-
         async with DatabaseContext(engine=db_engine) as db_context:
             execution_context = ToolExecutionContext(
                 interface_type="test",
