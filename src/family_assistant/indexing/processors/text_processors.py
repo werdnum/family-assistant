@@ -114,7 +114,7 @@ class TextChunker(ContentProcessor):
                 current_pos = min(end_pos, current_pos)
                 # Force move to the end of the current chunk to ensure next one starts after.
                 # This effectively means less or no overlap if step is too small.
-        return [c for c in final_chunks if c.strip()]
+                current_pos = end_pos
 
     @property
     def name(self) -> str:
