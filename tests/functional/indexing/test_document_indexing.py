@@ -527,7 +527,7 @@ async def test_document_indexing_and_query_e2e(
         assert found_keyword_result["fts_score"] > 0, (
             f"Keyword FTS score should be positive, but was {found_keyword_result['fts_score']}"
         )
-        assert found_keyword_result.get("embedding_type") in ["title", "content_chunk"]
+        assert found_keyword_result.get("embedding_type") in {"title", "content_chunk"}
         if found_keyword_result.get("embedding_type") == "title":
             assert (
                 found_keyword_result.get("embedding_source_content") == TEST_DOC_TITLE
@@ -1447,7 +1447,6 @@ async def test_url_indexing_auto_title_e2e(
         # Restore original scraper
         if original_scraper is not None:
             fastapi_app.state.scraper = original_scraper
-        else:
+        elif hasattr(fastapi_app.state, "scraper"):
             # Remove scraper if it didn't exist before
-            if hasattr(fastapi_app.state, "scraper"):
-                del fastapi_app.state.scraper
+            del fastapi_app.state.scraper

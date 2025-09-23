@@ -31,7 +31,11 @@ if not re.search(r"\bgit\s+commit\b", command) or "--no-verify" in command:
 
 # Get the current branch
 result = subprocess.run(
-    ["git", "branch", "--show-current"], capture_output=True, text=True, cwd=os.getcwd()
+    ["git", "branch", "--show-current"],
+    capture_output=True,
+    text=True,
+    cwd=os.getcwd(),
+    check=False,
 )
 
 # Check if the command succeeded
@@ -45,7 +49,7 @@ if result.returncode != 0:
 current_branch = result.stdout.strip()
 
 # Check if we're on the main branch
-if current_branch in ["main", "master"]:
+if current_branch in {"main", "master"}:
     print(
         f"• You're currently on the '{current_branch}' branch. Direct commits to the main branch are not allowed.",
         file=sys.stderr,
