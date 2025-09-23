@@ -34,6 +34,7 @@ from family_assistant.indexing.pipeline import IndexingPipeline
 from family_assistant.indexing.processors.dispatch_processors import (
     EmbeddingDispatchProcessor,
 )
+from family_assistant.indexing.processors.file_processors import PDFTextExtractor
 from family_assistant.indexing.processors.llm_processors import (  # Added
     LLMPrimaryLinkExtractorProcessor,
     LLMSummaryGeneratorProcessor,
@@ -1253,9 +1254,6 @@ async def test_email_with_pdf_attachment_indexing_e2e(
 
     # --- Arrange: Create Indexing Pipeline (including PDFTextExtractor) ---
     # This pipeline should be capable of handling email text and PDF attachments.
-    from family_assistant.indexing.processors.file_processors import (
-        PDFTextExtractor,  # Import here
-    )
 
     title_extractor = TitleExtractor()
     pdf_extractor = PDFTextExtractor()

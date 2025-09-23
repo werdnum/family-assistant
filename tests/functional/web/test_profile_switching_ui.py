@@ -415,7 +415,7 @@ class TestProfileSwitchingUI:
         # Clear the input to show the interface is responsive
         await message_input.clear()
         cleared_value = await message_input.input_value()
-        assert cleared_value == "", (
+        assert not cleared_value, (
             f"Input should be cleared, but contains: '{cleared_value}'"
         )
 

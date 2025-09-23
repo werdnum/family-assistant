@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import hashlib
 import logging
 import os
 import pathlib
@@ -12,18 +13,22 @@ import tempfile
 import time
 import uuid
 from collections.abc import AsyncGenerator, Callable, Generator
+from contextlib import nullcontext
 from typing import Any, Protocol
 from unittest.mock import MagicMock
 
 import caldav
 import pytest
 import pytest_asyncio  # Import the correct decorator
+import vcr
 from caldav.lib import error as caldav_error  # Import the error module
 from docker.errors import DockerException  # Import DockerException directly
 from passlib.hash import bcrypt
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from testcontainers.postgres import PostgresContainer  # type: ignore[import-untyped]
+
+import family_assistant.storage.tasks as tasks_module
 
 # Import for task_worker_manager fixture
 from family_assistant.processing import ProcessingService  # Import ProcessingService
@@ -38,6 +43,7 @@ from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.vector import init_vector_db  # Corrected import path
 from family_assistant.task_worker import TaskWorker
 from family_assistant.utils.clock import MockClock
+from family_assistant.web.app_creator import app as fastapi_app
 
 # Configure logging for tests (optional, but can be helpful)
 logging.basicConfig(level=logging.INFO)
@@ -91,9 +97,9 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
             db_option = "postgres"
 
         db_backends = []
-        if db_option in ("sqlite", "all"):
+        if db_option in {"sqlite", "all"}:
             db_backends.append("sqlite")
-        if db_option in ("postgres", "all"):
+        if db_option in {"postgres", "all"}:
             db_backends.append("postgres")
 
         # Check if the test is requesting pg_vector_db_engine
@@ -105,18 +111,16 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
             else:
                 # Skip this test if postgres is not in the selected backends
                 metafunc.parametrize("db_engine", [], indirect=True)
-        else:
-            # Check if test has postgres marker
-            if metafunc.definition.get_closest_marker("postgres"):
-                # Postgres-only tests
-                if "postgres" in db_backends:
-                    metafunc.parametrize("db_engine", ["postgres"], indirect=True)
-                else:
-                    # Skip this test if postgres is not in the selected backends
-                    metafunc.parametrize("db_engine", [], indirect=True)
+        elif metafunc.definition.get_closest_marker("postgres"):
+            # Postgres-only tests
+            if "postgres" in db_backends:
+                metafunc.parametrize("db_engine", ["postgres"], indirect=True)
             else:
-                # Regular tests get all selected backends
-                metafunc.parametrize("db_engine", db_backends, indirect=True)
+                # Skip this test if postgres is not in the selected backends
+                metafunc.parametrize("db_engine", [], indirect=True)
+        else:
+            # Regular tests get all selected backends
+            metafunc.parametrize("db_engine", db_backends, indirect=True)
 
 
 # Port allocation now handled by worker-specific ranges - no global tracking needed
@@ -159,7 +163,6 @@ def find_free_port() -> int:
 @pytest.fixture(autouse=True)
 def reset_task_event() -> Generator[None, None, None]:
     """Reset the global task event for each test to ensure isolation."""
-    import family_assistant.storage.tasks as tasks_module
 
     # Reset before test
     tasks_module._task_event = None
@@ -226,8 +229,6 @@ async def db_engine(
         max_test_name_length = 49
 
         if len(test_name_safe) > max_test_name_length:
-            import hashlib
-
             name_hash = hashlib.md5(test_name_safe.encode()).hexdigest()[:4]
             test_name_safe = f"{test_name_safe[:45]}{name_hash}"
 
@@ -347,13 +348,18 @@ def check_container_runtime() -> bool:
     """Check if Docker or Podman is available."""
     for cmd in ["docker", "podman"]:
         try:
-            result = subprocess.run(
-                [cmd, "version"], capture_output=True, text=True, timeout=5, check=False
+            subprocess.run(
+                [cmd, "version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=True,
             )
-            if result.returncode == 0:
-                logger.info(f"Container runtime '{cmd}' is available")
-                return True
+            logger.info(f"Container runtime '{cmd}' is available")
+            return True
         except (subprocess.TimeoutExpired, FileNotFoundError):
+            continue
+        except subprocess.CalledProcessError:
             continue
     return False
 
@@ -375,12 +381,14 @@ def check_postgres_available() -> tuple[bool, str | None]:
                 capture_output=True,
                 text=True,
                 timeout=5,
-                check=False,
+                check=True,
             )
-            if result.returncode == 0 and "17" in result.stdout:
+            if "17" in result.stdout:
                 logger.info(f"Found PostgreSQL 17 at: {pg_ctl}")
                 return True, pg_ctl
         except (subprocess.TimeoutExpired, FileNotFoundError):
+            continue
+        except subprocess.CalledProcessError:
             continue
 
     return False, None
@@ -413,22 +421,25 @@ class SubprocessPostgresContainer:
         initdb_path = self.pg_ctl.replace("pg_ctl", "initdb")
         logger.info(f"Initializing PostgreSQL database in {self.data_dir}")
 
-        result = subprocess.run(
-            [
-                initdb_path,
-                "-D",
-                self.data_dir,
-                "-U",
-                self.user,
-                "--auth-local=trust",
-                "--auth-host=md5",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to initialize PostgreSQL: {result.stderr}")
+        try:
+            subprocess.run(
+                [
+                    initdb_path,
+                    "-D",
+                    self.data_dir,
+                    "-U",
+                    self.user,
+                    "--auth-local=trust",
+                    "--auth-host=md5",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as err:
+            raise RuntimeError(
+                f"Failed to initialize PostgreSQL: {err.stderr}"
+            ) from err
 
         # Update postgresql.conf to listen on the specific port
         conf_path = os.path.join(self.data_dir, "postgresql.conf")
@@ -451,81 +462,87 @@ class SubprocessPostgresContainer:
 
         # Start PostgreSQL
         logger.info(f"Starting PostgreSQL on port {self.port}")
-        result = subprocess.run(
-            [
-                self.pg_ctl,
-                "start",
-                "-D",
-                self.data_dir,
-                "-l",
-                os.path.join(self.data_dir, "logfile"),
-                "-w",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to start PostgreSQL: {result.stderr}")
+        try:
+            subprocess.run(
+                [
+                    self.pg_ctl,
+                    "start",
+                    "-D",
+                    self.data_dir,
+                    "-l",
+                    os.path.join(self.data_dir, "logfile"),
+                    "-w",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as err:
+            raise RuntimeError(f"Failed to start PostgreSQL: {err.stderr}") from err
 
         # Set up the test database and user
         psql_path = self.pg_ctl.replace("pg_ctl", "psql")
 
         # Create user with password
-        result = subprocess.run(
-            [
-                psql_path,
-                "-U",
-                self.user,
-                "-p",
-                str(self.port),
-                "-c",
-                f"ALTER USER {self.user} PASSWORD '{self.password}';",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to set user password: {result.stderr}")
+        try:
+            subprocess.run(
+                [
+                    psql_path,
+                    "-U",
+                    self.user,
+                    "-p",
+                    str(self.port),
+                    "-c",
+                    f"ALTER USER {self.user} PASSWORD '{self.password}';",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as err:
+            raise RuntimeError(f"Failed to set user password: {err.stderr}") from err
 
         # Create test database
-        result = subprocess.run(
-            [
-                psql_path,
-                "-U",
-                self.user,
-                "-p",
-                str(self.port),
-                "-c",
-                f"CREATE DATABASE {self.db_name};",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to create database: {result.stderr}")
+        try:
+            subprocess.run(
+                [
+                    psql_path,
+                    "-U",
+                    self.user,
+                    "-p",
+                    str(self.port),
+                    "-c",
+                    f"CREATE DATABASE {self.db_name};",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as err:
+            raise RuntimeError(f"Failed to create database: {err.stderr}") from err
 
         # Create pgvector extension
-        result = subprocess.run(
-            [
-                psql_path,
-                "-U",
-                self.user,
-                "-p",
-                str(self.port),
-                "-d",
-                self.db_name,
-                "-c",
-                "CREATE EXTENSION IF NOT EXISTS vector;",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to create pgvector extension: {result.stderr}")
+        try:
+            subprocess.run(
+                [
+                    psql_path,
+                    "-U",
+                    self.user,
+                    "-p",
+                    str(self.port),
+                    "-d",
+                    self.db_name,
+                    "-c",
+                    "CREATE EXTENSION IF NOT EXISTS vector;",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as err:
+            raise RuntimeError(
+                f"Failed to create pgvector extension: {err.stderr}"
+            ) from err
 
         logger.info("PostgreSQL started and configured successfully")
 
@@ -533,11 +550,15 @@ class SubprocessPostgresContainer:
         """Stop PostgreSQL and clean up."""
         if self.pg_ctl and os.path.exists(self.data_dir):
             logger.info("Stopping PostgreSQL subprocess...")
-            subprocess.run(
-                [self.pg_ctl, "stop", "-D", self.data_dir, "-m", "fast"],
-                capture_output=True,
-                check=False,
-            )
+            try:
+                subprocess.run(
+                    [self.pg_ctl, "stop", "-D", self.data_dir, "-m", "fast"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError as err:
+                logger.warning("Failed to stop PostgreSQL subprocess: %s", err.stderr)
 
             # Clean up the data directory
             shutil.rmtree(self.data_dir, ignore_errors=True)
@@ -658,7 +679,6 @@ async def pg_vector_db_engine(
 
     if len(test_name_safe) > max_test_name_length:
         # For long names, truncate and add a short hash for uniqueness
-        import hashlib
 
         name_hash = hashlib.md5(test_name_safe.encode()).hexdigest()[:4]
         # Keep first 39 chars + 4 char hash = 43 chars total
@@ -695,8 +715,6 @@ async def pg_vector_db_engine(
 
     # Create engine for the new test database
     test_db_url = admin_url.rsplit("/", 1)[0] + f"/{unique_db_name}"
-
-    from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 
     engine = create_engine_with_sqlite_optimizations(test_db_url)
 
@@ -1167,7 +1185,6 @@ def vcr_bypass_for_streaming(request: pytest.FixtureRequest) -> None:
     # Check if the test is marked with 'no_vcr'
     if request.node.get_closest_marker("no_vcr"):
         # Import here to avoid circular imports
-        import vcr
 
         # Monkey patch VCR to be a no-op for this test
         original_use_cassette = vcr.VCR.use_cassette
@@ -1178,7 +1195,6 @@ def vcr_bypass_for_streaming(request: pytest.FixtureRequest) -> None:
             **kwargs: Any,  # noqa: ANN401
         ) -> Any:  # noqa: ANN401
             """Return a no-op context manager that doesn't record or replay."""
-            from contextlib import nullcontext
 
             return nullcontext()
 
@@ -1217,28 +1233,30 @@ def built_frontend() -> Generator[None, None, None]:
         # Run npm install if needed
         if needs_install:
             logger.info("Running npm install...")
-            result = subprocess.run(
-                ["npm", "install"],
-                cwd=frontend_dir,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if result.returncode != 0:
-                pytest.fail(f"npm install failed: {result.stderr}")
+            try:
+                subprocess.run(
+                    ["npm", "install"],
+                    cwd=frontend_dir,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError as err:
+                pytest.fail(f"npm install failed: {err.stderr}")
 
         # Run npm run build
         if needs_build:
             logger.info("Running npm run build...")
-            result = subprocess.run(
-                ["npm", "run", "build"],
-                cwd=frontend_dir,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if result.returncode != 0:
-                pytest.fail(f"npm run build failed: {result.stderr}")
+            try:
+                subprocess.run(
+                    ["npm", "run", "build"],
+                    cwd=frontend_dir,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError as err:
+                pytest.fail(f"npm run build failed: {err.stderr}")
 
             logger.info(
                 f"Frontend built successfully. Files in dist: {list(dist_dir.glob('*.html'))}"
@@ -1257,7 +1275,6 @@ def setup_fastapi_test_config() -> Generator[None, None, None]:
     Sets up a default test configuration for the FastAPI app.
     This ensures all tests have a valid, writable document_storage_path.
     """
-    from family_assistant.web.app_creator import app as fastapi_app
 
     # Store original config to restore later
     original_config = getattr(fastapi_app.state, "config", None)
@@ -1300,7 +1317,6 @@ def setup_fastapi_test_config() -> Generator[None, None, None]:
         # Restore original config
         if original_config is not None:
             fastapi_app.state.config = original_config
-        else:
+        elif hasattr(fastapi_app.state, "config"):
             # Remove config if it didn't exist before
-            if hasattr(fastapi_app.state, "config"):
-                del fastapi_app.state.config
+            del fastapi_app.state.config

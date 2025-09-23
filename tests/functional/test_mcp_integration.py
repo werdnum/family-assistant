@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -6,20 +8,23 @@ import random
 import signal  # Import the signal module
 import socket
 import uuid  # Added for turn_id
-from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock  # Keep mocks for LLM
 
+import httpx
 import pytest
 import pytest_asyncio  # Import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 if TYPE_CHECKING:
-    from family_assistant.llm import LLMInterface  # LLMOutput will come from mocks
-from family_assistant.llm import ToolCallFunction, ToolCallItem
-from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+    from collections.abc import AsyncGenerator
+
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+    from family_assistant.llm import LLMInterface
 
 # Import necessary components from the application
+from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
@@ -110,7 +115,6 @@ async def wait_for_server(
     Raises:
         RuntimeError: If the server doesn't start within the timeout
     """
-    import httpx
 
     start_time = asyncio.get_event_loop().time()
     last_error = None

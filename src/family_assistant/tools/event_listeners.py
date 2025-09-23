@@ -4,8 +4,11 @@ Event listener CRUD tools.
 
 import json
 import logging
+import re
 from typing import Any
 
+from family_assistant.events.condition_evaluator import EventConditionValidator
+from family_assistant.scripting.engine import StarlarkConfig, StarlarkEngine
 from family_assistant.storage.events import (
     EventSourceType,
     create_event_listener,
@@ -281,7 +284,7 @@ async def create_event_listener_tool(
             })
 
         # Validate action_type
-        if action_type not in ["wake_llm", "script"]:
+        if action_type not in {"wake_llm", "script"}:
             return json.dumps({
                 "success": False,
                 "message": f"Invalid action_type '{action_type}'. Must be 'wake_llm' or 'script'",
@@ -345,10 +348,6 @@ async def create_event_listener_tool(
 
         # Validate condition_script if provided
         if condition_script:
-            from family_assistant.events.condition_evaluator import (
-                EventConditionValidator,
-            )
-
             # Get config from execution context if available
             config = getattr(exec_context, "event_config", None) or {}
             validator = EventConditionValidator(config=config)
@@ -606,11 +605,9 @@ async def validate_event_listener_script_tool(
     Returns:
         JSON string with validation result
     """
-    import re
-
     try:
         # Import starlark-pyo3 for syntax validation
-        import starlark
+        import starlark  # noqa: PLC0415
 
         # Try to parse the script
         starlark.parse("event_listener.star", script_code)
@@ -660,8 +657,6 @@ async def test_event_listener_script_tool(
         JSON string with test results
     """
     try:
-        from family_assistant.scripting.engine import StarlarkConfig, StarlarkEngine
-
         # Create a test engine with limited timeout
         engine = StarlarkEngine(
             tools_provider=exec_context.tools_provider,

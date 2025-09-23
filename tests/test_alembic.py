@@ -3,6 +3,7 @@
 import os
 import tempfile
 from collections.abc import Generator
+from pathlib import Path
 
 import pytest
 from alembic.config import Config
@@ -51,7 +52,6 @@ def alembic_config() -> Config:
     """
     Override this fixture to provide the alembic config object.
     """
-    from pathlib import Path
 
     # Use relative path to alembic.ini
     config_path = Path(__file__).parent.parent / "alembic.ini"

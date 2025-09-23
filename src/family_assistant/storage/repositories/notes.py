@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import delete, insert, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.sql import functions as func
 
@@ -129,8 +130,6 @@ class NotesRepository(BaseRepository):
         if self._db.engine.dialect.name == "postgresql":
             # Use PostgreSQL's ON CONFLICT DO UPDATE for atomic upsert
             try:
-                from sqlalchemy.dialects.postgresql import insert as pg_insert
-
                 stmt = pg_insert(notes_table).values(
                     title=title,
                     content=content,

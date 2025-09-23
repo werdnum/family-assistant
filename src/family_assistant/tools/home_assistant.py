@@ -135,7 +135,9 @@ async def render_home_assistant_template_tool(
 
     try:
         # Import homeassistant_api to check for the method
-        from homeassistant_api.errors import HomeassistantAPIError
+        from homeassistant_api.errors import (  # noqa: PLC0415
+            HomeassistantAPIError,
+        )
     except ImportError:
         logger.error("homeassistant_api library is not installed")
         return "Error: Home Assistant API library is not installed."

@@ -4,6 +4,7 @@ Quick debug script to test SSE endpoint directly
 """
 
 import asyncio
+import traceback
 
 import httpx
 
@@ -48,8 +49,6 @@ async def test_sse_endpoint() -> None:
 
         except Exception as e:
             print(f"Error: {e}")
-            import traceback
-
             traceback.print_exc()
 
 

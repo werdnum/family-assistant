@@ -114,10 +114,10 @@ async def get_document(
                 full_text = embedding.content
                 full_text_type = embedding.embedding_type
                 # Check if this was stored without embedding due to size
-                if embedding.embedding_model in [
+                if embedding.embedding_model in {
                     "text_only_too_long",
                     "text_only_error",
-                ]:
+                }:
                     full_text_warning = (
                         f"Note: This content was too large to embed "
                         f"(reason: {embedding.embedding_model})"

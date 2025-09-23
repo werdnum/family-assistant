@@ -15,6 +15,7 @@ from PIL import Image
 
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.services.attachments import AttachmentService
 from family_assistant.tools.types import ToolExecutionContext
 
 
@@ -317,7 +318,6 @@ async def test_format_history_converts_attachment_urls(
     attachment_file.write_bytes(test_image_content)
 
     # Create and inject AttachmentService
-    from family_assistant.services.attachments import AttachmentService
 
     processing_service.attachment_service = AttachmentService(str(storage_path))
 

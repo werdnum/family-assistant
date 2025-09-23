@@ -12,14 +12,20 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy import and_, cast, select
 from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.types import Integer
 
 # storage module functions now accessed via DatabaseContext
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.events.indexing_source import IndexingEventType, IndexingSource
 from family_assistant.events.processor import EventProcessor
-from family_assistant.indexing.tasks import handle_embed_and_store_batch
+from family_assistant.indexing.tasks import (
+    check_document_completion,
+    handle_embed_and_store_batch,
+)
 from family_assistant.storage import get_db_context
+from family_assistant.storage.events import recent_events_table
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import add_document
 from family_assistant.tools.types import ToolExecutionContext
@@ -46,10 +52,6 @@ async def poll_for_document_ready_event(
     Raises:
         AssertionError: If event not found within timeout
     """
-    from sqlalchemy import and_, cast, select
-    from sqlalchemy.types import Integer
-
-    from family_assistant.storage.events import recent_events_table
 
     max_attempts = int(timeout_seconds / poll_interval)
 
@@ -722,7 +724,6 @@ async def test_json_extraction_compatibility(db_engine: AsyncEngine) -> None:
             )
 
         # Import the function to test
-        from family_assistant.indexing.tasks import check_document_completion
 
         # Test that it correctly counts pending tasks
         pending_count = await check_document_completion(db_ctx, test_doc_id)
@@ -762,7 +763,6 @@ async def test_json_extraction_cross_database(db_engine: AsyncEngine) -> None:
         # Verify our cross-database JSON extraction implementation works
 
         # Test that our check_document_completion function works
-        from family_assistant.indexing.tasks import check_document_completion
 
         pending_count = await check_document_completion(db_ctx, test_doc_id)
         assert pending_count == 1, f"Expected 1 pending task, got {pending_count}"

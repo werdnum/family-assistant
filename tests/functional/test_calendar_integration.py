@@ -1,9 +1,10 @@
 import asyncio
 import json
 import logging
+import re
 import uuid
 from datetime import date, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
@@ -12,10 +13,11 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.calendar_integration import (
+    fetch_upcoming_events,
     format_datetime_or_date,  # Added import
 )
 from family_assistant.context_providers import CalendarContextProvider
-from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
@@ -29,12 +31,8 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
 )
+from family_assistant.tools.calendar import search_calendar_events_tool
 from family_assistant.tools.types import ToolExecutionContext
-
-if TYPE_CHECKING:
-    from family_assistant.llm import LLMInterface
-
-# RADICALE_TEST_CALENDAR_NAME is no longer needed as direct URL is provided by fixture
 from family_assistant.utils.clock import MockClock
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
@@ -504,7 +502,6 @@ async def test_modify_event(
     logger.info(
         f"Verifying event exists with UID {event_uid} at calendar URL {test_calendar_direct_url}"
     )
-    from family_assistant.tools.calendar import search_calendar_events_tool
 
     # Create a database context for the search operation
     async with DatabaseContext(engine=pg_vector_db_engine) as db_ctx:
@@ -525,7 +522,6 @@ async def test_modify_event(
         logger.info(f"Search result for '{original_summary}': {search_result}")
 
     # Extract the calendar URL from the search result to ensure we use the correct one
-    import re
 
     calendar_url_match = re.search(r"Calendar: (.+)", search_result)
     if calendar_url_match:
@@ -1418,7 +1414,6 @@ END:VCALENDAR"""
     }
 
     # Import and test the fetch function
-    from family_assistant.calendar_integration import fetch_upcoming_events
 
     # Fetch events - this should not throw an error even with mixed date/datetime types
     events = await fetch_upcoming_events(test_calendar_config, TEST_TIMEZONE_STR)
@@ -1448,7 +1443,7 @@ END:VCALENDAR"""
     event_summaries = [
         e["summary"]
         for e in events
-        if e["summary"] in ["Timed Event Test", "All Day Event Test"]
+        if e["summary"] in {"Timed Event Test", "All Day Event Test"}
     ]
     timed_idx = event_summaries.index("Timed Event Test")
     all_day_idx = event_summaries.index("All Day Event Test")

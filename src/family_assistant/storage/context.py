@@ -268,7 +268,9 @@ class DatabaseContext:
     def notes(self) -> "NotesRepository":
         """Get the notes repository instance."""
         if self._notes is None:
-            from family_assistant.storage.repositories import NotesRepository
+            from family_assistant.storage.repositories import (  # noqa: PLC0415
+                NotesRepository,
+            )
 
             self._notes = NotesRepository(self)
         return self._notes
@@ -277,7 +279,9 @@ class DatabaseContext:
     def tasks(self) -> "TasksRepository":
         """Get the tasks repository instance."""
         if self._tasks is None:
-            from family_assistant.storage.repositories import TasksRepository
+            from family_assistant.storage.repositories import (  # noqa: PLC0415
+                TasksRepository,
+            )
 
             self._tasks = TasksRepository(self)
         return self._tasks
@@ -286,7 +290,9 @@ class DatabaseContext:
     def message_history(self) -> "MessageHistoryRepository":
         """Get the message history repository instance."""
         if self._message_history is None:
-            from family_assistant.storage.repositories import MessageHistoryRepository
+            from family_assistant.storage.repositories import (  # noqa: PLC0415
+                MessageHistoryRepository,
+            )
 
             self._message_history = MessageHistoryRepository(self)
         return self._message_history
@@ -295,7 +301,9 @@ class DatabaseContext:
     def email(self) -> "EmailRepository":
         """Get the email repository instance."""
         if self._email is None:
-            from family_assistant.storage.repositories import EmailRepository
+            from family_assistant.storage.repositories import (  # noqa: PLC0415
+                EmailRepository,
+            )
 
             self._email = EmailRepository(self)
         return self._email
@@ -304,7 +312,9 @@ class DatabaseContext:
     def error_logs(self) -> "ErrorLogsRepository":
         """Get the error logs repository instance."""
         if self._error_logs is None:
-            from family_assistant.storage.repositories import ErrorLogsRepository
+            from family_assistant.storage.repositories import (  # noqa: PLC0415
+                ErrorLogsRepository,
+            )
 
             self._error_logs = ErrorLogsRepository(self)
         return self._error_logs
@@ -313,7 +323,9 @@ class DatabaseContext:
     def events(self) -> "EventsRepository":
         """Get the events repository instance."""
         if self._events is None:
-            from family_assistant.storage.repositories import EventsRepository
+            from family_assistant.storage.repositories import (  # noqa: PLC0415
+                EventsRepository,
+            )
 
             self._events = EventsRepository(self)
         return self._events
@@ -322,7 +334,9 @@ class DatabaseContext:
     def vector(self) -> "VectorRepository":
         """Get the vector repository instance."""
         if self._vector is None:
-            from family_assistant.storage.repositories import VectorRepository
+            from family_assistant.storage.repositories import (  # noqa: PLC0415
+                VectorRepository,
+            )
 
             self._vector = VectorRepository(self)
         return self._vector

@@ -211,12 +211,12 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
                             ).update(value["chat_id_to_name_map"])
                         # For other keys within default_profile_settings, direct update
                         for sub_key, sub_value in value.items():
-                            if sub_key not in [
+                            if sub_key not in {
                                 "processing_config",
                                 "tools_config",
                                 "chat_id_to_name_map",
                                 "slash_commands",  # Add slash_commands here
-                            ]:
+                            }:
                                 config_data[key][sub_key] = sub_value
                         # Handle slash_commands specifically (it's a list, replace)
                         if "slash_commands" in value and isinstance(
@@ -257,12 +257,12 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
     # Handle TELEGRAM_ENABLED environment variable
     telegram_enabled_env = os.getenv("TELEGRAM_ENABLED")
     if telegram_enabled_env is not None:
-        config_data["telegram_enabled"] = telegram_enabled_env.lower() in (
+        config_data["telegram_enabled"] = telegram_enabled_env.lower() in {
             "true",
             "1",
             "yes",
             "on",
-        )
+        }
     # Allow API keys to be None if not set in env, they are validated later
     config_data["openrouter_api_key"] = os.getenv(
         "OPENROUTER_API_KEY", config_data.get("openrouter_api_key")
@@ -386,7 +386,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
     )
     config_data["litellm_debug"] = os.getenv(
         "LITELLM_DEBUG", str(config_data["litellm_debug"])
-    ).lower() in ("true", "1", "yes")
+    ).lower() in {"true", "1", "yes"}
 
     # Parse comma-separated lists from Env Vars
     allowed_ids_str = os.getenv("ALLOWED_USER_IDS", os.getenv("ALLOWED_CHAT_IDS"))
@@ -634,13 +634,13 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
         k: v
         for k, v in config_data.items()
         if k
-        not in [
+        not in {
             "telegram_token",
             "openrouter_api_key",
             "gemini_api_key",
             "willyweather_api_key",  # Exclude weather API key
             "database_url",
-        ]  # Exclude top-level secrets
+        }
     })
     # Also exclude password from top-level calendar_config
     if (

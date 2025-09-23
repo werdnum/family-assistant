@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from family_assistant.llm import LLMStreamEvent
-from family_assistant.processing import ProcessingService
-from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.tools.types import ToolAttachment, ToolResult, ToolReturnType
 
 
 class TestProcessingServiceMultimodal:
@@ -37,7 +37,6 @@ class TestProcessingServiceMultimodal:
         self, mock_llm_client: Mock, mock_tools_provider: AsyncMock
     ) -> ProcessingService:
         """Create a ProcessingService for testing"""
-        from family_assistant.processing import ProcessingServiceConfig
 
         config = ProcessingServiceConfig(
             id="test_profile",
@@ -288,7 +287,6 @@ class TestProcessingServiceMultimodal:
 
     def test_tool_result_type_alias(self) -> None:
         """Test ToolReturnType alias works correctly"""
-        from family_assistant.tools.types import ToolReturnType
 
         # Should accept string
         string_result: ToolReturnType = "Simple result"

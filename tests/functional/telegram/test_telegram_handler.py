@@ -4,7 +4,6 @@
 # 1. Messages SENT by the bot (via mocked Telegram API calls like send_message).
 # 2. Messages RECEIVED by the bot (implicitly verified by mock LLM rules/matchers).
 # Database state changes (message history, notes, tasks) are NOT directly asserted here.
-
 import json  # Add import
 import logging
 import typing  # ADDED for cast
@@ -19,7 +18,7 @@ from assertpy import (
     assert_that,
     soft_assertions,
 )  # Import assert_that and soft_assertions
-from telegram import Chat, Message, Update, User
+from telegram import Chat, Message, PhotoSize, Update, User
 from telegram.ext import ContextTypes
 
 # CHANGED: LLMOutput from family_assistant.llm aliased
@@ -92,7 +91,6 @@ def create_mock_update_with_photo(
     bot: Any | None = None,  # noqa: ANN401  # telegram bot object
 ) -> Update:
     """Creates a mock Telegram Update object for a message with a photo."""
-    from telegram import PhotoSize
 
     # Create mock photo bytes if not provided
     if photo_bytes is None:

@@ -9,10 +9,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from family_assistant.indexing.pipeline import IndexableContent
 from family_assistant.utils.scraping import Scraper, ScrapeResult
 
 if TYPE_CHECKING:
-    from family_assistant.indexing.pipeline import IndexableContent
     from family_assistant.storage.vector import Document  # Protocol for Document
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -65,10 +65,6 @@ class WebFetcherProcessor:
         """
         Processes IndexableContent items, fetches URLs, and creates new items.
         """
-        # Import IndexableContent here for clarity, though TYPE_CHECKING handles it
-        # for static analysis. Using string literals for type hints below.
-        from family_assistant.indexing.pipeline import IndexableContent
-
         output_items: list[IndexableContent] = []
         items_to_pass_through: list[IndexableContent] = []
 

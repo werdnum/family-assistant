@@ -98,7 +98,9 @@ class IndexingPipeline:
 
         # Configure processors if applicable
         # Import here to avoid circular dependency at module level if TextChunker imports pipeline elements
-        from family_assistant.indexing.processors.text_processors import TextChunker
+        from family_assistant.indexing.processors.text_processors import (  # noqa: PLC0415
+            TextChunker,
+        )
 
         for processor in self.processors:
             if isinstance(processor, TextChunker):

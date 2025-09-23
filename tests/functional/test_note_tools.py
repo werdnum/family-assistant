@@ -65,8 +65,7 @@ async def create_processing_service(
 
     # Create context providers
     async def get_test_db_context_func() -> DatabaseContext:
-        manager = get_db_context(engine=db_engine)
-        return await manager.__aenter__()
+        return get_db_context(engine=db_engine)
 
     notes_provider = NotesContextProvider(
         get_db_context_func=get_test_db_context_func,

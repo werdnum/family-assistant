@@ -284,7 +284,7 @@ async def test_parallel_tool_calls(
 
     # Might get both in one response or need multiple turns
     assert len(tool_names) >= 1
-    assert any(name in ["get_weather", "calculate"] for name in tool_names)
+    assert any(name in {"get_weather", "calculate"} for name in tool_names)
 
 
 @pytest.mark.no_db

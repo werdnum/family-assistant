@@ -4,7 +4,10 @@ import copy
 import logging
 import os
 import socket
-from datetime import datetime, timezone
+import subprocess
+import sys
+import zoneinfo
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -12,7 +15,7 @@ import uvicorn
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 # Import Embedding interface/clients
-import family_assistant.embeddings as embeddings
+from family_assistant import embeddings
 
 # Import the whole storage module for task queue functions etc.
 # --- NEW: Import ContextProvider and its implementations ---
@@ -71,6 +74,7 @@ from family_assistant.tools import (
     _scan_user_docs,
 )
 from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.utils.logging_handler import setup_error_logging
 from family_assistant.utils.scraping import PlaywrightScraper
 from family_assistant.web.app_creator import app as fastapi_app
 from family_assistant.web.app_creator import configure_app_auth
@@ -197,33 +201,37 @@ class Assistant:
     async def _ensure_playwright_browsers_installed(self) -> None:
         """Ensure Playwright browsers are installed, install if missing."""
         try:
-            import subprocess
-            import sys
-
             # Check if browsers are installed by trying to get the path
-            result = subprocess.run(
-                [sys.executable, "-m", "playwright", "install", "--dry-run"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,  # Don't raise on non-zero exit code
-            )
-
-            # If dry-run suggests installation is needed, install chromium
-            if "chromium" in result.stdout.lower() or result.returncode != 0:
-                logger.info("Playwright browsers not found, installing chromium...")
-                install_result = subprocess.run(
-                    [sys.executable, "-m", "playwright", "install", "chromium"],
+            try:
+                dry_run = subprocess.run(
+                    [sys.executable, "-m", "playwright", "install", "--dry-run"],
                     capture_output=True,
                     text=True,
-                    timeout=300,  # 5 minute timeout for installation
-                    check=False,  # Don't raise on non-zero exit code
+                    timeout=10,
+                    check=True,
                 )
-                if install_result.returncode == 0:
+                dry_run_output = dry_run.stdout
+                needs_install = "chromium" in dry_run_output.lower()
+            except subprocess.CalledProcessError as dry_run_error:
+                dry_run_output = (dry_run_error.stdout or "").lower()
+                needs_install = True
+
+            # If dry-run suggests installation is needed, install chromium
+            if needs_install:
+                logger.info("Playwright browsers not found, installing chromium...")
+                try:
+                    subprocess.run(
+                        [sys.executable, "-m", "playwright", "install", "chromium"],
+                        capture_output=True,
+                        text=True,
+                        timeout=300,  # 5 minute timeout for installation
+                        check=True,
+                    )
                     logger.info("Playwright chromium browser installed successfully")
-                else:
+                except subprocess.CalledProcessError as install_error:
                     logger.warning(
-                        f"Failed to install Playwright browsers: {install_result.stderr}"
+                        "Failed to install Playwright browsers: %s",
+                        install_error.stderr,
                     )
             else:
                 logger.debug("Playwright browsers already installed")
@@ -295,10 +303,10 @@ class Assistant:
                 dimensions=embedding_dimensions,
                 default_embedding_behavior="generate",
             )
-        elif embedding_model_name.startswith("/") or embedding_model_name in [
+        elif embedding_model_name.startswith("/") or embedding_model_name in {
             "all-MiniLM-L6-v2",
             "other-local-model-name",
-        ]:
+        }:
             try:
                 if "SentenceTransformerEmbeddingGenerator" not in dir(embeddings):
                     raise ImportError("sentence-transformers library not installed.")
@@ -349,8 +357,6 @@ class Assistant:
         if error_logging_config.get("enabled", True) and not os.environ.get(
             "FAMILY_ASSISTANT_DISABLE_DB_ERROR_LOGGING"
         ):
-            from family_assistant.utils.logging_handler import setup_error_logging
-
             self.error_logging_handler = setup_error_logging(self.database_engine)
             logger.info("Database error logging handler initialized")
 
@@ -1046,9 +1052,6 @@ class Assistant:
 
     async def _setup_system_tasks(self) -> None:
         """Upsert system tasks on startup."""
-        import zoneinfo
-        from datetime import timedelta
-
         try:
             assert self.database_engine is not None, (
                 "Database engine must be initialized before setting up system tasks"

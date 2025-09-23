@@ -6,8 +6,10 @@ Starlark scripting environment, allowing scripts to discover and execute tools.
 """
 
 import asyncio
+import concurrent.futures
 import json
 import logging
+import threading
 from collections.abc import Coroutine
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -109,8 +111,6 @@ class ToolsAPI:
 
     def _run_async(self, coro: Coroutine[Any, Any, T]) -> T:
         """Run an async coroutine from sync context."""
-        import threading
-
         # First, check if we're already running in an event loop
         try:
             current_loop = asyncio.get_running_loop()
@@ -128,8 +128,6 @@ class ToolsAPI:
                     # same event loop they were created in. Creating a new event loop would
                     # cause "Future attached to a different loop" errors.
                     # See docs/postgres-test-failures-analysis.md for details.
-                    import concurrent.futures
-
                     def run_in_main_loop() -> T:
                         assert self._main_loop is not None  # Already checked above
                         future = asyncio.run_coroutine_threadsafe(coro, self._main_loop)
@@ -142,8 +140,6 @@ class ToolsAPI:
                         return exec_future.result(timeout=30.0)
                 else:
                     # Fallback to creating a new event loop if we don't have access to the main one
-                    import concurrent.futures
-
                     with concurrent.futures.ThreadPoolExecutor(
                         max_workers=1
                     ) as executor:

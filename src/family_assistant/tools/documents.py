@@ -16,6 +16,11 @@ import aiofiles
 import filetype  # type: ignore[import-untyped]
 from sqlalchemy import text
 
+from family_assistant.indexing.ingestion import process_document_ingestion_request
+from family_assistant.storage.vector_search import (
+    VectorSearchQuery,
+    query_vector_store,
+)
 from family_assistant.tools.types import ToolAttachment, ToolResult
 
 if TYPE_CHECKING:
@@ -238,11 +243,6 @@ async def search_documents_tool(
     Returns:
         A formatted string containing the search results or an error message.
     """
-    from family_assistant.storage.vector_search import (
-        VectorSearchQuery,
-        query_vector_store,
-    )
-
     logger.info(f"Executing search_documents_tool with query: '{query}'")
     db_context = exec_context.db_context
     # Use the provided generator's model name
@@ -517,8 +517,6 @@ async def ingest_document_from_url_tool(
     Returns:
         A string message indicating success or failure.
     """
-    from family_assistant.indexing.ingestion import process_document_ingestion_request
-
     logger.info(
         f"Executing ingest_document_from_url_tool for URL: '{url_to_ingest}', Provided Title: '{title}'"
     )

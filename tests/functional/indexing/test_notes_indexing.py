@@ -13,16 +13,18 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import Text, select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.indexing.notes_indexer import NotesIndexer
-from family_assistant.indexing.pipeline import IndexingPipeline
+from family_assistant.indexing.pipeline import ContentProcessor, IndexingPipeline
+from family_assistant.indexing.processors import EmbeddingDispatchProcessor
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.notes import notes_table
 from family_assistant.storage.tasks import tasks_table
-from family_assistant.storage.vector import query_vectors
+from family_assistant.storage.vector import DocumentEmbeddingRecord, query_vectors
 from family_assistant.task_worker import TaskWorker
 from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import wait_for_tasks_to_complete
@@ -171,8 +173,6 @@ async def test_notes_indexing_e2e(
 
     # --- Arrange: Setup Pipeline and Indexer ---
     # Create pipeline with processors
-    from family_assistant.indexing.pipeline import ContentProcessor
-    from family_assistant.indexing.processors import EmbeddingDispatchProcessor
 
     processors: list[ContentProcessor] = [
         EmbeddingDispatchProcessor(
@@ -228,7 +228,6 @@ async def test_notes_indexing_e2e(
             logger.info(f"Created note with title: {unique_note_title}")
 
             # Get the note ID for tracking
-            from family_assistant.storage.notes import notes_table
 
             note_stmt = select(notes_table.c.id).where(
                 notes_table.c.title == unique_note_title
@@ -241,7 +240,6 @@ async def test_notes_indexing_e2e(
         # --- Act: Find the Indexing Task ---
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
             await asyncio.sleep(0.2)  # Wait for task to be enqueued
-            from sqlalchemy import Text
 
             select_task_stmt = (
                 select(tasks_table.c.task_id)
@@ -479,8 +477,6 @@ async def test_note_update_reindexing_e2e(
 
     # Setup same infrastructure as main test
     # Create pipeline with processors
-    from family_assistant.indexing.pipeline import ContentProcessor
-    from family_assistant.indexing.processors import EmbeddingDispatchProcessor
 
     processors: list[ContentProcessor] = [
         EmbeddingDispatchProcessor(
@@ -524,8 +520,6 @@ async def test_note_update_reindexing_e2e(
             )
             assert result == "Success"
 
-            from family_assistant.storage.notes import notes_table
-
             note_stmt = select(notes_table.c.id).where(
                 notes_table.c.title == unique_note_title
             )
@@ -540,7 +534,6 @@ async def test_note_update_reindexing_e2e(
         # Find and wait for the initial indexing task to complete
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
             await asyncio.sleep(0.2)  # Wait for task to be enqueued
-            from sqlalchemy import Text
 
             # Find the index_note task
             select_task_stmt = (
@@ -582,7 +575,6 @@ async def test_note_update_reindexing_e2e(
             document_db_id = doc_record.id
 
             # Count initial embeddings
-            from family_assistant.storage.vector import DocumentEmbeddingRecord
 
             initial_embeddings_stmt = select(DocumentEmbeddingRecord.id).where(
                 DocumentEmbeddingRecord.document_id == document_db_id
@@ -606,7 +598,6 @@ async def test_note_update_reindexing_e2e(
         # Find and wait for the re-indexing task
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
             await asyncio.sleep(0.2)  # Wait for task to be enqueued
-            from sqlalchemy import Text
 
             # Find the new index_note task (created after update)
             select_update_task_stmt = (
@@ -733,8 +724,6 @@ async def test_notes_indexing_graceful_degradation(
     unique_note_title = f"Large Note Test {uuid.uuid4()}"
 
     # Setup pipeline and indexer (same as main test)
-    from family_assistant.indexing.pipeline import ContentProcessor
-    from family_assistant.indexing.processors import EmbeddingDispatchProcessor
 
     processors: list[ContentProcessor] = [
         EmbeddingDispatchProcessor(
@@ -781,8 +770,6 @@ async def test_notes_indexing_graceful_degradation(
             )
             assert result == "Success"
 
-            from family_assistant.storage.notes import notes_table
-
             note_stmt = select(notes_table.c.id).where(
                 notes_table.c.title == unique_note_title
             )
@@ -794,7 +781,6 @@ async def test_notes_indexing_graceful_degradation(
         # Find the indexing task
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
             await asyncio.sleep(0.2)  # Wait for task to be enqueued
-            from sqlalchemy import Text
 
             select_task_stmt = (
                 select(tasks_table.c.task_id)
@@ -863,7 +849,6 @@ async def test_notes_indexing_graceful_degradation(
             document_db_id = doc_record.id
 
             # Check embeddings
-            from family_assistant.storage.vector import DocumentEmbeddingRecord
 
             embeddings_stmt = select(
                 DocumentEmbeddingRecord.embedding_type,
@@ -892,11 +877,11 @@ async def test_notes_indexing_graceful_degradation(
                 else 0
             )
             if combined_text_len > 30000:  # Matches MAX_CONTENT_LENGTH in tasks.py
-                assert raw_note_embedding["embedding_model"] in [
+                assert raw_note_embedding["embedding_model"] in {
                     "text_only_too_long",
                     "text_only_error",
                     "text_only_empty_result",
-                ], (
+                }, (
                     f"Expected storage-only model, got: {raw_note_embedding['embedding_model']}"
                 )
                 logger.info(

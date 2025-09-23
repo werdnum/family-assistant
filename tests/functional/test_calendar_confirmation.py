@@ -6,6 +6,7 @@ the confirmation prompt properly displays the event details fetched from the cal
 
 import asyncio
 import logging
+import re
 import uuid
 from datetime import datetime, timedelta
 from typing import Any
@@ -18,6 +19,7 @@ from family_assistant.calendar_integration import (
     fetch_event_details_for_confirmation,
 )
 from family_assistant.storage.context import get_db_context
+from family_assistant.telegram_bot import telegramify_markdown
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -28,11 +30,15 @@ from family_assistant.tools import (
     ConfirmingToolsProvider,
     LocalToolsProvider,
 )
+from family_assistant.tools.calendar import (
+    add_calendar_event_tool,
+    search_calendar_events_tool,
+)
 from family_assistant.tools.confirmation import (
     render_delete_calendar_event_confirmation,
     render_modify_calendar_event_confirmation,
 )
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +56,6 @@ async def create_test_event_in_radicale(
     base_url, user, passwd, calendar_url = radicale_server_details
 
     # Use the actual add_calendar_event_tool to create the event
-    from family_assistant.tools.calendar import add_calendar_event_tool
 
     calendar_config = {
         "caldav": {
@@ -86,7 +91,6 @@ async def create_test_event_in_radicale(
         logger.info(f"Event creation result: {result}")
 
         # Now search for the event to get its UID
-        from family_assistant.tools.calendar import search_calendar_events_tool
 
         search_result = await search_calendar_events_tool(
             exec_context=exec_context,
@@ -95,7 +99,6 @@ async def create_test_event_in_radicale(
         )
 
     # Extract UID from search result
-    import re
 
     uid_match = re.search(r"UID: ([^\n]+)", search_result)
     if uid_match:
@@ -173,7 +176,6 @@ async def test_modify_calendar_event_confirmation_shows_event_details(
     print(f"DEBUG: Event details: {fetched_details}")
 
     # Also check for escaped version of the summary since confirmation uses telegramify_markdown
-    from family_assistant.telegram_bot import telegramify_markdown
 
     escaped_summary = telegramify_markdown.escape_markdown(event_summary)
     print(f"DEBUG: Escaped event_summary: {escaped_summary}")
@@ -256,7 +258,6 @@ async def test_delete_calendar_event_confirmation_shows_event_details(
 
     # Verify the confirmation prompt
     # The confirmation uses telegramify_markdown which escapes special characters
-    from family_assistant.telegram_bot import telegramify_markdown
 
     escaped_summary = telegramify_markdown.escape_markdown(event_summary)
 
@@ -382,7 +383,6 @@ async def test_confirming_tools_provider_with_calendar_events(
         )
 
         # The tool should have executed successfully
-        from family_assistant.tools.types import ToolResult
 
         result_text = result.text if isinstance(result, ToolResult) else str(result)
         assert (

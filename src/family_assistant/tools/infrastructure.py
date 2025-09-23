@@ -13,6 +13,7 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any, Protocol, get_type_hints
 
+from family_assistant import calendar_integration
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 if TYPE_CHECKING:
@@ -503,10 +504,7 @@ class ConfirmingToolsProvider(ToolsProvider):
         This is specifically for calendar tools that need to fetch event details
         before showing confirmation.
         """
-        if tool_name in ["modify_calendar_event", "delete_calendar_event"]:
-            # Import here to avoid circular dependencies
-            from family_assistant import calendar_integration
-
+        if tool_name in {"modify_calendar_event", "delete_calendar_event"}:
             uid = args.get("uid")
             calendar_url = args.get("calendar_url")
             if uid and calendar_url:

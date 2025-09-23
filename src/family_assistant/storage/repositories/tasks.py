@@ -7,7 +7,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import and_, insert, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.tasks import tasks_table
@@ -87,7 +89,7 @@ class TasksRepository(BaseRepository):
         values_to_insert = {
             k: v
             for k, v in values_to_insert.items()
-            if v is not None or k in ["payload", "error"]
+            if v is not None or k in {"payload", "error"}
         }
 
         try:
@@ -98,8 +100,6 @@ class TasksRepository(BaseRepository):
                 # For system tasks, do an upsert to handle re-scheduling
                 if self._db.engine.dialect.name == "postgresql":
                     # PostgreSQL: Use ON CONFLICT DO UPDATE
-                    from sqlalchemy.dialects.postgresql import insert as pg_insert
-
                     stmt = pg_insert(tasks_table).values(**values_to_insert)
                     # Only update fields that might change for system tasks
                     update_dict = {
@@ -461,8 +461,6 @@ class TasksRepository(BaseRepository):
         offset: int = 0,
     ) -> tuple[list[dict], int]:
         """Get script execution tasks for a specific listener."""
-        from sqlalchemy.sql import functions as func
-
         try:
             # Build query for script execution tasks that match the listener
             # Task IDs for script listeners follow format: script_listener_{listener_id}_{timestamp}
