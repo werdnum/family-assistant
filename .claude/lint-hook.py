@@ -98,16 +98,16 @@ async def lint_python_file(file_path: str) -> list[LintResult]:
             return LintResult("ruff check", True, duration)
 
     async def run_ruff_format() -> LintResult:
-        cmd = [f"{venv}/bin/ruff", "format", "--preview", "--check", file_path]
-        returncode, stdout, stderr, duration = await run_command(cmd, timeout=2.0)
+        cmd = [f"{venv}/bin/ruff", "format", file_path]
+        returncode, stdout, stderr, duration = await run_command(cmd, timeout=5.0)
 
         if returncode != 0:
+            output = stderr or stdout or "ruff format failed"
             return LintResult(
                 "ruff format",
                 success=False,
                 duration=duration,
-                output="File needs formatting. Run: ruff format " + file_path,
-                auto_fixable=True,
+                output=output,
             )
         else:
             return LintResult("ruff format", True, duration)
@@ -133,14 +133,14 @@ async def lint_python_file(file_path: str) -> list[LintResult]:
             return LintResult("basedpyright", True, duration)
 
     # Run all linters in parallel
-    tasks = [
+    format_result = await run_ruff_format()
+    other_tasks = [
         run_ruff_check(),
-        run_ruff_format(),
         run_basedpyright(),
     ]
 
-    results = await asyncio.gather(*tasks)
-    return list(results)
+    other_results = await asyncio.gather(*other_tasks)
+    return [format_result, *other_results]
 
 
 async def lint_javascript_file(file_path: str) -> list[LintResult]:
@@ -252,7 +252,7 @@ async def main() -> None:
         # Only process file editing tools
         # NotebookEdit is excluded since it only works with .ipynb files,
         # which require special cell-based linting not yet implemented
-        if tool_name not in ["Edit", "MultiEdit", "Write"]:
+        if tool_name not in {"Edit", "MultiEdit", "Write"}:
             return
 
         # Extract file path from tool input
@@ -270,9 +270,9 @@ async def main() -> None:
             # Determine file type and run appropriate linters
             file_ext = Path(file_path).suffix.lower()
 
-            if file_ext in [".py"]:
+            if file_ext in {".py"}:
                 results = await lint_python_file(file_path)
-            elif file_ext in [".js", ".jsx", ".ts", ".tsx"]:
+            elif file_ext in {".js", ".jsx", ".ts", ".tsx"}:
                 results = await lint_javascript_file(file_path)
             else:
                 # Skip unsupported file types
