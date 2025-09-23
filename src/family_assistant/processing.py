@@ -1179,9 +1179,8 @@ class ProcessingService:
                     full_thread_messages_db = (
                         await db_context.message_history.get_by_thread_id(
                             thread_root_id=thread_root_id_for_turn,
-                            processing_profile_id=self.service_config.id,
                         )
-                    )  # Filter by profile
+                    )
                     current_trigger_removed_from_thread = []
                     if trigger_interface_message_id:
                         for msg_in_thread in full_thread_messages_db:
@@ -1597,7 +1596,6 @@ class ProcessingService:
                     full_thread_messages_db = (
                         await db_context.message_history.get_by_thread_id(
                             thread_root_id=thread_root_id_for_turn,
-                            processing_profile_id=self.service_config.id,
                         )
                     )
                     current_trigger_removed_from_thread = []
