@@ -244,12 +244,13 @@ class ToolsAPI:
             return None
 
     async def _process_attachment_arguments(
-        self, kwargs: dict[str, Any]
+        self, tool_name: str, kwargs: dict[str, Any]
     ) -> dict[str, Any]:
         """
         Process tool arguments to replace attachment IDs with actual content.
 
         Args:
+            tool_name: Name of the tool (to get schema information)
             kwargs: Original tool arguments
 
         Returns:
@@ -257,27 +258,108 @@ class ToolsAPI:
         """
         processed_kwargs = {}
 
-        for key, value in kwargs.items():
-            if self._is_attachment_id(value):
-                logger.debug(f"Processing attachment ID {value} for parameter {key}")
+        # Get tool schema to check for attachment type parameters
+        tool_info = self.get_tool(tool_name)
+        attachment_params = set()
 
-                # Fetch attachment content
-                content = await self._fetch_attachment_content(value)
-                if content is not None:
-                    # Replace attachment ID with content bytes
-                    processed_kwargs[key] = content
+        if tool_info and tool_info.parameters:
+            properties = tool_info.parameters.get("properties", {})
+            for param_name, param_def in properties.items():
+                if isinstance(param_def, dict):
+                    # Direct attachment type
+                    if param_def.get("type") == "attachment":
+                        attachment_params.add(param_name)
+                        logger.debug(
+                            f"Tool '{tool_name}' parameter '{param_name}' is declared as attachment type"
+                        )
+                    # Array of attachments
+                    elif param_def.get("type") == "array":
+                        items = param_def.get("items", {})
+                        if (
+                            isinstance(items, dict)
+                            and items.get("type") == "attachment"
+                        ):
+                            attachment_params.add(param_name)
+                            logger.debug(
+                                f"Tool '{tool_name}' parameter '{param_name}' is declared as array of attachment type"
+                            )
+
+        for key, value in kwargs.items():
+            # Check if this parameter is declared as attachment type in schema
+            is_attachment_param = key in attachment_params
+
+            if is_attachment_param:
+                # Handle both single attachment IDs and lists of attachment IDs
+                if isinstance(value, list):
+                    # Array of attachment IDs
+                    processed_values = []
+                    for item in value:
+                        if self._is_attachment_id(item):
+                            logger.debug(
+                                f"Processing attachment ID {item} from array parameter {key}"
+                            )
+                            content = await self._fetch_attachment_content(item)
+                            if content is not None:
+                                processed_values.append(content)
+                                logger.debug(
+                                    f"Replaced attachment ID {item} with {len(content)} bytes in array {key}"
+                                )
+                            else:
+                                logger.error(
+                                    f"Could not fetch attachment {item} from array {key}, skipping"
+                                )
+                        else:
+                            logger.warning(
+                                f"Array parameter '{key}' item '{item}' is not a valid UUID, keeping as-is"
+                            )
+                            processed_values.append(item)
+                    processed_kwargs[key] = processed_values
+                # Single attachment ID
+                elif self._is_attachment_id(value):
                     logger.debug(
-                        f"Replaced attachment ID {value} with {len(content)} bytes for parameter {key}"
+                        f"Processing single attachment ID {value} for parameter {key}"
                     )
+                    content = await self._fetch_attachment_content(value)
+                    if content is not None:
+                        processed_kwargs[key] = content
+                        logger.debug(
+                            f"Replaced attachment ID {value} with {len(content)} bytes for parameter {key}"
+                        )
+                    else:
+                        logger.error(
+                            f"Could not fetch attachment {value} for parameter {key}, removing parameter"
+                        )
+                        # Don't add this parameter to processed_kwargs
                 else:
-                    # Remove parameter if attachment not found to avoid passing invalid data
-                    logger.error(
-                        f"Could not fetch attachment {value} for parameter {key}, removing parameter"
+                    logger.warning(
+                        f"Parameter '{key}' declared as attachment type but value '{value}' is not a valid UUID"
                     )
-                    # Don't add this parameter to processed_kwargs - let the tool handle the missing parameter
+                    # Keep original value if not a UUID
+                    processed_kwargs[key] = value
             else:
-                # Keep original value for non-attachment parameters
-                processed_kwargs[key] = value
+                # Backward compatibility: check if value looks like UUID
+                is_uuid_value = self._is_attachment_id(value)
+                if is_uuid_value:
+                    logger.debug(
+                        f"Processing attachment ID {value} for parameter {key} (backward compatibility)"
+                    )
+                    # Fetch attachment content
+                    content = await self._fetch_attachment_content(value)
+                    if content is not None:
+                        # Replace attachment ID with content bytes
+                        processed_kwargs[key] = content
+                        logger.debug(
+                            f"Replaced attachment ID {value} with {len(content)} bytes for parameter {key}"
+                        )
+                    else:
+                        # Remove parameter if attachment not found
+                        logger.error(
+                            f"Could not fetch attachment {value} for parameter {key}, removing parameter"
+                        )
+                        # Don't add this parameter to processed_kwargs
+                else:
+                    # Keep original value for non-attachment parameters
+                    processed_kwargs[key] = value
 
         return processed_kwargs
 
@@ -401,7 +483,7 @@ class ToolsAPI:
 
             # Process attachment arguments to replace attachment IDs with content
             processed_kwargs = self._run_async(
-                self._process_attachment_arguments(kwargs)
+                self._process_attachment_arguments(tool_name, kwargs)
             )
 
             # Create the coroutine directly - _run_async expects a coroutine

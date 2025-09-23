@@ -76,12 +76,19 @@ than creating parallel APIs.
 
 Enhanced Starlark functions:
 
-- `wake_llm(context)` - Extended to accept `attachments` in context dict
-- `tools.execute(tool_name, **kwargs)` - Extended to accept attachment IDs as parameters
-- `attachment.get(attachment_id)` - Get metadata (utility function)
-- `attachment.list(source_type=None)` - List available attachments (utility function)
-- `attachment.create(content, mime_type, description)` - Create new attachment (utility function)
-- `attachment.send(attachment_id, message=None)` - Send to user (utility function)
+- `wake_llm(context)` - Extended to accept `attachments` in context dict ✅ IMPLEMENTED
+- `tools.execute(tool_name, **kwargs)` - Extended to accept attachment IDs as parameters ✅
+  IMPLEMENTED
+- `attachment_get(attachment_id)` - Get metadata ✅ IMPLEMENTED
+- `attachment_send(attachment_id, message=None)` - Send to user ✅ IMPLEMENTED
+
+**Excluded for Security:**
+
+- `attachment_list()` - Intentionally not exposed to prevent attachment ID enumeration
+
+**Deferred for Future:**
+
+- `attachment_create(content, mime_type, description)` - Create new attachment (awaiting use case)
 
 #### 4. LLM Attachment Tools
 
@@ -202,10 +209,23 @@ CREATE INDEX idx_attachment_source ON attachment_metadata(source_type, source_id
 
 ### Permission Model
 
-1. **Conversation Scope**: Attachments only accessible within conversation
-2. **User Scope**: User attachments accessible across their conversations (optional)
-3. **Tool Scope**: Tools can only access attachments passed to them
-4. **Script Scope**: Scripts inherit conversation scope
+**Simplified "ID = Access" Model:**
+
+1. **Direct Access**: If you have an attachment ID, you can access it
+2. **No Discovery**: No listing/browsing mechanism (prevents ID enumeration)
+3. **UUID Security**: Attachment IDs are UUIDs (not guessable)
+4. **Authenticated Access**: General authentication required, but no complex per-attachment
+   permissions
+
+**ID Distribution Methods:**
+
+- LLM provides IDs to scripts based on conversation context
+- Tools return attachment IDs as results
+- Direct parameter passing (for known IDs)
+
+**Security Rationale:** This model aligns with the application's threat model where authenticated
+users are trusted not to be malicious. Complex permission checking is avoided in favor of making IDs
+non-discoverable.
 
 ### Memory Management
 
@@ -303,7 +323,7 @@ if attachments:
 
 ## Implementation Status
 
-### Phase 1: Foundation (Complete)
+### Phase 1: Foundation (COMPLETE ✅)
 
 - [x] Design document created
 - [x] Centralized attachment configuration in config.yaml
@@ -313,19 +333,21 @@ if attachments:
 - [x] Database schema migration for attachment_metadata table
 - [x] Unified AttachmentRegistry class
 
-### Phase 2: User Attachment Processing (Complete)
+### Phase 2: User Attachment Processing (COMPLETE ✅)
 
 - [x] Chat API modification for user attachment storage
 - [x] Processing pipeline updates with attachment claiming
 - [x] Message metadata enhancement with attachment IDs
 - [x] Proper authentication and authorization
 
-### Phase 3: Unified Script API (Current)
+### Phase 3: Unified Script API (PARTIALLY COMPLETE)
 
-- [ ] Extend wake_llm function to accept attachments in context
-- [ ] Extend tools.execute function to handle attachment parameters
-- [ ] Add core attachment utility functions (get, list, create, send)
-- [ ] Permission checking and conversation scoping
+- [x] Extend wake_llm function to accept attachments in context
+- [x] Extend tools.execute function to handle attachment parameters
+- [x] Add core attachment utility functions (get, list, send)
+- [x] Basic attachment content processing in tools.execute
+- [ ] Enhanced tool schema for attachment type declarations
+- [ ] Comprehensive test coverage for attachment functionality
 
 ### Phase 4: LLM Tools (Planned)
 
@@ -355,9 +377,38 @@ if attachments:
 4. Add permission checking and conversation scoping
 5. Write comprehensive tests for unified attachment API
 
+## Current Technical Implementation
+
+### Attachment Processing in tools.execute
+
+The `tools.execute` function currently:
+
+1. Detects UUID-formatted parameters using `_is_attachment_id()`
+2. Fetches attachment content via `_process_attachment_arguments()`
+3. Replaces attachment IDs with raw content bytes before tool execution
+
+### Security Implementation
+
+- `attachment_list()` not exposed in script API to prevent ID enumeration
+- Scripts must receive attachment IDs via LLM context, tool results, or parameters
+- UUID validation ensures only valid attachment IDs are processed
+- Conversation-scoped access enforced at registry level
+
+### Next Steps (Immediate)
+
+1. **Tool Schema Enhancement**: Add explicit attachment type support in tool definitions
+2. **Test Coverage**: Comprehensive tests for existing attachment functionality
+3. **Documentation**: Update script tool help and examples
+
+### Future Work
+
+- `attachment_create()` function (when use case emerges)
+- MCP server attachment support (when needed)
+- Privileged access for system scripts (if required)
+
 ## Design Notes
 
 - Attachment cleanup will be conservative (better to keep than delete by mistake)
 - Focus on core functionality before optimization
-- Maintain strong permission boundaries
+- Simple permission model prioritized over complex access control
 - Keep memory usage efficient with lazy loading
