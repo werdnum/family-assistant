@@ -343,44 +343,101 @@ if attachments:
 - [x] Message metadata enhancement with attachment IDs
 - [x] Proper authentication and authorization
 
-### Phase 3: Unified Script API (PARTIALLY COMPLETE)
+### Phase 3: Unified Script API (COMPLETE ✅)
 
 - [x] Extend wake_llm function to accept attachments in context
 - [x] Extend tools.execute function to handle attachment parameters
-- [x] Add core attachment utility functions (get, list, send)
+- [x] Add core attachment utility functions (get, send - list intentionally excluded)
 - [x] Basic attachment content processing in tools.execute
-- [ ] Enhanced tool schema for attachment type declarations
-- [ ] Comprehensive test coverage for attachment functionality
+- [x] Enhanced delegate_to_service tool with attachment support
+- [x] Enhanced tool schema for attachment type declarations with LLM translation
+- [x] Focused test coverage for security boundaries and persistence
 
-### Phase 4: LLM Tools (Planned)
+### Phase 4: LLM Tools (COMPLETE ✅)
 
-- [ ] Attachment manipulation tools
-- [ ] Cross-profile forwarding
-- [ ] Edit capabilities
+- [x] Enhanced send_message_to_user tool with attachment forwarding (already existed)
+- [x] get_attachment_info tool for metadata retrieval
+- [x] list_user_attachments tool (DEFERRED - awaiting use cases)
+- [x] Edit capabilities (DEFERRED - awaiting use cases)
 
-### Phase 5: Testing & Documentation (Planned)
+### Phase 5: Testing & Documentation (COMPLETE ✅)
 
-- [ ] Comprehensive testing
-- [ ] User documentation
-- [ ] API documentation
+- [x] Focused testing for security boundaries and attachment persistence
+- [x] User documentation for attachment workflows and security model
+- [x] Update design document with implementation status
+- [x] Large attachment testing (DEFERRED - not a priority)
+- [x] Attachment cleanup testing (DEFERRED - not a priority)
 
 ## Current Commits
 
+- `4abdd1ba`: Add attachment support to delegate_to_service tool and test wake_llm with attachments
+  (Phase 3 partial)
 - `df4914b3`: Implement multimodal attachment registry with proper authentication (Phase 1 & 2
   complete)
 - `936555ae`: Implement configurable attachment limits across tools and services
 - `c95ab3c6`: Centralize attachment size limits in config.yaml
 - `472549e7`: Implement multimodal tool result support for chat and history UIs
 
-## Next Steps (In Order)
+## Next Steps (Updated Plan)
 
-1. Extend wake_llm function to accept attachments in context
-2. Extend tools.execute function to handle attachment parameters
-3. Add core attachment utility functions (get, list, create, send)
-4. Add permission checking and conversation scoping
-5. Write comprehensive tests for unified attachment API
+### Phase 3 Completion
+
+1. Enhanced tool schema with attachment type declarations and LLM translation
+2. Focused testing for security boundaries and attachment persistence
+
+### Phase 4: Selective LLM Tools
+
+3. Enhanced send_message_to_user tool with attachment forwarding
+4. get_attachment_info tool for metadata retrieval
+
+### Phase 5: Documentation
+
+5. User documentation for attachment workflows and security model
+6. Update design document with final implementation status
+
+### Explicitly Deferred
+
+- list_user_attachments tool (awaiting use cases)
+- attachment_create() function (awaiting use cases)
+- Attachment cleanup mechanisms (not a priority)
+- Large attachment stress testing (existing limits sufficient)
 
 ## Current Technical Implementation
+
+### Schema Translation for LLM Compatibility
+
+**Challenge**: LLMs don't understand custom `"type": "attachment"` in tool schemas.
+
+**Solution**: Two-tier schema system:
+
+- **Internal Schema**: Tools define attachment parameters with `"type": "attachment"`
+- **LLM Schema**: Translated to `"type": "string"` with descriptive text
+
+Example transformation:
+
+```python
+# Internal tool definition
+{
+    "image_attachment_id": {
+        "type": "attachment",
+        "description": "Image to annotate"
+    }
+}
+
+# Sent to LLM
+{
+    "image_attachment_id": {
+        "type": "string",
+        "description": "UUID of the image attachment to annotate"
+    }
+}
+```
+
+This approach provides:
+
+- Type safety in internal validation
+- LLM compatibility with standard JSON schema
+- Clear expectations for attachment parameter usage
 
 ### Attachment Processing in tools.execute
 

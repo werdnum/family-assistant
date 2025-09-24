@@ -141,6 +141,7 @@ default_profile_settings:
       - "cancel_pending_callback"
       - "search_documents"
       - "get_full_document_content"
+      - "get_attachment_info"
       - "get_message_history"
       - "get_user_documentation_content"
       - "ingest_document_from_url"
