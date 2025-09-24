@@ -193,10 +193,13 @@ class StarlarkEngine:
                         execution_context, main_loop=self._main_loop
                     )
 
-                    # Add attachment functions (excluding list for security)
+                    # Add attachment functions (excluding list and send for security/architecture)
                     module.add_callable("attachment_get", attachment_api.get)
-                    module.add_callable("attachment_send", attachment_api.send)
                     # NOTE: attachment_list intentionally excluded to prevent ID enumeration
+                    # NOTE: attachment_send removed - scripts should use LLM tools:
+                    #   - attach_to_response (for current user)
+                    #   - send_message_to_user (for other users)
+                    #   - wake_llm (to pass to LLM for processing)
 
                     logger.debug("Added attachment API to Starlark module")
                 except Exception as e:
