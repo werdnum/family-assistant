@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
+import uuid
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from family_assistant.events.processor import EventProcessor
+from family_assistant.interfaces import ChatInterface
+from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.services.attachments import AttachmentService
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.events import EventActionType, EventSourceType
+from family_assistant.task_worker import (
+    TaskWorker,
+    handle_llm_callback,
+    handle_script_execution,
+)
 from family_assistant.tools import (
     ATTACHMENT_TOOLS_DEFINITION,
     COMMUNICATION_TOOLS_DEFINITION,
@@ -21,6 +32,8 @@ from family_assistant.tools import (
 )
 from family_assistant.tools import AVAILABLE_FUNCTIONS as local_tool_implementations
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
+from tests.helpers import wait_for_tasks_to_complete
+from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -381,3 +394,193 @@ class TestAttachmentWorkflows:
             assert processed_att.mime_type.startswith("image/")
             assert user_att.description == "User uploaded photo"
             assert processed_att.description == "Processed user photo"
+
+    async def test_event_script_camera_wake_llm_workflow(
+        self,
+        db_engine: AsyncEngine,
+        attachment_service: AttachmentService,
+    ) -> None:
+        """Test Event → Script → Camera → Wake LLM workflow with attachments."""
+        test_run_id = uuid.uuid4()
+
+        async with DatabaseContext(engine=db_engine) as db_ctx:
+            # Step 1: Create event listener with script that calls camera and wake_llm
+            await db_ctx.events.create_event_listener(
+                name=f"Security Camera Alert {test_run_id}",
+                source_id=EventSourceType.home_assistant,
+                match_conditions={
+                    "entity_id": "binary_sensor.motion_detector",
+                },
+                conversation_id="test_conversation",
+                interface_type="telegram",
+                action_type=EventActionType.script,
+                action_config={
+                    "script_code": """
+# Motion detected, take camera snapshot
+camera_result = tools_execute("mock_camera_snapshot", entity_id="camera.front_door")
+
+# Check if we got an attachment
+if camera_result and "Successfully captured" in camera_result:
+    # Get the attachment info from the last tool execution
+    # In real usage, the camera tool would return attachment metadata
+    wake_llm({
+        "alert_type": "motion_detection",
+        "location": "front_door",
+        "timestamp": time_format(time_now(), "%Y-%m-%d %H:%M:%S"),
+        "camera_snapshot": "captured",
+        "action_needed": "Review security footage"
+    })
+else:
+    wake_llm({
+        "alert_type": "motion_detection_failed",
+        "location": "front_door",
+        "error": "Camera snapshot failed"
+    })
+"""
+                },
+                enabled=True,
+            )
+
+        # Step 2: Create infrastructure with attachment support
+        shutdown_event = asyncio.Event()
+        new_task_event = asyncio.Event()
+
+        # Event processor
+        processor = EventProcessor(
+            sources={},
+            sample_interval_hours=1.0,
+            get_db_context_func=lambda: get_db_context(db_engine),
+        )
+        processor._running = True
+        await processor._refresh_listener_cache()
+
+        # Tools provider with camera and attachment tools
+        local_provider = LocalToolsProvider(
+            definitions=(
+                ATTACHMENT_TOOLS_DEFINITION
+                + MOCK_IMAGE_TOOLS_DEFINITION
+                + COMMUNICATION_TOOLS_DEFINITION
+            ),
+            implementations={
+                "mock_camera_snapshot": local_tool_implementations[
+                    "mock_camera_snapshot"
+                ],
+                "attach_to_response": local_tool_implementations["attach_to_response"],
+                "send_message_to_user": local_tool_implementations[
+                    "send_message_to_user"
+                ],
+            },
+        )
+        tools_provider = CompositeToolsProvider(providers=[local_provider])
+        await tools_provider.get_tool_definitions()
+
+        # Mock chat interface
+        mock_chat_interface = AsyncMock(spec=ChatInterface)
+        mock_chat_interface.send_message.return_value = "mock_security_message_id"
+
+        # LLM client that expects security alert with camera context
+        def security_matcher(args: dict) -> bool:
+            messages = args.get("messages", [])
+            if messages:
+                last_msg = messages[-1]
+                content = str(last_msg.get("content", ""))
+                return (
+                    "Script wake_llm call" in content
+                    and "motion_detection" in content
+                    and "front_door" in content
+                    and "camera_snapshot" in content
+                    and "captured" in content
+                )
+            return False
+
+        llm_client = RuleBasedMockLLMClient(
+            rules=[
+                (
+                    security_matcher,
+                    LLMOutput(
+                        content="🚨 Security Alert: Motion detected at front door! Camera snapshot captured. Reviewing footage now."
+                    ),
+                )
+            ],
+            default_response=LLMOutput(content="Security system monitoring."),
+        )
+
+        # Processing service with attachment service
+        processing_service = ProcessingService(
+            llm_client=llm_client,
+            tools_provider=tools_provider,
+            service_config=ProcessingServiceConfig(
+                id="event_handler",
+                prompts={"system_prompt": "Security event handler"},
+                timezone_str="UTC",
+                max_history_messages=1,
+                history_max_age_hours=1,
+                tools_config={},
+                delegation_security_level="blocked",
+            ),
+            app_config={},
+            context_providers=[],
+            server_url=None,
+        )
+
+        # Task worker
+        task_worker = TaskWorker(
+            processing_service=processing_service,
+            chat_interface=mock_chat_interface,
+            timezone_str="UTC",
+            embedding_generator=MagicMock(),
+            calendar_config={},
+            shutdown_event_instance=shutdown_event,
+            engine=db_engine,
+        )
+        task_worker.register_task_handler("script_execution", handle_script_execution)
+        task_worker.register_task_handler("llm_callback", handle_llm_callback)
+
+        worker_task = asyncio.create_task(
+            task_worker.run(new_task_event), name=f"SecurityWorker-{test_run_id}"
+        )
+        await asyncio.sleep(0.1)
+
+        # Step 3: Process motion detection event
+        await processor.process_event(
+            "home_assistant",
+            {
+                "entity_id": "binary_sensor.motion_detector",
+                "old_state": {"state": "off"},
+                "new_state": {"state": "on", "attributes": {"zone": "front_door"}},
+            },
+        )
+
+        # Signal worker and wait for script execution
+        new_task_event.set()
+        await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
+
+        # Wait for LLM callback task
+        await asyncio.sleep(0.5)
+        new_task_event.set()
+        await wait_for_tasks_to_complete(db_engine, task_types={"llm_callback"})
+
+        # Step 4: Verify LLM was woken with security context
+        mock_chat_interface.send_message.assert_called_once()
+        call_args = mock_chat_interface.send_message.call_args
+        sent_text = call_args[1]["text"]
+
+        assert "Security Alert" in sent_text
+        assert "Motion detected" in sent_text
+        assert "front door" in sent_text
+        assert "snapshot captured" in sent_text
+
+        # Step 5: Verify the workflow executed successfully
+        # Note: In this test, the mock camera tool creates an attachment
+        # but the script doesn't directly access it. In a real implementation,
+        # the script would have access to the attachment ID and pass it to wake_llm
+        # This test validates the workflow structure and integration
+
+        # Cleanup
+        shutdown_event.set()
+        new_task_event.set()
+        try:
+            await asyncio.wait_for(worker_task, timeout=2.0)
+        except asyncio.TimeoutError:
+            worker_task.cancel()
+            await asyncio.sleep(0.1)
