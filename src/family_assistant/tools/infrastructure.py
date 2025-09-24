@@ -15,6 +15,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, Protocol, get_type_hints
 
 from family_assistant import calendar_integration
+from family_assistant.tools.attachment_utils import process_attachment_arguments
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 if TYPE_CHECKING:
@@ -268,6 +269,9 @@ class LocalToolsProvider:
             call_args = arguments.copy()
             logger.debug(f"Tool '{name}' - Initial arguments from LLM: {arguments}")
             logger.debug(f"Tool '{name}' - Initial call_args (copy): {call_args}")
+
+            # Process attachment arguments (convert string IDs to ScriptAttachment objects)
+            call_args = await process_attachment_arguments(call_args, context)
             sig = inspect.signature(callable_func)
 
             resolved_hints = {}
