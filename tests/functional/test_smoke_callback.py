@@ -1259,7 +1259,6 @@ async def test_schedule_reminder_with_follow_up(
         )
     logger.info("User response recorded")
 
-    # Execute the final follow-up (should be cancelled since user responded)
     mock_clock.advance(timedelta(seconds=follow_up_interval_seconds + 1))
     test_new_task_event.set()
 
