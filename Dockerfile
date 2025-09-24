@@ -68,7 +68,8 @@ RUN rm -rf /home/appuser/.cache/uv && \
 # Switch to appuser for UV tool installations
 USER appuser
 ENV HOME=/home/appuser
-RUN env
+ENV UV_TOOL_BIN_DIR=/uv/bin
+ENV UV_TOOL_DIR=/uv/tools
 RUN uv tool install mcp-server-time
 RUN uv tool install mcp-server-fetch
 
