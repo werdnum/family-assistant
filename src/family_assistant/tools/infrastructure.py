@@ -7,6 +7,7 @@ used by all tool implementations.
 from __future__ import annotations
 
 import asyncio
+import copy
 import inspect
 import json
 import logging
@@ -20,6 +21,81 @@ if TYPE_CHECKING:
     from family_assistant.embeddings import EmbeddingGenerator
 
 logger = logging.getLogger(__name__)
+
+
+def translate_attachment_schemas_for_llm(
+    tool_definitions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Translate tool schemas for LLM compatibility by converting attachment types.
+
+    Transforms 'type': 'attachment' parameters to 'type': 'string' with descriptive text
+    explaining that the LLM should provide an attachment UUID.
+
+    Args:
+        tool_definitions: List of tool definitions with potentially internal attachment types
+
+    Returns:
+        List of tool definitions compatible with LLMs (no custom attachment types)
+    """
+
+    translated_definitions = copy.deepcopy(tool_definitions)
+
+    for tool_def in translated_definitions:
+        if tool_def.get("type") == "function":
+            function_def = tool_def.get("function", {})
+            parameters = function_def.get("parameters", {})
+            properties = parameters.get("properties", {})
+
+            # Transform each parameter that has type: attachment
+            for param_name, param_def in properties.items():
+                if param_def.get("type") == "attachment":
+                    # Direct attachment parameter
+                    param_def["type"] = "string"
+
+                    # Enhance description to explain UUID requirement
+                    original_desc = param_def.get("description", "")
+                    if (
+                        "UUID" not in original_desc
+                        and "attachment" in original_desc.lower()
+                    ):
+                        param_def["description"] = (
+                            f"UUID of the {original_desc.lower()}"
+                        )
+                    elif "UUID" not in original_desc:
+                        param_def["description"] = (
+                            f"UUID of the attachment. {original_desc}"
+                        )
+
+                    logger.debug(
+                        f"Translated attachment parameter '{param_name}' to string type for LLM compatibility"
+                    )
+
+                elif param_def.get("type") == "array":
+                    # Handle arrays of attachments
+                    items = param_def.get("items", {})
+                    if isinstance(items, dict) and items.get("type") == "attachment":
+                        items["type"] = "string"
+
+                        # Enhance items description for UUID requirement
+                        original_desc = items.get("description", "")
+                        if not original_desc:
+                            items["description"] = "UUID of an attachment"
+                        elif "UUID" not in original_desc:
+                            if "attachment" in original_desc.lower():
+                                items["description"] = (
+                                    f"UUID of the {original_desc.lower()}"
+                                )
+                            else:
+                                items["description"] = (
+                                    f"UUID of the attachment. {original_desc}"
+                                )
+
+                        logger.debug(
+                            f"Translated attachment array parameter '{param_name}' items to string type for LLM compatibility"
+                        )
+
+    return translated_definitions
 
 
 class ConfirmationCallbackProtocol(Protocol):
@@ -157,6 +233,22 @@ class LocalToolsProvider:
             )
 
     async def get_tool_definitions(self) -> list[dict[str, Any]]:
+        """Get tool definitions translated for LLM compatibility.
+
+        Returns tool definitions with attachment types converted to string types
+        with UUID descriptions for LLM compatibility.
+        """
+        return translate_attachment_schemas_for_llm(self._definitions)
+
+    def get_raw_tool_definitions(self) -> list[dict[str, Any]]:
+        """Get raw internal tool definitions without LLM translation.
+
+        This is used internally by the script API to detect attachment types
+        before translation.
+
+        Returns:
+            Raw tool definitions with original attachment types
+        """
         return self._definitions
 
     async def execute_tool(

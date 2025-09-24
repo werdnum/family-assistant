@@ -107,6 +107,72 @@ class MockToolsProvider:
         else:
             raise ValueError(f"Unknown tool: {name}")
 
+    def get_raw_tool_definitions(self) -> list[dict[str, Any]]:
+        """Return raw tool definitions (same as translated for mock)."""
+        # For the mock, raw and translated definitions are the same
+        # Return the definitions synchronously to avoid event loop issues
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "echo",
+                    "description": "Echo back the input message",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "message": {
+                                "type": "string",
+                                "description": "Message to echo",
+                            }
+                        },
+                        "required": ["message"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "add_numbers",
+                    "description": "Add two numbers together",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "a": {
+                                "type": "number",
+                                "description": "First number",
+                            },
+                            "b": {
+                                "type": "number",
+                                "description": "Second number",
+                            },
+                        },
+                        "required": ["a", "b"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "greet_user",
+                    "description": "Greet a user",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "user_name": {
+                                "type": "string",
+                                "description": "Name of the user to greet",
+                            },
+                            "formal": {
+                                "type": "boolean",
+                                "description": "Whether to use formal greeting",
+                            },
+                        },
+                        "required": ["user_name"],
+                    },
+                },
+            },
+        ]
+
     async def close(self) -> None:
         """No cleanup needed for mock."""
         pass
