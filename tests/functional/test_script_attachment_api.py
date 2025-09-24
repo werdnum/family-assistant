@@ -16,6 +16,12 @@ from family_assistant.scripting.errors import ScriptExecutionError
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.services.attachments import AttachmentService
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.tools import (
+    ATTACHMENT_TOOLS_DEFINITION,
+    CompositeToolsProvider,
+    LocalToolsProvider,
+)
+from family_assistant.tools import AVAILABLE_FUNCTIONS as local_tool_implementations
 from family_assistant.tools.types import ToolExecutionContext
 
 if TYPE_CHECKING:
@@ -338,8 +344,20 @@ print("Hello world")
                 attachment_service=attachment_service,
             )
 
+            # Create tools provider with attachment tools
+            local_provider = LocalToolsProvider(
+                definitions=ATTACHMENT_TOOLS_DEFINITION,
+                implementations={
+                    "attach_to_response": local_tool_implementations[
+                        "attach_to_response"
+                    ],
+                },
+            )
+            tools_provider = CompositeToolsProvider(providers=[local_provider])
+            await tools_provider.get_tool_definitions()
+
             config = StarlarkConfig(enable_print=True)
-            engine = StarlarkEngine(config=config)
+            engine = StarlarkEngine(tools_provider=tools_provider, config=config)
 
             # Test script that uses attachment functions
             # Note: attachment_list is not available for security, so we test with known attachment ID
@@ -350,9 +368,10 @@ metadata = attachment_get(attachment_id)
 
 if metadata:
     print("Found attachment:", metadata.get("description", "No description"))
-    # Test sending the attachment
-    send_result = attachment_send(attachment_id, "Test message")
-    print("Send result:", send_result)
+    # Test using attachment with LLM tools (attachment_send was removed)
+    # We can test that attach_to_response tool is available via tools_execute
+    attach_result = tools_execute("attach_to_response", attachment_ids=[attachment_id])
+    print("Attach result:", attach_result)
     result = True
 else:
     print("No attachment found")
