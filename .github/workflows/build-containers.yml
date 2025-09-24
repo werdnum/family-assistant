@@ -107,4 +107,4 @@ jobs:
         if: needs.prepare.outputs.should-push == 'true'
         run: |
           curl --fail-with-body -X POST \
-            "https://concourse-webhooks.bishop-dorian.ts.net/api/v1/teams/main/pipelines/family-assistant/resources/family-assistant-image/check/webhook?token=${{ secrets.CONCOURSE_WEBHOOK_TOKEN }}"
+            "https://concourse-webhooks.bishop-dorian.ts.net/api/v1/teams/main/pipelines/family-assistant/resources/family-assistant-image/check/webhook?webhook_token=${{ secrets.CONCOURSE_WEBHOOK_TOKEN }}"
