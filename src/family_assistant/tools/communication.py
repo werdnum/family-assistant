@@ -228,13 +228,16 @@ async def send_message_to_user_tool(
                         logger.warning(f"Attachment {attachment_id} not found")
                         continue
 
-                    # Check conversation scoping
+                    # Check conversation scoping for cross-user sending
+                    # For send_message_to_user, we allow attachments from the current conversation
+                    # to be sent to other users (cross-conversation sharing is legitimate)
+                    # Only allow attachments that belong to the current conversation
                     if (
                         exec_context.conversation_id
                         and attachment.conversation_id != exec_context.conversation_id
                     ):
                         logger.warning(
-                            f"Attachment {attachment_id} not accessible from conversation {exec_context.conversation_id}"
+                            f"Attachment {attachment_id} from conversation {attachment.conversation_id} not accessible from conversation {exec_context.conversation_id}. Only attachments from current conversation can be sent to other users."
                         )
                         continue
 

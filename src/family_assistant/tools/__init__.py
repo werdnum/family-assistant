@@ -74,6 +74,11 @@ from family_assistant.tools.infrastructure import (
     ToolNotFoundError,
     ToolsProvider,
 )
+from family_assistant.tools.mock_image_tools import (
+    MOCK_IMAGE_TOOLS_DEFINITION,
+    annotate_image_tool,
+    mock_camera_snapshot_tool,
+)
 from family_assistant.tools.notes import (
     NOTE_TOOLS_DEFINITION,
     add_or_update_note_tool,
@@ -166,6 +171,9 @@ __all__ = [
     "get_camera_snapshot_tool",
     "ATTACHMENT_TOOLS_DEFINITION",
     "attach_to_response_tool",
+    "MOCK_IMAGE_TOOLS_DEFINITION",
+    "annotate_image_tool",
+    "mock_camera_snapshot_tool",
 ]
 
 
@@ -231,6 +239,9 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "get_camera_snapshot": get_camera_snapshot_tool,
     "execute_script": execute_script_tool,
     "attach_to_response": attach_to_response_tool,
+    # Mock image processing tools (for testing)
+    "annotate_image": annotate_image_tool,
+    "mock_camera_snapshot": mock_camera_snapshot_tool,
 }
 
 
@@ -247,4 +258,5 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
     + COMMUNICATION_TOOLS_DEFINITION
     + SCRIPT_TOOLS_DEFINITION
     + ATTACHMENT_TOOLS_DEFINITION
+    + MOCK_IMAGE_TOOLS_DEFINITION
 )
