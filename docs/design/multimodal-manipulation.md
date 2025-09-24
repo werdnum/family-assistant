@@ -80,11 +80,14 @@ Enhanced Starlark functions:
 - `tools.execute(tool_name, **kwargs)` - Extended to accept attachment IDs as parameters ✅
   IMPLEMENTED
 - `attachment_get(attachment_id)` - Get metadata ✅ IMPLEMENTED
-- `attachment_send(attachment_id, message=None)` - Send to user ✅ IMPLEMENTED
 
-**Excluded for Security:**
+**Excluded for Security/Architecture:**
 
 - `attachment_list()` - Intentionally not exposed to prevent attachment ID enumeration
+- `attachment_send()` - Removed as redundant. Scripts should use LLM tools:
+  - `attach_to_response` (for current user)
+  - `send_message_to_user` (for other users)
+  - `wake_llm` (to pass to LLM for processing)
 
 **Deferred for Future:**
 
