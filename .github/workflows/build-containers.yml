@@ -106,5 +106,5 @@ jobs:
       - name: Trigger Concourse Deployment
         if: needs.prepare.outputs.should-push == 'true'
         run: |
-          curl -X POST \
+          curl --fail-with-body -X POST \
             "https://concourse-webhooks.bishop-dorian.ts.net/api/v1/teams/main/pipelines/family-assistant/resources/family-assistant-image/check/webhook?token=${{ secrets.CONCOURSE_WEBHOOK_TOKEN }}"
