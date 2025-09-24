@@ -11,6 +11,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
+from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.telegram_bot import telegramify_markdown
 
 if TYPE_CHECKING:
@@ -65,6 +66,11 @@ SERVICE_TOOLS_DEFINITION: list[dict[str, Any]] = [
                         "description": "Optional. If true, explicitly ask the user for confirmation before delegating the task. Defaults to false. This may be overridden if the target profile's security level is 'confirm' (always confirm) or 'blocked' (never delegate). If the 'delegate_to_service' tool itself is configured to require confirmation for the current profile, user confirmation will also be sought.",
                         "default": False,
                     },
+                    "attachment_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of attachment UUIDs to include with the delegated request. These attachments must be accessible in the current conversation and will be passed to the target service for processing.",
+                    },
                 },
                 "required": ["target_service_id", "user_request"],
             },
@@ -79,9 +85,20 @@ async def delegate_to_service_tool(
     target_service_id: str,
     user_request: str,
     confirm_delegation: bool = False,
+    attachment_ids: list[str] | None = None,
 ) -> str:
     """
     Delegates a user request to another specialized assistant profile (service).
+
+    Args:
+        exec_context: The execution context
+        target_service_id: ID of the target service profile to delegate to
+        user_request: The request text to delegate
+        confirm_delegation: Whether to ask for user confirmation
+        attachment_ids: Optional list of attachment UUIDs to include with the request
+
+    Returns:
+        String response from the target service or error message
     """
     logger.info(
         f"Executing delegate_to_service_tool: target='{target_service_id}', request='{user_request[:50]}...', confirm={confirm_delegation}"
@@ -189,13 +206,60 @@ async def delegate_to_service_tool(
                 )
                 return f"Error during confirmation for delegating to '{target_service_id}': {e}"
 
-    logger.info(f"Delegating request to service profile: '{target_service_id}'")
+    # Process attachments if provided
+    content_parts = [{"type": "text", "text": user_request}]
+
+    if attachment_ids:
+        if not exec_context.attachment_service:
+            logger.warning(
+                "Attachment IDs provided but AttachmentService not available - ignoring attachments"
+            )
+        else:
+            attachment_registry = AttachmentRegistry(exec_context.attachment_service)
+
+            for attachment_id in attachment_ids:
+                try:
+                    # Validate attachment exists and is accessible
+                    attachment = await attachment_registry.get_attachment(
+                        exec_context.db_context, attachment_id
+                    )
+
+                    if not attachment:
+                        logger.warning(
+                            f"Attachment {attachment_id} not found - skipping"
+                        )
+                        continue
+
+                    # Check conversation scoping
+                    if (
+                        exec_context.conversation_id
+                        and attachment.conversation_id != exec_context.conversation_id
+                    ):
+                        logger.warning(
+                            f"Attachment {attachment_id} from conversation {attachment.conversation_id} not accessible from conversation {exec_context.conversation_id} - skipping"
+                        )
+                        continue
+
+                    # Add attachment content part
+                    content_parts.append({
+                        "type": "attachment",
+                        "attachment_id": attachment_id,
+                    })
+                    logger.debug(f"Added attachment {attachment_id} to delegation")
+
+                except Exception as e:
+                    logger.error(f"Error validating attachment {attachment_id}: {e}")
+                    continue
+
+    logger.info(
+        f"Delegating request to service profile: '{target_service_id}' with {len(content_parts)} content parts"
+    )
     try:
         result = await target_service.handle_chat_interaction(
             db_context=exec_context.db_context,
             interface_type=exec_context.interface_type,  # Use current interface type
             conversation_id=exec_context.conversation_id,  # Use current conversation ID
-            trigger_content_parts=[{"type": "text", "text": user_request}],
+            trigger_content_parts=content_parts,
             trigger_interface_message_id=None,  # This is an internal trigger
             user_name=exec_context.user_name,  # Pass original user's name
             replied_to_interface_id=None,
