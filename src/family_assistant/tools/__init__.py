@@ -23,6 +23,7 @@ from family_assistant.tools.calendar import (
 )
 from family_assistant.tools.communication import (
     COMMUNICATION_TOOLS_DEFINITION,
+    get_attachment_info_tool,
     get_message_history_tool,
     send_message_to_user_tool,
 )
@@ -174,6 +175,7 @@ __all__ = [
     "MOCK_IMAGE_TOOLS_DEFINITION",
     "annotate_image_tool",
     "mock_camera_snapshot_tool",
+    "get_attachment_info_tool",
 ]
 
 
@@ -214,6 +216,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "schedule_recurring_action": schedule_recurring_action_tool,
     "search_documents": search_documents_tool,
     "get_full_document_content": get_full_document_content_tool,
+    "get_attachment_info": get_attachment_info_tool,
     "get_message_history": get_message_history_tool,
     "get_user_documentation_content": get_user_documentation_content_tool,
     "ingest_document_from_url": ingest_document_from_url_tool,

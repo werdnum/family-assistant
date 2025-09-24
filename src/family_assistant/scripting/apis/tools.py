@@ -18,6 +18,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.tools.infrastructure import (
+    CompositeToolsProvider,
+    LocalToolsProvider,
+)
 
 T = TypeVar("T")
 
@@ -86,6 +90,7 @@ class ToolsAPI:
 
         # Cache tool definitions
         self._tool_definitions: list[dict[str, Any]] | None = None
+        self._raw_tool_definitions: list[dict[str, Any]] | None = None
 
         logger.info(
             "Initialized ToolsAPI bridge for Starlark scripts (deny_all_tools=%s, allowed_tools=%s, main_loop=%s)",
@@ -243,6 +248,49 @@ class ToolsAPI:
             )
             return None
 
+    def _get_raw_tool_definitions(self) -> list[dict[str, Any]]:
+        """Get raw tool definitions for internal schema analysis.
+
+        Uses the raw definitions (without LLM translation) to detect attachment types.
+        Falls back to regular definitions if raw definitions are not available.
+        """
+        if self._raw_tool_definitions is None:
+            # Try to get raw definitions from LocalToolsProvider
+            if isinstance(self.tools_provider, LocalToolsProvider):
+                self._raw_tool_definitions = (
+                    self.tools_provider.get_raw_tool_definitions()
+                )
+            elif isinstance(self.tools_provider, CompositeToolsProvider):
+                # For composite providers, collect raw definitions from all LocalToolsProvider instances
+                all_raw_definitions = []
+                for provider in self.tools_provider.get_providers():
+                    if isinstance(provider, LocalToolsProvider):
+                        all_raw_definitions.extend(provider.get_raw_tool_definitions())
+                self._raw_tool_definitions = all_raw_definitions
+            elif hasattr(self.tools_provider, "get_raw_tool_definitions"):
+                # Provider has raw definitions method
+                raw_method = getattr(
+                    self.tools_provider, "get_raw_tool_definitions", None
+                )
+                if raw_method:
+                    raw_definitions = raw_method()
+                    self._raw_tool_definitions = (
+                        raw_definitions if raw_definitions else []
+                    )
+                else:
+                    self._raw_tool_definitions = []
+            else:
+                # Fallback: use translated definitions (may not detect attachment types correctly)
+                logger.warning(
+                    f"Cannot get raw tool definitions from {type(self.tools_provider).__name__}, "
+                    "using translated definitions - attachment detection may not work properly"
+                )
+                self._raw_tool_definitions = self._run_async(
+                    self.tools_provider.get_tool_definitions()
+                )
+
+        return self._raw_tool_definitions or []
+
     async def _process_attachment_arguments(
         self, tool_name: str, kwargs: dict[str, Any]
     ) -> dict[str, Any]:
@@ -258,12 +306,23 @@ class ToolsAPI:
         """
         processed_kwargs = {}
 
-        # Get tool schema to check for attachment type parameters
-        tool_info = self.get_tool(tool_name)
+        # Get RAW tool schema to check for attachment type parameters
+        # This is important because the regular get_tool_definitions() now returns
+        # translated schemas where attachment types have been converted to string types
+        raw_definitions = self._get_raw_tool_definitions()
         attachment_params = set()
 
-        if tool_info and tool_info.parameters:
-            properties = tool_info.parameters.get("properties", {})
+        # Find the tool definition in raw definitions
+        tool_def = None
+        for definition in raw_definitions:
+            if definition.get("type") == "function":
+                function_def = definition.get("function", {})
+                if function_def.get("name") == tool_name:
+                    tool_def = function_def
+                    break
+
+        if tool_def and tool_def.get("parameters"):
+            properties = tool_def["parameters"].get("properties", {})
             for param_name, param_def in properties.items():
                 if isinstance(param_def, dict):
                     # Direct attachment type

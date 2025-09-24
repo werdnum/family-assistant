@@ -87,6 +87,29 @@ COMMUNICATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_attachment_info",
+            "description": (
+                "Retrieve metadata information about a specific attachment by its UUID. "
+                "This includes details like file size, MIME type, description, source, and creation time.\n\n"
+                "Returns: A JSON string containing attachment metadata including attachment_id, mime_type, "
+                "description, size, source_type, source_id, conversation_id, created_at, and any additional metadata. "
+                "On error, returns 'Error: [error details]'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "attachment_id": {
+                        "type": "string",
+                        "description": "The UUID of the attachment to retrieve information about.",
+                    },
+                },
+                "required": ["attachment_id"],
+            },
+        },
+    },
 ]
 
 
@@ -322,3 +345,58 @@ async def send_message_to_user_tool(
         return (
             f"Error: Could not send message to Chat ID {target_chat_id}. Details: {e}"
         )
+
+
+async def get_attachment_info_tool(
+    exec_context: ToolExecutionContext,
+    attachment_id: str,
+) -> str:
+    """
+    Retrieve metadata information about a specific attachment.
+
+    Args:
+        exec_context: The execution context.
+        attachment_id: The UUID of the attachment to retrieve information about.
+
+    Returns:
+        A JSON string containing attachment metadata or an error message.
+    """
+    logger.info(f"Executing get_attachment_info_tool for attachment {attachment_id}")
+
+    db_context = exec_context.db_context
+
+    if not exec_context.attachment_service:
+        logger.error("AttachmentService not available in ToolExecutionContext")
+        return "Error: Attachment service not available."
+
+    try:
+        attachment_registry = AttachmentRegistry(exec_context.attachment_service)
+
+        # Retrieve attachment metadata
+        attachment = await attachment_registry.get_attachment(db_context, attachment_id)
+
+        if not attachment:
+            logger.warning(f"Attachment {attachment_id} not found")
+            return f"Error: Attachment with ID {attachment_id} not found."
+
+        # Check conversation scoping - only allow access to attachments from current conversation
+        if (
+            exec_context.conversation_id
+            and attachment.conversation_id != exec_context.conversation_id
+        ):
+            logger.warning(
+                f"Access denied: attachment {attachment_id} belongs to conversation {attachment.conversation_id}, "
+                f"but current conversation is {exec_context.conversation_id}"
+            )
+            return f"Error: Access denied. Attachment {attachment_id} is not accessible from the current conversation."
+
+        # Convert to dictionary and return as JSON string
+        metadata_dict = attachment.to_dict()
+
+        return json.dumps(metadata_dict, indent=2)
+
+    except Exception as e:
+        logger.error(
+            f"Error retrieving attachment info for {attachment_id}: {e}", exc_info=True
+        )
+        return f"Error: Failed to retrieve attachment information. {e}"
