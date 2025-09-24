@@ -2,6 +2,7 @@ import json
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -21,6 +22,8 @@ from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
 )
+from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.services.attachments import AttachmentService
 from family_assistant.storage import message_history_table  # Updated import
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
@@ -765,3 +768,161 @@ async def test_delegation_unrestricted_confirm_arg_granted(
     call_args = awaited_mock_confirmation_callback.call_args[0]  # positional args
     confirmed_tool_args = call_args[5]  # tool_args is the 6th argument (index 5)
     assert confirmed_tool_args.get("confirm_delegation") is True
+
+
+@pytest.mark.asyncio
+async def test_delegate_to_service_with_attachments(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """Test delegating requests with attachments."""
+    logger.info("--- Test: Delegation With Attachments ---")
+
+    # Create attachment service
+    test_storage = tmp_path / "test_attachments"
+    test_storage.mkdir(exist_ok=True)
+    attachment_service = AttachmentService(storage_path=str(test_storage))
+    attachment_registry = AttachmentRegistry(attachment_service)
+
+    # Create a test attachment
+    test_content = b"Test image content for delegation"
+    async with DatabaseContext(engine=db_engine) as db_context:
+        attachment_record = await attachment_registry.register_user_attachment(
+            db_context=db_context,
+            content=test_content,
+            mime_type="image/png",
+            filename="test_image.png",
+            conversation_id=str(TEST_CHAT_ID),
+            user_id=TEST_USER_NAME,
+            description="Test image for delegation",
+        )
+        test_attachment_id = attachment_record.attachment_id
+
+    # Create LLM client that expects attachment in delegated request
+    def attachment_delegation_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        if not messages:
+            return False
+
+        # Check if this is the delegated request containing attachment reference
+        last_message = messages[-1]
+        content = last_message.get("content", "")
+        return "DELEGATED_TASK_DESCRIPTION" in content and "test_image.png" in content
+
+    llm_client = RuleBasedMockLLMClient(
+        rules=[
+            (
+                attachment_delegation_matcher,
+                MockLLMOutput(
+                    content="I can see the test image attachment and will process the delegated task accordingly.",
+                    tool_calls=None,
+                ),
+            )
+        ],
+        default_response=MockLLMOutput(
+            content="Processed delegation request (no attachments detected).",
+            tool_calls=None,
+        ),
+    )
+
+    # Create primary service that will call delegate_to_service with attachments
+    primary_llm_client = RuleBasedMockLLMClient(
+        rules=[
+            (
+                lambda kwargs: True,  # Match any request
+                MockLLMOutput(
+                    content="I'll delegate this task with the attachment.",
+                    tool_calls=[
+                        ToolCallItem(
+                            id="delegate_call",
+                            type="function",
+                            function=ToolCallFunction(
+                                name="delegate_to_service",
+                                arguments=json.dumps({
+                                    "target_service_id": SPECIALIZED_PROFILE_ID,
+                                    "user_request": DELEGATED_TASK_DESCRIPTION,
+                                    "confirm_delegation": False,
+                                    "attachment_ids": [test_attachment_id],
+                                }),
+                            ),
+                        )
+                    ],
+                ),
+            )
+        ]
+    )
+
+    # Create services
+    primary_tools_provider = LocalToolsProvider(
+        definitions=local_tools_definition_list,
+        implementations=local_tool_implementations_map,
+    )
+
+    primary_service = ProcessingService(
+        llm_client=primary_llm_client,
+        tools_provider=primary_tools_provider,
+        service_config=ProcessingServiceConfig(
+            id=PRIMARY_PROFILE_ID,
+            prompts={"system_prompt": "I am a primary assistant."},
+            timezone_str="UTC",
+            max_history_messages=10,
+            history_max_age_hours=24,
+            tools_config={},
+            delegation_security_level="unrestricted",
+        ),
+        app_config={},
+        context_providers=[],
+        server_url=None,
+    )
+
+    specialized_service = ProcessingService(
+        llm_client=llm_client,
+        tools_provider=LocalToolsProvider(definitions=[], implementations={}),
+        service_config=ProcessingServiceConfig(
+            id=SPECIALIZED_PROFILE_ID,
+            prompts={"system_prompt": "I am a specialized assistant."},
+            timezone_str="UTC",
+            max_history_messages=10,
+            history_max_age_hours=24,
+            tools_config={},
+            delegation_security_level="unrestricted",
+        ),
+        app_config={},
+        context_providers=[],
+        server_url=None,
+    )
+
+    # Set up registry
+    registry = {
+        PRIMARY_PROFILE_ID: primary_service,
+        SPECIALIZED_PROFILE_ID: specialized_service,
+    }
+    primary_service.set_processing_services_registry(registry)
+    specialized_service.set_processing_services_registry(registry)
+
+    # Execute delegation with attachments
+    user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        result = await primary_service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type=TEST_INTERFACE_TYPE,
+            conversation_id=str(TEST_CHAT_ID),
+            trigger_content_parts=[
+                {"type": "text", "text": user_query},
+                {"type": "attachment", "attachment_id": test_attachment_id},
+            ],
+            trigger_interface_message_id="msg_attach",
+            user_name=TEST_USER_NAME,
+            chat_interface=MagicMock(spec=ChatInterface),
+            request_confirmation_callback=None,
+        )
+
+        final_reply = result.text_reply
+        error = result.error_traceback
+
+    assert error is None, f"Error during attachment delegation: {error}"
+    assert final_reply is not None
+    assert "delegate this task with the attachment" in final_reply
+
+    logger.info("Attachment delegation test completed successfully")
