@@ -15,11 +15,13 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from threading import Thread
 from typing import TYPE_CHECKING, Any, TypeVar
-from uuid import UUID
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
-from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.tools.attachment_utils import (
+    fetch_attachment_object,
+    is_attachment_id,
+    process_attachment_arguments,
+)
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
@@ -201,14 +203,8 @@ class ToolsAPI:
         Returns:
             True if value is a valid UUID string, False otherwise
         """
-        if not isinstance(value, str):
-            return False
 
-        try:
-            UUID(value)
-            return True
-        except ValueError:
-            return False
+        return is_attachment_id(value)
 
     async def _fetch_attachment_object(
         self, attachment_id: str
@@ -222,55 +218,8 @@ class ToolsAPI:
         Returns:
             ScriptAttachment object if found, None otherwise
         """
-        try:
-            # Get attachment service from context
-            attachment_service = self.execution_context.attachment_service
-            if attachment_service is None:
-                logger.error(
-                    f"AttachmentService not available in context for attachment {attachment_id}"
-                )
-                return None
 
-            # Create attachment registry
-            attachment_registry = AttachmentRegistry(attachment_service)
-
-            # Fetch attachment metadata
-            metadata = await attachment_registry.get_attachment(
-                self.execution_context.db_context, attachment_id
-            )
-
-            if metadata is None:
-                logger.warning(
-                    f"Attachment not found or access denied: {attachment_id}"
-                )
-                return None
-
-            # Check conversation scoping - this is a critical security check
-            if (
-                self.execution_context.conversation_id
-                and metadata.conversation_id != self.execution_context.conversation_id
-            ):
-                logger.warning(
-                    f"Attachment {attachment_id} not accessible from conversation {self.execution_context.conversation_id}"
-                )
-                return None
-
-            # Create a DatabaseContext getter for the ScriptAttachment
-            def db_context_getter() -> DatabaseContext:
-                return DatabaseContext(engine=self.execution_context.db_context.engine)
-
-            # Create and return ScriptAttachment object
-            return ScriptAttachment(
-                metadata=metadata,
-                registry=attachment_registry,
-                db_context_getter=db_context_getter,
-            )
-
-        except Exception as e:
-            logger.error(
-                f"Error fetching attachment {attachment_id}: {e}", exc_info=True
-            )
-            return None
+        return await fetch_attachment_object(attachment_id, self.execution_context)
 
     def _get_raw_tool_definitions(self) -> list[dict[str, Any]]:
         """Get raw tool definitions for internal schema analysis.
@@ -328,123 +277,8 @@ class ToolsAPI:
         Returns:
             Processed arguments with attachment content
         """
-        processed_kwargs = {}
 
-        # Get RAW tool schema to check for attachment type parameters
-        # This is important because the regular get_tool_definitions() now returns
-        # translated schemas where attachment types have been converted to string types
-        raw_definitions = self._get_raw_tool_definitions()
-        attachment_params = set()
-
-        # Find the tool definition in raw definitions
-        tool_def = None
-        for definition in raw_definitions:
-            if definition.get("type") == "function":
-                function_def = definition.get("function", {})
-                if function_def.get("name") == tool_name:
-                    tool_def = function_def
-                    break
-
-        if tool_def and tool_def.get("parameters"):
-            properties = tool_def["parameters"].get("properties", {})
-            for param_name, param_def in properties.items():
-                if isinstance(param_def, dict):
-                    # Direct attachment type
-                    if param_def.get("type") == "attachment":
-                        attachment_params.add(param_name)
-                        logger.debug(
-                            f"Tool '{tool_name}' parameter '{param_name}' is declared as attachment type"
-                        )
-                    # Array of attachments
-                    elif param_def.get("type") == "array":
-                        items = param_def.get("items", {})
-                        if (
-                            isinstance(items, dict)
-                            and items.get("type") == "attachment"
-                        ):
-                            attachment_params.add(param_name)
-                            logger.debug(
-                                f"Tool '{tool_name}' parameter '{param_name}' is declared as array of attachment type"
-                            )
-
-        for key, value in kwargs.items():
-            # Check if this parameter is declared as attachment type in schema
-            is_attachment_param = key in attachment_params
-
-            if is_attachment_param:
-                # Handle both single attachment IDs and lists of attachment IDs
-                if isinstance(value, list):
-                    # Array of attachment IDs
-                    processed_values = []
-                    for item in value:
-                        if self._is_attachment_id(item):
-                            logger.debug(
-                                f"Processing attachment ID {item} from array parameter {key}"
-                            )
-                            attachment = await self._fetch_attachment_object(item)
-                            if attachment is not None:
-                                processed_values.append(attachment)
-                                logger.debug(
-                                    f"Replaced attachment ID {item} with attachment object in array {key}"
-                                )
-                            else:
-                                logger.error(
-                                    f"Could not fetch attachment {item} from array {key}, skipping"
-                                )
-                        else:
-                            logger.warning(
-                                f"Array parameter '{key}' item '{item}' is not a valid UUID, keeping as-is"
-                            )
-                            processed_values.append(item)
-                    processed_kwargs[key] = processed_values
-                # Single attachment ID
-                elif self._is_attachment_id(value):
-                    logger.debug(
-                        f"Processing single attachment ID {value} for parameter {key}"
-                    )
-                    attachment = await self._fetch_attachment_object(value)
-                    if attachment is not None:
-                        processed_kwargs[key] = attachment
-                        logger.debug(
-                            f"Replaced attachment ID {value} with attachment object for parameter {key}"
-                        )
-                    else:
-                        logger.error(
-                            f"Could not fetch attachment {value} for parameter {key}, removing parameter"
-                        )
-                        # Don't add this parameter to processed_kwargs
-                else:
-                    logger.warning(
-                        f"Parameter '{key}' declared as attachment type but value '{value}' is not a valid UUID"
-                    )
-                    # Keep original value if not a UUID
-                    processed_kwargs[key] = value
-            else:
-                # Backward compatibility: check if value looks like UUID
-                is_uuid_value = self._is_attachment_id(value)
-                if is_uuid_value:
-                    logger.debug(
-                        f"Processing attachment ID {value} for parameter {key} (backward compatibility)"
-                    )
-                    # Fetch attachment object
-                    attachment = await self._fetch_attachment_object(value)
-                    if attachment is not None:
-                        # Replace attachment ID with attachment object
-                        processed_kwargs[key] = attachment
-                        logger.debug(
-                            f"Replaced attachment ID {value} with attachment object for parameter {key}"
-                        )
-                    else:
-                        # Remove parameter if attachment not found
-                        logger.error(
-                            f"Could not fetch attachment {value} for parameter {key}, removing parameter"
-                        )
-                        # Don't add this parameter to processed_kwargs
-                else:
-                    # Keep original value for non-attachment parameters
-                    processed_kwargs[key] = value
-
-        return processed_kwargs
+        return await process_attachment_arguments(kwargs, self.execution_context)
 
     def list_tools(self) -> list[ToolInfo]:
         """

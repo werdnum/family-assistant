@@ -147,7 +147,7 @@ async def highlight_image_tool(
             )
 
         # Get original image content from the ScriptAttachment
-        original_content = image_attachment_id.get_content()
+        original_content = await image_attachment_id.get_content_async()
 
         if not original_content:
             logger.error(
