@@ -14,6 +14,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    ForeignKey,
     Index,
     Integer,
     MetaData,
@@ -145,8 +146,9 @@ attachment_metadata_table = Table(
     Column("content_url", Text, nullable=True),  # URL for retrieval
     Column("storage_path", Text, nullable=True),  # File system path
     Column("conversation_id", String(255), nullable=True),
-    Column("message_id", Integer, nullable=True, 
-           ForeignKey("message_history.internal_id")),
+    Column(
+        "message_id", Integer, ForeignKey("message_history.internal_id"), nullable=True
+    ),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("accessed_at", DateTime(timezone=True), nullable=True),
     Column("metadata", JSON, nullable=True),
