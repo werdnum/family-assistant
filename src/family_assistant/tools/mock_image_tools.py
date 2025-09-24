@@ -9,10 +9,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.tools.types import ToolAttachment, ToolResult
 
 if TYPE_CHECKING:
+    from family_assistant.scripting.apis.attachments import ScriptAttachment
     from family_assistant.tools.types import ToolExecutionContext
 
 
@@ -128,7 +128,7 @@ async def mock_camera_snapshot_tool(
 
 async def annotate_image_tool(
     exec_context: ToolExecutionContext,
-    image_attachment_id: str,
+    image_attachment_id: ScriptAttachment,
     annotation_text: str = "Annotated Image",
     position: str = "top-left",
 ) -> ToolResult:
@@ -141,7 +141,7 @@ async def annotate_image_tool(
 
     Args:
         exec_context: The execution context
-        image_attachment_id: UUID of the image attachment to annotate
+        image_attachment_id: ScriptAttachment object containing the image to annotate
         annotation_text: Text to add as annotation (default: "Annotated Image")
         position: Where to place the text (default: "top-left")
 
@@ -150,51 +150,27 @@ async def annotate_image_tool(
     """
     logger = logging.getLogger(__name__)
 
+    attachment_id = image_attachment_id.get_id()
     logger.info(
-        f"Mock annotating image {image_attachment_id} with text '{annotation_text}' at {position}"
+        f"Mock annotating image {attachment_id} with text '{annotation_text}' at {position}"
     )
 
-    if not exec_context.attachment_service:
-        logger.error("AttachmentService not available in execution context")
-        return ToolResult(
-            text="Error: AttachmentService not available", attachment=None
-        )
-
-    # Create attachment registry
-    attachment_registry = AttachmentRegistry(exec_context.attachment_service)
-
     try:
-        # Get the original attachment metadata
-        original_attachment = await attachment_registry.get_attachment(
-            exec_context.db_context, image_attachment_id
-        )
-
-        if not original_attachment:
-            logger.warning(f"Image attachment {image_attachment_id} not found")
-            return ToolResult(
-                text=f"Error: Image attachment {image_attachment_id} not found",
-                attachment=None,
-            )
-
         # Check if it's an image
-        if not original_attachment.mime_type.startswith("image/"):
+        if not image_attachment_id.get_mime_type().startswith("image/"):
             logger.warning(
-                f"Attachment {image_attachment_id} is not an image (type: {original_attachment.mime_type})"
+                f"Attachment {attachment_id} is not an image (type: {image_attachment_id.get_mime_type()})"
             )
             return ToolResult(
-                text=f"Error: Attachment is not an image (type: {original_attachment.mime_type})",
+                text=f"Error: Attachment is not an image (type: {image_attachment_id.get_mime_type()})",
                 attachment=None,
             )
 
-        # Get original image content via registry (which has the correct method)
-        original_content = await attachment_registry.get_attachment_content(
-            exec_context.db_context, image_attachment_id
-        )
+        # Get original image content from the ScriptAttachment object
+        original_content = image_attachment_id.get_content()
 
         if not original_content:
-            logger.error(
-                f"Could not retrieve content for attachment {image_attachment_id}"
-            )
+            logger.error(f"Could not retrieve content for attachment {attachment_id}")
             return ToolResult(
                 text="Error: Could not retrieve image content", attachment=None
             )
@@ -205,9 +181,7 @@ async def annotate_image_tool(
         annotated_content = original_content + mock_annotation
 
         # Determine new filename
-        original_filename = original_attachment.metadata.get(
-            "original_filename", "image.png"
-        )
+        original_filename = image_attachment_id.get_filename() or "image.png"
         base_name = (
             original_filename.rsplit(".", 1)[0]
             if "." in original_filename
@@ -221,8 +195,8 @@ async def annotate_image_tool(
         # Create the annotated attachment
         annotated_attachment = ToolAttachment(
             content=annotated_content,
-            mime_type=original_attachment.mime_type,
-            description=f"Mock annotated version of {original_attachment.description or 'image'} with '{annotation_text}' at {position}",
+            mime_type=image_attachment_id.get_mime_type(),
+            description=f"Mock annotated version of {image_attachment_id.get_description() or 'image'} with '{annotation_text}' at {position}",
         )
 
         success_message = (

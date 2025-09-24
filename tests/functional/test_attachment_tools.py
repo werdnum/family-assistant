@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import AVAILABLE_FUNCTIONS, TOOLS_DEFINITION
@@ -97,10 +98,24 @@ class TestAttachToResponseTool:
                 attachment_service=mock_attachment_service,
             )
 
+            # Create ScriptAttachment object for the tool
+            # Get the attachment metadata from registry
+            attachment_metadata = await attachment_registry.get_attachment(
+                db_context, mock_attachment_metadata.id
+            )
+            assert attachment_metadata is not None
+
+            # Create ScriptAttachment object
+            script_attachment = ScriptAttachment(
+                metadata=attachment_metadata,
+                registry=attachment_registry,
+                db_context_getter=lambda: DatabaseContext(db_engine),
+            )
+
             # Execute tool
             result = await attach_to_response_tool(
                 exec_context=exec_context,
-                attachment_ids=[mock_attachment_metadata.id],
+                attachment_ids=[script_attachment],
             )
 
             # Verify result
@@ -130,9 +145,13 @@ class TestAttachToResponseTool:
                 attachment_service=mock_attachment_service,
             )
 
+            # Create a mock ScriptAttachment that will fail validation
+            invalid_attachment = Mock(spec=ScriptAttachment)
+            invalid_attachment.get_id.side_effect = Exception("Invalid attachment")
+
             result = await attach_to_response_tool(
                 exec_context=exec_context,
-                attachment_ids=["invalid_uuid"],
+                attachment_ids=[invalid_attachment],
             )
 
             result_data = json.loads(result)
@@ -156,9 +175,13 @@ class TestAttachToResponseTool:
                 attachment_service=None,  # No attachment service
             )
 
+            # Create a mock ScriptAttachment for this test
+            mock_attachment = Mock(spec=ScriptAttachment)
+            mock_attachment.get_id.return_value = "some_id"
+
             result = await attach_to_response_tool(
                 exec_context=exec_context,
-                attachment_ids=["some_id"],
+                attachment_ids=[mock_attachment],
             )
 
             result_data = json.loads(result)

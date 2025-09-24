@@ -6,9 +6,8 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from family_assistant.services.attachment_registry import AttachmentRegistry
-
 if TYPE_CHECKING:
+    from family_assistant.scripting.apis.attachments import ScriptAttachment
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -44,7 +43,7 @@ ATTACHMENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
 # Tool Implementations
 async def attach_to_response_tool(
     exec_context: ToolExecutionContext,
-    attachment_ids: list[str],
+    attachment_ids: list[ScriptAttachment],
 ) -> str:
     """
     Attach files/images to the current LLM response.
@@ -54,7 +53,7 @@ async def attach_to_response_tool(
 
     Args:
         exec_context: The execution context
-        attachment_ids: List of attachment UUIDs to attach to the response
+        attachment_ids: List of ScriptAttachment objects to attach to the response
 
     Returns:
         A JSON string indicating the attachments have been queued
@@ -72,45 +71,29 @@ async def attach_to_response_tool(
             "message": "AttachmentService not available",
         })
 
-    # Create attachment registry
-    attachment_registry = AttachmentRegistry(exec_context.attachment_service)
-
-    # Validate attachment IDs exist and are accessible
+    # Extract attachment IDs from ScriptAttachment objects
     validated_ids = []
-    for attachment_id in attachment_ids:
+    for attachment in attachment_ids:
         try:
-            attachment = await attachment_registry.get_attachment(
-                exec_context.db_context, attachment_id
-            )
+            # Get the attachment ID from the ScriptAttachment object
+            attachment_id = attachment.get_id()
 
-            if not attachment:
-                logger.warning(f"Attachment {attachment_id} not found")
-                continue
-
-            # Check conversation scoping
-            if (
-                exec_context.conversation_id
-                and attachment.conversation_id != exec_context.conversation_id
-            ):
-                logger.warning(
-                    f"Attachment {attachment_id} not accessible from conversation {exec_context.conversation_id}"
-                )
-                continue
-
+            # Basic validation - the ScriptAttachment object already validates access
+            # when it was created, so we just need to extract the ID
             validated_ids.append(attachment_id)
             logger.debug(
-                f"Validated attachment {attachment_id}: {attachment.description}"
+                f"Added attachment {attachment_id}: {attachment.get_description()}"
             )
 
         except Exception as e:
-            logger.error(f"Error validating attachment {attachment_id}: {e}")
+            logger.error(f"Error processing attachment object: {e}")
             continue
 
     if not validated_ids:
         return json.dumps({"status": "error", "message": "No valid attachments found"})
 
     logger.info(
-        f"Successfully validated {len(validated_ids)} attachment(s) for response"
+        f"Successfully processed {len(validated_ids)} attachment(s) for response"
     )
 
     # Return the validated attachment IDs for the processing service to capture

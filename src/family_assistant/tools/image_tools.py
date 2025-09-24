@@ -12,10 +12,10 @@ from typing import TYPE_CHECKING, Any
 
 from PIL import Image, ImageDraw
 
-from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.tools.types import ToolAttachment, ToolResult
 
 if TYPE_CHECKING:
+    from family_assistant.scripting.apis.attachments import ScriptAttachment
     from family_assistant.tools.types import ToolExecutionContext
 
 # Tool Definitions
@@ -113,7 +113,7 @@ COLOR_MAP = {
 
 async def highlight_image_tool(
     exec_context: ToolExecutionContext,
-    image_attachment_id: str,
+    image_attachment_id: ScriptAttachment,
     regions: list[dict[str, Any]],
 ) -> ToolResult:
     """
@@ -124,7 +124,7 @@ async def highlight_image_tool(
 
     Args:
         exec_context: The execution context
-        image_attachment_id: UUID of the image attachment to process
+        image_attachment_id: ScriptAttachment object containing the image to process
         regions: List of region dictionaries with shape, position, size, and style
 
     Returns:
@@ -132,44 +132,22 @@ async def highlight_image_tool(
     """
     logger = logging.getLogger(__name__)
 
-    logger.info(f"Highlighting {len(regions)} regions on image {image_attachment_id}")
-
-    if not exec_context.attachment_service:
-        logger.error("AttachmentService not available in execution context")
-        return ToolResult(
-            text="Error: AttachmentService not available", attachment=None
-        )
-
-    # Create attachment registry
-    attachment_registry = AttachmentRegistry(exec_context.attachment_service)
+    attachment_id = image_attachment_id.get_id()
+    logger.info(f"Highlighting {len(regions)} regions on image {attachment_id}")
 
     try:
-        # Get the original attachment metadata
-        original_attachment = await attachment_registry.get_attachment(
-            exec_context.db_context, image_attachment_id
-        )
-
-        if not original_attachment:
-            logger.warning(f"Image attachment {image_attachment_id} not found")
-            return ToolResult(
-                text=f"Error: Image attachment {image_attachment_id} not found",
-                attachment=None,
-            )
-
         # Check if it's an image
-        if not original_attachment.mime_type.startswith("image/"):
+        if not image_attachment_id.get_mime_type().startswith("image/"):
             logger.warning(
-                f"Attachment {image_attachment_id} is not an image (type: {original_attachment.mime_type})"
+                f"Attachment {attachment_id} is not an image (type: {image_attachment_id.get_mime_type()})"
             )
             return ToolResult(
-                text=f"Error: Attachment is not an image (type: {original_attachment.mime_type})",
+                text=f"Error: Attachment is not an image (type: {image_attachment_id.get_mime_type()})",
                 attachment=None,
             )
 
-        # Get original image content
-        original_content = await attachment_registry.get_attachment_content(
-            exec_context.db_context, image_attachment_id
-        )
+        # Get original image content from the ScriptAttachment
+        original_content = image_attachment_id.get_content()
 
         if not original_content:
             logger.error(
@@ -248,9 +226,7 @@ async def highlight_image_tool(
             )
 
         # Determine new filename
-        original_filename = original_attachment.metadata.get(
-            "original_filename", "image.png"
-        )
+        original_filename = image_attachment_id.get_filename() or "image.png"
         base_name = (
             original_filename.rsplit(".", 1)[0]
             if "." in original_filename
@@ -262,7 +238,7 @@ async def highlight_image_tool(
         highlighted_attachment = ToolAttachment(
             content=highlighted_content,
             mime_type="image/png",
-            description=f"Highlighted version of {original_attachment.description or 'image'} with {len(regions_drawn)} regions marked",
+            description=f"Highlighted version of {image_attachment_id.get_description() or 'image'} with {len(regions_drawn)} regions marked",
         )
 
         success_message = (
