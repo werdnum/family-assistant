@@ -64,6 +64,10 @@ from family_assistant.tools.home_assistant import (
     get_camera_snapshot_tool,
     render_home_assistant_template_tool,
 )
+from family_assistant.tools.image_tools import (
+    IMAGE_TOOLS_DEFINITION,
+    highlight_image_tool,
+)
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     ConfirmationCallbackProtocol,
@@ -176,6 +180,8 @@ __all__ = [
     "annotate_image_tool",
     "mock_camera_snapshot_tool",
     "get_attachment_info_tool",
+    "IMAGE_TOOLS_DEFINITION",
+    "highlight_image_tool",
 ]
 
 
@@ -245,6 +251,8 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     # Mock image processing tools (for testing)
     "annotate_image": annotate_image_tool,
     "mock_camera_snapshot": mock_camera_snapshot_tool,
+    # Real image processing tools
+    "highlight_image": highlight_image_tool,
 }
 
 
@@ -261,5 +269,6 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
     + COMMUNICATION_TOOLS_DEFINITION
     + SCRIPT_TOOLS_DEFINITION
     + ATTACHMENT_TOOLS_DEFINITION
+    + IMAGE_TOOLS_DEFINITION
     + MOCK_IMAGE_TOOLS_DEFINITION
 )
