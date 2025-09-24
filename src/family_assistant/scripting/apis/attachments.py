@@ -7,18 +7,150 @@ user and tool attachments within conversations.
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 from typing import TYPE_CHECKING, Any
 
-from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.services.attachment_registry import (
+    AttachmentMetadata,
+    AttachmentRegistry,
+)
 from family_assistant.storage.context import DatabaseContext
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
+
+
+class ScriptAttachment:
+    """
+    Wrapper for attachment metadata that provides lazy content loading.
+
+    This class represents an attachment object that tools can work with,
+    providing methods to access ID, MIME type, description, and content
+    without needing to know about the underlying storage system.
+    """
+
+    def __init__(
+        self,
+        metadata: AttachmentMetadata,
+        registry: AttachmentRegistry,
+        db_context_getter: Callable,
+    ) -> None:
+        """
+        Initialize a ScriptAttachment.
+
+        Args:
+            metadata: The attachment metadata
+            registry: The attachment registry for content access
+            db_context_getter: Function that returns a DatabaseContext
+        """
+        self._metadata = metadata
+        self._registry = registry
+        self._db_context_getter = db_context_getter
+        self._content_cache: bytes | None = None
+
+    def get_id(self) -> str:
+        """Get the attachment UUID."""
+        return self._metadata.attachment_id
+
+    def get_mime_type(self) -> str:
+        """Get the MIME type of the attachment."""
+        return self._metadata.mime_type
+
+    def get_description(self) -> str:
+        """Get the description of the attachment."""
+        return self._metadata.description
+
+    def get_size(self) -> int:
+        """Get the size of the attachment in bytes."""
+        return self._metadata.size
+
+    def get_source_type(self) -> str:
+        """Get the source type (user, tool, script)."""
+        return self._metadata.source_type
+
+    def get_filename(self) -> str | None:
+        """Get the original filename if available."""
+        # Extract filename from metadata dict if available
+        metadata_dict = self._metadata.to_dict()
+        return metadata_dict.get("metadata", {}).get("original_filename")
+
+    def get_content(self) -> bytes:
+        """
+        Get the attachment content as bytes.
+
+        This loads the content lazily and caches it for subsequent calls.
+
+        Returns:
+            The attachment content as bytes
+
+        Raises:
+            RuntimeError: If the content cannot be retrieved
+        """
+        if self._content_cache is None:
+            try:
+                # We need to run async code from sync context
+                # This will work in the script execution environment
+                async def _get_content() -> bytes:
+                    async with self._db_context_getter() as db_context:
+                        content = await self._registry.get_attachment_content(
+                            db_context, self._metadata.attachment_id
+                        )
+                        if content is None:
+                            raise RuntimeError(
+                                f"Could not retrieve content for attachment {self._metadata.attachment_id}"
+                            )
+                        return content
+
+                # Try to get running loop, fall back to new loop if none
+                try:
+                    loop = asyncio.get_running_loop()
+                    # We're in an async context, but sync method called
+                    # This should not happen in normal script execution
+                    future = asyncio.run_coroutine_threadsafe(_get_content(), loop)
+                    self._content_cache = future.result(timeout=30)
+                except RuntimeError:
+                    # No running loop, use asyncio.run
+                    self._content_cache = asyncio.run(_get_content())
+
+            except Exception as e:
+                raise RuntimeError(f"Failed to get attachment content: {e}") from e
+
+        return self._content_cache
+
+    def get_content_stream(self) -> io.BytesIO:
+        """
+        Get the attachment content as a BytesIO stream.
+
+        This is useful for memory-efficient processing of large attachments.
+
+        Returns:
+            A BytesIO stream containing the attachment content
+        """
+        return io.BytesIO(self.get_content())
+
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Get the attachment metadata as a dictionary.
+
+        Returns:
+            Dictionary representation of the attachment metadata
+        """
+        return self._metadata.to_dict()
+
+    def __str__(self) -> str:
+        """String representation of the attachment."""
+        return f"ScriptAttachment(id={self.get_id()}, mime_type={self.get_mime_type()}, size={self.get_size()})"
+
+    def __repr__(self) -> str:
+        """Developer representation of the attachment."""
+        return self.__str__()
 
 
 class AttachmentAPI:
