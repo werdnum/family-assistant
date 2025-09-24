@@ -17,7 +17,9 @@ from threading import Thread
 from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
+from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
@@ -208,15 +210,17 @@ class ToolsAPI:
         except ValueError:
             return False
 
-    async def _fetch_attachment_content(self, attachment_id: str) -> bytes | None:
+    async def _fetch_attachment_object(
+        self, attachment_id: str
+    ) -> ScriptAttachment | None:
         """
-        Fetch attachment content by ID.
+        Fetch attachment object by ID.
 
         Args:
             attachment_id: The attachment ID to fetch
 
         Returns:
-            Attachment content bytes if found, None otherwise
+            ScriptAttachment object if found, None otherwise
         """
         try:
             # Get attachment service from context
@@ -230,17 +234,37 @@ class ToolsAPI:
             # Create attachment registry
             attachment_registry = AttachmentRegistry(attachment_service)
 
-            # Fetch attachment content
-            content = await attachment_registry.get_attachment_content(
+            # Fetch attachment metadata
+            metadata = await attachment_registry.get_attachment(
                 self.execution_context.db_context, attachment_id
             )
 
-            if content is None:
+            if metadata is None:
                 logger.warning(
                     f"Attachment not found or access denied: {attachment_id}"
                 )
+                return None
 
-            return content
+            # Check conversation scoping - this is a critical security check
+            if (
+                self.execution_context.conversation_id
+                and metadata.conversation_id != self.execution_context.conversation_id
+            ):
+                logger.warning(
+                    f"Attachment {attachment_id} not accessible from conversation {self.execution_context.conversation_id}"
+                )
+                return None
+
+            # Create a DatabaseContext getter for the ScriptAttachment
+            def db_context_getter() -> DatabaseContext:
+                return DatabaseContext(engine=self.execution_context.db_context.engine)
+
+            # Create and return ScriptAttachment object
+            return ScriptAttachment(
+                metadata=metadata,
+                registry=attachment_registry,
+                db_context_getter=db_context_getter,
+            )
 
         except Exception as e:
             logger.error(
@@ -357,11 +381,11 @@ class ToolsAPI:
                             logger.debug(
                                 f"Processing attachment ID {item} from array parameter {key}"
                             )
-                            content = await self._fetch_attachment_content(item)
-                            if content is not None:
-                                processed_values.append(content)
+                            attachment = await self._fetch_attachment_object(item)
+                            if attachment is not None:
+                                processed_values.append(attachment)
                                 logger.debug(
-                                    f"Replaced attachment ID {item} with {len(content)} bytes in array {key}"
+                                    f"Replaced attachment ID {item} with attachment object in array {key}"
                                 )
                             else:
                                 logger.error(
@@ -378,11 +402,11 @@ class ToolsAPI:
                     logger.debug(
                         f"Processing single attachment ID {value} for parameter {key}"
                     )
-                    content = await self._fetch_attachment_content(value)
-                    if content is not None:
-                        processed_kwargs[key] = content
+                    attachment = await self._fetch_attachment_object(value)
+                    if attachment is not None:
+                        processed_kwargs[key] = attachment
                         logger.debug(
-                            f"Replaced attachment ID {value} with {len(content)} bytes for parameter {key}"
+                            f"Replaced attachment ID {value} with attachment object for parameter {key}"
                         )
                     else:
                         logger.error(
@@ -402,13 +426,13 @@ class ToolsAPI:
                     logger.debug(
                         f"Processing attachment ID {value} for parameter {key} (backward compatibility)"
                     )
-                    # Fetch attachment content
-                    content = await self._fetch_attachment_content(value)
-                    if content is not None:
-                        # Replace attachment ID with content bytes
-                        processed_kwargs[key] = content
+                    # Fetch attachment object
+                    attachment = await self._fetch_attachment_object(value)
+                    if attachment is not None:
+                        # Replace attachment ID with attachment object
+                        processed_kwargs[key] = attachment
                         logger.debug(
-                            f"Replaced attachment ID {value} with {len(content)} bytes for parameter {key}"
+                            f"Replaced attachment ID {value} with attachment object for parameter {key}"
                         )
                     else:
                         # Remove parameter if attachment not found
