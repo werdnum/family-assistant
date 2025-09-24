@@ -466,6 +466,172 @@ The `tools.execute` function currently:
 - MCP server attachment support (when needed)
 - Privileged access for system scripts (if required)
 
+## Local Testing Plan
+
+### Overview
+
+This section outlines manual testing procedures for verifying the multimodal attachment system works
+correctly in a local development environment without external dependencies like Telegram or Home
+Assistant.
+
+### Test Tools Required
+
+#### Image Highlighting Tool
+
+A real image processing tool for testing:
+
+```python
+# src/family_assistant/tools/image_tools.py
+highlight_image(attachment_id: str, regions: list[dict]) -> ToolResult
+```
+
+This tool uses PIL to draw colored rectangles/circles on images, useful for "find the object"
+scenarios.
+
+### Core Test Scenarios
+
+#### 1. Basic Upload and Round-trip
+
+**Objective**: Verify user attachments get stable IDs and can be returned
+
+**Steps**:
+
+1. Via Web UI, upload an image with message "describe this image"
+2. Verify LLM receives attachment and provides description
+3. Ask "send the same image back to me"
+4. Verify original image is displayed in response
+
+**Expected Result**: Same image appears in chat response with stable attachment ID
+
+#### 2. Tool-Generated Attachments
+
+**Objective**: Verify tools can generate and return attachments
+
+**Steps**:
+
+1. Ask "generate a test image with text 'Hello Testing'"
+2. Verify mock camera tool creates attachment
+3. Ask "highlight any interesting areas in that image"
+4. Verify highlight tool processes and returns modified image
+
+**Expected Result**: Modified image with highlighted regions appears in response
+
+#### 3. Script Processing Workflow
+
+**Objective**: Verify scripts can process user attachments
+
+**Test Scripts**:
+
+- `echo_attachment.star` - Simple round-trip test
+- `process_image.star` - Image processing workflow
+
+**Steps**:
+
+1. Upload image to trigger test script
+2. Script receives attachment ID in context
+3. Script processes via tools.execute()
+4. Script returns result via wake_llm()
+
+**Expected Result**: Processed image returned with script modifications
+
+#### 4. Multi-step Processing Chain
+
+**Objective**: Verify attachment IDs persist through tool chains
+
+**Steps**:
+
+1. Upload image: "process this image"
+2. LLM uses highlight tool to mark regions
+3. LLM uses annotate tool to add text
+4. LLM returns final processed image
+
+**Expected Result**: Each step preserves attachment chain, final image shows all modifications
+
+#### 5. Cross-Profile Processing
+
+**Objective**: Verify attachments work with profile delegation
+
+**Steps**:
+
+1. Configure vision_expert profile in config
+2. Upload image to default profile
+3. Request "delegate this to vision expert for analysis"
+4. Verify attachment is forwarded correctly
+
+**Expected Result**: Vision profile receives attachment and processes it
+
+### Validation Checklist
+
+For each test scenario, verify:
+
+- [ ] Attachment IDs are UUIDs (not guessable)
+- [ ] Images display correctly in web UI
+- [ ] Attachment metadata appears in SSE events
+- [ ] Database entries created in attachment_metadata table
+- [ ] File storage works (files created in configured directory)
+- [ ] Tool results include attachment_id in response
+- [ ] Scripts can access attachments via attachment_get()
+- [ ] No errors in logs during processing
+
+### Debugging Utilities
+
+#### Debug Attachment Registry
+
+```python
+# Tool for inspecting attachment state
+debug_attachments(conversation_id: str) -> dict
+```
+
+Shows all attachments in current conversation with metadata.
+
+#### Test Data Generator
+
+```python
+# Create multiple test images for batch testing
+generate_test_images_batch(count: int = 3) -> list[str]
+```
+
+#### Enhanced Logging
+
+Enable DEBUG logging for:
+
+- `family_assistant.services.attachment_registry`
+- `family_assistant.tools`
+- `family_assistant.processing`
+
+### Common Issues and Solutions
+
+**Attachment not found errors**:
+
+- Check attachment_metadata table for entry
+- Verify file exists in storage directory
+- Check conversation_id matches
+
+**Images not displaying in UI**:
+
+- Verify SSE events include attachment metadata
+- Check content_url is accessible
+- Verify MIME type is supported
+
+**Script attachment access issues**:
+
+- Ensure attachment ID is valid UUID
+- Check attachment belongs to same conversation
+- Verify script has proper context
+
+### Success Criteria
+
+The testing is successful when:
+
+1. ✅ User attachments get stable IDs and persist in conversation
+2. ✅ Tools can generate and return new attachments
+3. ✅ Scripts can process both user and tool attachments
+4. ✅ Attachments display correctly in web UI
+5. ✅ Multi-step workflows preserve attachment chains
+6. ✅ Cross-profile delegation includes attachments
+7. ✅ No memory leaks or file system issues
+8. ✅ All attachment operations are properly logged
+
 ## Design Notes
 
 - Attachment cleanup will be conservative (better to keep than delete by mistake)
