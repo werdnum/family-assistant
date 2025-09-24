@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
+from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.services.attachment_registry import AttachmentRegistry
 
 if TYPE_CHECKING:
@@ -243,12 +244,24 @@ async def send_message_to_user_tool(
 
             for attachment_id in attachment_ids:
                 try:
+                    # Handle both string IDs and ScriptAttachment objects
+                    if hasattr(attachment_id, "get_id"):
+                        # It's a ScriptAttachment object, extract the ID
+                        actual_attachment_id = (
+                            attachment_id.get_id()
+                            if isinstance(attachment_id, ScriptAttachment)
+                            else str(attachment_id)
+                        )
+                    else:
+                        # It's a string ID
+                        actual_attachment_id = attachment_id
+
                     attachment = await attachment_registry.get_attachment(
-                        exec_context.db_context, attachment_id
+                        exec_context.db_context, actual_attachment_id
                     )
 
                     if not attachment:
-                        logger.warning(f"Attachment {attachment_id} not found")
+                        logger.warning(f"Attachment {actual_attachment_id} not found")
                         continue
 
                     # Check conversation scoping for cross-user sending
@@ -260,12 +273,15 @@ async def send_message_to_user_tool(
                         and attachment.conversation_id != exec_context.conversation_id
                     ):
                         logger.warning(
-                            f"Attachment {attachment_id} from conversation {attachment.conversation_id} not accessible from conversation {exec_context.conversation_id}. Only attachments from current conversation can be sent to other users."
+                            f"Attachment {actual_attachment_id} from conversation {attachment.conversation_id} not accessible from conversation {exec_context.conversation_id}. Only attachments from current conversation can be sent to other users."
                         )
                         continue
 
-                    validated_attachment_ids.append(attachment_id)
-                    logger.debug(f"Validated attachment {attachment_id} for sending")
+                    # Always append the string ID to the validated list
+                    validated_attachment_ids.append(actual_attachment_id)
+                    logger.debug(
+                        f"Validated attachment {actual_attachment_id} for sending"
+                    )
 
                 except Exception as e:
                     logger.error(f"Error validating attachment {attachment_id}: {e}")

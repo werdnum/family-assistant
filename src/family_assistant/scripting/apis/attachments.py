@@ -113,12 +113,57 @@ class ScriptAttachment:
                     loop = asyncio.get_running_loop()
                     # We're in an async context, but sync method called
                     # This should not happen in normal script execution
+                    logger.debug(
+                        f"Running in async context, using run_coroutine_threadsafe for attachment {self._metadata.attachment_id}"
+                    )
                     future = asyncio.run_coroutine_threadsafe(_get_content(), loop)
                     self._content_cache = future.result(timeout=30)
                 except RuntimeError:
                     # No running loop, use asyncio.run
+                    logger.debug(
+                        f"No running loop, using asyncio.run for attachment {self._metadata.attachment_id}"
+                    )
                     self._content_cache = asyncio.run(_get_content())
 
+            except Exception as e:
+                raise RuntimeError(f"Failed to get attachment content: {e}") from e
+
+        return self._content_cache
+
+    async def get_content_async(self) -> bytes:
+        """
+        Get the attachment content as bytes (async version).
+
+        This method is for use in async contexts like tool execution.
+        It avoids the complex sync/async bridge used in get_content().
+
+        Returns:
+            The attachment content as bytes
+
+        Raises:
+            RuntimeError: If the content cannot be retrieved
+        """
+        if self._content_cache is None:
+            try:
+                # Get the database context - it might already be active, so don't use 'async with'
+                db_context = self._db_context_getter()
+                logger.debug(
+                    f"Retrieving content for attachment {self._metadata.attachment_id} using registry"
+                )
+                content = await self._registry.get_attachment_content(
+                    db_context, self._metadata.attachment_id
+                )
+                if content is None:
+                    logger.error(
+                        f"AttachmentRegistry returned None for attachment {self._metadata.attachment_id}"
+                    )
+                    raise RuntimeError(
+                        f"Could not retrieve content for attachment {self._metadata.attachment_id}"
+                    )
+                logger.debug(
+                    f"Successfully retrieved {len(content)} bytes for attachment {self._metadata.attachment_id}"
+                )
+                self._content_cache = content
             except Exception as e:
                 raise RuntimeError(f"Failed to get attachment content: {e}") from e
 
