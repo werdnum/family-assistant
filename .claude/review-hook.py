@@ -131,6 +131,17 @@ class ReviewHook:
             print("✅ Stashed changes restored successfully", file=sys.stderr)
         else:
             print("⚠️ Failed to restore stashed changes cleanly", file=sys.stderr)
+            # If stash apply fails it can leave conflict markers behind. Clean up the
+            # working tree by restoring the index contents so the user keeps their
+            # staged/ formatted changes without conflict artifacts.
+            cleanup = subprocess.run(
+                ["git", "checkout-index", "-a", "-f"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if cleanup.returncode != 0 and cleanup.stderr:
+                print(cleanup.stderr, file=sys.stderr)
             print(
                 f"Your changes are preserved in stash: {self.stash_ref[:8]}",
                 file=sys.stderr,
