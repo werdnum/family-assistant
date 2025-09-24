@@ -101,6 +101,7 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:${{ needs.prepare.outputs.tag }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:main
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Trigger Concourse Deployment
@@ -108,3 +109,4 @@ jobs:
         run: |
           curl --fail-with-body -X POST \
             "https://concourse-webhooks.bishop-dorian.ts.net/api/v1/teams/main/pipelines/family-assistant/resources/family-assistant-image/check/webhook?webhook_token=${{ secrets.CONCOURSE_WEBHOOK_TOKEN }}"
+
