@@ -55,6 +55,7 @@ async def fetch_attachment_object(
         attachment_registry = AttachmentRegistry(attachment_service)
 
         # Fetch attachment metadata
+        logger.debug(f"Looking up attachment {attachment_id} in registry")
         metadata = await attachment_registry.get_attachment(
             context.db_context, attachment_id
         )
@@ -63,13 +64,20 @@ async def fetch_attachment_object(
             logger.warning(f"Attachment not found or access denied: {attachment_id}")
             return None
 
+        logger.debug(
+            f"Found attachment {attachment_id}: {metadata.description}, conversation_id: {metadata.conversation_id}"
+        )
+
         # Check conversation scoping - this is a critical security check
+        logger.debug(
+            f"Checking conversation access: context.conversation_id={context.conversation_id}, metadata.conversation_id={metadata.conversation_id}"
+        )
         if (
             context.conversation_id
             and metadata.conversation_id != context.conversation_id
         ):
             logger.warning(
-                f"Attachment {attachment_id} not accessible from conversation {context.conversation_id}"
+                f"Attachment {attachment_id} not accessible from conversation {context.conversation_id} (attachment belongs to {metadata.conversation_id})"
             )
             return None
 

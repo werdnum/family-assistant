@@ -905,6 +905,41 @@ async def api_chat_send_message_stream(
                             yield f"event: tool_result\ndata: {json.dumps(tool_result_data)}\n\n"
 
                         elif event.type == "done":
+                            # Handle attachment IDs from attach_to_response tool calls
+                            if event.metadata and "attachment_ids" in event.metadata:
+                                # Get attachment registry to fetch attachment metadata
+                                attachment_registry = await get_attachment_registry(
+                                    request
+                                )
+
+                                for attachment_id in event.metadata["attachment_ids"]:
+                                    try:
+                                        # Get attachment metadata from the registry
+                                        attachment_info = (
+                                            await attachment_registry.get_attachment(
+                                                stream_db_context, attachment_id
+                                            )
+                                        )
+                                        if attachment_info:
+                                            attachment_event_data = {
+                                                "type": "attachment",
+                                                "attachment_id": attachment_id,
+                                                "url": attachment_info.content_url,
+                                                "content_url": attachment_info.content_url,
+                                                "mime_type": attachment_info.mime_type,
+                                                "description": attachment_info.description,
+                                                "size": attachment_info.size,
+                                            }
+                                            yield f"event: attachment\ndata: {json.dumps(attachment_event_data)}\n\n"
+                                        else:
+                                            logger.warning(
+                                                f"Attachment {attachment_id} not found in registry"
+                                            )
+                                    except Exception as e:
+                                        logger.error(
+                                            f"Error emitting attachment event for {attachment_id}: {e}"
+                                        )
+
                             # Send completion event with optional metadata
                             done_data: dict[str, Any] = {}
                             if event.metadata and event.metadata.get("reasoning_info"):

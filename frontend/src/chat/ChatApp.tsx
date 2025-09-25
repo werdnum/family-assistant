@@ -257,90 +257,39 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const handleStreamingToolCall = useCallback((toolCalls: Array<Record<string, unknown>>) => {
     if (toolCalls && toolCalls.length > 0) {
       setMessages((prev) => {
-        let updatedMessages = [...prev];
+        const updatedMessages = prev.map((msg) => {
+          if (msg.id === streamingMessageIdRef.current) {
+            // This is the message to update.
+            // It might be a 'loading' message, or it might already have text.
+            toolCallMessageIdRef.current = msg.id;
 
-        // If this is the first tool call, convert the loading message to a tool call message
-        if (!toolCallMessageIdRef.current && streamingMessageIdRef.current) {
-          updatedMessages = updatedMessages.map((msg) => {
-            if (msg.id === streamingMessageIdRef.current) {
-              // Store this as the tool call message ID
-              toolCallMessageIdRef.current = msg.id;
+            const existingTextContent =
+              msg.content?.filter((part) => part.type === 'text' && part.text !== LOADING_MARKER) ||
+              [];
 
-              // Replace the loading message with tool calls
-              const toolParts: MessageContent[] = toolCalls.map((tc) => {
-                const args = parseToolArguments(tc.arguments);
-                return {
-                  type: 'tool-call',
-                  toolCallId: tc.id as string,
-                  toolName: tc.name as string,
-                  args: args,
-                  argsText:
-                    typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments),
-                  ...(tc.result && { result: tc.result as string }),
-                  ...(tc.attachments && { attachments: tc.attachments }),
-                  // Note: status is on the message level, not on individual tool calls
-                };
-              });
-
+            const toolParts: MessageContent[] = toolCalls.map((tc) => {
+              const args = parseToolArguments(tc.arguments);
               return {
-                ...msg,
-                content: toolParts,
-                isLoading: false,
-                // Set message status to indicate tool calls are running
-                status: {
-                  type: 'running',
-                },
+                type: 'tool-call',
+                toolCallId: tc.id as string,
+                toolName: tc.name as string,
+                args: args,
+                argsText:
+                  typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments),
+                ...(tc.result && { result: tc.result as string }),
+                ...(tc.attachments && { attachments: tc.attachments }),
               };
-            }
-            return msg;
-          });
+            });
 
-          // Add a new loading message for the text response if there will be text content
-          // The text content will stream separately from tool calls
-          const textResponseMessageId = `${streamingMessageIdRef.current}_text`;
-          updatedMessages.push({
-            id: textResponseMessageId,
-            role: 'assistant',
-            content: [{ type: 'text', text: LOADING_MARKER }],
-            isLoading: true,
-            createdAt: new Date(),
-          });
-
-          // Update the streaming message ID to point to the text message
-          streamingMessageIdRef.current = textResponseMessageId;
-        } else if (toolCallMessageIdRef.current) {
-          // Update existing tool call message with new/updated tool calls
-          updatedMessages = updatedMessages.map((msg) => {
-            if (msg.id === toolCallMessageIdRef.current) {
-              const toolParts: MessageContent[] = toolCalls.map((tc) => {
-                const args = parseToolArguments(tc.arguments);
-                return {
-                  type: 'tool-call',
-                  toolCallId: tc.id as string,
-                  toolName: tc.name as string,
-                  args: args,
-                  argsText:
-                    typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments),
-                  ...(tc.result && { result: tc.result as string }),
-                  ...(tc.attachments && { attachments: tc.attachments }),
-                  // Note: status is on the message level, not on individual tool calls
-                };
-              });
-
-              // Check if all tool calls have results
-              const allToolsComplete = toolParts.every((tc) => tc.result !== undefined);
-
-              return {
-                ...msg,
-                content: toolParts,
-                // Update status based on whether all tools are complete
-                status: allToolsComplete ? { type: 'complete' } : { type: 'running' },
-              };
-            }
-            return msg;
-          });
-        }
-
+            return {
+              ...msg,
+              content: [...existingTextContent, ...toolParts],
+              isLoading: false,
+              status: { type: 'running' },
+            };
+          }
+          return msg;
+        });
         return updatedMessages;
       });
     }
