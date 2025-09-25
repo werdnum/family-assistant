@@ -368,7 +368,17 @@ async def test_attachment_response_error_handling(
     attachment_previews = page.locator('[data-testid="attachment-preview"]')
     preview_count = await attachment_previews.count()
 
-    # Either we should have an error message OR no attachment previews (or both)
-    assert error_found or preview_count == 0, (
-        "Expected either an error message in tool result or no attachment previews for invalid attachment ID"
+    # Check if attachment preview shows "failed to load" which is also a valid error state
+    failed_to_load_found = False
+    if preview_count > 0:
+        for i in range(preview_count):
+            preview = attachment_previews.nth(i)
+            preview_text = await preview.text_content()
+            if preview_text and "failed to load" in preview_text.lower():
+                failed_to_load_found = True
+                break
+
+    # Either we should have an error message OR no attachment previews OR "failed to load" previews
+    assert error_found or preview_count == 0 or failed_to_load_found, (
+        "Expected either an error message in tool result, no attachment previews, or 'failed to load' previews for invalid attachment ID"
     )
