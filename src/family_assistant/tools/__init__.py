@@ -64,6 +64,11 @@ from family_assistant.tools.home_assistant import (
     get_camera_snapshot_tool,
     render_home_assistant_template_tool,
 )
+from family_assistant.tools.image_generation import (
+    IMAGE_GENERATION_TOOLS_DEFINITION,
+    generate_image_tool,
+    transform_image_tool,
+)
 from family_assistant.tools.image_tools import (
     IMAGE_TOOLS_DEFINITION,
     highlight_image_tool,
@@ -182,6 +187,9 @@ __all__ = [
     "get_attachment_info_tool",
     "IMAGE_TOOLS_DEFINITION",
     "highlight_image_tool",
+    "IMAGE_GENERATION_TOOLS_DEFINITION",
+    "generate_image_tool",
+    "transform_image_tool",
 ]
 
 
@@ -253,6 +261,9 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "mock_camera_snapshot": mock_camera_snapshot_tool,
     # Real image processing tools
     "highlight_image": highlight_image_tool,
+    # Image generation tools
+    "generate_image": generate_image_tool,
+    "transform_image": transform_image_tool,
 }
 
 
@@ -270,5 +281,6 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
     + SCRIPT_TOOLS_DEFINITION
     + ATTACHMENT_TOOLS_DEFINITION
     + IMAGE_TOOLS_DEFINITION
+    + IMAGE_GENERATION_TOOLS_DEFINITION
     + MOCK_IMAGE_TOOLS_DEFINITION
 )
