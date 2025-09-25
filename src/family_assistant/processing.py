@@ -990,11 +990,24 @@ class ProcessingService:
                     # Format user message with attachments as content parts
                     content_parts = []
 
-                    # Add text content if present
-                    if user_message_content:
+                    # Build text content with inline attachment metadata
+                    text_content = user_message_content
+                    attachment_metadata_lines = (
+                        self._generate_attachment_metadata_lines(attachments)
+                    )
+
+                    # Append attachment metadata to text content
+                    if attachment_metadata_lines:
+                        if text_content:
+                            text_content += "\n" + "\n".join(attachment_metadata_lines)
+                        else:
+                            text_content = "\n".join(attachment_metadata_lines)
+
+                    # Add text content with metadata
+                    if text_content:
                         content_parts.append({
                             "type": "text",
-                            "text": user_message_content,
+                            "text": text_content,
                         })
 
                     # Add image attachments as image_url content parts
@@ -1709,6 +1722,44 @@ class ProcessingService:
                 trigger_content_parts
             )
 
+            # Add inline attachment metadata if there are trigger attachments
+            if trigger_attachments and len(trigger_attachments) > 0:
+                attachment_metadata_lines = self._generate_attachment_metadata_lines(
+                    trigger_attachments
+                )
+
+                # Add metadata to text content parts
+                if attachment_metadata_lines:
+                    metadata_text = "\n".join(attachment_metadata_lines)
+
+                    # Find or create text content part
+                    text_part_found = False
+                    for part in converted_trigger_parts:
+                        if part.get("type") == "text":
+                            # Append metadata to existing text
+                            part["text"] = part["text"] + "\n" + metadata_text
+                            text_part_found = True
+                            break
+
+                    # If no text part exists, create one with just metadata
+                    if not text_part_found:
+                        converted_trigger_parts.insert(
+                            0,
+                            {
+                                "type": "text",
+                                "text": metadata_text,
+                            },
+                        )
+
+                # Add image attachments as image_url content parts for trigger_attachments
+                for attachment in trigger_attachments:
+                    if attachment.get("type") == "image" and attachment.get(
+                        "content_url"
+                    ):
+                        converted_trigger_parts.append({
+                            "type": "image_url",
+                            "image_url": {"url": attachment["content_url"]},
+                        })
             # Add current user trigger message
             llm_user_content: str | list[dict[str, Any]]
             if (
@@ -1760,6 +1811,38 @@ class ProcessingService:
             yield LLMStreamEvent(
                 type="error", error=str(e), metadata={"error_id": str(uuid.uuid4())}
             )
+
+    def _generate_attachment_metadata_lines(
+        self, attachments: list[dict[str, Any]]
+    ) -> list[str]:
+        """
+        Generate attachment metadata lines for a list of attachments.
+
+        Args:
+            attachments: List of attachment dictionaries
+
+        Returns:
+            List of formatted attachment metadata strings
+        """
+        attachment_metadata_lines = []
+
+        for attachment in attachments:
+            attachment_id = attachment.get("attachment_id")
+            attachment_type = attachment.get("type", "file")
+            filename = attachment.get("filename", "unknown")
+            mime_type = attachment.get("mime_type", "")
+
+            if attachment_id:
+                # Format attachment metadata line
+                type_desc = attachment_type
+                if mime_type:
+                    type_desc = f"{attachment_type} ({mime_type})"
+
+                attachment_metadata_lines.append(
+                    f"[Attachment available: {attachment_id} ({type_desc}: {filename})]"
+                )
+
+        return attachment_metadata_lines
 
     def _get_file_extension_from_mime_type(self, mime_type: str) -> str:
         """
