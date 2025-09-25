@@ -105,83 +105,75 @@ export const useStreamingResponse = ({
               try {
                 const payload = JSON.parse(data);
 
-                // Use the event type from the 'event:' line
-                switch (currentEventType) {
-                  case 'text':
-                    if (payload.content) {
-                      currentMessage += payload.content;
-                      onMessage(currentMessage);
+                // A single payload can contain multiple parts.
+                // We don't rely on `currentEventType` but inspect the payload directly.
+
+                // Handle text content
+                if (payload.content) {
+                  currentMessage += payload.content;
+                  onMessage(currentMessage);
+                }
+
+                // Handle a single tool call
+                if (payload.tool_call) {
+                  const newToolCall = {
+                    id: payload.tool_call.id,
+                    name: payload.tool_call.function.name,
+                    arguments: payload.tool_call.function.arguments || '{}',
+                  };
+                  toolCalls.push(newToolCall);
+                  onToolCall([...toolCalls]);
+                }
+
+                // Handle an array of tool calls
+                if (payload.tool_calls) {
+                  payload.tool_calls.forEach((tc) => {
+                    const newToolCall = {
+                      id: tc.id,
+                      name: tc.function.name,
+                      arguments: tc.function.arguments || '{}',
+                    };
+                    toolCalls.push(newToolCall);
+                  });
+                  onToolCall([...toolCalls]);
+                }
+
+                // Handle tool result
+                if (payload.tool_call_id && payload.result) {
+                  const toolCallIndex = toolCalls.findIndex((tc) => tc.id === payload.tool_call_id);
+                  if (toolCallIndex !== -1) {
+                    toolCalls[toolCallIndex].result = payload.result;
+                    if (payload.attachments && payload.attachments.length > 0) {
+                      toolCalls[toolCallIndex].attachments = payload.attachments;
                     }
-                    break;
+                    onToolCall([...toolCalls]);
+                  }
+                }
 
-                  case 'tool_call':
-                    if (payload.tool_call) {
-                      const newToolCall = {
-                        id: payload.tool_call.id,
-                        name: payload.tool_call.function.name,
-                        arguments: payload.tool_call.function.arguments || '{}',
-                      };
-                      toolCalls.push(newToolCall);
-                      onToolCall(toolCalls);
-                    }
-                    break;
+                // Handle tool confirmation request
+                if (payload.request_id && payload.tool_name) {
+                  onToolConfirmationRequest({
+                    request_id: payload.request_id,
+                    tool_name: payload.tool_name,
+                    tool_call_id: payload.tool_call_id,
+                    confirmation_prompt: payload.confirmation_prompt,
+                    timeout_seconds: payload.timeout_seconds,
+                    args: payload.args,
+                    created_at: new Date().toISOString(),
+                  });
+                }
 
-                  case 'tool_result':
-                    if (payload.tool_call_id && payload.result) {
-                      // Find the tool call and update it with the result
-                      const toolCallIndex = toolCalls.findIndex(
-                        (tc) => tc.id === payload.tool_call_id
-                      );
-                      if (toolCallIndex !== -1) {
-                        toolCalls[toolCallIndex].result = payload.result;
-                        // Add attachments if present
-                        if (payload.attachments && payload.attachments.length > 0) {
-                          toolCalls[toolCallIndex].attachments = payload.attachments;
-                        }
-                        // Don't set status on individual tool calls - it's managed at message level
-                        // Notify about the update with all tool calls
-                        onToolCall([...toolCalls]);
-                      }
-                    }
-                    break;
+                // Handle tool confirmation result
+                if (payload.request_id !== undefined && payload.approved !== undefined) {
+                  onToolConfirmationResult({
+                    request_id: payload.request_id,
+                    approved: payload.approved,
+                  });
+                }
 
-                  case 'tool_confirmation_request':
-                    // Handle tool confirmation request
-                    if (payload.request_id && payload.tool_name) {
-                      onToolConfirmationRequest({
-                        request_id: payload.request_id,
-                        tool_name: payload.tool_name,
-                        tool_call_id: payload.tool_call_id,
-                        confirmation_prompt: payload.confirmation_prompt,
-                        timeout_seconds: payload.timeout_seconds,
-                        args: payload.args,
-                        created_at: new Date().toISOString(),
-                      });
-                    }
-                    break;
-
-                  case 'tool_confirmation_result':
-                    // Handle tool confirmation result
-                    if (payload.request_id !== undefined && payload.approved !== undefined) {
-                      onToolConfirmationResult({
-                        request_id: payload.request_id,
-                        approved: payload.approved,
-                      });
-                    }
-                    break;
-
-                  case 'error':
-                    onError(new Error(payload.error || 'Unknown error'));
-                    break;
-
-                  case 'end':
-                  case 'done':
-                    // Stream completed successfully
-                    break;
-
-                  default:
-                    // Log unknown event types for debugging
-                    break;
+                // Handle error
+                if (payload.error) {
+                  onError(new Error(payload.error || 'Unknown error'));
                 }
               } catch (e) {
                 console.error('Failed to parse SSE event:', e, 'Data:', data);

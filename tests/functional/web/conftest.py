@@ -328,6 +328,7 @@ async def web_only_assistant(
                         "add_or_update_note",
                         "search_documents",
                         "delete_calendar_event",
+                        "attach_to_response",
                     ],
                     "confirm_tools": ["delete_calendar_event", "add_or_update_note"],
                     "confirmation_timeout_seconds": 10.0,  # Short timeout for tests (10s instead of default 1hr)
@@ -460,10 +461,12 @@ async def web_test_fixture(
 
     # Set up console message logging for debugging
     def log_console(msg: Any) -> None:  # noqa: ANN401  # playwright console message
-        print(f"[Browser Console] {msg.type}: {msg.text}")
+        with open("/tmp/browser_console.log", "a", encoding="utf-8") as f:
+            f.write(f"{msg.type}: {msg.text}\n")
         # Also log location for errors
         if msg.type == "error":
-            print(f"  Location: {msg.location}")
+            with open("/tmp/browser_console.log", "a", encoding="utf-8") as f:
+                f.write(f"  Location: {msg.location}\n")
 
     page.on("console", log_console)
 

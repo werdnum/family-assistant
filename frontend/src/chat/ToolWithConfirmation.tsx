@@ -86,13 +86,15 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
   return (
     <>
       {/* Always render the tool UI */}
-      <ToolComponent
-        toolName={toolName}
-        args={args}
-        result={result}
-        status={status}
-        attachments={attachments}
-      />
+      <div data-testid="tool-call">
+        <ToolComponent
+          toolName={toolName}
+          args={args}
+          result={result}
+          status={status}
+          attachments={attachments}
+        />
+      </div>
 
       {/* Show confirmation UI if there's a pending confirmation */}
       {pendingConfirmation && (

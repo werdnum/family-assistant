@@ -224,6 +224,14 @@ export const UserMessageAttachments: FC = () => {
   );
 };
 
+export const AssistantMessageAttachments: FC = () => {
+  return (
+    <div className="flex w-full flex-row gap-3 col-span-full col-start-1 row-start-1 justify-start">
+      <MessagePrimitive.Attachments components={{ Attachment: AttachmentUI }} />
+    </div>
+  );
+};
+
 export const ComposerAttachments: FC = () => {
   return (
     <div className="flex w-full flex-row gap-3 overflow-x-auto">
