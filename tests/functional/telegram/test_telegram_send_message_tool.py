@@ -449,18 +449,15 @@ async def test_callback_send_message_to_self_rejected(
 
     def callback_error_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        for msg in messages:
-            if msg.get("role") != "tool" or msg.get("tool_call_id") != tool_call_id:
-                continue
-            content = str(msg.get("content", ""))
-            if (
-                "Cannot send a message to yourself" in content
+        return any(
+            msg.get("role") == "tool"
+            and msg.get("tool_call_id") == tool_call_id
+            and (
+                "Cannot send a message to yourself" in (content := str(msg.get("content", "")))
                 and "respond directly in this conversation" in content
-            ):
-                return True
-        return False
-
-    # LLM learns from the error and responds correctly
+            )
+            for msg in messages
+        )
     callback_correction_output = LLMOutput(
         content="Don't forget about your meeting! 📅", tool_calls=None
     )
