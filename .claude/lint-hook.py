@@ -60,39 +60,47 @@ async def lint_python_file(file_path: str) -> list[LintResult]:
 
     # Define all linter tasks
     async def run_ruff_check() -> LintResult:
-        cmd = [
+        # Run Ruff without auto-fixing to avoid mutating files while work is in progress.
+        check_cmd = [
             f"{venv}/bin/ruff",
             "check",
-            "--fix",
             "--preview",
             "--ignore=E501",
             file_path,
         ]
-        returncode, stdout, stderr, duration = await run_command(cmd, timeout=2.0)
+        returncode, stdout, stderr, duration = await run_command(check_cmd, timeout=2.0)
 
         if returncode != 0:
-            # Try to get suggested fixes
-            fix_cmd = [
+            # Capture the output from the basic check run first.
+            output = stderr or stdout
+
+            # Run Ruff again with --diff so we can show the suggested fixes without
+            # mutating the file. This mirrors what `ruff check --fix` would do, but
+            # surfaces the diff instead of applying it.
+            diff_cmd = [
                 f"{venv}/bin/ruff",
                 "check",
-                "--unsafe-fixes",
                 "--diff",
+                "--unsafe-fixes",
                 "--preview",
                 "--ignore=E501",
                 file_path,
             ]
-            _, fix_output, _, _ = await run_command(fix_cmd, timeout=1.0)
+            _, diff_stdout, diff_stderr, _ = await run_command(diff_cmd, timeout=2.0)
 
-            output = stderr or stdout
-            if fix_output:
-                output += f"\n💡 Suggested fixes:\n{fix_output}"
+            diff_output = diff_stdout or diff_stderr
+            if diff_output:
+                output += (
+                    "\n💡 Suggested fixes (run `ruff check --fix --preview --ignore=E501"
+                    f" {file_path}` to apply):\n{diff_output}"
+                )
 
             return LintResult(
                 "ruff check",
                 success=False,
                 duration=duration,
                 output=output,
-                auto_fixable=bool(fix_output),
+                auto_fixable=bool(diff_output.strip()),
             )
         else:
             return LintResult("ruff check", True, duration)
