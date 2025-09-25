@@ -61,7 +61,7 @@ check_test_status() {
     ' 2>/dev/null)
 
     if [ -z "$TEST_COMMANDS" ]; then
-        echo "❌ Tests have not been run since modifying $LAST_MOD_FILE" >&2
+        echo "❌ Tests have not been run since modifying $LAST_MOD_FILE at $LAST_MOD_TIME" >&2
         echo "You MUST run 'poe test' before finishing" >&2
         echo "Reminder: only 'poe test' (with optional -xq) will do. No other commands will satisfy this hook." >&2
         echo "... even if you think these changes don't impact any or all tests." >&2
@@ -70,21 +70,26 @@ check_test_status() {
 
     # Check if any test command completed successfully
     local SUCCESSFUL_TEST=""
+    local LAST_TEST_ATTEMPT_COMMAND=""
+    local LAST_TEST_ATTEMPT_TIME=""
     while IFS= read -r test_cmd; do
         if [ -z "$test_cmd" ]; then
             continue
         fi
-        
+
         local TEST_ID=$(echo "$test_cmd" | jq -r '.id')
         local TEST_COMMAND=$(echo "$test_cmd" | jq -r '.command')
-        
+
         # Find the timestamp of this specific test command
         local TEST_TIME=$(cat "$TRANSCRIPT_PATH" | jq -r --arg id "$TEST_ID" '
             select(.type == "assistant" and .message.content) |
             select(.message.content[] | select(.type == "tool_use" and .id == $id)) |
             .timestamp
         ' | head -1)
-        
+
+        LAST_TEST_ATTEMPT_COMMAND="$TEST_COMMAND"
+        LAST_TEST_ATTEMPT_TIME="$TEST_TIME"
+
         # Check if this test command has a result and if it was successful
         local TEST_RESULT=$(cat "$TRANSCRIPT_PATH" | jq -r --arg id "$TEST_ID" --arg test_time "$TEST_TIME" '
             select(.type == "user" and .message.content and (.message.content | type == "array") and .timestamp > $test_time) |
@@ -103,11 +108,18 @@ check_test_status() {
     if [ -n "$SUCCESSFUL_TEST" ]; then
         return 0  # Tests are passing
     else
-        echo "❌ Tests failed after modifying $LAST_MOD_FILE" >&2
+        echo "❌ Tests failed after modifying $LAST_MOD_FILE at $LAST_MOD_TIME" >&2
         echo "You MUST fix failing tests before finishing" >&2
         echo "Reminder: commits are not accepted without a passing run of poe test." >&2
         echo "If you believe the failure to be a flake, prove it by rerunning poe test to get a passing result." >&2
         echo "If you have other feedback to address, do that first – you will need to re-run tests after making any further tests." >&2
+        if [ -n "$LAST_TEST_ATTEMPT_COMMAND" ]; then
+            if [ -n "$LAST_TEST_ATTEMPT_TIME" ]; then
+                echo "Last failing test command: '$LAST_TEST_ATTEMPT_COMMAND' at $LAST_TEST_ATTEMPT_TIME" >&2
+            else
+                echo "Last failing test command: '$LAST_TEST_ATTEMPT_COMMAND' (timestamp unavailable)" >&2
+            fi
+        fi
         return 1
     fi
 }
