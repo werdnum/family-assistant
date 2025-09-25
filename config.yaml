@@ -147,6 +147,7 @@ default_profile_settings:
       - "ingest_document_from_url"
       - "execute_script"
       - "send_message_to_user"
+      - "attach_to_response"
       - "add_calendar_event"
       - "search_calendar_events"
       - "modify_calendar_event"
