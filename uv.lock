@@ -5136,11 +5136,11 @@ wheels = [
 
 [[package]]
 name = "types-vobject"
-version = "0.9.9.20250601"
+version = "0.9.9.20250708"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e6/19/05f09be62f46f1a25dedeb05858968a3b29ac7fd2ea6d0ac616360df2aee/types_vobject-0.9.9.20250601.tar.gz", hash = "sha256:1a9b760cfe91ac80a8cba1d4e50a6dba247dbce4258c942e704d7cb3a81c762f", size = 11858, upload-time = "2025-06-01T03:25:04.141Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e3/fb/06b1ddd47cddf89f4cf9e0f6f002495e21ab351a6b54de00e1a8c7c1f73f/types_vobject-0.9.9.20250708.tar.gz", hash = "sha256:29a2e8f34732286012b776084c85f4c1a2117a0320b0d3894fb6c9b841ccc592", size = 12448, upload-time = "2025-07-08T03:14:06.617Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/57/31/1543f1d5e018650179f73dd91a661b049127f727b50ba387824219dcba1c/types_vobject-0.9.9.20250601-py3-none-any.whl", hash = "sha256:6565b8890bba3467b9dc1ba671caa2b198a58f9acc52d2cadcebbc46b4aed066", size = 13479, upload-time = "2025-06-01T03:25:02.877Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/01/74b11f03d72541b2e4add0dbb7051a1fead1985b08882f4f74f0d6a68173/types_vobject-0.9.9.20250708-py3-none-any.whl", hash = "sha256:f3e4783fafb116bac02cc963e8f715c461417e50f85ea6b0bde2c86865da6a4e", size = 14300, upload-time = "2025-07-08T03:14:05.871Z" },
 ]
 
 [[package]]
