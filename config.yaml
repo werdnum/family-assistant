@@ -160,6 +160,9 @@ default_profile_settings:
       - "delete_event_listener" # Event system tool
       - "toggle_event_listener" # Event system tool
       - "test_event_listener" # Event system tool
+      # Image generation tools
+      - "generate_image" # Generate images from text using AI
+      - "transform_image" # Transform existing images based on instructions
     enable_mcp_server_ids: # Explicitly define MCP servers for the default profile
       - "time"
       - "brave"
