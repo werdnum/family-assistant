@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 import aiofiles
 import pytz  # Added
 
+from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.services.attachments import AttachmentService
 
 # Import storage and calendar integration for context building
@@ -743,6 +744,62 @@ class ProcessingService:
                 history_message = llm_message.copy()
                 history_message["tool_name"] = function_name
                 stream_metadata = None
+
+                # Special handling for attach_to_response tool: enrich with attachment metadata
+                if function_name == "attach_to_response":
+                    try:
+                        result_data = json.loads(content_for_stream)
+                        if (
+                            result_data.get("status") == "attachments_queued"
+                            and "attachment_ids" in result_data
+                        ):
+                            # Only enrich metadata if attachment service is available
+                            if self.attachment_service:
+                                # Get attachment registry from the tool execution context
+                                attachment_registry = AttachmentRegistry(
+                                    self.attachment_service
+                                )
+
+                                attachment_metadata_list = []
+                                for attachment_id in result_data["attachment_ids"]:
+                                    try:
+                                        attachment_info = (
+                                            await attachment_registry.get_attachment(
+                                                db_context, attachment_id
+                                            )
+                                        )
+                                        if attachment_info:
+                                            attachment_metadata_list.append({
+                                                "attachment_id": attachment_id,
+                                                "type": "tool_result",
+                                                "description": attachment_info.description
+                                                or "Attachment",
+                                                "url": attachment_info.content_url,
+                                                "content_url": attachment_info.content_url,
+                                                "mime_type": attachment_info.mime_type,
+                                                "size": attachment_info.size,
+                                            })
+                                    except Exception as e:
+                                        logger.warning(
+                                            f"Failed to get metadata for attachment {attachment_id}: {e}"
+                                        )
+
+                                if attachment_metadata_list:
+                                    stream_metadata = {
+                                        "attachments": attachment_metadata_list
+                                    }
+                                    logger.info(
+                                        f"Enriched attach_to_response result with {len(attachment_metadata_list)} attachment metadata entries"
+                                    )
+                            else:
+                                logger.warning(
+                                    "AttachmentService not available, skipping metadata enrichment for attach_to_response"
+                                )
+                    except (json.JSONDecodeError, KeyError) as e:
+                        logger.warning(
+                            f"Failed to parse attach_to_response result for metadata enrichment: {e}"
+                        )
+                        # Continue with normal processing if parsing fails
 
             return (
                 LLMStreamEvent(
