@@ -1,12 +1,20 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { CheckCircleIcon, ClockIcon, AlertCircleIcon, FileIcon } from 'lucide-react';
 
 interface AttachToResponseToolProps {
   toolName: string;
-  args?: Record<string, unknown>; // Keep for interface compatibility but won't use
+  args?: Record<string, unknown>;
   result?: string | Record<string, unknown>;
   status: { type: string };
   attachments?: Array<Record<string, unknown>>;
+}
+
+interface Attachment {
+  id: string;
+  name: string;
+  url: string;
+  mime_type: string;
+  size: number;
 }
 
 /**
@@ -14,13 +22,92 @@ interface AttachToResponseToolProps {
  * as the primary visual representation instead of showing raw tool call data.
  */
 export const AttachToResponseTool: React.FC<AttachToResponseToolProps> = ({
-  args: _args,
+  args,
   result,
   status,
   attachments: directAttachments,
 }) => {
+  const [fetchedAttachments, setFetchedAttachments] = useState<Attachment[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Extract attachment IDs from args for cases where result doesn't have enriched data
+  const getAttachmentIdsFromArgs = (): string[] => {
+    if (!args) {
+      return [];
+    }
+
+    try {
+      // Handle both parsed JSON args and string args
+      let parsedArgs = args;
+      if (typeof args === 'string') {
+        parsedArgs = JSON.parse(args);
+      }
+
+      const attachmentIds = (parsedArgs as Record<string, unknown>).attachment_ids;
+      return Array.isArray(attachmentIds) ? attachmentIds : [];
+    } catch {
+      return [];
+    }
+  };
+
+  // Fetch attachment data from API when we only have IDs
+  useEffect(() => {
+    const attachmentIds = getAttachmentIdsFromArgs();
+
+    // Check if we already have enriched attachment data
+    const hasEnrichedData = Array.isArray(directAttachments) && directAttachments.length > 0;
+    const hasResultAttachments = result && typeof result === 'object' && 'attachments' in result;
+
+    if (attachmentIds.length > 0 && !hasEnrichedData && !hasResultAttachments) {
+      setIsLoading(true);
+
+      // Fetch attachment info from API
+      Promise.all(
+        attachmentIds.map(async (attachmentId) => {
+          try {
+            // Use HEAD request to get metadata without downloading the file content
+            const headResponse = await fetch(`/api/v1/attachments/${attachmentId}`, {
+              method: 'HEAD',
+            });
+
+            if (!headResponse.ok) {
+              throw new Error(`Failed to fetch attachment metadata for ${attachmentId}`);
+            }
+
+            return {
+              id: attachmentId,
+              name:
+                headResponse.headers.get('content-disposition')?.match(/filename="(.+)"/)?.[1] ||
+                'Attachment',
+              url: `/api/v1/attachments/${attachmentId}`,
+              mime_type: headResponse.headers.get('content-type') || 'application/octet-stream',
+              size: parseInt(headResponse.headers.get('content-length') || '0', 10),
+            };
+          } catch (error) {
+            console.error(`Failed to fetch attachment ${attachmentId}:`, error);
+            return {
+              id: attachmentId,
+              name: 'Attachment (failed to load)',
+              url: `/api/v1/attachments/${attachmentId}`,
+              mime_type: 'application/octet-stream',
+              size: 0,
+            };
+          }
+        })
+      ).then((attachments) => {
+        setFetchedAttachments(attachments);
+        setIsLoading(false);
+      });
+    }
+  }, [args, result, directAttachments]);
+
   // Extract attachments from multiple possible sources
   const extractAttachments = (): Attachment[] => {
+    // If we have fetched attachments, use those first
+    if (fetchedAttachments.length > 0) {
+      return fetchedAttachments;
+    }
+
     let attachmentData: unknown[] = [];
 
     // Try to get attachments from direct attachments prop first
@@ -29,7 +116,7 @@ export const AttachToResponseTool: React.FC<AttachToResponseToolProps> = ({
     }
     // Try to get from result.attachments if result is an object
     else if (result && typeof result === 'object' && 'attachments' in result) {
-      const resultAttachments = (result as any).attachments;
+      const resultAttachments = (result as Record<string, unknown>).attachments;
       if (Array.isArray(resultAttachments)) {
         attachmentData = resultAttachments;
       }
@@ -86,10 +173,10 @@ export const AttachToResponseTool: React.FC<AttachToResponseToolProps> = ({
   let statusClass = '';
   let statusText = '';
 
-  if (status?.type === 'running') {
+  if (status?.type === 'running' || isLoading) {
     statusIcon = <ClockIcon size={16} className="animate-spin" />;
     statusClass = 'tool-running';
-    statusText = 'Preparing attachments...';
+    statusText = isLoading ? 'Loading attachments...' : 'Preparing attachments...';
   } else if (status?.type === 'complete' && attachments.length > 0) {
     statusIcon = <CheckCircleIcon size={16} />;
     statusClass = 'tool-complete';
