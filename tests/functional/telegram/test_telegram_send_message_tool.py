@@ -342,12 +342,16 @@ async def test_send_message_to_self_rejected(
     def tool_error_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         # Look for the tool response with error message
-        return any(
-            msg.get("role") == "tool"
-            and msg.get("tool_call_id") == tool_call_id
-            and "Cannot send a message to yourself" in str(msg.get("content", ""))
-            for msg in messages
-        )
+        for msg in messages:
+            if msg.get("role") != "tool" or msg.get("tool_call_id") != tool_call_id:
+                continue
+            content = str(msg.get("content", ""))
+            if (
+                "Cannot send a message to yourself" in content
+                and "respond directly in this conversation" in content
+            ):
+                return True
+        return False
 
     error_acknowledgment_output = LLMOutput(
         content="I cannot send a message to yourself. You'll see my responses directly in this conversation.",
@@ -448,12 +452,16 @@ async def test_callback_send_message_to_self_rejected(
 
     def callback_error_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        return any(
-            msg.get("role") == "tool"
-            and msg.get("tool_call_id") == tool_call_id
-            and "Cannot send a message to yourself" in str(msg.get("content", ""))
-            for msg in messages
-        )
+        for msg in messages:
+            if msg.get("role") != "tool" or msg.get("tool_call_id") != tool_call_id:
+                continue
+            content = str(msg.get("content", ""))
+            if (
+                "Cannot send a message to yourself" in content
+                and "respond directly in this conversation" in content
+            ):
+                return True
+        return False
 
     # LLM learns from the error and responds correctly
     callback_correction_output = LLMOutput(

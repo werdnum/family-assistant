@@ -64,7 +64,8 @@ COMMUNICATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
                 "Returns: A string indicating the result. "
                 "On success, returns 'Message sent successfully to user with Chat ID [chat_id].'. "
                 "If message is sent but history recording fails, returns 'Message sent to user with Chat ID [chat_id], but failed to record in history.'. "
-                "On error, returns 'Error: Could not send message to Chat ID [chat_id]. Details: [error details]' or 'Error: Chat interface not available.'."
+                "On error, returns 'Error: Could not send message to Chat ID [chat_id]. Details: [error details]', 'Error: Chat interface not available.',"
+                " or 'Error: Cannot send a message to yourself. Instead of calling this tool, respond directly in this conversation with the message you want the current user to receive.'."
             ),
             "parameters": {
                 "type": "object",
@@ -232,7 +233,10 @@ async def send_message_to_user_tool(
         logger.warning(
             f"Attempt to send message to self: target_chat_id={target_chat_id}, current_conversation_id={current_conversation_id}"
         )
-        return "Error: Cannot send a message to yourself. Please specify a different recipient."
+        return (
+            "Error: Cannot send a message to yourself. Instead of calling this tool, respond "
+            "directly in this conversation with the message you want the current user to receive."
+        )
 
     # Validate attachment IDs if provided
     validated_attachment_ids: list[str] | None = None
