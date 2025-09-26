@@ -115,6 +115,7 @@ check_test_status() {
         echo "NO EXCUSES! Even if you've made 'substantial progress'." >&2
         echo "If you believe the failure to be a flake, prove it by rerunning poe test to get a passing result." >&2
         echo "If you have other feedback to address, do that first – you will need to re-run tests after making any further tests." >&2
+        echo "If you are stuck, consider using @agent-systematic-debugger with a detailed prompt explaining what changes you have made, what you have tried so far and any findings." >&2
         if [ -n "$LAST_TEST_ATTEMPT_COMMAND" ]; then
             if [ -n "$LAST_TEST_ATTEMPT_TIME" ]; then
                 echo "Last failing test command: '$LAST_TEST_ATTEMPT_COMMAND' at $LAST_TEST_ATTEMPT_TIME" >&2
