@@ -509,10 +509,21 @@ class ProcessingService:
                                 and "attachment_ids" in result_data
                             ):
                                 attachment_ids = result_data["attachment_ids"]
-                                pending_attachment_ids.extend(attachment_ids)
-                                logger.info(
-                                    f"Captured {len(attachment_ids)} attachment IDs from attach_to_response"
-                                )
+                                # Add deduplication to prevent the same attachment from being added multiple times
+                                new_attachment_ids = [
+                                    id
+                                    for id in attachment_ids
+                                    if id not in pending_attachment_ids
+                                ]
+                                pending_attachment_ids.extend(new_attachment_ids)
+                                if new_attachment_ids:
+                                    logger.info(
+                                        f"Captured {len(new_attachment_ids)} new attachment IDs from attach_to_response"
+                                    )
+                                if len(attachment_ids) != len(new_attachment_ids):
+                                    logger.warning(
+                                        f"Deduplicated {len(attachment_ids) - len(new_attachment_ids)} attachment IDs that were already queued"
+                                    )
                         except (json.JSONDecodeError, KeyError) as e:
                             logger.warning(
                                 f"Failed to parse attach_to_response result: {e}"

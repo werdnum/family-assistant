@@ -96,9 +96,11 @@ async def attach_to_response_tool(
         f"Successfully processed {len(validated_ids)} attachment(s) for response"
     )
 
-    # Return the validated attachment IDs for the processing service to capture
+    # Return JSON with a clear status message that the LLM can understand
+    attachment_word = "attachment" if len(validated_ids) == 1 else "attachments"
     return json.dumps({
         "status": "attachments_queued",
         "attachment_ids": validated_ids,
         "count": len(validated_ids),
+        "message": f"Successfully attached {len(validated_ids)} {attachment_word} to this response. The {attachment_word} will be sent with this message. No further action needed.",
     })
