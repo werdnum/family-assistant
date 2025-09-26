@@ -926,3 +926,178 @@ async def test_delegate_to_service_with_attachments(
     assert "delegate this task with the attachment" in final_reply
 
     logger.info("Attachment delegation test completed successfully")
+
+
+@pytest.mark.asyncio
+async def test_delegate_to_service_cross_conversation_attachment_denied(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """Test that delegation fails when trying to access attachments from different conversations."""
+    logger.info("--- Test: Delegation Cross-Conversation Attachment Security ---")
+
+    # Create attachment registry
+    test_storage = tmp_path / "test_attachments"
+    test_storage.mkdir(exist_ok=True)
+    attachment_registry = AttachmentRegistry(
+        storage_path=str(test_storage), db_engine=db_engine, config=None
+    )
+
+    # Create a test attachment in a different conversation
+    other_conversation_id = "other_conversation_123"
+    test_content = b"Test image content from other conversation"
+    async with DatabaseContext(engine=db_engine) as db_context:
+        attachment_record = await attachment_registry.register_user_attachment(
+            db_context=db_context,
+            content=test_content,
+            mime_type="image/png",
+            filename="other_test_image.png",
+            conversation_id=other_conversation_id,  # Different conversation
+            user_id=TEST_USER_NAME,
+            description="Test image from other conversation",
+        )
+        other_attachment_id = attachment_record.attachment_id
+
+    # Create primary service that will attempt to delegate with unauthorized attachment
+    def security_error_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        if not messages:
+            return False
+        last_message = messages[-1]
+        content = last_message.get("content", "")
+        return (
+            last_message.get("role") == "tool"
+            and "Error: Cannot delegate with attachment" in content
+            and "cross-conversation attachment access is not allowed" in content
+        )
+
+    def initial_user_request_matcher(kwargs: MatcherArgs) -> bool:
+        messages = kwargs.get("messages", [])
+        if not messages:
+            return False
+        last_message = messages[-1]
+        return last_message.get(
+            "role"
+        ) == "user" and DELEGATED_TASK_DESCRIPTION in last_message.get("content", "")
+
+    primary_llm_client = RuleBasedMockLLMClient(
+        rules=[
+            # Rule 1: Handle security error response from delegation tool
+            (
+                security_error_matcher,
+                MockLLMOutput(
+                    content="I see there was a security error with the attachment delegation. The attachment belongs to a different conversation and cannot be accessed.",
+                    tool_calls=None,
+                ),
+            ),
+            # Rule 2: Handle initial user request and attempt delegation
+            (
+                initial_user_request_matcher,
+                MockLLMOutput(
+                    content="I'll try to delegate this task with the attachment from another conversation.",
+                    tool_calls=[
+                        ToolCallItem(
+                            id="delegate_call_security_test",
+                            type="function",
+                            function=ToolCallFunction(
+                                name="delegate_to_service",
+                                arguments=json.dumps({
+                                    "target_service_id": SPECIALIZED_PROFILE_ID,
+                                    "user_request": DELEGATED_TASK_DESCRIPTION,
+                                    "confirm_delegation": False,
+                                    "attachment_ids": [
+                                        other_attachment_id
+                                    ],  # Unauthorized attachment
+                                }),
+                            ),
+                        )
+                    ],
+                ),
+            ),
+        ]
+    )
+
+    # Create specialized service (won't be called due to security failure)
+    specialized_llm_client = RuleBasedMockLLMClient(
+        rules=[],
+        default_response=MockLLMOutput(
+            content="This should not be reached due to security violation.",
+            tool_calls=None,
+        ),
+    )
+
+    # Create services
+    primary_tools_provider = LocalToolsProvider(
+        definitions=local_tools_definition_list,
+        implementations=local_tool_implementations_map,
+    )
+
+    primary_service = ProcessingService(
+        llm_client=primary_llm_client,
+        tools_provider=primary_tools_provider,
+        service_config=ProcessingServiceConfig(
+            id=PRIMARY_PROFILE_ID,
+            prompts={"system_prompt": "I am a primary assistant."},
+            timezone_str="UTC",
+            max_history_messages=10,
+            history_max_age_hours=24,
+            tools_config={},
+            delegation_security_level="unrestricted",
+        ),
+        app_config={},
+        context_providers=[],
+        server_url=None,
+        attachment_registry=attachment_registry,  # Pass attachment registry
+    )
+
+    specialized_service = ProcessingService(
+        llm_client=specialized_llm_client,
+        tools_provider=LocalToolsProvider(definitions=[], implementations={}),
+        service_config=ProcessingServiceConfig(
+            id=SPECIALIZED_PROFILE_ID,
+            prompts={"system_prompt": "I am a specialized assistant."},
+            timezone_str="UTC",
+            max_history_messages=10,
+            history_max_age_hours=24,
+            tools_config={},
+            delegation_security_level="unrestricted",
+        ),
+        app_config={},
+        context_providers=[],
+        server_url=None,
+        attachment_registry=attachment_registry,  # Pass attachment registry
+    )
+
+    # Set up registry
+    registry = {
+        PRIMARY_PROFILE_ID: primary_service,
+        SPECIALIZED_PROFILE_ID: specialized_service,
+    }
+    primary_service.set_processing_services_registry(registry)
+    specialized_service.set_processing_services_registry(registry)
+
+    # Execute delegation with unauthorized attachment
+    user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        result = await primary_service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type=TEST_INTERFACE_TYPE,
+            conversation_id=str(TEST_CHAT_ID),  # Current conversation
+            trigger_content_parts=[{"type": "text", "text": user_query}],
+            trigger_interface_message_id="msg_security_test",
+            user_name=TEST_USER_NAME,
+            chat_interface=MagicMock(spec=ChatInterface),
+            request_confirmation_callback=None,
+        )
+
+        final_reply = result.text_reply
+        error = result.error_traceback
+
+    # Verify the security violation was properly handled
+    assert error is None, f"Unexpected error during security test: {error}"
+    assert final_reply is not None
+    assert "security error with the attachment delegation" in final_reply
+    assert "different conversation" in final_reply
+
+    logger.info("Cross-conversation attachment security test completed successfully")
