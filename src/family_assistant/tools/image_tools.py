@@ -27,7 +27,7 @@ IMAGE_TOOLS_DEFINITION: list[dict[str, Any]] = [
             "description": (
                 "Draw colored rectangles or circles to highlight regions on an image. "
                 "Useful for marking objects, areas of interest, or annotations. "
-                "Returns a new image with the highlighted regions."
+                "Creates and displays a new image with the highlighted regions."
             ),
             "parameters": {
                 "type": "object",

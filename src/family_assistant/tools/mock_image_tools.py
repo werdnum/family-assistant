@@ -24,7 +24,7 @@ MOCK_IMAGE_TOOLS_DEFINITION: list[dict[str, Any]] = [
             "name": "mock_camera_snapshot",
             "description": (
                 "Mock tool to simulate taking a camera snapshot. "
-                "Returns a fake image attachment for testing workflows. "
+                "Generates and displays a mock camera image for testing workflows. "
                 "This is only for testing and development purposes."
             ),
             "parameters": {

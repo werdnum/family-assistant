@@ -2,6 +2,7 @@
 Integration tests for processing.py multimodal tool results handling.
 """
 
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -86,8 +87,10 @@ class TestProcessingServiceMultimodal:
             request_confirmation_callback=None,
         )
 
-        # Should return tuple of (event, tool_message, history_message)
-        event, tool_message, history_message = result
+        # Should return ToolExecutionResult dataclass
+        event = result.stream_event
+        tool_message = result.llm_message
+        history_message = result.history_message
 
         # Check event
         assert isinstance(event, LLMStreamEvent)
@@ -145,7 +148,9 @@ class TestProcessingServiceMultimodal:
             request_confirmation_callback=None,
         )
 
-        event, tool_message, history_message = result
+        event = result.stream_event
+        tool_message = result.llm_message
+        history_message = result.history_message
 
         # Check event
         assert isinstance(event, LLMStreamEvent)
@@ -205,7 +210,9 @@ class TestProcessingServiceMultimodal:
             request_confirmation_callback=None,
         )
 
-        event, tool_message, history_message = result
+        event = result.stream_event
+        tool_message = result.llm_message
+        history_message = result.history_message
 
         # Should behave similar to string result when no attachment
         assert event.tool_result == "Text processed successfully"
@@ -238,7 +245,8 @@ class TestProcessingServiceMultimodal:
             request_confirmation_callback=None,
         )
 
-        event, tool_message, history_message = result
+        event = result.stream_event
+        tool_message = result.llm_message
 
         # Should return error
         assert event.type == "tool_result"
@@ -276,7 +284,8 @@ class TestProcessingServiceMultimodal:
             request_confirmation_callback=None,
         )
 
-        event, tool_message, history_message = result
+        event = result.stream_event
+        tool_message = result.llm_message
 
         # Should handle error gracefully
         assert event.type == "tool_result"
@@ -302,3 +311,371 @@ class TestProcessingServiceMultimodal:
 
         result = mock_tool_function()
         assert result == "test"
+
+    async def test_automatic_attachment_queuing(
+        self, processing_service: ProcessingService, mock_db_context: Mock
+    ) -> None:
+        """Test that tool result attachments are automatically queued for display"""
+        # Mock tool call object with attachment result
+        tool_call = Mock()
+        tool_call.id = "test_call_auto"
+        tool_call.function.name = "mock_camera_snapshot"
+        tool_call.function.arguments = '{"entity_id": "camera.test"}'
+
+        # Create ToolResult with attachment
+        attachment = ToolAttachment(
+            mime_type="image/jpeg",
+            content=b"fake jpeg data",
+            description="Test camera image",
+        )
+        tool_result = ToolResult(text="Captured camera image", attachment=attachment)
+
+        # Mock the attachment service
+        mock_attachment_service = Mock()
+        mock_attachment_service.store_bytes_as_attachment.return_value = {
+            "attachment_id": "auto_attachment_123",
+            "url": "http://localhost:8000/attachments/auto_attachment_123",
+        }
+        processing_service.attachment_service = mock_attachment_service
+
+        # Mock tools provider to return ToolResult with attachment (async)
+        mock_tools_provider = AsyncMock()
+        mock_tools_provider.execute_tool.return_value = tool_result
+        processing_service.tools_provider = mock_tools_provider
+
+        # Execute single tool
+        result = await processing_service._execute_single_tool(
+            tool_call,
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=mock_db_context,
+            chat_interface=None,
+            request_confirmation_callback=None,
+        )
+
+        # Verify that the attachment ID is returned for auto-queuing
+        assert result.auto_attachment_id == "auto_attachment_123"
+
+        # Verify attachment was stored
+        mock_attachment_service.store_bytes_as_attachment.assert_called_once()
+        store_call = mock_attachment_service.store_bytes_as_attachment.call_args
+        assert store_call[1]["file_content"] == b"fake jpeg data"
+        assert store_call[1]["content_type"] == "image/jpeg"
+
+    async def test_no_auto_attachment_for_string_results(
+        self, processing_service: ProcessingService, mock_db_context: Mock
+    ) -> None:
+        """Test that string tool results don't generate auto-attachment IDs"""
+        # Mock tool call object
+        tool_call = Mock()
+        tool_call.id = "test_call_string"
+        tool_call.function.name = "simple_tool"
+        tool_call.function.arguments = '{"text": "hello"}'
+
+        # Mock tools provider to return simple string (async)
+        mock_tools_provider = AsyncMock()
+        mock_tools_provider.execute_tool.return_value = "Simple text result"
+        processing_service.tools_provider = mock_tools_provider
+
+        # Execute single tool
+        result = await processing_service._execute_single_tool(
+            tool_call,
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=mock_db_context,
+            chat_interface=None,
+            request_confirmation_callback=None,
+        )
+
+        # Verify no attachment ID is returned
+        assert result.auto_attachment_id is None
+
+    async def test_no_auto_attachment_without_attachment_service(
+        self, processing_service: ProcessingService, mock_db_context: Mock
+    ) -> None:
+        """Test that ToolResult attachments don't auto-queue without attachment service"""
+        # Mock tool call object
+        tool_call = Mock()
+        tool_call.id = "test_call_no_service"
+        tool_call.function.name = "image_tool"
+        tool_call.function.arguments = "{}"
+
+        # Create ToolResult with attachment
+        attachment = ToolAttachment(
+            mime_type="image/png",
+            content=b"fake png data",
+            description="Test image",
+        )
+        tool_result = ToolResult(text="Generated image", attachment=attachment)
+
+        # No attachment service configured
+        processing_service.attachment_service = None
+
+        # Mock tools provider (async)
+        mock_tools_provider = AsyncMock()
+        mock_tools_provider.execute_tool.return_value = tool_result
+        processing_service.tools_provider = mock_tools_provider
+
+        # Execute single tool
+        result = await processing_service._execute_single_tool(
+            tool_call,
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=mock_db_context,
+            chat_interface=None,
+            request_confirmation_callback=None,
+        )
+
+        # Should not have auto-attachment ID without attachment service
+        assert result.auto_attachment_id is None
+
+    async def test_attach_to_response_overrides_auto_attachments(
+        self, processing_service: ProcessingService, mock_db_context: Mock
+    ) -> None:
+        """Test that LLM calling attach_to_response replaces auto-queued attachments"""
+        # This test simulates the full tool loop behavior where:
+        # 1. First tool generates attachment -> auto-queued
+        # 2. LLM calls attach_to_response -> replaces auto-queued with explicit list
+
+        # Mock attachment service
+        mock_attachment_service = Mock()
+        processing_service.attachment_service = mock_attachment_service
+
+        # Simulate two tool calls in sequence
+        # First: image generation tool that auto-queues attachment
+        image_tool_call = Mock()
+        image_tool_call.id = "call_image_gen"
+        image_tool_call.function.name = "generate_image"
+        image_tool_call.function.arguments = '{"prompt": "sunset"}'
+
+        # Create attachment for image generation
+        attachment = ToolAttachment(
+            mime_type="image/png",
+            content=b"fake png data",
+            description="Generated sunset image",
+        )
+        image_result = ToolResult(text="Generated image", attachment=attachment)
+
+        # Mock attachment storage
+        mock_attachment_service.store_bytes_as_attachment.return_value = {
+            "attachment_id": "generated_image_123",
+            "url": "http://localhost:8000/attachments/generated_image_123",
+        }
+
+        # Mock tools provider to return different results based on tool name
+        mock_tools_provider = AsyncMock()
+
+        def mock_execute_tool(
+            name: str, args: dict[str, Any], context: dict[str, Any], call_id: str
+        ) -> ToolReturnType:
+            if name == "generate_image":
+                return image_result
+            elif name == "attach_to_response":
+                # Return JSON indicating explicit attachment control
+                return '{"status": "attachments_queued", "attachment_ids": ["explicit_attachment_456"], "count": 1, "message": "Explicitly controlling attachments"}'
+            return "Unknown tool"
+
+        mock_tools_provider.execute_tool.side_effect = mock_execute_tool
+        processing_service.tools_provider = mock_tools_provider
+
+        # Execute first tool (image generation) - should auto-queue
+        first_result = await processing_service._execute_single_tool(
+            image_tool_call,
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=mock_db_context,
+            chat_interface=None,
+            request_confirmation_callback=None,
+        )
+
+        # Verify auto-attachment ID is captured
+        assert first_result.auto_attachment_id == "generated_image_123"
+
+        # Second: attach_to_response tool call
+        attach_tool_call = Mock()
+        attach_tool_call.id = "call_attach_response"
+        attach_tool_call.function.name = "attach_to_response"
+        attach_tool_call.function.arguments = (
+            '{"attachment_ids": ["explicit_attachment_456"]}'
+        )
+
+        second_result = await processing_service._execute_single_tool(
+            attach_tool_call,
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=mock_db_context,
+            chat_interface=None,
+            request_confirmation_callback=None,
+        )
+
+        # attach_to_response doesn't generate auto-attachments
+        assert second_result.auto_attachment_id is None
+        # But it should return the JSON response for the processing loop to handle
+        assert second_result.stream_event.tool_result is not None
+        assert "attachments_queued" in second_result.stream_event.tool_result
+
+    async def test_multiple_attach_to_response_calls_behavior(
+        self, processing_service: ProcessingService, mock_db_context: Mock
+    ) -> None:
+        """Test behavior when attach_to_response is called multiple times"""
+        # This tests the edge case where LLM calls attach_to_response multiple times
+        # The last call should win (replace previous explicit attachments)
+
+        mock_tools_provider = AsyncMock()
+
+        # Mock attach_to_response to return different attachment lists
+        call_count = 0
+
+        def mock_attach_response(
+            name: str, args: dict[str, Any], context: dict[str, Any], call_id: str
+        ) -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First call with one attachment
+                return '{"status": "attachments_queued", "attachment_ids": ["first_attachment"], "count": 1, "message": "First attach call"}'
+            else:
+                # Second call with different attachments
+                return '{"status": "attachments_queued", "attachment_ids": ["second_attachment_a", "second_attachment_b"], "count": 2, "message": "Second attach call"}'
+
+        mock_tools_provider.execute_tool.side_effect = mock_attach_response
+        processing_service.tools_provider = mock_tools_provider
+
+        # First attach_to_response call
+        first_call = Mock()
+        first_call.id = "call_attach_1"
+        first_call.function.name = "attach_to_response"
+        first_call.function.arguments = '{"attachment_ids": ["first_attachment"]}'
+
+        first_result = await processing_service._execute_single_tool(
+            first_call,
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=mock_db_context,
+            chat_interface=None,
+            request_confirmation_callback=None,
+        )
+
+        # Second attach_to_response call
+        second_call = Mock()
+        second_call.id = "call_attach_2"
+        second_call.function.name = "attach_to_response"
+        second_call.function.arguments = (
+            '{"attachment_ids": ["second_attachment_a", "second_attachment_b"]}'
+        )
+
+        second_result = await processing_service._execute_single_tool(
+            second_call,
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=mock_db_context,
+            chat_interface=None,
+            request_confirmation_callback=None,
+        )
+
+        # Both should return proper JSON responses
+        assert first_result.stream_event.tool_result is not None
+        assert "first_attachment" in first_result.stream_event.tool_result
+        assert second_result.stream_event.tool_result is not None
+        assert "second_attachment_a" in second_result.stream_event.tool_result
+        assert "second_attachment_b" in second_result.stream_event.tool_result
+
+        # Neither generates auto-attachments (attach_to_response is explicit control)
+        assert first_result.auto_attachment_id is None
+        assert second_result.auto_attachment_id is None
+
+    async def test_new_attachments_after_attach_to_response(
+        self, processing_service: ProcessingService, mock_db_context: Mock
+    ) -> None:
+        """Test behavior when new tool attachments appear after attach_to_response is called"""
+        # This tests the scenario:
+        # 1. LLM calls attach_to_response (explicit control)
+        # 2. Later tool generates new attachment
+        # Question: Should the new attachment be auto-queued or ignored?
+        # Answer: It should be auto-queued! Each attachment is independent.
+
+        mock_attachment_service = Mock()
+        mock_attachment_service.store_bytes_as_attachment.return_value = {
+            "attachment_id": "new_attachment_after_explicit",
+            "url": "http://localhost:8000/attachments/new_attachment_after_explicit",
+        }
+        processing_service.attachment_service = mock_attachment_service
+
+        mock_tools_provider = AsyncMock()
+
+        def mock_execute_tool(
+            name: str, args: dict[str, Any], context: dict[str, Any], call_id: str
+        ) -> ToolReturnType:
+            if name == "attach_to_response":
+                return '{"status": "attachments_queued", "attachment_ids": ["explicit_attachment"], "count": 1, "message": "Explicit control established"}'
+            elif name == "generate_new_image":
+                # New tool that generates attachment after explicit control was established
+                attachment = ToolAttachment(
+                    mime_type="image/jpeg",
+                    content=b"new image data",
+                    description="New generated image",
+                )
+                return ToolResult(text="Generated new image", attachment=attachment)
+            return "Unknown tool"
+
+        mock_tools_provider.execute_tool.side_effect = mock_execute_tool
+        processing_service.tools_provider = mock_tools_provider
+
+        # First: LLM calls attach_to_response (establishes explicit control)
+        attach_call = Mock()
+        attach_call.id = "call_explicit"
+        attach_call.function.name = "attach_to_response"
+        attach_call.function.arguments = '{"attachment_ids": ["explicit_attachment"]}'
+
+        attach_result = await processing_service._execute_single_tool(
+            attach_call,
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=mock_db_context,
+            chat_interface=None,
+            request_confirmation_callback=None,
+        )
+
+        # Second: New tool generates attachment
+        new_tool_call = Mock()
+        new_tool_call.id = "call_new_image"
+        new_tool_call.function.name = "generate_new_image"
+        new_tool_call.function.arguments = "{}"
+
+        new_tool_result = await processing_service._execute_single_tool(
+            new_tool_call,
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=mock_db_context,
+            chat_interface=None,
+            request_confirmation_callback=None,
+        )
+
+        # Attach call should not generate auto-attachment
+        assert attach_result.auto_attachment_id is None
+
+        # But new tool should still auto-queue its attachment
+        # (Each tool execution is independent)
+        assert new_tool_result.auto_attachment_id == "new_attachment_after_explicit"
+
+        # The processing loop will handle the logic of:
+        # - Auto-queue from new tool
+        # - But if there's another attach_to_response later, it replaces everything
