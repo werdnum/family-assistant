@@ -7,20 +7,39 @@ lifecycle, and access control across user-sourced and tool-generated attachments
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import mimetypes
+import os
+import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import aiofiles
+from fastapi import HTTPException, UploadFile
 from sqlalchemy import and_, delete, insert, select, update
 
 from family_assistant.storage.base import attachment_metadata_table
+from family_assistant.storage.context import DatabaseContext
 
 if TYPE_CHECKING:
-    from family_assistant.services.attachments import AttachmentService
-    from family_assistant.storage.context import DatabaseContext
+    from sqlalchemy.ext.asyncio import AsyncEngine
 
 logger = logging.getLogger(__name__)
+
+# Default configuration values (fallbacks)
+DEFAULT_MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
+DEFAULT_MAX_MULTIMODAL_SIZE = 20 * 1024 * 1024  # 20MB
+DEFAULT_ALLOWED_MIME_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "text/plain",
+    "text/markdown",
+    "application/pdf",
+}
 
 
 class AttachmentMetadata:
@@ -95,16 +114,49 @@ class AttachmentMetadata:
 
 
 class AttachmentRegistry:
-    """Registry for managing attachment metadata and lifecycle."""
+    """Registry for managing attachment metadata and file storage."""
 
-    def __init__(self, attachment_service: AttachmentService) -> None:
+    def __init__(
+        self,
+        storage_path: str,
+        db_engine: AsyncEngine,
+        config: dict[str, Any] | None = None,
+    ) -> None:
         """
         Initialize the attachment registry.
 
         Args:
-            attachment_service: The attachment service for file operations
+            storage_path: Base directory for storing attachment files
+            db_engine: Database engine for creating contexts
+            config: Optional configuration dictionary (attachment_config section)
         """
-        self.attachment_service = attachment_service
+        self.storage_path = Path(storage_path)
+        self.storage_path.mkdir(parents=True, exist_ok=True)
+        self.db_engine = db_engine
+
+        # Set up configuration with defaults
+        attachment_config = config or {}
+        self.max_file_size = attachment_config.get(
+            "max_file_size", DEFAULT_MAX_FILE_SIZE
+        )
+        self.max_multimodal_size = attachment_config.get(
+            "max_multimodal_size", DEFAULT_MAX_MULTIMODAL_SIZE
+        )
+        allowed_types = attachment_config.get(
+            "allowed_mime_types", list(DEFAULT_ALLOWED_MIME_TYPES)
+        )
+        self.allowed_mime_types = (
+            set(allowed_types)
+            if isinstance(allowed_types, list)
+            else DEFAULT_ALLOWED_MIME_TYPES
+        )
+
+        logger.info(
+            f"AttachmentRegistry initialized with storage path: {self.storage_path}, "
+            f"max_file_size: {self.max_file_size // (1024 * 1024)}MB, "
+            f"max_multimodal_size: {self.max_multimodal_size // (1024 * 1024)}MB, "
+            f"allowed_types: {len(self.allowed_mime_types)} types"
+        )
 
     async def register_attachment(
         self,
@@ -176,6 +228,7 @@ class AttachmentRegistry:
         logger.info(
             f"Registered attachment {attachment_id} from {source_type}:{source_id}"
         )
+        logger.info(f"register_attachment return type: {type(attachment_metadata)}")
         return attachment_metadata
 
     async def get_attachment(
@@ -273,21 +326,19 @@ class AttachmentRegistry:
             AttachmentMetadata object
         """
         # Store the attachment file
-        attachment_data = self.attachment_service.store_bytes_as_attachment(
-            content, filename, mime_type
-        )
+        attachment_data = await self._store_file_only(content, filename, mime_type)
 
         # Register in metadata database
         return await self.register_attachment(
             db_context=db_context,
-            attachment_id=attachment_data["attachment_id"],
+            attachment_id=attachment_data.attachment_id,
             source_type="user",
             source_id=user_id,
             mime_type=mime_type,
             description=description or f"User uploaded: {filename}",
             size=len(content),
-            content_url=attachment_data["url"],
-            storage_path=attachment_data["storage_path"],
+            content_url=attachment_data.content_url,
+            storage_path=attachment_data.storage_path,
             conversation_id=conversation_id,
             message_id=message_id,
             metadata={"original_filename": filename, "upload_method": "api"},
@@ -364,7 +415,7 @@ class AttachmentRegistry:
             return None
 
         # Get content from file system
-        file_path = self.attachment_service.get_attachment_path(attachment_id)
+        file_path = self.get_attachment_path(attachment_id)
         if not file_path or not file_path.exists():
             logger.warning(f"Attachment file not found: {attachment_id}")
             return None
@@ -435,7 +486,7 @@ class AttachmentRegistry:
 
         if success:
             # Only delete file if database deletion succeeded
-            file_deleted = self.attachment_service.delete_attachment(attachment_id)
+            file_deleted = self._delete_attachment_file(attachment_id)
             logger.info(
                 f"Deleted attachment {attachment_id} (db: {success}, file: {file_deleted})"
             )
@@ -473,8 +524,8 @@ class AttachmentRegistry:
         referenced_rows = await db_context.fetch_all(referenced_query)
         referenced_ids = {row["attachment_id"] for row in referenced_rows}
 
-        # Use AttachmentService to clean up orphaned files
-        return self.attachment_service.cleanup_orphaned_files(referenced_ids)
+        # Clean up orphaned files directly
+        return self._cleanup_orphaned_files(referenced_ids)
 
     async def update_attachment_conversation(
         self,
@@ -568,3 +619,428 @@ class AttachmentRegistry:
             return AttachmentMetadata.from_row(row)
 
         return None
+
+    # Convenience methods that create their own database contexts
+
+    async def register_tool_attachment_with_context(
+        self,
+        attachment_id: str,
+        tool_name: str,
+        mime_type: str,
+        description: str,
+        size: int,
+        content_url: str,
+        storage_path: str | None = None,
+        conversation_id: str | None = None,
+        message_id: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> AttachmentMetadata:
+        """
+        Register a tool-generated attachment using internal database context.
+
+        This is a convenience method that creates its own DatabaseContext.
+        Use this from processing.py and other places that don't already have a context.
+        """
+        async with DatabaseContext(self.db_engine) as db_context:
+            return await self.register_tool_attachment(
+                db_context=db_context,
+                attachment_id=attachment_id,
+                tool_name=tool_name,
+                mime_type=mime_type,
+                description=description,
+                size=size,
+                content_url=content_url,
+                storage_path=storage_path,
+                conversation_id=conversation_id,
+                message_id=message_id,
+                metadata=metadata,
+            )
+
+    async def get_attachment_with_context(
+        self, attachment_id: str
+    ) -> AttachmentMetadata | None:
+        """
+        Get attachment metadata by ID using internal database context.
+
+        This is a convenience method that creates its own DatabaseContext.
+        """
+        async with DatabaseContext(self.db_engine) as db_context:
+            return await self.get_attachment(db_context, attachment_id)
+
+    async def store_and_register_tool_attachment(
+        self,
+        file_content: bytes,
+        filename: str,
+        content_type: str,
+        tool_name: str,
+        description: str | None = None,
+        conversation_id: str | None = None,
+        message_id: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> AttachmentMetadata:
+        """
+        Store file content and register as a tool attachment in one operation.
+
+        This is a public method that encapsulates the full workflow for tool-generated attachments.
+
+        Args:
+            file_content: Raw file content bytes
+            filename: Original filename
+            content_type: MIME type
+            tool_name: Name of the tool that created it
+            description: Optional description
+            conversation_id: Associated conversation
+            message_id: Associated message
+            metadata: Additional metadata
+
+        Returns:
+            AttachmentMetadata for the stored and registered attachment
+        """
+        # First store the file
+        file_metadata = await self._store_file_only(
+            file_content=file_content,
+            filename=filename,
+            content_type=content_type,
+        )
+
+        # Then register it in the database
+        return await self.register_tool_attachment_with_context(
+            attachment_id=file_metadata.attachment_id,
+            tool_name=tool_name,
+            mime_type=content_type,
+            description=description or f"Tool attachment from {tool_name}",
+            size=len(file_content),
+            content_url=file_metadata.content_url
+            or f"/api/attachments/{file_metadata.attachment_id}",
+            storage_path=str(file_metadata.storage_path)
+            if file_metadata.storage_path
+            else None,
+            conversation_id=conversation_id,
+            message_id=message_id,
+            metadata=metadata,
+        )
+
+    # File storage methods (previously from AttachmentService)
+
+    def _calculate_content_hash(self, content: bytes) -> str:
+        """Calculate SHA-256 hash of file content."""
+        return hashlib.sha256(content).hexdigest()
+
+    def _get_file_path(self, attachment_id: str, filename: str) -> Path:
+        """
+        Generate file storage path for an attachment.
+
+        Uses hash-based directory structure: XX/attachment_id.ext
+        where XX is the first 2 characters of the attachment_id (provides 256 buckets).
+        """
+        # Use first 2 characters of attachment_id for directory sharding
+        hash_prefix = attachment_id[:2]
+        hash_dir = self.storage_path / hash_prefix
+        hash_dir.mkdir(parents=True, exist_ok=True)
+
+        # Use attachment_id as filename with original extension
+        file_ext = Path(filename).suffix.lower()
+        return hash_dir / f"{attachment_id}{file_ext}"
+
+    def _validate_file(self, file: UploadFile) -> None:
+        """
+        Validate uploaded file for type and size restrictions.
+
+        Args:
+            file: The uploaded file to validate
+
+        Raises:
+            HTTPException: If file validation fails
+        """
+        # Check MIME type
+        if file.content_type not in self.allowed_mime_types:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File type '{file.content_type}' not allowed. "
+                f"Allowed types: {', '.join(self.allowed_mime_types)}",
+            )
+
+        # Check file size
+        if hasattr(file.file, "seek") and hasattr(file.file, "tell"):
+            # Get current position
+            current_pos = file.file.tell()
+            # Seek to end to get size
+            file.file.seek(0, 2)
+            file_size = file.file.tell()
+            # Seek back to original position
+            file.file.seek(current_pos)
+
+            if file_size > self.max_file_size:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File size {file_size} bytes exceeds maximum allowed size of {self.max_file_size} bytes",
+                )
+
+    def _sanitize_filename(self, filename: str) -> str:
+        """
+        Sanitize filename to prevent path traversal and other security issues.
+
+        Args:
+            filename: Original filename
+
+        Returns:
+            Sanitized filename
+        """
+        # Remove any path components
+        filename = os.path.basename(filename)
+
+        # Remove any potentially dangerous characters
+        dangerous_chars = ["<", ">", ":", '"', "/", "\\", "|", "?", "*", "\0"]
+        for char in dangerous_chars:
+            filename = filename.replace(char, "_")
+
+        # Ensure filename is not empty and not too long
+        if not filename or filename.startswith("."):
+            filename = f"attachment{Path(filename).suffix}"
+
+        if len(filename) > 255:
+            name_part = filename[:200]
+            ext_part = filename[-50:]
+            filename = name_part + "..." + ext_part
+
+        return filename
+
+    async def _store_file_only(
+        self,
+        file_content: bytes,
+        filename: str,
+        content_type: str = "image/jpeg",
+    ) -> AttachmentMetadata:
+        """
+        Store raw bytes as an attachment file (private method for internal use).
+
+        Args:
+            file_content: Raw file content bytes
+            filename: Original filename
+            content_type: MIME type of the file
+
+        Returns:
+            AttachmentMetadata object
+
+        Raises:
+            ValueError: If file validation fails
+        """
+        # Basic validation
+        if len(file_content) > self.max_file_size:
+            raise ValueError(
+                f"File size {len(file_content)} bytes exceeds maximum allowed size of {self.max_file_size} bytes"
+            )
+
+        if content_type not in self.allowed_mime_types:
+            raise ValueError(
+                f"File type '{content_type}' not allowed. Allowed types: {', '.join(self.allowed_mime_types)}"
+            )
+
+        # Generate unique attachment ID
+        attachment_id = str(uuid.uuid4())
+
+        # Sanitize filename
+        safe_filename = self._sanitize_filename(filename)
+
+        try:
+            # Calculate content hash for potential future deduplication
+            _ = self._calculate_content_hash(file_content)
+
+            # Get storage path
+            file_path = self._get_file_path(attachment_id, safe_filename)
+
+            # Write file to disk asynchronously
+            async with aiofiles.open(file_path, "wb") as f:
+                await f.write(file_content)
+
+            # Create minimal attachment metadata object (caller should provide proper metadata)
+            attachment_metadata = AttachmentMetadata(
+                attachment_id=attachment_id,
+                source_type="file_only",  # Indicates this is just file storage, not registered
+                source_id="file_storage",  # Generic source for file-only storage
+                mime_type=content_type,
+                description=f"File storage: {safe_filename}",
+                size=len(file_content),
+                content_url=f"/api/attachments/{attachment_id}",
+                storage_path=str(file_path.relative_to(self.storage_path)),
+                metadata={
+                    "original_filename": safe_filename,
+                    "storage_method": "file_only",
+                },
+            )
+
+            logger.info(
+                f"Successfully stored attachment {attachment_id}: {safe_filename} ({len(file_content)} bytes)"
+            )
+
+            return attachment_metadata
+
+        except Exception as e:
+            logger.error(f"Failed to store attachment: {e}")
+            raise ValueError(f"Failed to store attachment: {e}") from e
+
+    async def store_attachment(self, file: UploadFile) -> AttachmentMetadata:
+        """
+        Store an uploaded attachment file.
+
+        Args:
+            file: The uploaded file
+
+        Returns:
+            AttachmentMetadata object
+
+        Raises:
+            HTTPException: If file validation or storage fails
+        """
+        # Validate the file
+        self._validate_file(file)
+
+        # Generate unique attachment ID
+        attachment_id = str(uuid.uuid4())
+
+        # Sanitize filename
+        safe_filename = self._sanitize_filename(file.filename or "attachment")
+
+        try:
+            # Read file content
+            file_content = await file.read()
+
+            # Calculate content hash for potential future deduplication
+            _ = self._calculate_content_hash(file_content)
+
+            # Get storage path
+            file_path = self._get_file_path(attachment_id, safe_filename)
+
+            # Write file to disk asynchronously
+            async with aiofiles.open(file_path, "wb") as f:
+                await f.write(file_content)
+
+            # Create attachment metadata
+            attachment_metadata = AttachmentMetadata(
+                attachment_id=attachment_id,
+                source_type="user",
+                source_id="api_user",
+                mime_type=file.content_type or "application/octet-stream",
+                description=f"User uploaded: {safe_filename}",
+                size=len(file_content),
+                content_url=f"/api/attachments/{attachment_id}",
+                storage_path=str(file_path.relative_to(self.storage_path)),
+                metadata={"original_filename": safe_filename, "upload_method": "api"},
+            )
+
+            logger.info(
+                f"Successfully stored attachment {attachment_id}: {safe_filename} ({len(file_content)} bytes)"
+            )
+            return attachment_metadata
+
+        except Exception as e:
+            logger.error(f"Failed to store attachment: {e}")
+            raise HTTPException(
+                status_code=500, detail=f"Failed to store attachment: {str(e)}"
+            ) from e
+
+    def get_attachment_path(self, attachment_id: str) -> Path | None:
+        """
+        Get the file system path for an attachment by ID.
+
+        Args:
+            attachment_id: The attachment UUID
+
+        Returns:
+            Path to the attachment file, or None if not found
+        """
+        try:
+            # Parse as UUID to validate format
+            uuid.UUID(attachment_id)
+        except ValueError:
+            logger.warning(f"Invalid attachment ID format: {attachment_id}")
+            return None
+
+        # Use hash prefix to directly locate the file
+        hash_prefix = attachment_id[:2]
+        hash_dir = self.storage_path / hash_prefix
+
+        if not hash_dir.is_dir():
+            logger.info(f"Attachment file not found: {attachment_id}")
+            return None
+
+        # Look for files starting with the attachment ID in the hash directory
+        # Use attachment_id* to find both files with and without extensions
+        for file_path in hash_dir.glob(f"{attachment_id}*"):
+            if file_path.is_file():
+                return file_path
+
+        logger.info(f"Attachment file not found: {attachment_id}")
+        return None
+
+    def get_content_type(self, file_path: Path) -> str:
+        """
+        Get the MIME type for a file.
+
+        Args:
+            file_path: Path to the file
+
+        Returns:
+            MIME type string
+        """
+        content_type, _ = mimetypes.guess_type(str(file_path))
+        return content_type or "application/octet-stream"
+
+    def _delete_attachment_file(self, attachment_id: str) -> bool:
+        """
+        Delete an attachment file (private method).
+
+        Args:
+            attachment_id: The attachment UUID
+
+        Returns:
+            True if file was deleted, False if not found
+        """
+        file_path = self.get_attachment_path(attachment_id)
+        if file_path and file_path.exists():
+            try:
+                file_path.unlink()
+                logger.info(f"Deleted attachment file: {attachment_id}")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to delete attachment {attachment_id}: {e}")
+                return False
+        return False
+
+    def _cleanup_orphaned_files(self, referenced_attachment_ids: set[str]) -> int:
+        """
+        Clean up attachment files that are no longer referenced in the database.
+
+        Args:
+            referenced_attachment_ids: Set of attachment IDs that are still referenced
+
+        Returns:
+            Number of files deleted
+        """
+        deleted_count = 0
+
+        # Iterate through hash-prefixed directories (00-ff)
+        for hash_dir in self.storage_path.glob("*/"):
+            if not hash_dir.is_dir():
+                continue
+
+            for file_path in hash_dir.glob("*"):
+                if not file_path.is_file():
+                    continue
+
+                # Extract attachment ID from filename
+                file_stem = file_path.stem
+                try:
+                    uuid.UUID(file_stem)  # Validate it's a UUID
+                    if file_stem not in referenced_attachment_ids:
+                        file_path.unlink()
+                        deleted_count += 1
+                        logger.info(f"Deleted orphaned attachment: {file_stem}")
+                except (ValueError, OSError) as e:
+                    logger.warning(
+                        f"Skipping non-UUID file or deletion error: {file_path}: {e}"
+                    )
+                    continue
+
+        logger.info(f"Cleaned up {deleted_count} orphaned attachment files")
+        return deleted_count

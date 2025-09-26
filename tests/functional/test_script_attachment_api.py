@@ -14,7 +14,6 @@ from family_assistant.scripting.apis.attachments import (
 from family_assistant.scripting.engine import StarlarkConfig, StarlarkEngine
 from family_assistant.scripting.errors import ScriptExecutionError
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.services.attachments import AttachmentService
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
     ATTACHMENT_TOOLS_DEFINITION,
@@ -30,22 +29,21 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
 
-@pytest.fixture
-async def attachment_service(tmp_path: Path) -> AttachmentService:
-    """Create a real AttachmentService for testing."""
-
-    # Create a temporary directory for test attachments
-    test_storage = tmp_path / "test_attachments"
-    test_storage.mkdir(exist_ok=True)
-    return AttachmentService(storage_path=str(test_storage))
+# AttachmentService fixture removed - using AttachmentRegistry directly
 
 
 @pytest.fixture
 async def attachment_registry(
-    attachment_service: AttachmentService,
+    tmp_path: Path,
+    db_engine: AsyncEngine,
 ) -> AttachmentRegistry:
     """Create a real AttachmentRegistry for testing."""
-    return AttachmentRegistry(attachment_service)
+    # Create a temporary directory for test attachments
+    test_storage = tmp_path / "test_attachments"
+    test_storage.mkdir(exist_ok=True)
+    return AttachmentRegistry(
+        storage_path=str(test_storage), db_engine=db_engine, config=None
+    )
 
 
 @pytest.fixture
@@ -253,10 +251,10 @@ class TestAttachmentAPI:
 class TestCreateAttachmentAPI:
     """Test the create_attachment_api factory function."""
 
-    async def test_create_api_with_attachment_service(
+    async def test_create_api_with_attachment_registry(
         self,
         db_engine: AsyncEngine,
-        attachment_service: AttachmentService,
+        attachment_registry: AttachmentRegistry,
     ) -> None:
         """Test creating AttachmentAPI from execution context."""
         async with DatabaseContext(engine=db_engine) as db_context:
@@ -266,7 +264,7 @@ class TestCreateAttachmentAPI:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
-                attachment_service=attachment_service,
+                attachment_registry=attachment_registry,
             )
 
             api = create_attachment_api(execution_context)
@@ -274,11 +272,11 @@ class TestCreateAttachmentAPI:
             assert isinstance(api, AttachmentAPI)
             assert api.conversation_id == "test_conversation"
 
-    async def test_create_api_without_attachment_service(
+    async def test_create_api_without_attachment_registry(
         self,
         db_engine: AsyncEngine,
     ) -> None:
-        """Test creating AttachmentAPI fails without attachment service."""
+        """Test creating AttachmentAPI fails without attachment registry."""
         async with DatabaseContext(engine=db_engine) as db_context:
             execution_context = ToolExecutionContext(
                 interface_type="test",
@@ -286,21 +284,24 @@ class TestCreateAttachmentAPI:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
-                attachment_service=None,  # No attachment service
+                attachment_registry=None,  # No attachment registry
             )
 
-            with pytest.raises(RuntimeError, match="AttachmentService not available"):
+            with pytest.raises(
+                RuntimeError,
+                match="AttachmentRegistry not available in execution context",
+            ):
                 create_attachment_api(execution_context)
 
 
 class TestStarlarkIntegration:
     """Test attachment API integration with Starlark scripts."""
 
-    async def test_script_without_attachment_service(
+    async def test_script_without_attachment_registry(
         self,
         db_engine: AsyncEngine,
     ) -> None:
-        """Test that scripts work without attachment service (functions not available)."""
+        """Test that scripts work without attachment registry (functions not available)."""
         async with DatabaseContext(engine=db_engine) as db_context:
             execution_context = ToolExecutionContext(
                 interface_type="test",
@@ -308,7 +309,7 @@ class TestStarlarkIntegration:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
-                attachment_service=None,  # No attachment service
+                attachment_registry=None,  # No attachment registry
             )
 
             config = StarlarkConfig(enable_print=True)
@@ -330,7 +331,7 @@ print("Hello world")
     async def test_script_with_attachment_functions(
         self,
         db_engine: AsyncEngine,
-        attachment_service: AttachmentService,
+        attachment_registry: AttachmentRegistry,
         sample_attachment: str,
     ) -> None:
         """Test that attachment functions are available in Starlark scripts."""
@@ -341,7 +342,7 @@ print("Hello world")
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
-                attachment_service=attachment_service,
+                attachment_registry=attachment_registry,
             )
 
             # Create tools provider with attachment tools
@@ -391,7 +392,7 @@ result
     async def test_script_attachment_error_handling(
         self,
         db_engine: AsyncEngine,
-        attachment_service: AttachmentService,
+        attachment_registry: AttachmentRegistry,
     ) -> None:
         """Test that attachment function errors are handled gracefully."""
         async with DatabaseContext(engine=db_engine) as db_context:
@@ -401,7 +402,7 @@ result
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
-                attachment_service=attachment_service,
+                attachment_registry=attachment_registry,
             )
 
             config = StarlarkConfig(enable_print=True)
@@ -425,7 +426,7 @@ result == None
     async def test_attachment_list_not_available(
         self,
         db_engine: AsyncEngine,
-        attachment_service: AttachmentService,
+        attachment_registry: AttachmentRegistry,
     ) -> None:
         """Test that attachment_list function is not available in scripts for security."""
         async with DatabaseContext(engine=db_engine) as db_context:
@@ -435,7 +436,7 @@ result == None
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
-                attachment_service=attachment_service,
+                attachment_registry=attachment_registry,
             )
 
             config = StarlarkConfig(enable_print=True)

@@ -9,6 +9,7 @@ import pytest
 
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.services.attachment_registry import AttachmentMetadata
 from family_assistant.tools.types import ToolAttachment, ToolResult, ToolReturnType
 
 
@@ -330,13 +331,24 @@ class TestProcessingServiceMultimodal:
         )
         tool_result = ToolResult(text="Captured camera image", attachment=attachment)
 
-        # Mock the attachment service
-        mock_attachment_service = Mock()
-        mock_attachment_service.store_bytes_as_attachment.return_value = {
-            "attachment_id": "auto_attachment_123",
-            "url": "http://localhost:8000/attachments/auto_attachment_123",
-        }
-        processing_service.attachment_service = mock_attachment_service
+        # Mock the attachment registry
+        mock_attachment_registry = Mock()
+
+        # Mock store_and_register_tool_attachment (new public method) - returns AttachmentMetadata
+        mock_attachment_registry.store_and_register_tool_attachment = AsyncMock(
+            return_value=AttachmentMetadata(
+                attachment_id="auto_attachment_123",
+                source_type="tool",
+                source_id="mock_camera_snapshot",
+                mime_type="image/jpeg",
+                description="Test camera image",
+                size=15,
+                content_url="http://localhost:8000/attachments/auto_attachment_123",
+                storage_path="/tmp/auto_attachment_123.jpeg",
+            )
+        )
+
+        processing_service.attachment_registry = mock_attachment_registry
 
         # Mock tools provider to return ToolResult with attachment (async)
         mock_tools_provider = AsyncMock()
@@ -358,11 +370,16 @@ class TestProcessingServiceMultimodal:
         # Verify that the attachment ID is returned for auto-queuing
         assert result.auto_attachment_id == "auto_attachment_123"
 
-        # Verify attachment was stored
-        mock_attachment_service.store_bytes_as_attachment.assert_called_once()
-        store_call = mock_attachment_service.store_bytes_as_attachment.call_args
-        assert store_call[1]["file_content"] == b"fake jpeg data"
-        assert store_call[1]["content_type"] == "image/jpeg"
+        # Verify attachment was stored and registered
+        mock_attachment_registry.store_and_register_tool_attachment.assert_called_once()
+
+        # Check that store_and_register_tool_attachment was called with correct content
+        call_args = (
+            mock_attachment_registry.store_and_register_tool_attachment.call_args
+        )
+        assert call_args[1]["file_content"] == b"fake jpeg data"
+        assert call_args[1]["content_type"] == "image/jpeg"
+        assert call_args[1]["tool_name"] == "mock_camera_snapshot"
 
     async def test_no_auto_attachment_for_string_results(
         self, processing_service: ProcessingService, mock_db_context: Mock
@@ -394,10 +411,10 @@ class TestProcessingServiceMultimodal:
         # Verify no attachment ID is returned
         assert result.auto_attachment_id is None
 
-    async def test_no_auto_attachment_without_attachment_service(
+    async def test_no_auto_attachment_without_attachment_registry(
         self, processing_service: ProcessingService, mock_db_context: Mock
     ) -> None:
-        """Test that ToolResult attachments don't auto-queue without attachment service"""
+        """Test that ToolResult attachments don't auto-queue without attachment registry"""
         # Mock tool call object
         tool_call = Mock()
         tool_call.id = "test_call_no_service"
@@ -412,8 +429,8 @@ class TestProcessingServiceMultimodal:
         )
         tool_result = ToolResult(text="Generated image", attachment=attachment)
 
-        # No attachment service configured
-        processing_service.attachment_service = None
+        # No attachment registry configured
+        processing_service.attachment_registry = None
 
         # Mock tools provider (async)
         mock_tools_provider = AsyncMock()
@@ -432,7 +449,7 @@ class TestProcessingServiceMultimodal:
             request_confirmation_callback=None,
         )
 
-        # Should not have auto-attachment ID without attachment service
+        # Should not have auto-attachment ID without attachment registry
         assert result.auto_attachment_id is None
 
     async def test_attach_to_response_overrides_auto_attachments(
@@ -443,9 +460,10 @@ class TestProcessingServiceMultimodal:
         # 1. First tool generates attachment -> auto-queued
         # 2. LLM calls attach_to_response -> replaces auto-queued with explicit list
 
-        # Mock attachment service
-        mock_attachment_service = Mock()
-        processing_service.attachment_service = mock_attachment_service
+        # Mock attachment registry and service
+        mock_attachment_registry = Mock()
+        mock_attachment_registry = Mock()
+        processing_service.attachment_registry = mock_attachment_registry
 
         # Simulate two tool calls in sequence
         # First: image generation tool that auto-queues attachment
@@ -462,11 +480,19 @@ class TestProcessingServiceMultimodal:
         )
         image_result = ToolResult(text="Generated image", attachment=attachment)
 
-        # Mock attachment storage
-        mock_attachment_service.store_bytes_as_attachment.return_value = {
-            "attachment_id": "generated_image_123",
-            "url": "http://localhost:8000/attachments/generated_image_123",
-        }
+        # Mock attachment storage - fix for consolidated AttachmentRegistry
+        mock_attachment_registry.store_and_register_tool_attachment = AsyncMock(
+            return_value=AttachmentMetadata(
+                attachment_id="generated_image_123",
+                source_type="tool",
+                source_id="generate_image",
+                mime_type="image/png",
+                description="Generated sunset image",
+                size=13,
+                content_url="http://localhost:8000/attachments/generated_image_123",
+                storage_path="/tmp/generated_image_123.png",
+            )
+        )
 
         # Mock tools provider to return different results based on tool name
         mock_tools_provider = AsyncMock()
@@ -608,12 +634,29 @@ class TestProcessingServiceMultimodal:
         # Question: Should the new attachment be auto-queued or ignored?
         # Answer: It should be auto-queued! Each attachment is independent.
 
-        mock_attachment_service = Mock()
-        mock_attachment_service.store_bytes_as_attachment.return_value = {
-            "attachment_id": "new_attachment_after_explicit",
-            "url": "http://localhost:8000/attachments/new_attachment_after_explicit",
-        }
-        processing_service.attachment_service = mock_attachment_service
+        # Mock attachment registry for this test
+        mock_attachment_registry = Mock()
+
+        # Mock store_and_register_tool_attachment for the new tool attachment
+        mock_attachment_registry.store_and_register_tool_attachment = AsyncMock(
+            return_value=AttachmentMetadata(
+                attachment_id="new_attachment_after_explicit",
+                source_type="tool",
+                source_id="generate_new_image",
+                mime_type="image/jpeg",
+                description="New generated image",
+                size=13,
+                content_url="http://localhost:8000/attachments/new_attachment_after_explicit",
+                storage_path="/tmp/new_attachment_after_explicit.jpeg",
+            )
+        )
+
+        # Mock get_attachment for the attach_to_response tool
+        mock_attachment_registry.get_attachment = AsyncMock(
+            return_value=None
+        )  # Return None for explicit_attachment lookup
+
+        processing_service.attachment_registry = mock_attachment_registry
 
         mock_tools_provider = AsyncMock()
 

@@ -15,28 +15,29 @@ from httpx import AsyncClient
 from PIL import Image
 from sqlalchemy import select
 
-from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.services.attachments import AttachmentService
+from family_assistant.services.attachment_registry import (
+    AttachmentMetadata,
+    AttachmentRegistry,
+)
 from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.context import DatabaseContext
 
 
 @pytest.fixture
-async def attachment_service() -> AsyncMock:
-    """Mock attachment service for testing."""
-    service = AsyncMock(spec=AttachmentService)
-    service.store_bytes_as_attachment.return_value = {
-        "attachment_id": "test-attachment-id",
-        "url": "http://localhost:8000/api/v1/attachments/test-attachment-id",
-        "storage_path": "/tmp/test-attachment-id.png",
-    }
-    return service
-
-
-@pytest.fixture
-async def attachment_registry(attachment_service: AsyncMock) -> AttachmentRegistry:
-    """Create attachment registry with mock service."""
-    return AttachmentRegistry(attachment_service)
+async def mock_attachment_registry() -> AsyncMock:
+    """Mock attachment registry for testing."""
+    registry = AsyncMock(spec=AttachmentRegistry)
+    registry.register_user_attachment.return_value = AttachmentMetadata(
+        attachment_id="test-attachment-id",
+        source_type="user",
+        source_id="api_user",
+        mime_type="image/png",
+        description="Test attachment",
+        size=1000,
+        content_url="http://localhost:8000/api/v1/attachments/test-attachment-id",
+        storage_path="/tmp/test-attachment-id.png",
+    )
+    return registry
 
 
 @pytest.fixture

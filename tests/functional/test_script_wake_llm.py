@@ -16,7 +16,6 @@ from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.services.attachments import AttachmentService
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.events import EventActionType, EventSourceType
 from family_assistant.task_worker import (
@@ -552,8 +551,9 @@ async def test_script_wake_llm_with_attachments(
     # Step 1: Create test attachments
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        attachment_service = AttachmentService(storage_path=temp_dir)
-        attachment_registry = AttachmentRegistry(attachment_service)
+        attachment_registry = AttachmentRegistry(
+            storage_path=temp_dir, db_engine=db_engine, config=None
+        )
 
         # Create mock image attachment
         test_image_content = b"mock_image_data_for_wake_llm_test"
@@ -658,7 +658,7 @@ if motion_detected:
             server_url="http://test:8000",
             app_config={},
             clock=MagicMock(),
-            attachment_service=attachment_service,
+            attachment_registry=attachment_registry,
         )
 
         # Get task worker events from manager

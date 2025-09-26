@@ -36,11 +36,11 @@ class MockAttachmentMetadata:
 
 
 @pytest.fixture
-def mock_attachment_service() -> Mock:
-    """Mock attachment service."""
-    service = Mock()
-    service.get_attachment_metadata = AsyncMock()
-    return service
+def mock_attachment_registry() -> Mock:
+    """Mock attachment registry."""
+    registry = Mock()
+    registry.get_attachment_metadata = AsyncMock()
+    return registry
 
 
 @pytest.fixture
@@ -63,18 +63,20 @@ class TestAttachToResponseTool:
     async def test_attach_to_response_success(
         self,
         db_engine: AsyncEngine,  # noqa: ANN001
-        mock_attachment_service: Mock,
+        mock_attachment_registry: Mock,
         mock_attachment_metadata: MockAttachmentMetadata,
     ) -> None:
         """Test successful attachment bundling."""
         # Setup attachment service mock
-        mock_attachment_service.get_attachment_metadata.return_value = (
+        mock_attachment_registry.get_attachment_metadata.return_value = (
             mock_attachment_metadata
         )
 
         async with DatabaseContext(db_engine) as db_context:
             # Create attachment registry and register the attachment in the database
-            attachment_registry = AttachmentRegistry(mock_attachment_service)
+            attachment_registry = AttachmentRegistry(
+                storage_path="/tmp/test_attachments", db_engine=db_engine, config=None
+            )
             await attachment_registry.register_attachment(
                 db_context=db_context,
                 attachment_id=mock_attachment_metadata.id,
@@ -95,7 +97,7 @@ class TestAttachToResponseTool:
                 user_name="test_user",
                 db_context=db_context,
                 chat_interface=None,
-                attachment_service=mock_attachment_service,
+                attachment_registry=attachment_registry,
             )
 
             # Create ScriptAttachment object for the tool
@@ -129,14 +131,19 @@ class TestAttachToResponseTool:
     async def test_attach_to_response_invalid_attachment(
         self,
         db_engine: AsyncEngine,
-        mock_attachment_service: Mock,
+        mock_attachment_registry: Mock,
     ) -> None:
         """Test attach_to_response with invalid attachment ID."""
 
         # Setup attachment service mock to return None (not found)
-        mock_attachment_service.get_attachment_metadata.return_value = None
+        mock_attachment_registry.get_attachment_metadata.return_value = None
 
         async with DatabaseContext(db_engine) as db_context:
+            # Create attachment registry for this test
+            attachment_registry = AttachmentRegistry(
+                storage_path="/tmp/test_attachments", db_engine=db_engine, config=None
+            )
+
             exec_context = ToolExecutionContext(
                 conversation_id="test_conversation",
                 interface_type="telegram",
@@ -144,7 +151,7 @@ class TestAttachToResponseTool:
                 user_name="test_user",
                 db_context=db_context,
                 chat_interface=None,
-                attachment_service=mock_attachment_service,
+                attachment_registry=attachment_registry,
             )
 
             # Create a mock ScriptAttachment that will fail validation
@@ -160,11 +167,11 @@ class TestAttachToResponseTool:
             assert result_data["status"] == "error"
             assert "No valid attachments found" in result_data["message"]
 
-    async def test_attach_to_response_no_attachment_service(
+    async def test_attach_to_response_no_attachment_registry(
         self,
         db_engine: AsyncEngine,
     ) -> None:
-        """Test attach_to_response without attachment service."""
+        """Test attach_to_response without attachment registry."""
 
         async with DatabaseContext(db_engine) as db_context:
             exec_context = ToolExecutionContext(
@@ -174,7 +181,7 @@ class TestAttachToResponseTool:
                 user_name="test_user",
                 db_context=db_context,
                 chat_interface=None,
-                attachment_service=None,  # No attachment service
+                attachment_registry=None,  # No attachment registry
             )
 
             # Create a mock ScriptAttachment for this test
@@ -188,7 +195,7 @@ class TestAttachToResponseTool:
 
             result_data = json.loads(result)
             assert result_data["status"] == "error"
-            assert "AttachmentService not available" in result_data["message"]
+            assert "AttachmentRegistry not available" in result_data["message"]
 
 
 class TestSendMessageToUserWithAttachments:
@@ -197,12 +204,12 @@ class TestSendMessageToUserWithAttachments:
     async def test_send_message_with_valid_attachments(
         self,
         db_engine: AsyncEngine,
-        mock_attachment_service: Mock,
+        mock_attachment_registry: Mock,
         mock_attachment_metadata: MockAttachmentMetadata,
     ) -> None:
         """Test send_message_to_user with valid attachments."""
         # Setup attachment service mock
-        mock_attachment_service.get_attachment_metadata.return_value = (
+        mock_attachment_registry.get_attachment_metadata.return_value = (
             mock_attachment_metadata
         )
 
@@ -212,7 +219,9 @@ class TestSendMessageToUserWithAttachments:
 
         async with DatabaseContext(db_engine) as db_context:
             # Create attachment registry and register the attachment in the database
-            attachment_registry = AttachmentRegistry(mock_attachment_service)
+            attachment_registry = AttachmentRegistry(
+                storage_path="/tmp/test_attachments", db_engine=db_engine, config=None
+            )
             await attachment_registry.register_attachment(
                 db_context=db_context,
                 attachment_id=mock_attachment_metadata.id,
@@ -232,7 +241,7 @@ class TestSendMessageToUserWithAttachments:
                 user_name="test_user",
                 db_context=db_context,
                 chat_interface=mock_chat_interface,
-                attachment_service=mock_attachment_service,
+                attachment_registry=attachment_registry,
             )
 
             result = await send_message_to_user_tool(
@@ -255,7 +264,7 @@ class TestSendMessageToUserWithAttachments:
     async def test_send_message_without_attachments(
         self,
         db_engine: AsyncEngine,
-        mock_attachment_service: Mock,
+        mock_attachment_registry: Mock,
     ) -> None:
         """Test send_message_to_user without attachments."""
 
@@ -271,7 +280,7 @@ class TestSendMessageToUserWithAttachments:
                 user_name="test_user",
                 db_context=db_context,
                 chat_interface=mock_chat_interface,
-                attachment_service=mock_attachment_service,
+                attachment_registry=None,
             )
 
             result = await send_message_to_user_tool(

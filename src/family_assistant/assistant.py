@@ -8,7 +8,7 @@ import subprocess
 import sys
 import zoneinfo
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import uvicorn
@@ -41,7 +41,6 @@ from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.llm import LLMInterface
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.services.attachments import AttachmentService
 from family_assistant.storage import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.context import (
@@ -80,6 +79,9 @@ from family_assistant.web.app_creator import app as fastapi_app
 from family_assistant.web.app_creator import configure_app_auth
 
 from .telegram_bot import TelegramService
+
+if TYPE_CHECKING:
+    from family_assistant.services.attachment_registry import AttachmentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +166,7 @@ class Assistant:
         self.processing_services_registry: dict[str, ProcessingService] = {}
         self.default_processing_service: ProcessingService | None = None
         self.scraper_instance: PlaywrightScraper | None = None
-        self.attachment_service: AttachmentService | None = None
+        self.attachment_registry: AttachmentRegistry | None = None
         self.document_indexer: DocumentIndexer | None = None
         self.email_indexer: EmailIndexer | None = None
         self.notes_indexer: NotesIndexer | None = None
@@ -255,25 +257,6 @@ class Assistant:
         self.shared_httpx_client = httpx.AsyncClient()
         logger.info("Shared httpx.AsyncClient created.")
 
-        # Initialize AttachmentService
-        attachment_storage_path = self.config.get(
-            "chat_attachment_storage_path",
-            self.config.get("attachment_config", {}).get(
-                "storage_path", "/tmp/chat_attachments"
-            ),
-        )
-        attachment_config = self.config.get("attachment_config")
-        self.attachment_service = AttachmentService(
-            attachment_storage_path, attachment_config
-        )
-        logger.info(
-            f"AttachmentService initialized with path: {attachment_storage_path}"
-        )
-
-        # Store in FastAPI app state for web access
-        fastapi_app.state.attachment_service = self.attachment_service
-        logger.info("AttachmentService stored in FastAPI app state.")
-
         # Check if Telegram is enabled
         self.telegram_enabled = self.config.get("telegram_enabled", True)
 
@@ -357,6 +340,33 @@ class Assistant:
         # Configure authentication with the database engine
         configure_app_auth(fastapi_app, self.database_engine)
         logger.info("Authentication configured with database engine")
+
+        # Initialize AttachmentRegistry (consolidates file storage and database metadata)
+        # Must come after database engine initialization
+        attachment_storage_path = self.config.get(
+            "chat_attachment_storage_path",
+            self.config.get("attachment_config", {}).get(
+                "storage_path", "/tmp/chat_attachments"
+            ),
+        )
+        attachment_config = self.config.get("attachment_config")
+
+        # Import locally to avoid circular imports
+        from family_assistant.services.attachment_registry import (  # noqa: PLC0415
+            AttachmentRegistry,
+        )
+
+        self.attachment_registry = AttachmentRegistry(
+            storage_path=attachment_storage_path,
+            db_engine=self.database_engine,
+            config=attachment_config,
+        )
+
+        # Store in FastAPI app state for web access
+        fastapi_app.state.attachment_registry = self.attachment_registry
+        logger.info(
+            f"AttachmentRegistry initialized with path: {attachment_storage_path}"
+        )
 
         # Setup error logging to database if enabled
         error_logging_config = self.config.get("logging", {}).get("database_errors", {})
@@ -777,7 +787,7 @@ class Assistant:
                 context_providers=context_providers,
                 server_url=self.config["server_url"],
                 app_config=self.config,
-                attachment_service=self.attachment_service,
+                attachment_registry=self.attachment_registry,
                 event_sources=self.event_processor.sources
                 if self.event_processor
                 else None,
@@ -856,7 +866,7 @@ class Assistant:
                 processing_service=self.default_processing_service,
                 processing_services_registry=self.processing_services_registry,
                 app_config=self.config,
-                attachment_service=self.attachment_service,
+                attachment_registry=self.attachment_registry,
                 get_db_context_func=self._get_db_context_for_telegram,
                 # use_batching argument removed
             )

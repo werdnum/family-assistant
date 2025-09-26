@@ -229,20 +229,11 @@ async def get_current_active_user(request: Request) -> dict:
 
 async def get_attachment_registry(request: Request) -> AttachmentRegistry:
     """Retrieves the AttachmentRegistry instance from app state."""
-    # Try to get cached registry first
-    if hasattr(request.app.state, "attachment_registry"):
-        return request.app.state.attachment_registry
-
-    # Create and cache if not exists
-    attachment_service = getattr(request.app.state, "attachment_service", None)
-    if not attachment_service:
-        logger.error("AttachmentService not found in app state.")
+    registry = getattr(request.app.state, "attachment_registry", None)
+    if not registry:
+        logger.error("AttachmentRegistry not found in app state.")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="AttachmentService not configured or available.",
+            detail="AttachmentRegistry not configured or available.",
         )
-
-    # Create and cache AttachmentRegistry
-    registry = AttachmentRegistry(attachment_service)
-    request.app.state.attachment_registry = registry
     return registry

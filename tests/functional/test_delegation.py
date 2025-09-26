@@ -23,7 +23,6 @@ from family_assistant.processing import (
     ProcessingServiceConfig,
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.services.attachments import AttachmentService
 from family_assistant.storage import message_history_table  # Updated import
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
@@ -778,11 +777,12 @@ async def test_delegate_to_service_with_attachments(
     """Test delegating requests with attachments."""
     logger.info("--- Test: Delegation With Attachments ---")
 
-    # Create attachment service
+    # Create attachment registry
     test_storage = tmp_path / "test_attachments"
     test_storage.mkdir(exist_ok=True)
-    attachment_service = AttachmentService(storage_path=str(test_storage))
-    attachment_registry = AttachmentRegistry(attachment_service)
+    attachment_registry = AttachmentRegistry(
+        storage_path=str(test_storage), db_engine=db_engine, config=None
+    )
 
     # Create a test attachment
     test_content = b"Test image content for delegation"
