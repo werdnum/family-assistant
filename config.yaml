@@ -164,6 +164,8 @@ default_profile_settings:
       # Image generation tools
       - "generate_image" # Generate images from text using AI
       - "transform_image" # Transform existing images based on instructions
+      # Image manipulation tools
+      - "highlight_image" # Highlight or annotate areas in images
     enable_mcp_server_ids: # Explicitly define MCP servers for the default profile
       - "time"
       - "brave"
