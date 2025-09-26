@@ -271,7 +271,20 @@ class LocalToolsProvider:
             logger.debug(f"Tool '{name}' - Initial call_args (copy): {call_args}")
 
             # Process attachment arguments (convert string IDs to ScriptAttachment objects)
-            call_args = await process_attachment_arguments(call_args, context)
+            try:
+                # Find the tool definition to know which parameters are attachments
+                tool_definition = None
+                for definition in self._definitions:
+                    if definition.get("function", {}).get("name") == name:
+                        tool_definition = definition
+                        break
+
+                call_args = await process_attachment_arguments(
+                    call_args, context, tool_definition
+                )
+            except ValueError as e:
+                logger.error(f"Attachment processing failed for tool '{name}': {e}")
+                return f"Error: {str(e)}"
             sig = inspect.signature(callable_func)
 
             resolved_hints = {}

@@ -95,7 +95,9 @@ async def fetch_attachment_object(
 
 
 async def process_attachment_arguments(
-    arguments: dict[str, Any], context: ToolExecutionContext
+    arguments: dict[str, Any],
+    context: ToolExecutionContext,
+    tool_definition: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Process arguments and convert attachment IDs to ScriptAttachment objects.
@@ -103,16 +105,43 @@ async def process_attachment_arguments(
     Args:
         arguments: Raw arguments from tool call
         context: Tool execution context
+        tool_definition: Tool definition to check which parameters are attachment types
 
     Returns:
         Processed arguments with ScriptAttachment objects
     """
+
+    def is_attachment_parameter(param_name: str, param_value: object) -> bool:
+        """Check if a parameter is defined as an attachment type."""
+        if not tool_definition:
+            # Fallback: if we don't have the tool definition, use the old heuristic
+            return is_attachment_id(param_value)
+
+        # Get the parameter definition from the tool schema
+        properties = (
+            tool_definition.get("function", {})
+            .get("parameters", {})
+            .get("properties", {})
+        )
+        param_def = properties.get(param_name, {})
+
+        # Check if this parameter is defined as attachment type
+        if param_def.get("type") == "attachment":
+            return True
+
+        # Check if it's an array of attachments
+        if param_def.get("type") == "array":
+            items = param_def.get("items", {})
+            if items.get("type") == "attachment":
+                return True
+
+        return False
+
     processed_args = {}
 
     for key, value in arguments.items():
-        # Check for attachment ID patterns
-        if isinstance(value, list):
-            # Array of potential attachment IDs
+        if isinstance(value, list) and is_attachment_parameter(key, value):
+            # Array of attachment IDs
             processed_values = []
             for item in value:
                 if is_attachment_id(item):
@@ -126,13 +155,17 @@ async def process_attachment_arguments(
                             f"Replaced attachment ID {item} with attachment object in array {key}"
                         )
                     else:
-                        logger.error(
-                            f"Could not fetch attachment {item} from array {key}, skipping"
+                        raise ValueError(
+                            f"Attachment '{item}' not found or access denied in array parameter '{key}'"
                         )
                 else:
                     processed_values.append(item)
             processed_args[key] = processed_values
-        elif is_attachment_id(value):
+        elif (
+            is_attachment_parameter(key, value)
+            and isinstance(value, str)
+            and is_attachment_id(value)
+        ):
             # Single attachment ID
             logger.debug(f"Processing single attachment ID {value} for parameter {key}")
             attachment = await fetch_attachment_object(value, context)
@@ -142,10 +175,9 @@ async def process_attachment_arguments(
                     f"Replaced attachment ID {value} with attachment object for parameter {key}"
                 )
             else:
-                logger.error(
-                    f"Could not fetch attachment {value} for parameter {key}, removing parameter"
+                raise ValueError(
+                    f"Attachment '{value}' not found or access denied for parameter '{key}'"
                 )
-                # Don't add this parameter to processed_args
         else:
             # Regular parameter, keep as-is
             processed_args[key] = value
