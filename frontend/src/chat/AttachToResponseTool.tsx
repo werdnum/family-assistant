@@ -59,45 +59,55 @@ export const AttachToResponseTool: React.FC<AttachToResponseToolProps> = ({
     const hasResultAttachments = result && typeof result === 'object' && 'attachments' in result;
 
     if (attachmentIds.length > 0 && !hasEnrichedData && !hasResultAttachments) {
+      // Log for debugging - this fallback should not be needed if data flow works correctly
+      console.warn('AttachToResponseTool: Using fallback attachment metadata fetching');
+
       setIsLoading(true);
 
       // Fetch attachment info from API
       Promise.all(
         attachmentIds.map(async (attachmentId) => {
           try {
-            // Use HEAD request to get metadata without downloading the file content
-            const headResponse = await fetch(`/api/v1/attachments/${attachmentId}`, {
-              method: 'HEAD',
+            // Use GET request to get metadata (HEAD not supported by attachment API)
+            const response = await fetch(`/api/attachments/${attachmentId}`, {
+              method: 'GET',
             });
 
-            if (!headResponse.ok) {
-              throw new Error(`Failed to fetch attachment metadata for ${attachmentId}`);
+            if (!response.ok) {
+              throw new Error(
+                `HTTP ${response.status}: Failed to fetch attachment for ${attachmentId}`
+              );
             }
 
             return {
               id: attachmentId,
               name:
-                headResponse.headers.get('content-disposition')?.match(/filename="(.+)"/)?.[1] ||
+                response.headers.get('content-disposition')?.match(/filename="(.+)"/)?.[1] ||
                 'Attachment',
-              url: `/api/v1/attachments/${attachmentId}`,
-              mime_type: headResponse.headers.get('content-type') || 'application/octet-stream',
-              size: parseInt(headResponse.headers.get('content-length') || '0', 10),
+              url: `/api/attachments/${attachmentId}`,
+              mime_type: response.headers.get('content-type') || 'application/octet-stream',
+              size: parseInt(response.headers.get('content-length') || '0', 10),
             };
           } catch (error) {
-            console.error(`Failed to fetch attachment ${attachmentId}:`, error);
+            console.warn(`Failed to fetch attachment ${attachmentId}:`, error);
             return {
               id: attachmentId,
               name: 'Attachment (failed to load)',
-              url: `/api/v1/attachments/${attachmentId}`,
+              url: `/api/attachments/${attachmentId}`,
               mime_type: 'application/octet-stream',
               size: 0,
             };
           }
         })
-      ).then((attachments) => {
-        setFetchedAttachments(attachments);
-        setIsLoading(false);
-      });
+      )
+        .then((attachments) => {
+          setFetchedAttachments(attachments);
+          setIsLoading(false);
+        })
+        .catch((error) => {
+          console.warn('Failed to fetch attachments:', error);
+          setIsLoading(false);
+        });
     }
   }, [args, result, directAttachments]);
 

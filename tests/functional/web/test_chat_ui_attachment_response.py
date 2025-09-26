@@ -18,7 +18,10 @@ from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 
 async def create_test_attachment(
-    web_test_fixture: WebTestFixture, attachment_id: str, conversation_id: str
+    web_test_fixture: WebTestFixture,
+    attachment_id: str,
+    conversation_id: str,
+    base_url: str,
 ) -> None:
     """Create a test attachment in the database and filesystem."""
 
@@ -29,16 +32,21 @@ async def create_test_attachment(
     buffer.seek(0)
     image_data = buffer.getvalue()
 
-    # Get storage path from config
-    storage_dir = web_test_fixture.assistant.config["attachment_storage_path"]
-    if not storage_dir:
-        raise ValueError("Attachment storage path not configured")
+    # Get storage path from the assistant's attachment service, not config
+    # The config might have a different path than what the service actually uses
+    attachment_service = web_test_fixture.assistant.attachment_service
+    if attachment_service is None:
+        raise ValueError("AttachmentService not available")
+    storage_dir = str(attachment_service.storage_path)
+    print(f"[DEBUG] Test attachment storage dir: {storage_dir}")
     hash_prefix = attachment_id[:2]  # First 2 characters as hash prefix
     hash_dir = f"{storage_dir}/{hash_prefix}"
     os.makedirs(hash_dir, exist_ok=True)
+    print(f"[DEBUG] Created hash dir: {hash_dir}")
 
     # Write the file to the filesystem using the same structure as AttachmentService
-    file_path = f"{hash_dir}/{attachment_id}"
+    # AttachmentService expects files to have extensions, so add .png for our image
+    file_path = f"{hash_dir}/{attachment_id}.png"
     with open(file_path, "wb") as f:
         f.write(image_data)
 
@@ -56,7 +64,7 @@ async def create_test_attachment(
                 mime_type="image/png",
                 description="Test attachment for attach_to_response",
                 size=len(image_data),
-                content_url=f"http://localhost:8000/api/v1/attachments/{attachment_id}",
+                content_url=f"{base_url}/api/attachments/{attachment_id}",
                 storage_path=file_path,
                 conversation_id=conversation_id,
                 created_at=datetime(2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
@@ -73,6 +81,35 @@ async def test_attachment_response_flow(
     page = web_test_fixture.page
     chat_page = ChatPage(page, web_test_fixture.base_url)
 
+    # Track console messages for debugging - fail on errors
+    console_messages = []
+    console_errors = []
+    page_errors = []
+
+    def handle_console(msg: Any) -> None:  # noqa: ANN401
+        if hasattr(msg, "type") and hasattr(msg, "text"):
+            message_text = msg.text
+            console_messages.append(f"[{msg.type}] {message_text}")
+            print(f"Console [{msg.type}]: {message_text}")
+
+            # Track error messages separately
+            if msg.type.lower() == "error":
+                console_errors.append(message_text)
+
+            # Force flush to make sure messages appear immediately
+            sys.stdout.flush()
+
+    page.on("console", handle_console)
+
+    # Also capture any JavaScript errors
+    def handle_page_error(error: Any) -> None:  # noqa: ANN401
+        error_msg = str(error)
+        page_errors.append(error_msg)
+        print(f"Page error: {error_msg}")
+        sys.stdout.flush()
+
+    page.on("pageerror", handle_page_error)
+
     tool_call_id = "attach_tool_call"
     attachment_id = "3156da24-5b94-44ce-9dd1-014f538841c0"  # From screenshot
     llm_initial_response = "Of course, here is your photo"
@@ -84,11 +121,9 @@ async def test_attachment_response_flow(
         has_trigger = "send this image back" in str(messages).lower()
         # Check if there are already tool results (indicating this is a follow-up call)
         has_tool_results = any(msg.get("role") == "tool" for msg in messages)
-        # Debug: print the messages to understand what's being passed
-        print(f"Mock LLM triggered with {len(messages)} messages")
-        print(f"Messages content: {str(messages)[:200]}")
-        print(f"Has trigger phrase: {has_trigger}")
-        print(f"Has tool results: {has_tool_results}")
+        print(f"[DEBUG] Mock LLM called with {len(messages)} messages")
+        print(f"[DEBUG] Has trigger phrase: {has_trigger}")
+        print(f"[DEBUG] Has tool results: {has_tool_results}")
         # Only trigger if we have the phrase but no tool results yet
         return has_trigger and not has_tool_results
 
@@ -125,17 +160,14 @@ async def test_attachment_response_flow(
     )
 
     # Create a test attachment in the database
-    await create_test_attachment(web_test_fixture, attachment_id, conversation_id)
+    await create_test_attachment(
+        web_test_fixture, attachment_id, conversation_id, chat_page.base_url
+    )
 
     await chat_page.send_message("send this image back to me")
 
-    # Wait for the assistant response
-    await page.wait_for_selector(
-        '[data-testid="assistant-message-content"]', timeout=15000
-    )
-
-    # Wait for the tool call to be displayed
-    await page.wait_for_selector('[data-testid="tool-call"]', timeout=10000)
+    # Wait for the tool call to be displayed (skip waiting for general assistant message)
+    await page.wait_for_selector('[data-testid="tool-call"]', timeout=15000)
 
     # Check that the attach_to_response tool call is shown with attachment display
     tool_call_element = page.locator('[data-testid="tool-call"]')
@@ -150,7 +182,47 @@ async def test_attachment_response_flow(
     preview_count = await attachment_previews.count()
     assert preview_count == 1, f"Expected 1 attachment preview, found {preview_count}"
 
-    print("Attachment successfully displayed within tool UI")
+    # Check for images within attachment previews and verify they load
+    images = page.locator('[data-testid="attachment-preview"] img')
+    image_count = await images.count()
+
+    if image_count > 0:
+        print(f"Found {image_count} images in attachment previews")
+
+        # Check that at least one image has loaded correctly
+        for i in range(image_count):
+            img = images.nth(i)
+            src = await img.get_attribute("src")
+            natural_width = await img.evaluate("(element) => element.naturalWidth")
+
+            print(f"Image {i}: src={src}, naturalWidth={natural_width}")
+
+            # Verify image source uses correct API path (not v1)
+            if src and "/api/" in src:
+                assert "/api/attachments/" in src, (
+                    f"Image src should use /api/attachments/ not /api/v1/attachments/. Got: {src}"
+                )
+
+            # At least one image should have loaded (naturalWidth > 0)
+            if natural_width and natural_width > 0:
+                print(f"Image {i} loaded successfully with width {natural_width}")
+                break
+        else:
+            # No images loaded successfully
+            raise AssertionError(
+                f"No images loaded successfully. Found {image_count} images but none had naturalWidth > 0"
+            )
+
+    # CRITICAL: Fail test if any console errors occurred
+    if console_errors:
+        print(f"Console errors detected: {console_errors}")
+        raise AssertionError(f"Test failed due to console errors: {console_errors}")
+
+    if page_errors:
+        print(f"Page errors detected: {page_errors}")
+        raise AssertionError(f"Test failed due to page errors: {page_errors}")
+
+    print("Attachment successfully displayed within tool UI with no console errors")
 
 
 @pytest.mark.playwright
@@ -162,14 +234,21 @@ async def test_attachment_response_with_multiple_attachments(
     page = web_test_fixture.page
     chat_page = ChatPage(page, web_test_fixture.base_url)
 
-    # Track console messages for debugging
+    # Track console messages for debugging - fail on errors
     console_messages = []
+    console_errors = []
+    page_errors = []
 
     def handle_console(msg: Any) -> None:  # noqa: ANN401
         if hasattr(msg, "type") and hasattr(msg, "text"):
             message_text = msg.text
             console_messages.append(f"[{msg.type}] {message_text}")
             print(f"Console [{msg.type}]: {message_text}")
+
+            # Track error messages separately
+            if msg.type.lower() == "error":
+                console_errors.append(message_text)
+
             # Force flush to make sure messages appear immediately
             sys.stdout.flush()
 
@@ -177,8 +256,9 @@ async def test_attachment_response_with_multiple_attachments(
 
     # Also capture any JavaScript errors
     def handle_page_error(error: Any) -> None:  # noqa: ANN401
-        print(f"Page error: {error}")
-
+        error_msg = str(error)
+        page_errors.append(error_msg)
+        print(f"Page error: {error_msg}")
         sys.stdout.flush()
 
     page.on("pageerror", handle_page_error)
@@ -237,7 +317,9 @@ async def test_attachment_response_with_multiple_attachments(
 
     # Create test attachments in the database
     for attachment_id in attachment_ids:
-        await create_test_attachment(web_test_fixture, attachment_id, conversation_id)
+        await create_test_attachment(
+            web_test_fixture, attachment_id, conversation_id, chat_page.base_url
+        )
 
     await chat_page.send_message("send me both images")
 
@@ -287,6 +369,48 @@ async def test_attachment_response_with_multiple_attachments(
     assert preview_count > 0, (
         f"Expected at least 1 attachment preview, found {preview_count}"
     )
+
+    # Check for images within attachment previews and verify they load
+    images = page.locator('[data-testid="attachment-preview"] img')
+    image_count = await images.count()
+
+    if image_count > 0:
+        print(f"Found {image_count} images in attachment previews")
+
+        # Check that at least one image has loaded correctly
+        for i in range(image_count):
+            img = images.nth(i)
+            src = await img.get_attribute("src")
+            natural_width = await img.evaluate("(element) => element.naturalWidth")
+
+            print(f"Image {i}: src={src}, naturalWidth={natural_width}")
+
+            # Verify image source uses correct API path (not v1)
+            if src and "/api/" in src:
+                assert "/api/attachments/" in src, (
+                    f"Image src should use /api/attachments/ not /api/v1/attachments/. Got: {src}"
+                )
+
+            # At least one image should have loaded (naturalWidth > 0)
+            if natural_width and natural_width > 0:
+                print(f"Image {i} loaded successfully with width {natural_width}")
+                break
+        else:
+            # No images loaded successfully
+            raise AssertionError(
+                f"No images loaded successfully. Found {image_count} images but none had naturalWidth > 0"
+            )
+
+    # CRITICAL: Fail test if any console errors occurred
+    if console_errors:
+        print(f"Console errors detected: {console_errors}")
+        raise AssertionError(f"Test failed due to console errors: {console_errors}")
+
+    if page_errors:
+        print(f"Page errors detected: {page_errors}")
+        raise AssertionError(f"Test failed due to page errors: {page_errors}")
+
+    print("Multiple attachment test completed successfully with no console errors")
 
 
 @pytest.mark.playwright

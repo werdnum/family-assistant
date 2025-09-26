@@ -206,6 +206,27 @@ export const handlers = [
     });
   }),
 
+  // Mock attachment GET endpoint - returns attachment data with proper headers
+  http.get('/api/attachments/:attachmentId', ({ params }) => {
+    const { attachmentId } = params;
+
+    // Create a simple test image binary data (small PNG)
+    const pngData = new Uint8Array([
+      137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 100, 0, 0, 0, 100, 8,
+      2, 0, 0, 0, 255, 128, 2, 3, 0, 0, 0, 185, 73, 68, 65, 84, 120, 156, 237, 193, 1, 13, 0, 0, 0,
+      130, 32, 251, 79, 109, 14, 55, 160, 0, 0, 0, 0, 0, 0, 0, 0,
+    ]);
+
+    return new HttpResponse(pngData, {
+      status: 200,
+      headers: {
+        'Content-Type': 'image/png',
+        'Content-Length': pngData.length.toString(),
+        'Content-Disposition': `inline; filename="test-attachment-${attachmentId}.png"`,
+      },
+    });
+  }),
+
   http.delete('/api/attachments/:attachmentId', () => {
     return HttpResponse.json({
       message: 'Attachment deleted successfully',
