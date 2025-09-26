@@ -123,6 +123,8 @@ class TestAttachToResponseTool:
             assert result_data["status"] == "attachments_queued"
             assert result_data["attachment_ids"] == [mock_attachment_metadata.id]
             assert result_data["count"] == 1
+            assert "Successfully attached 1 attachment" in result_data["message"]
+            assert "No further action needed" in result_data["message"]
 
     async def test_attach_to_response_invalid_attachment(
         self,
