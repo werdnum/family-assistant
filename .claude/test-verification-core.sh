@@ -111,6 +111,8 @@ check_test_status() {
         echo "❌ Tests failed after modifying $LAST_MOD_FILE at $LAST_MOD_TIME" >&2
         echo "You MUST fix failing tests before finishing" >&2
         echo "Reminder: commits are not accepted without a passing run of poe test." >&2
+        echo "This means that there were NO test failures before you started, there are no pre-existing issues." >&2
+        echo "NO EXCUSES! Even if you've made 'substantial progress'." >&2
         echo "If you believe the failure to be a flake, prove it by rerunning poe test to get a passing result." >&2
         echo "If you have other feedback to address, do that first – you will need to re-run tests after making any further tests." >&2
         if [ -n "$LAST_TEST_ATTEMPT_COMMAND" ]; then
