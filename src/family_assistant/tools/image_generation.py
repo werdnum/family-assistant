@@ -31,7 +31,7 @@ IMAGE_GENERATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "generate_image",
-            "description": "Generate a new image from text description using AI",
+            "description": "Generate and display a new image from text description using AI",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -54,7 +54,7 @@ IMAGE_GENERATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "transform_image",
-            "description": "Transform an existing image based on text instruction. Works for editing (remove objects), styling (make it look like a painting), or variations (same scene at night).",
+            "description": "Transform and display an existing image based on text instruction. Works for editing (remove objects), styling (make it look like a painting), or variations (same scene at night).",
             "parameters": {
                 "type": "object",
                 "properties": {
