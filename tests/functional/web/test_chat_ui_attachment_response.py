@@ -32,17 +32,17 @@ async def create_test_attachment(
     buffer.seek(0)
     image_data = buffer.getvalue()
 
-    # Get storage path from the assistant's attachment service, not config
+    # Get storage path from the assistant's attachment registry, not config
     # The config might have a different path than what the service actually uses
-    attachment_service = web_test_fixture.assistant.attachment_service
-    if attachment_service is None:
-        raise ValueError("AttachmentService not available")
-    storage_dir = str(attachment_service.storage_path)
-    print(f"[DEBUG] Test attachment storage dir: {storage_dir}")
+    attachment_registry = web_test_fixture.assistant.attachment_registry
+    if attachment_registry is None:
+        raise ValueError("AttachmentRegistry not available")
+    storage_dir = str(attachment_registry.storage_path)
+    # Test attachment storage dir: {storage_dir}
     hash_prefix = attachment_id[:2]  # First 2 characters as hash prefix
     hash_dir = f"{storage_dir}/{hash_prefix}"
     os.makedirs(hash_dir, exist_ok=True)
-    print(f"[DEBUG] Created hash dir: {hash_dir}")
+    # Created hash dir: {hash_dir}
 
     # Write the file to the filesystem using the same structure as AttachmentService
     # AttachmentService expects files to have extensions, so add .png for our image
@@ -121,9 +121,7 @@ async def test_attachment_response_flow(
         has_trigger = "send this image back" in str(messages).lower()
         # Check if there are already tool results (indicating this is a follow-up call)
         has_tool_results = any(msg.get("role") == "tool" for msg in messages)
-        print(f"[DEBUG] Mock LLM called with {len(messages)} messages")
-        print(f"[DEBUG] Has trigger phrase: {has_trigger}")
-        print(f"[DEBUG] Has tool results: {has_tool_results}")
+        # Mock LLM called with {len(messages)} messages, trigger: {has_trigger}, tool_results: {has_tool_results}
         # Only trigger if we have the phrase but no tool results yet
         return has_trigger and not has_tool_results
 
@@ -506,3 +504,155 @@ async def test_attachment_response_error_handling(
     assert error_found or preview_count == 0 or failed_to_load_found, (
         "Expected either an error message in tool result, no attachment previews, or 'failed to load' previews for invalid attachment ID"
     )
+
+
+@pytest.mark.playwright
+async def test_tool_attachment_persistence_after_page_reload(
+    web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
+) -> None:
+    """
+    Test that tool-generated attachments persist after page reload.
+
+    This is the core test for the bug fix: tool attachments were being stored
+    but not registered in the database, causing them to 404 after page reload.
+    """
+    page = web_test_fixture.page
+    chat_page = ChatPage(page, web_test_fixture.base_url)
+
+    # Create a test attachment to simulate a tool-generated attachment
+    attachment_id = "3156da24-5b94-44ce-9dd1-014f538841c0"  # Valid UUID
+
+    # Mock the LLM to respond with attach_to_response tool call
+    def should_trigger_attach_tool(args: dict[str, list[dict[str, str]]]) -> bool:
+        messages = args.get("messages", [])
+        # Check if user message contains the trigger phrase
+        has_trigger = any(
+            "show attachment" in msg.get("content", "").lower()
+            for msg in messages
+            if msg.get("role") == "user"
+        )
+        # Check if there are already tool results (indicating this is a follow-up call)
+        has_tool_results = any(msg.get("role") == "tool" for msg in messages)
+        # Only trigger if we have the phrase but no tool results yet
+        return has_trigger and not has_tool_results
+
+    tool_call_id = "test-tool-persistence-call-123"
+    llm_response = "I'll show you the attachment now."
+
+    mock_llm_client.rules = [
+        (
+            should_trigger_attach_tool,
+            LLMOutput(
+                content=llm_response,
+                tool_calls=[
+                    ToolCallItem(
+                        id=tool_call_id,
+                        type="function",
+                        function=ToolCallFunction(
+                            name="attach_to_response",
+                            arguments=json.dumps({"attachment_ids": [attachment_id]}),
+                        ),
+                    )
+                ],
+            ),
+        )
+    ]
+
+    # Navigate and trigger the tool attachment
+    await chat_page.navigate_to_chat()
+
+    # Extract conversation ID from the page URL
+    page_url = page.url
+    conversation_id = (
+        page_url.split("conversation_id=")[-1]
+        if "conversation_id=" in page_url
+        else "web_conv_test"
+    )
+
+    # Create a test attachment in the database with the correct conversation ID
+    await create_test_attachment(
+        web_test_fixture, attachment_id, conversation_id, web_test_fixture.base_url
+    )
+
+    await chat_page.send_message("show attachment")
+
+    # Wait for tool execution and attachment display
+    await page.wait_for_selector('[data-testid="tool-call"]', timeout=15000)
+    print("[DEBUG] Tool call found")
+    await page.wait_for_selector('[data-testid="attachment-preview"]', timeout=10000)
+    print("[DEBUG] Attachment preview found")
+
+    # Verify attachment is displayed initially
+    attachment_preview = page.locator('[data-testid="attachment-preview"]').first
+    await attachment_preview.wait_for(state="visible", timeout=5000)
+    print("[DEBUG] Attachment preview is visible")
+
+    # Get the attachment URL from the img element
+    img_element = attachment_preview.locator("img").first
+    await img_element.wait_for(state="visible", timeout=5000)
+    attachment_url = await img_element.get_attribute("src")
+    assert attachment_url is not None, "Attachment should have a valid URL"
+
+    # Convert relative URL to absolute if needed for API requests
+    if attachment_url.startswith("/"):
+        attachment_url = f"{web_test_fixture.base_url}{attachment_url}"
+
+    # Verify the attachment actually loads (not a 404)
+    img_response = await page.request.get(attachment_url)
+    assert img_response.status == 200, (
+        f"Attachment should be accessible initially, got {img_response.status}"
+    )
+
+    # CRITICAL TEST: Reload the page
+    # Reloading page to test persistence...
+    await page.reload()
+    await page.wait_for_load_state("networkidle")
+
+    # Wait for the chat history to reload
+    await page.wait_for_selector('[data-testid="tool-call"]', timeout=10000)
+
+    # THE BUG FIX TEST: Verify attachment is still visible and accessible after reload
+    try:
+        await page.wait_for_selector(
+            '[data-testid="attachment-preview"]', timeout=10000
+        )
+        attachment_preview_after_reload = page.locator(
+            '[data-testid="attachment-preview"]'
+        ).first
+        await attachment_preview_after_reload.wait_for(state="visible", timeout=5000)
+
+        # Get the attachment URL after reload
+        img_element_after_reload = attachment_preview_after_reload.locator("img").first
+        await img_element_after_reload.wait_for(state="visible", timeout=5000)
+        attachment_url_after_reload = await img_element_after_reload.get_attribute(
+            "src"
+        )
+
+        # CORE ASSERTION: The attachment should still be accessible (not 404)
+        if attachment_url_after_reload:
+            # Convert relative URL to absolute if needed for API requests
+            if attachment_url_after_reload.startswith("/"):
+                attachment_url_after_reload = (
+                    f"{web_test_fixture.base_url}{attachment_url_after_reload}"
+                )
+
+            img_response_after_reload = await page.request.get(
+                attachment_url_after_reload
+            )
+            assert img_response_after_reload.status == 200, (
+                f"TOOL ATTACHMENT PERSISTENCE BUG! "
+                f"Got {img_response_after_reload.status} when accessing {attachment_url_after_reload} after page reload. "
+                f"This indicates the attachment was not properly registered in the database."
+            )
+
+        print(
+            "[SUCCESS] Tool attachment persisted after page reload - bug fix verified!"
+        )
+
+    except Exception as e:
+        # If we can't find the attachment after reload, that's the bug!
+        pytest.fail(
+            f"TOOL ATTACHMENT PERSISTENCE BUG! "
+            f"Tool attachment disappeared after page reload: {e}. "
+            f"This indicates tool attachments are stored as files but not registered in the database."
+        )

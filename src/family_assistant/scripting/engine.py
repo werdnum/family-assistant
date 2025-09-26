@@ -187,7 +187,7 @@ class StarlarkEngine:
             module.add_callable("wake_llm", self._create_wake_llm_function())
 
             # Add attachment API if we have execution context with attachment service
-            if execution_context and execution_context.attachment_service:
+            if execution_context and execution_context.attachment_registry:
                 try:
                     attachment_api = create_attachment_api(
                         execution_context, main_loop=self._main_loop

@@ -13,7 +13,6 @@ from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.services.attachments import AttachmentService
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.events import EventActionType, EventSourceType
 from family_assistant.task_worker import (
@@ -45,12 +44,14 @@ class TestAttachmentWorkflows:
     """Test complete attachment manipulation workflows."""
 
     @pytest.fixture
-    async def attachment_service(self, tmp_path: Path) -> AttachmentService:
-        """Create a real AttachmentService for testing."""
+    async def attachment_registry(
+        self, tmp_path: Path, db_engine: AsyncEngine
+    ) -> AttachmentRegistry:
+        """Create a real AttachmentRegistry for testing."""
         # Create a temporary directory for test attachments
         test_storage = tmp_path / "test_attachments"
         test_storage.mkdir(exist_ok=True)
-        return AttachmentService(storage_path=str(test_storage))
+        return AttachmentRegistry(storage_path=str(test_storage), db_engine=db_engine)
 
     @pytest.fixture
     async def attachment_tools_provider(self) -> ToolsProvider:
@@ -82,7 +83,7 @@ class TestAttachmentWorkflows:
         self,
         db_engine: AsyncEngine,
         attachment_tools_provider: ToolsProvider,
-        attachment_service: AttachmentService,
+        attachment_registry: AttachmentRegistry,
     ) -> None:
         """Test Camera → Annotate → Response workflow."""
         async with DatabaseContext(engine=db_engine) as db_context:
@@ -93,7 +94,7 @@ class TestAttachmentWorkflows:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
-                attachment_service=attachment_service,
+                attachment_registry=attachment_registry,
             )
 
             # Step 1: Get camera snapshot (using mock camera tool)
@@ -118,26 +119,24 @@ class TestAttachmentWorkflows:
                 camera_content = b"fake_camera_image_data"
                 camera_mime = "image/png"
 
-            # Store the camera attachment using the attachment service to get an ID
-            camera_data = attachment_service.store_bytes_as_attachment(
+            # Use the attachment registry directly (already configured)
+            # Store file first, then register as tool attachment
+            camera_data = await attachment_registry._store_file_only(
                 camera_content,
                 "camera_snapshot.png",
                 camera_mime,
             )
-            camera_attachment_id = camera_data["attachment_id"]
+            camera_attachment_id = camera_data.attachment_id
 
-            # Register the camera attachment in the metadata database
-            attachment_registry = AttachmentRegistry(attachment_service)
-            await attachment_registry.register_attachment(
+            await attachment_registry.register_tool_attachment(
                 db_context=db_context,
                 attachment_id=camera_attachment_id,
-                source_type="tool",
-                source_id="mock_camera_snapshot",
+                tool_name="mock_camera_snapshot",
                 mime_type=camera_mime,
                 description="Camera snapshot",
                 size=len(camera_content),
-                content_url=camera_data["url"],
-                storage_path=camera_data["storage_path"],
+                content_url=camera_data.content_url or "",
+                storage_path=camera_data.storage_path,
                 conversation_id="test_conversation",
             )
 
@@ -167,12 +166,12 @@ class TestAttachmentWorkflows:
                 annotated_mime = camera_mime
 
             # Store the annotated attachment
-            annotated_data = attachment_service.store_bytes_as_attachment(
+            annotated_data = await attachment_registry._store_file_only(
                 annotated_content,
                 "annotated_image.png",
                 annotated_mime,
             )
-            annotated_attachment_id = annotated_data["attachment_id"]
+            annotated_attachment_id = annotated_data.attachment_id
 
             # Register the annotated attachment
             await attachment_registry.register_attachment(
@@ -183,8 +182,8 @@ class TestAttachmentWorkflows:
                 mime_type=annotated_mime,
                 description="Annotated image",
                 size=len(annotated_content),
-                content_url=annotated_data["url"],
-                storage_path=annotated_data["storage_path"],
+                content_url=annotated_data.content_url or "",
+                storage_path=annotated_data.storage_path,
                 conversation_id="test_conversation",
             )
 
@@ -238,7 +237,7 @@ class TestAttachmentWorkflows:
         self,
         db_engine: AsyncEngine,
         attachment_tools_provider: ToolsProvider,
-        attachment_service: AttachmentService,
+        attachment_registry: AttachmentRegistry,
     ) -> None:
         """Test User Image → Process → Send to Another User workflow."""
         async with DatabaseContext(engine=db_engine) as db_context:
@@ -249,33 +248,26 @@ class TestAttachmentWorkflows:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
-                attachment_service=attachment_service,
+                attachment_registry=attachment_registry,
             )
 
             # Step 1: Simulate user uploading an image
             # In real usage, this would come from Telegram/Web interface
             user_image_content = b"fake_user_uploaded_image_data" + b"\x00" * 200
-            user_image_data = attachment_service.store_bytes_as_attachment(
-                user_image_content,
-                "user_photo.jpg",
-                "image/jpeg",
+            # Register user attachment (includes storage)
+            user_attachment_metadata = (
+                await attachment_registry.register_user_attachment(
+                    db_context=db_context,
+                    content=user_image_content,
+                    filename="user_photo.jpg",
+                    mime_type="image/jpeg",
+                    conversation_id="test_conversation",
+                    description="User uploaded photo",
+                )
             )
-            user_attachment_id = user_image_data["attachment_id"]
+            user_attachment_id = user_attachment_metadata.attachment_id
 
-            # Register the user attachment in the metadata database
-            attachment_registry = AttachmentRegistry(attachment_service)
-            await attachment_registry.register_attachment(
-                db_context=db_context,
-                attachment_id=user_attachment_id,
-                source_type="user",
-                source_id="test_user",
-                mime_type="image/jpeg",
-                description="User uploaded photo",
-                size=len(user_image_content),
-                content_url=user_image_data["url"],
-                storage_path=user_image_data["storage_path"],
-                conversation_id="test_conversation",
-            )
+            # User attachment already registered above
 
             # Step 2: Process the user image (annotate it)
             process_result = await attachment_tools_provider.execute_tool(
@@ -302,12 +294,12 @@ class TestAttachmentWorkflows:
             processed_mime = process_result.attachment.mime_type
 
             # Store the processed attachment
-            processed_data = attachment_service.store_bytes_as_attachment(
+            processed_data = await attachment_registry._store_file_only(
                 processed_content,
                 "processed_photo.jpg",
                 processed_mime,
             )
-            processed_attachment_id = processed_data["attachment_id"]
+            processed_attachment_id = processed_data.attachment_id
 
             # Register the processed attachment
             await attachment_registry.register_attachment(
@@ -318,8 +310,8 @@ class TestAttachmentWorkflows:
                 mime_type=processed_mime,
                 description="Processed user photo",
                 size=len(processed_content),
-                content_url=processed_data["url"],
-                storage_path=processed_data["storage_path"],
+                content_url=processed_data.content_url or "",
+                storage_path=processed_data.storage_path,
                 conversation_id="test_conversation",
             )
 
@@ -338,7 +330,7 @@ class TestAttachmentWorkflows:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
-                attachment_service=attachment_service,
+                attachment_registry=attachment_registry,
                 chat_interface=mock_chat_interface,
             )
 
@@ -398,7 +390,7 @@ class TestAttachmentWorkflows:
     async def test_event_script_camera_wake_llm_workflow(
         self,
         db_engine: AsyncEngine,
-        attachment_service: AttachmentService,
+        attachment_registry: AttachmentRegistry,
     ) -> None:
         """Test Event → Script → Camera → Wake LLM workflow with attachments."""
         test_run_id = uuid.uuid4()

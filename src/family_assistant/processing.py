@@ -24,7 +24,6 @@ import aiofiles
 import pytz  # Added
 
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.services.attachments import AttachmentService
 
 # Import storage and calendar integration for context building
 # storage import removed - using repository pattern via DatabaseContext
@@ -115,8 +114,8 @@ class ProcessingService:
         server_url: str | None,
         app_config: dict[str, Any],  # Keep app_config for now
         clock: Clock | None = None,
-        attachment_service: AttachmentService
-        | None = None,  # AttachmentService (optional)
+        attachment_registry: AttachmentRegistry
+        | None = None,  # AttachmentRegistry (required for attachment operations)
         event_sources: dict[str, Any] | None = None,  # Add event sources
     ) -> None:
         """
@@ -130,7 +129,7 @@ class ProcessingService:
             server_url: The base URL of the web server.
             app_config: The main application configuration dictionary (global settings).
             clock: Clock instance for time operations.
-            attachment_service: AttachmentService instance for handling file attachments.
+            attachment_registry: AttachmentRegistry instance for handling file attachments.
             event_sources: Dictionary mapping event source IDs to EventSource instances.
         """
         self.llm_client = (
@@ -146,13 +145,16 @@ class ProcessingService:
         self.clock = (
             clock if clock is not None else SystemClock()
         )  # Store the clock instance
-        self.attachment_service = attachment_service  # Store the attachment service
+
+        # Store attachment registry
+        self.attachment_registry = attachment_registry
+
         self.processing_services_registry: dict[str, ProcessingService] | None = None
         # Store the confirmation callback function if provided at init? No, get from context.
         self.home_assistant_client: HomeAssistantClientWrapper | None = (
             None  # Store HA client if available
         )
-        self.event_sources = event_sources  # Store event sources for validation
+        self.event_sources = event_sources  # Store event sources for validation  # Store event sources for validation
 
     # The LiteLLMClient passed to __init__ should already be configured
     # with primary and fallback model details by the caller (e.g., main.py)
@@ -705,7 +707,7 @@ class ProcessingService:
             indexing_source=(
                 self.event_sources.get("indexing") if self.event_sources else None
             ),
-            attachment_service=self.attachment_service,
+            attachment_registry=self.attachment_registry,
         )
 
         try:
@@ -733,7 +735,7 @@ class ProcessingService:
 
                     # Store attachment and generate URL if attachment service is available
                     if (
-                        self.attachment_service
+                        self.attachment_registry
                         and result.attachment
                         and result.attachment.content
                     ):
@@ -742,20 +744,34 @@ class ProcessingService:
                             file_extension = self._get_file_extension_from_mime_type(
                                 result.attachment.mime_type
                             )
-                            attachment_metadata = self.attachment_service.store_bytes_as_attachment(
-                                file_content=result.attachment.content,
-                                filename=f"tool_result_{uuid.uuid4()}{file_extension}",
-                                content_type=result.attachment.mime_type,
-                            )
-                            # Add the content URL and attachment ID to the attachment data
-                            attachment_data["content_url"] = attachment_metadata["url"]
-                            attachment_data["attachment_id"] = attachment_metadata[
-                                "attachment_id"
-                            ]
-                            auto_attachment_id = attachment_metadata["attachment_id"]
-                            logger.info(
-                                f"Stored tool result attachment: {auto_attachment_id}"
-                            )
+                            # Store and register the attachment using AttachmentRegistry
+                            if self.attachment_registry is not None:
+                                # Store and register the attachment in one operation
+                                registered_metadata = await self.attachment_registry.store_and_register_tool_attachment(
+                                    file_content=result.attachment.content,
+                                    filename=f"tool_result_{uuid.uuid4()}{file_extension}",
+                                    content_type=result.attachment.mime_type,
+                                    tool_name=function_name,
+                                    description=result.attachment.description
+                                    or f"Output from {function_name}",
+                                    conversation_id=conversation_id,
+                                    metadata={
+                                        "tool_call_id": call_id,
+                                        "auto_display": True,
+                                    },
+                                )
+
+                                attachment_data["content_url"] = (
+                                    registered_metadata.content_url or ""
+                                )
+                                attachment_data["attachment_id"] = (
+                                    registered_metadata.attachment_id
+                                )
+                                # Set auto_attachment_id for automatic queuing
+                                auto_attachment_id = registered_metadata.attachment_id
+                                logger.info(
+                                    f"Stored and registered tool attachment: {registered_metadata.attachment_id}"
+                                )
                         except Exception as e:
                             logger.error(f"Failed to store tool result attachment: {e}")
                             # Continue without URL if storage fails
@@ -785,12 +801,9 @@ class ProcessingService:
                             result_data.get("status") == "attachments_queued"
                             and "attachment_ids" in result_data
                         ):
-                            # Only enrich metadata if attachment service is available
-                            if self.attachment_service:
-                                # Get attachment registry from the tool execution context
-                                attachment_registry = AttachmentRegistry(
-                                    self.attachment_service
-                                )
+                            # Only enrich metadata if attachment registry is available
+                            if self.attachment_registry:
+                                attachment_registry = self.attachment_registry
 
                                 attachment_metadata_list = []
                                 for attachment_id in result_data["attachment_ids"]:
@@ -825,7 +838,7 @@ class ProcessingService:
                                     )
                             else:
                                 logger.warning(
-                                    "AttachmentService not available, skipping metadata enrichment for attach_to_response"
+                                    "AttachmentRegistry not available, skipping metadata enrichment for attach_to_response"
                                 )
                     except (json.JSONDecodeError, KeyError) as e:
                         logger.warning(
@@ -919,7 +932,7 @@ class ProcessingService:
             Modified content parts with server URLs converted to data URIs
         """
         # If no attachment service is available, return parts unchanged
-        if not self.attachment_service:
+        if not self.attachment_registry:
             return content_parts
 
         converted_parts = []
@@ -942,8 +955,8 @@ class ProcessingService:
                     if match:
                         attachment_id = match.group(1)
 
-                        # Use AttachmentService to get the file path
-                        file_path = self.attachment_service.get_attachment_path(
+                        # Use AttachmentRegistry to get the file path
+                        file_path = self.attachment_registry.get_attachment_path(
                             attachment_id
                         )
 
@@ -954,8 +967,8 @@ class ProcessingService:
                                     file_bytes = await f.read()
 
                                 # Detect MIME type from file extension
-                                content_type = self.attachment_service.get_content_type(
-                                    file_path
+                                content_type = (
+                                    self.attachment_registry.get_content_type(file_path)
                                 )
 
                                 # Convert to base64

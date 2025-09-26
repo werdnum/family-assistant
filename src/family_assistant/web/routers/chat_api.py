@@ -24,7 +24,11 @@ from family_assistant.web.dependencies import (
 from family_assistant.web.models import ChatMessageResponse, ChatPromptRequest
 
 if TYPE_CHECKING:
-    from family_assistant.services.attachment_registry import AttachmentRegistry
+    from family_assistant.services.attachment_registry import (
+        AttachmentMetadata,
+        AttachmentRegistry,
+    )
+
 
 logger = logging.getLogger(__name__)
 chat_api_router = APIRouter()
@@ -81,13 +85,13 @@ async def _process_user_attachments(
                         attachment_id = content_data.split("/")[-1]
 
                         # First try to atomically claim unlinked attachment for this conversation
-                        attachment_record = (
-                            await attachment_registry.claim_unlinked_attachment(
-                                db_context=db_context,
-                                attachment_id=attachment_id,
-                                conversation_id=conversation_id,
-                                required_source_id=user_id,
-                            )
+                        attachment_record: (
+                            AttachmentMetadata | None
+                        ) = await attachment_registry.claim_unlinked_attachment(
+                            db_context=db_context,
+                            attachment_id=attachment_id,
+                            conversation_id=conversation_id,
+                            required_source_id=user_id,
                         )
 
                         # If not claimed (already linked), get existing attachment record
@@ -102,7 +106,7 @@ async def _process_user_attachments(
                         if not attachment_record:
                             raise HTTPException(
                                 status_code=status.HTTP_404_NOT_FOUND,
-                                detail=f"Attachment not found: {attachment_id}",
+                                detail="Attachment not found",
                             )
 
                         # Add image content for LLM processing using the content_url
@@ -207,7 +211,9 @@ async def _process_user_attachments(
                         detail=f"Invalid base64 attachment content: {str(e)}",
                     ) from e
                 except Exception as e:
-                    logger.error(f"Error processing user attachment: {e}")
+                    logger.error(
+                        f"Error processing user attachment: {e}", exc_info=True
+                    )
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                         detail="Failed to process attachment",
