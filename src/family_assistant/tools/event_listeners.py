@@ -7,7 +7,6 @@ import logging
 import re
 from typing import Any
 
-from family_assistant.events.condition_evaluator import EventConditionValidator
 from family_assistant.scripting.engine import StarlarkConfig, StarlarkEngine
 from family_assistant.storage.events import (
     EventSourceType,
@@ -348,6 +347,11 @@ async def create_event_listener_tool(
 
         # Validate condition_script if provided
         if condition_script:
+            # Import here to avoid circular import
+            from family_assistant.events.condition_evaluator import (  # noqa: PLC0415
+                EventConditionValidator,
+            )
+
             # Get config from execution context if available
             config = getattr(exec_context, "event_config", None) or {}
             validator = EventConditionValidator(config=config)

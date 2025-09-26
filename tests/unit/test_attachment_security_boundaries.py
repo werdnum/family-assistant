@@ -7,7 +7,6 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.services.attachments import AttachmentService
 from family_assistant.storage.context import DatabaseContext
 
 
@@ -21,8 +20,9 @@ class TestAttachmentSecurityBoundaries:
         """Test that attachments cannot be accessed from different conversations."""
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            attachment_service = AttachmentService(storage_path=temp_dir)
-            attachment_registry = AttachmentRegistry(attachment_service)
+            attachment_registry = AttachmentRegistry(
+                storage_path=temp_dir, db_engine=db_engine, config=None
+            )
 
             # Create attachment in conversation A
             test_content = b"test content for conversation A"
@@ -70,8 +70,9 @@ class TestAttachmentSecurityBoundaries:
         """Test that attachments remain accessible throughout a conversation lifetime."""
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            attachment_service = AttachmentService(storage_path=temp_dir)
-            attachment_registry = AttachmentRegistry(attachment_service)
+            attachment_registry = AttachmentRegistry(
+                storage_path=temp_dir, db_engine=db_engine, config=None
+            )
 
             conversation_id = "persistent_conversation"
             test_content = b"persistent test content"
@@ -116,8 +117,9 @@ class TestAttachmentSecurityBoundaries:
         """Test that attachment IDs remain valid when passed between tools/services."""
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            attachment_service = AttachmentService(storage_path=temp_dir)
-            attachment_registry = AttachmentRegistry(attachment_service)
+            attachment_registry = AttachmentRegistry(
+                storage_path=temp_dir, db_engine=db_engine, config=None
+            )
 
             conversation_id = "service_conversation"
             test_content = b"content for service passing"
@@ -172,8 +174,9 @@ class TestAttachmentSecurityBoundaries:
         """Test proper handling of invalid or non-existent attachment IDs."""
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            attachment_service = AttachmentService(storage_path=temp_dir)
-            attachment_registry = AttachmentRegistry(attachment_service)
+            attachment_registry = AttachmentRegistry(
+                storage_path=temp_dir, db_engine=db_engine, config=None
+            )
 
             async with DatabaseContext(engine=db_engine) as db_context:
                 # Test with completely invalid UUID - registry doesn't validate format, just queries DB
@@ -201,8 +204,9 @@ class TestAttachmentSecurityBoundaries:
         """Test that attachment metadata remains intact and accurate."""
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            attachment_service = AttachmentService(storage_path=temp_dir)
-            attachment_registry = AttachmentRegistry(attachment_service)
+            attachment_registry = AttachmentRegistry(
+                storage_path=temp_dir, db_engine=db_engine, config=None
+            )
 
             conversation_id = "metadata_conversation"
             test_content = (

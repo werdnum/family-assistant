@@ -11,7 +11,6 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
-from family_assistant.services.attachment_registry import AttachmentRegistry
 
 if TYPE_CHECKING:
     from family_assistant.storage.context import DatabaseContext
@@ -45,14 +44,11 @@ async def fetch_attachment_object(
         ScriptAttachment object if found, None otherwise
     """
     try:
-        # Get attachment service from context
-        attachment_service = context.attachment_service
-        if not attachment_service:
-            logger.error("AttachmentService not available in execution context")
+        # Get attachment registry from context
+        attachment_registry = context.attachment_registry
+        if not attachment_registry:
+            logger.error("AttachmentRegistry not available in execution context")
             return None
-
-        # Create attachment registry
-        attachment_registry = AttachmentRegistry(attachment_service)
 
         # Fetch attachment metadata
         logger.debug(f"Looking up attachment {attachment_id} in registry")

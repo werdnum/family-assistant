@@ -27,7 +27,6 @@ from family_assistant.scripting import (
     StarlarkEngine,
 )
 from family_assistant.scripting.engine import StarlarkConfig
-from family_assistant.services.attachment_registry import AttachmentRegistry
 
 if TYPE_CHECKING:
     from family_assistant.events.indexing_source import IndexingSource
@@ -583,7 +582,7 @@ class TaskWorker:
                 clock=self.clock,  # Pass the clock instance
                 indexing_source=self.indexing_source,  # Pass the indexing source
                 event_sources=self.event_sources,  # Pass event sources directly
-                attachment_service=self.processing_service.attachment_service,  # Pass attachment service
+                attachment_registry=self.processing_service.attachment_registry,  # Pass attachment registry
             )
             # --- Execute Handler with Context ---
             logger.debug(
@@ -974,16 +973,15 @@ async def _process_script_wake_llm(
     # Fetch attachment metadata if any attachments are referenced
     trigger_attachments: list[dict[str, Any]] | None = None
     if all_attachment_ids:
-        # Get attachment service and registry
-        attachment_service = getattr(exec_context, "attachment_service", None)
-        if not attachment_service:
+        # Get attachment registry from execution context
+        attachment_registry = getattr(exec_context, "attachment_registry", None)
+        if not attachment_registry:
             # Try to get from app state or create if needed
-            # For now, skip attachment processing if service not available
+            # For now, skip attachment processing if registry not available
             logger.warning(
-                "AttachmentService not available for script wake_llm with attachments"
+                "AttachmentRegistry not available for script wake_llm with attachments"
             )
         else:
-            attachment_registry = AttachmentRegistry(attachment_service)
             trigger_attachments = []
 
             for attachment_id in all_attachment_ids:

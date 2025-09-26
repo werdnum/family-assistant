@@ -12,7 +12,6 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
-from family_assistant.services.attachment_registry import AttachmentRegistry
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
@@ -239,8 +238,8 @@ async def send_message_to_user_tool(
     validated_attachment_ids: list[str] | None = None
     if attachment_ids:
         validated_attachment_ids = []
-        if exec_context.attachment_service:
-            attachment_registry = AttachmentRegistry(exec_context.attachment_service)
+        if exec_context.attachment_registry:
+            attachment_registry = exec_context.attachment_registry
 
             for attachment_id in attachment_ids:
                 try:
@@ -288,7 +287,7 @@ async def send_message_to_user_tool(
                     continue
         else:
             logger.warning(
-                "AttachmentService not available - cannot validate attachment IDs"
+                "AttachmentRegistry not available - cannot validate attachment IDs"
             )
             # Still proceed but without attachments
             validated_attachment_ids = None
@@ -381,12 +380,12 @@ async def get_attachment_info_tool(
 
     db_context = exec_context.db_context
 
-    if not exec_context.attachment_service:
-        logger.error("AttachmentService not available in ToolExecutionContext")
-        return "Error: Attachment service not available."
+    if not exec_context.attachment_registry:
+        logger.error("AttachmentRegistry not available in ToolExecutionContext")
+        return "Error: Attachment registry not available."
 
     try:
-        attachment_registry = AttachmentRegistry(exec_context.attachment_service)
+        attachment_registry = exec_context.attachment_registry
 
         # Retrieve attachment metadata
         attachment = await attachment_registry.get_attachment(db_context, attachment_id)

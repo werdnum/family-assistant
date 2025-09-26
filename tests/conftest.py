@@ -14,7 +14,11 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import nullcontext
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
+
 from unittest.mock import MagicMock
 
 import caldav
@@ -32,6 +36,7 @@ import family_assistant.storage.tasks as tasks_module
 
 # Import for task_worker_manager fixture
 from family_assistant.processing import ProcessingService  # Import ProcessingService
+from family_assistant.services.attachment_registry import AttachmentRegistry
 
 # Import the metadata and the original engine object from your storage base
 from family_assistant.storage import init_db  # Import init_db
@@ -53,6 +58,32 @@ logging.basicConfig(level=logging.INFO)
 os.environ["FAMILY_ASSISTANT_DISABLE_DB_ERROR_LOGGING"] = "1"
 
 logger = logging.getLogger(__name__)
+
+
+@pytest.fixture(scope="function")
+def app(db_engine: AsyncEngine) -> Generator[Any, None, None]:
+    """Provide the FastAPI app instance for testing."""
+    fastapi_app.state.database_engine = db_engine
+    yield fastapi_app
+
+
+@pytest.fixture
+def attachment_registry_fixture(
+    app: "FastAPI", db_engine: AsyncEngine
+) -> AttachmentRegistry:
+    """Provide attachment registry for tests that need it."""
+    if (
+        not hasattr(app.state, "attachment_registry")
+        or app.state.attachment_registry is None
+    ):
+        storage_path = tempfile.mkdtemp()
+        registry = AttachmentRegistry(
+            storage_path=storage_path,
+            db_engine=db_engine,
+            config=None,
+        )
+        app.state.attachment_registry = registry
+    return app.state.attachment_registry
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

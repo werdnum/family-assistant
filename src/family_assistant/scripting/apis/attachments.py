@@ -11,10 +11,6 @@ import io
 import logging
 from typing import TYPE_CHECKING, Any
 
-from family_assistant.services.attachment_registry import (
-    AttachmentMetadata,
-    AttachmentRegistry,
-)
 from family_assistant.storage.context import DatabaseContext
 
 if TYPE_CHECKING:
@@ -22,6 +18,10 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.services.attachment_registry import (
+        AttachmentMetadata,
+        AttachmentRegistry,
+    )
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -406,16 +406,16 @@ def create_attachment_api(
         AttachmentAPI instance
 
     Raises:
-        RuntimeError: If attachment_service is not available in context
+        RuntimeError: If attachment_registry is not available in context
     """
-    if not execution_context.attachment_service:
-        raise RuntimeError("AttachmentService not available in execution context")
+    if not execution_context.attachment_registry:
+        raise RuntimeError("AttachmentRegistry not available in execution context")
 
     # Get conversation ID from execution context
     conversation_id = execution_context.conversation_id
 
-    # Create attachment registry from the service (following the pattern from tools.py)
-    attachment_registry = AttachmentRegistry(execution_context.attachment_service)
+    # Get attachment registry from the execution context
+    attachment_registry = execution_context.attachment_registry
 
     return AttachmentAPI(
         attachment_registry=attachment_registry,

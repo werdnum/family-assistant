@@ -11,7 +11,6 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.telegram_bot import telegramify_markdown
 
 if TYPE_CHECKING:
@@ -210,12 +209,12 @@ async def delegate_to_service_tool(
     content_parts = [{"type": "text", "text": user_request}]
 
     if attachment_ids:
-        if not exec_context.attachment_service:
+        if not exec_context.attachment_registry:
             logger.warning(
-                "Attachment IDs provided but AttachmentService not available - ignoring attachments"
+                "Attachment IDs provided but AttachmentRegistry not available - ignoring attachments"
             )
         else:
-            attachment_registry = AttachmentRegistry(exec_context.attachment_service)
+            attachment_registry = exec_context.attachment_registry
 
             for attachment_id in attachment_ids:
                 try:

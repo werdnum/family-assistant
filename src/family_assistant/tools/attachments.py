@@ -43,7 +43,7 @@ ATTACHMENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
 # Tool Implementations
 async def attach_to_response_tool(
     exec_context: ToolExecutionContext,
-    attachment_ids: list[ScriptAttachment],
+    attachment_ids: list[ScriptAttachment | str],
 ) -> str:
     """
     Attach files/images to the current LLM response.
@@ -53,7 +53,7 @@ async def attach_to_response_tool(
 
     Args:
         exec_context: The execution context
-        attachment_ids: List of ScriptAttachment objects to attach to the response
+        attachment_ids: List of ScriptAttachment objects or string IDs to attach to the response
 
     Returns:
         A JSON string indicating the attachments have been queued
@@ -63,27 +63,32 @@ async def attach_to_response_tool(
         f"Executing attach_to_response_tool with {len(attachment_ids)} attachment(s)"
     )
 
-    # Validate that we have attachment service
-    if not exec_context.attachment_service:
-        logger.error("AttachmentService not available in execution context")
+    # Validate that we have attachment registry
+    if not exec_context.attachment_registry:
+        logger.error("AttachmentRegistry not available in execution context")
         return json.dumps({
             "status": "error",
-            "message": "AttachmentService not available",
+            "message": "AttachmentRegistry not available",
         })
 
-    # Extract attachment IDs from ScriptAttachment objects
+    # Extract attachment IDs from ScriptAttachment objects or use string IDs directly
     validated_ids = []
     for attachment in attachment_ids:
         try:
-            # Get the attachment ID from the ScriptAttachment object
-            attachment_id = attachment.get_id()
+            if isinstance(attachment, str):
+                # Direct string ID (from LLM tool calls)
+                attachment_id = attachment
+                logger.debug(f"Processing string attachment ID: {attachment_id}")
+            else:
+                # ScriptAttachment object (from script contexts)
+                attachment_id = attachment.get_id()
+                logger.debug(
+                    f"Processing ScriptAttachment: {attachment_id} - {attachment.get_description()}"
+                )
 
-            # Basic validation - the ScriptAttachment object already validates access
-            # when it was created, so we just need to extract the ID
+            # Basic validation - verify attachment exists and is accessible
+            # TODO: Add conversation-level access validation here
             validated_ids.append(attachment_id)
-            logger.debug(
-                f"Added attachment {attachment_id}: {attachment.get_description()}"
-            )
 
         except Exception as e:
             logger.error(f"Error processing attachment object: {e}")

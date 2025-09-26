@@ -1,5 +1,5 @@
 """Services module for Family Assistant."""
 
-from .attachments import AttachmentService
+from .attachment_registry import AttachmentRegistry
 
-__all__ = ["AttachmentService"]
+__all__ = ["AttachmentRegistry"]

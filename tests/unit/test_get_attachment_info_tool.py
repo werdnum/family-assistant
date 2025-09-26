@@ -7,7 +7,6 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.services.attachments import AttachmentService
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.communication import get_attachment_info_tool
 from family_assistant.tools.types import ToolExecutionContext
@@ -20,8 +19,9 @@ class TestGetAttachmentInfoTool:
     async def test_get_attachment_info_success(self, db_engine: AsyncEngine) -> None:
         """Test successful attachment info retrieval."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            attachment_service = AttachmentService(storage_path=temp_dir)
-            attachment_registry = AttachmentRegistry(attachment_service)
+            attachment_registry = AttachmentRegistry(
+                storage_path=temp_dir, db_engine=db_engine, config=None
+            )
 
             conversation_id = "test_conversation"
             test_content = b"test content for attachment info"
@@ -48,7 +48,7 @@ class TestGetAttachmentInfoTool:
                     turn_id="turn_123",
                     user_name="test_user",
                     db_context=db_context,
-                    attachment_service=attachment_service,
+                    attachment_registry=attachment_registry,
                 )
 
                 # Execute the tool
@@ -78,7 +78,9 @@ class TestGetAttachmentInfoTool:
     async def test_get_attachment_info_not_found(self, db_engine: AsyncEngine) -> None:
         """Test attachment info retrieval for non-existent attachment."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            attachment_service = AttachmentService(storage_path=temp_dir)
+            attachment_registry = AttachmentRegistry(
+                storage_path=temp_dir, db_engine=db_engine, config=None
+            )
 
             async with DatabaseContext(engine=db_engine) as db_context:
                 exec_context = ToolExecutionContext(
@@ -87,7 +89,7 @@ class TestGetAttachmentInfoTool:
                     turn_id="turn_123",
                     user_name="test_user",
                     db_context=db_context,
-                    attachment_service=attachment_service,
+                    attachment_registry=attachment_registry,
                 )
 
                 # Try to get info for non-existent attachment
@@ -104,8 +106,9 @@ class TestGetAttachmentInfoTool:
     ) -> None:
         """Test that cross-conversation access is properly denied."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            attachment_service = AttachmentService(storage_path=temp_dir)
-            attachment_registry = AttachmentRegistry(attachment_service)
+            attachment_registry = AttachmentRegistry(
+                storage_path=temp_dir, db_engine=db_engine, config=None
+            )
 
             conversation_a = "conversation_a"
             conversation_b = "conversation_b"
@@ -131,7 +134,7 @@ class TestGetAttachmentInfoTool:
                     turn_id="turn_123",
                     user_name="test_user",
                     db_context=db_context,
-                    attachment_service=attachment_service,
+                    attachment_registry=attachment_registry,
                 )
 
                 result = await get_attachment_info_tool(
@@ -143,10 +146,10 @@ class TestGetAttachmentInfoTool:
                 assert "not accessible from the current conversation" in result
 
     @pytest.mark.asyncio
-    async def test_get_attachment_info_no_attachment_service(
+    async def test_get_attachment_info_no_attachment_registry(
         self, db_engine: AsyncEngine
     ) -> None:
-        """Test error handling when attachment service is not available."""
+        """Test error handling when attachment registry is not available."""
         async with DatabaseContext(engine=db_engine) as db_context:
             exec_context = ToolExecutionContext(
                 conversation_id="test_conversation",
@@ -154,7 +157,7 @@ class TestGetAttachmentInfoTool:
                 turn_id="turn_123",
                 user_name="test_user",
                 db_context=db_context,
-                attachment_service=None,  # No attachment service
+                attachment_registry=None,  # No attachment registry
             )
 
             result = await get_attachment_info_tool(
@@ -162,7 +165,7 @@ class TestGetAttachmentInfoTool:
                 attachment_id="some-attachment-id",
             )
 
-            assert "Error: Attachment service not available." in result
+            assert "Error: Attachment registry not available." in result
 
     @pytest.mark.asyncio
     async def test_get_attachment_info_same_conversation_access_allowed(
@@ -170,8 +173,9 @@ class TestGetAttachmentInfoTool:
     ) -> None:
         """Test that access within the same conversation is allowed."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            attachment_service = AttachmentService(storage_path=temp_dir)
-            attachment_registry = AttachmentRegistry(attachment_service)
+            attachment_registry = AttachmentRegistry(
+                storage_path=temp_dir, db_engine=db_engine, config=None
+            )
 
             conversation_id = "same_conversation"
 
@@ -196,7 +200,7 @@ class TestGetAttachmentInfoTool:
                     turn_id="turn_123",
                     user_name="test_user",
                     db_context=db_context,
-                    attachment_service=attachment_service,
+                    attachment_registry=attachment_registry,
                 )
 
                 result = await get_attachment_info_tool(

@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
 
     from family_assistant.processing import ProcessingService
-    from family_assistant.services.attachments import AttachmentService
+    from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.context import DatabaseContext
 
 logger = logging.getLogger(__name__)
@@ -528,7 +528,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         if first_photo_bytes:
             try:
                 # Store photo using attachment service instead of base64 encoding
-                attachment_metadata = self.telegram_service.attachment_service.store_bytes_as_attachment(
+                attachment_metadata = await self.telegram_service.attachment_registry._store_file_only(
                     file_content=first_photo_bytes,
                     filename=f"telegram_photo_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg",
                     content_type="image/jpeg",
@@ -537,23 +537,23 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 # Add as image_url content part for LLM using server URL
                 trigger_content_parts.append({
                     "type": "image_url",
-                    "image_url": {"url": attachment_metadata["url"]},
+                    "image_url": {"url": attachment_metadata.content_url},
                 })
 
                 # Store attachment metadata for message history
                 trigger_attachments = [
                     {
                         "type": "image",
-                        "content_url": attachment_metadata["url"],
-                        "name": attachment_metadata["filename"],
-                        "size": attachment_metadata["size"],
-                        "content_type": attachment_metadata["content_type"],
-                        "attachment_id": attachment_metadata["attachment_id"],
+                        "content_url": attachment_metadata.content_url,
+                        "name": attachment_metadata.description,
+                        "size": attachment_metadata.size,
+                        "content_type": attachment_metadata.mime_type,
+                        "attachment_id": attachment_metadata.attachment_id,
                     }
                 ]
 
                 logger.info(
-                    f"Stored Telegram photo as attachment: {attachment_metadata['attachment_id']}"
+                    f"Stored Telegram photo as attachment: {attachment_metadata.attachment_id}"
                 )
             except Exception as img_err:
                 logger.error(
@@ -1189,7 +1189,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         replied_to_interface_id=reply_to_interface_id_str,
                         chat_interface=self.telegram_service.chat_interface,
                         request_confirmation_callback=confirmation_callback_wrapper,
-                        trigger_attachments=None,  # TODO: Update slash command photo handling to use AttachmentService
+                        trigger_attachments=None,  # TODO: Update slash command photo handling to use AttachmentRegistry
                     )
 
                     final_llm_content_to_send = result.text_reply
@@ -1638,7 +1638,7 @@ class TelegramService:
             str, ProcessingService
         ],  # Registry of all services
         app_config: dict[str, Any],  # Main application config
-        attachment_service: AttachmentService,  # Add injected AttachmentService
+        attachment_registry: AttachmentRegistry,  # Changed from AttachmentService
         get_db_context_func: Callable[
             ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
         ],
@@ -1653,7 +1653,7 @@ class TelegramService:
             processing_service: The Default ProcessingService instance.
             processing_services_registry: Dictionary of all ProcessingService instances.
             app_config: The main application configuration dictionary.
-            attachment_service: The AttachmentService instance for handling file attachments.
+            attachment_registry: The AttachmentRegistry instance for handling file attachments.
             get_db_context_func: Async context manager function to get a DatabaseContext.
         """
         logger.info("Initializing TelegramService...")
@@ -1662,9 +1662,9 @@ class TelegramService:
         self._last_error: Exception | None = None
         self.chat_interface = TelegramChatInterface(self.application)
 
-        # Use injected AttachmentService
-        self.attachment_service = attachment_service
-        logger.info("Using injected AttachmentService")
+        # Use AttachmentRegistry (replaces AttachmentService)
+        self.attachment_registry = attachment_registry
+        logger.info("Using AttachmentRegistry for file operations")
 
         self.processing_service = processing_service  # Store default service
         self.processing_services_registry = (
@@ -2037,7 +2037,7 @@ class TelegramChatInterface(ChatInterface):
             # This will need to be properly implemented with DI
             logger.warning(
                 f"TelegramChatInterface: Cannot send {len(attachment_ids)} attachments - "
-                "AttachmentService not available. This feature needs proper dependency injection."
+                "AttachmentRegistry not available. This feature needs proper dependency injection."
             )
             return message_ids
 

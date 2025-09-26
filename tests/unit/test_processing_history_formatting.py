@@ -8,14 +8,14 @@ from collections.abc import AsyncIterator
 from io import BytesIO
 from pathlib import Path
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 from PIL import Image
 
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.services.attachments import AttachmentService
+from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.tools.types import ToolExecutionContext
 
 
@@ -319,7 +319,15 @@ async def test_format_history_converts_attachment_urls(
 
     # Create and inject AttachmentService
 
-    processing_service.attachment_service = AttachmentService(str(storage_path))
+    # Create a mock db_engine for AttachmentRegistry
+
+    mock_db_engine = MagicMock()
+
+    processing_service.attachment_registry = AttachmentRegistry(
+        storage_path=str(storage_path),
+        db_engine=mock_db_engine,
+        config=None,
+    )
 
     # Create history with attachment URL
     history_messages = [

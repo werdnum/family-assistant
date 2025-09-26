@@ -4,12 +4,11 @@ import logging
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.services.attachments import AttachmentService
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.web.dependencies import (
     get_attachment_registry,
@@ -44,16 +43,6 @@ class AttachmentMetadata(BaseModel):
     uploaded_at: str
 
 
-def get_attachment_service(request: Request) -> AttachmentService:
-    """Dependency to get the AttachmentService from app state."""
-    if not hasattr(request.app.state, "attachment_service"):
-        raise HTTPException(
-            status_code=500,
-            detail="AttachmentService not initialized. Server may still be starting up.",
-        )
-    return request.app.state.attachment_service
-
-
 @attachments_api_router.post(
     "/upload",
     summary="Upload attachment",
@@ -62,7 +51,6 @@ def get_attachment_service(request: Request) -> AttachmentService:
 async def upload_attachment(
     file: Annotated[UploadFile, File(description="File to upload as attachment")],
     current_user: Annotated[dict, Depends(get_current_user)],
-    attachment_service: Annotated[AttachmentService, Depends(get_attachment_service)],
     attachment_registry: Annotated[
         AttachmentRegistry, Depends(get_attachment_registry)
     ],
@@ -122,7 +110,6 @@ async def upload_attachment(
 async def serve_attachment(
     attachment_id: str,
     current_user: Annotated[dict, Depends(get_current_user)],
-    attachment_service: Annotated[AttachmentService, Depends(get_attachment_service)],
     attachment_registry: Annotated[
         AttachmentRegistry, Depends(get_attachment_registry)
     ],
@@ -163,12 +150,12 @@ async def serve_attachment(
     # All authenticated users can access any attachment for simplicity
 
     # Get file path
-    file_path = attachment_service.get_attachment_path(attachment_id)
+    file_path = attachment_registry.get_attachment_path(attachment_id)
     if not file_path or not file_path.exists():
         raise HTTPException(status_code=404, detail="Attachment file not found")
 
     # Get content type
-    content_type = attachment_service.get_content_type(file_path)
+    content_type = attachment_registry.get_content_type(file_path)
 
     # Return file response with proper headers
     return FileResponse(
@@ -237,7 +224,9 @@ async def delete_attachment(
 )
 async def get_attachment_metadata(
     attachment_id: str,
-    attachment_service: Annotated[AttachmentService, Depends(get_attachment_service)],
+    attachment_registry: Annotated[
+        AttachmentRegistry, Depends(get_attachment_registry)
+    ],
 ) -> AttachmentMetadata:
     """
     Get metadata for an attachment.
@@ -263,13 +252,13 @@ async def get_attachment_metadata(
         ) from e
 
     # Get file path
-    file_path = attachment_service.get_attachment_path(attachment_id)
+    file_path = attachment_registry.get_attachment_path(attachment_id)
     if not file_path or not file_path.exists():
         raise HTTPException(status_code=404, detail="Attachment not found")
 
     # Get basic metadata from file
     stat = file_path.stat()
-    content_type = attachment_service.get_content_type(file_path)
+    content_type = attachment_registry.get_content_type(file_path)
 
     # Return basic metadata (in production, this would come from database)
     return AttachmentMetadata(
@@ -278,6 +267,6 @@ async def get_attachment_metadata(
         type=content_type,
         size=stat.st_size,
         hash="unknown",  # Would need to recalculate or store in DB
-        storage_path=str(file_path.relative_to(attachment_service.storage_path)),
+        storage_path=str(file_path.relative_to(attachment_registry.storage_path)),
         uploaded_at="unknown",  # Would need to be stored in DB
     )

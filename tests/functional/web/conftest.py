@@ -5,8 +5,8 @@ import contextlib
 import os
 import socket
 import subprocess
+import tempfile
 import time
-import uuid
 from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -28,7 +28,9 @@ from family_assistant.context_providers import (
 )
 from family_assistant.llm import LLMInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.services.attachments import AttachmentService
+from family_assistant.services.attachment_registry import (
+    AttachmentRegistry,
+)
 from family_assistant.storage import init_db
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import (
@@ -842,16 +844,26 @@ def api_test_processing_service(
     )
 
 
+@pytest.fixture(scope="function")
+def attachment_registry_fixture(db_engine: AsyncEngine) -> AttachmentRegistry:
+    """Create a real AttachmentRegistry for functional tests."""
+    attachment_temp_dir = tempfile.mkdtemp()
+    return AttachmentRegistry(
+        storage_path=attachment_temp_dir, db_engine=db_engine, config=None
+    )
+
+
 @pytest_asyncio.fixture(scope="function")
 async def app_fixture(
-    db_engine: AsyncEngine,  # Use the main db_engine fixture
+    db_engine: AsyncEngine,
+    attachment_registry_fixture: AttachmentRegistry,
     api_test_processing_service: ProcessingService,
     api_test_tools_provider: ToolsProvider,
     api_mock_llm_client: LLMInterface,
 ) -> FastAPI:
     """
-    Creates a FastAPI application instance for testing, with a mock
-    ProcessingService.
+    Creates a FastAPI application instance for testing, with dependency-injected
+    AttachmentRegistry.
     """
     # Make a copy of the actual app to avoid modifying it globally
     app = FastAPI(
@@ -879,24 +891,8 @@ async def app_fixture(
     app.state.llm_client = api_mock_llm_client  # For other parts that might use it
     app.state.debug_mode = False  # Explicitly set for tests
 
-    # Add mock attachment service for attachment tests
-    mock_attachment_service = AsyncMock(spec=AttachmentService)
-    # Configure mock to return unique test data for each call
-
-    def generate_unique_attachment_data(
-        *args: object, **kwargs: object
-    ) -> dict[str, str]:
-        unique_id = uuid.uuid4().hex[:12]
-        return {
-            "attachment_id": f"test-attachment-id-{unique_id}",
-            "url": f"http://testserver/api/v1/attachments/test-attachment-id-{unique_id}",
-            "storage_path": f"/tmp/test-attachment-id-{unique_id}.png",
-        }
-
-    mock_attachment_service.store_bytes_as_attachment.side_effect = (
-        generate_unique_attachment_data
-    )
-    app.state.attachment_service = mock_attachment_service
+    # Use the dependency-injected attachment registry
+    app.state.attachment_registry = attachment_registry_fixture
 
     # Ensure database is initialized for this app instance
     async with get_db_context(engine=db_engine) as temp_db_ctx:
