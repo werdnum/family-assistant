@@ -51,6 +51,11 @@ gemini -p "Figure out why tests/broken_test.py is failing"
 - Reproduce issues in controlled environments when feasible
 - Research similar issues online when patterns suggest known problems
 
+For web UI issues:
+
+- Test manually with the Playwright MCP tools (mcp__playwright_*) to check if you can reproduce the problem.
+- Use `--screenshot` / `--video` / `--tracing` with Playwright to see what the UI looks like.
+
 **When to Persevere vs. Change Strategy:**
 
 - **Continue current approach** when: Each step reveals new information, you're narrowing down the
