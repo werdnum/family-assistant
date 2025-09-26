@@ -229,15 +229,15 @@ async def delegate_to_service_tool(
                         )
                         continue
 
-                    # Check conversation scoping
+                    # Check conversation scoping - fail delegation if unauthorized access attempted
                     if (
                         exec_context.conversation_id
                         and attachment.conversation_id != exec_context.conversation_id
                     ):
                         logger.warning(
-                            f"Attachment {attachment_id} from conversation {attachment.conversation_id} not accessible from conversation {exec_context.conversation_id} - skipping"
+                            f"Delegation security violation: Attachment {attachment_id} from conversation {attachment.conversation_id} not accessible from conversation {exec_context.conversation_id}"
                         )
-                        continue
+                        return f"Error: Cannot delegate with attachment {attachment_id} - it belongs to a different conversation. For security, cross-conversation attachment access is not allowed."
 
                     # Add attachment content part
                     content_parts.append({
