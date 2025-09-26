@@ -9,11 +9,14 @@ Uses dependency injection with ImageGenerationBackend protocol for different
 implementations (mock, Gemini API, fallback).
 """
 
+import io
 import logging
 from typing import TYPE_CHECKING, Any
 
+from PIL import Image
+
 from family_assistant.tools.image_backends import (
-    FallbackImageBackend,
+    GeminiImageBackend,
     ImageGenerationBackend,
     MockImageBackend,
 )
@@ -93,8 +96,8 @@ def _create_image_backend(
 
     # Create appropriate backend
     if api_key:
-        # Use fallback backend that tries Gemini first, then mock
-        return FallbackImageBackend(api_key)
+        # Use Gemini backend directly - let errors surface instead of masking them
+        return GeminiImageBackend(api_key)
     else:
         # Use mock backend when no API key is available
         logger.info("No Google API key found, using mock image backend")
@@ -123,6 +126,18 @@ async def generate_image_tool(
 
         # Generate the image
         image_bytes = await backend.generate_image(prompt, style)
+
+        # Log what we received from backend
+        logger.info(f"Backend returned {len(image_bytes)} bytes")
+
+        # Validate with PIL
+        try:
+            img = Image.open(io.BytesIO(image_bytes))
+            logger.info(
+                f"Tool validated image: format={img.format}, size={img.size}, mode={img.mode}"
+            )
+        except Exception as e:
+            logger.error(f"Tool received invalid image data from backend: {e}")
 
         # Create attachment
         attachment = ToolAttachment(
