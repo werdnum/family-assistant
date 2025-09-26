@@ -65,6 +65,7 @@ check_test_status() {
         echo "You MUST run 'poe test' before finishing" >&2
         echo "Reminder: only 'poe test' (with optional -xq) will do. No other commands will satisfy this hook." >&2
         echo "... even if you think these changes don't impact any or all tests." >&2
+        echo "If you have other feedback to address, do that first – you will need to re-run tests after making any further changes." >&2
         return 1
     fi
 
@@ -114,7 +115,7 @@ check_test_status() {
         echo "This means that there were NO test failures before you started, there are no pre-existing issues." >&2
         echo "NO EXCUSES! Even if you've made 'substantial progress'." >&2
         echo "If you believe the failure to be a flake, prove it by rerunning poe test to get a passing result." >&2
-        echo "If you have other feedback to address, do that first – you will need to re-run tests after making any further tests." >&2
+        echo "If you have other feedback to address, do that first – you will need to re-run tests after making any further changes." >&2
         echo "If you are stuck, consider using @agent-systematic-debugger with a detailed prompt explaining what changes you have made, what you have tried so far and any findings." >&2
         if [ -n "$LAST_TEST_ATTEMPT_COMMAND" ]; then
             if [ -n "$LAST_TEST_ATTEMPT_TIME" ]; then
