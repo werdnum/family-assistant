@@ -290,3 +290,62 @@ class TestLocalToolsProvider:
         # Should be converted to string
         assert isinstance(result, str)
         assert result == "42"
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_invalid_attachment_fails_gracefully(self) -> None:
+        """Test that tools with invalid attachment IDs fail with proper error messages."""
+
+        # Define a tool that expects an attachment parameter
+        async def tool_with_attachment(
+            exec_context: ToolExecutionContext,
+            image_attachment_id: Any,  # noqa: ANN401
+        ) -> str:
+            # This should never be reached when attachment is invalid
+            return f"Processed attachment: {image_attachment_id}"
+
+        provider = LocalToolsProvider(
+            definitions=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "tool_with_attachment",
+                        "description": "Test tool that requires an attachment",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "image_attachment_id": {
+                                    "type": "attachment",
+                                    "description": "An attachment ID",
+                                }
+                            },
+                            "required": ["image_attachment_id"],
+                        },
+                    },
+                }
+            ],
+            implementations={"tool_with_attachment": tool_with_attachment},
+        )
+
+        mock_db_context = MagicMock(spec=DatabaseContext)
+        context = ToolExecutionContext(
+            conversation_id="test-conv-attachment",
+            user_name="test-user",
+            interface_type="test",
+            timezone_str="UTC",
+            turn_id=None,
+            db_context=mock_db_context,
+            attachment_registry=None,  # No attachment registry
+        )
+
+        # Test with a valid UUID format but non-existent attachment
+        result = await provider.execute_tool(
+            "tool_with_attachment",
+            {"image_attachment_id": "5d8f4d9c-8a8d-4f9e-8b3a-9b7e3d6a1b1a"},
+            context,
+        )
+
+        # Should return an error message, not crash
+        assert isinstance(result, str)
+        assert result.startswith("Error:")
+        assert "not found or access denied" in result
+        assert "image_attachment_id" in result
