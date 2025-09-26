@@ -337,27 +337,125 @@ class GeminiImageBackend:
 
         # Call Gemini image generation
         response = await self.client.aio.models.generate_content(
-            model="models/gemini-2.5-flash-image-preview", contents=full_prompt
+            model="gemini-2.5-flash-image-preview", contents=full_prompt
+        )
+
+        # Log response structure for debugging
+        self.logger.info(f"Gemini response type: {type(response)}")
+        candidate_count = (
+            len(response.candidates)
+            if hasattr(response, "candidates") and response.candidates
+            else 0
+        )
+        self.logger.info(
+            f"Has candidates: {hasattr(response, 'candidates')}, count: {candidate_count}"
         )
 
         # Extract image data from response
         if hasattr(response, "candidates") and response.candidates:
             candidate = response.candidates[0]
+            self.logger.info(f"Candidate has content: {hasattr(candidate, 'content')}")
             if (
                 hasattr(candidate, "content")
                 and candidate.content
                 and candidate.content.parts
             ):
-                for part in candidate.content.parts:
-                    if hasattr(part, "inline_data") and part.inline_data:
-                        # Decode base64 image data
+                self.logger.info(f"Content parts count: {len(candidate.content.parts)}")
+                # Find the image data following Google's recommended pattern
+                for i, part in enumerate(candidate.content.parts):
+                    self.logger.info(
+                        f"Part {i}: inline_data is not None: {part.inline_data is not None}"
+                    )
+                    if part.inline_data is not None:
+                        # Found image data
                         image_data = part.inline_data.data
+                        data_size = (
+                            len(image_data)
+                            if image_data and hasattr(image_data, "__len__")
+                            else "unknown"
+                        )
+                        self.logger.info(
+                            f"inline_data.data type: {type(image_data)}, size: {data_size}"
+                        )
+
+                        # Process image data
+                        final_image_data = None
                         if isinstance(image_data, str):
                             # Base64 string
-                            return base64.b64decode(image_data)
+                            self.logger.info("Image data is string, decoding as Base64")
+                            final_image_data = base64.b64decode(image_data)
                         elif isinstance(image_data, bytes):
-                            # Already bytes
-                            return image_data
+                            # Could be raw bytes or Base64-encoded bytes
+                            # Check if it looks like Base64 by examining the content
+                            try:
+                                # Try to decode as UTF-8 first to see if it's Base64 text
+                                text_data = image_data.decode("utf-8")
+                                if text_data.startswith((
+                                    "iVBOR",
+                                    "/9j/",
+                                    "R0lG",
+                                )):  # PNG, JPEG, GIF Base64 headers
+                                    self.logger.info(
+                                        "Image data is Base64-encoded bytes, decoding"
+                                    )
+                                    final_image_data = base64.b64decode(text_data)
+                                else:
+                                    self.logger.info(
+                                        "Image data appears to be raw bytes"
+                                    )
+                                    final_image_data = image_data
+                            except UnicodeDecodeError:
+                                # Not valid UTF-8, assume raw bytes
+                                self.logger.info("Image data is raw bytes (not UTF-8)")
+                                final_image_data = image_data
+
+                        if final_image_data:
+                            self.logger.info(
+                                f"Returning image data, size: {len(final_image_data)} bytes"
+                            )
+
+                            # Debug: inspect first 100 bytes to understand format
+                            data_preview = final_image_data[:100]
+                            self.logger.info(
+                                f"First 100 bytes (hex): {data_preview.hex()}"
+                            )
+                            self.logger.info(
+                                f"First 20 bytes (ascii): {data_preview[:20]!r}"
+                            )
+
+                            # Check for common image file signatures
+                            if final_image_data.startswith(b"\x89PNG"):
+                                self.logger.info("Data starts with PNG signature")
+                            elif final_image_data.startswith(b"\xff\xd8\xff"):
+                                self.logger.info("Data starts with JPEG signature")
+                            elif final_image_data.startswith(b"GIF"):
+                                self.logger.info("Data starts with GIF signature")
+                            else:
+                                self.logger.warning(
+                                    "Data does not start with known image signature"
+                                )
+
+                            # Validate with PIL
+                            try:
+                                img = Image.open(io.BytesIO(final_image_data))
+                                self.logger.info(
+                                    f"Valid image: format={img.format}, size={img.size}, mode={img.mode}"
+                                )
+                            except Exception as e:
+                                self.logger.error(f"Invalid image data: {e}")
+                                # Try to save raw data for analysis
+                                try:
+                                    with open("/tmp/debug_image_data.bin", "wb") as f:
+                                        f.write(final_image_data)
+                                    self.logger.info(
+                                        "Saved raw data to /tmp/debug_image_data.bin for analysis"
+                                    )
+                                except Exception as save_error:
+                                    self.logger.error(
+                                        f"Could not save debug data: {save_error}"
+                                    )
+
+                            return final_image_data
 
         raise ValueError("No image data found in Gemini API response")
 
