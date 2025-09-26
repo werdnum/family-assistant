@@ -62,6 +62,16 @@ class ChatInteractionResult:
         return self.error_traceback is not None
 
 
+@dataclass
+class ToolExecutionResult:
+    """Result of executing a single tool call."""
+
+    stream_event: "LLMStreamEvent"
+    llm_message: dict[str, Any]
+    history_message: dict[str, Any]
+    auto_attachment_id: str | None = None
+
+
 # --- Configuration for ProcessingService ---
 @dataclass
 class ProcessingServiceConfig:
@@ -497,7 +507,21 @@ class ProcessingService:
             # Process results as they complete
             for completed_task in asyncio.as_completed(tool_tasks):
                 try:
-                    event, llm_message, history_message = await completed_task
+                    result = await completed_task
+                    event = result.stream_event
+                    llm_message = result.llm_message
+                    history_message = result.history_message
+                    auto_attachment_id = result.auto_attachment_id
+
+                    # Auto-queue tool result attachments
+                    if (
+                        auto_attachment_id
+                        and auto_attachment_id not in pending_attachment_ids
+                    ):
+                        pending_attachment_ids.append(auto_attachment_id)
+                        logger.info(
+                            f"Auto-queued tool attachment {auto_attachment_id} for display"
+                        )
 
                     # Check if this is an attach_to_response tool call
                     tool_name = history_message.get("tool_name")
@@ -509,21 +533,13 @@ class ProcessingService:
                                 and "attachment_ids" in result_data
                             ):
                                 attachment_ids = result_data["attachment_ids"]
-                                # Add deduplication to prevent the same attachment from being added multiple times
-                                new_attachment_ids = [
-                                    id
-                                    for id in attachment_ids
-                                    if id not in pending_attachment_ids
-                                ]
-                                pending_attachment_ids.extend(new_attachment_ids)
-                                if new_attachment_ids:
-                                    logger.info(
-                                        f"Captured {len(new_attachment_ids)} new attachment IDs from attach_to_response"
-                                    )
-                                if len(attachment_ids) != len(new_attachment_ids):
-                                    logger.warning(
-                                        f"Deduplicated {len(attachment_ids) - len(new_attachment_ids)} attachment IDs that were already queued"
-                                    )
+                                # LLM is taking control - replace auto-collected attachments with explicit list
+                                old_count = len(pending_attachment_ids)
+                                pending_attachment_ids.clear()
+                                pending_attachment_ids.extend(attachment_ids)
+                                logger.info(
+                                    f"LLM explicitly controlling attachments: replaced {old_count} auto-queued with {len(attachment_ids)} explicit attachments"
+                                )
                         except (json.JSONDecodeError, KeyError) as e:
                             logger.warning(
                                 f"Failed to parse attach_to_response result: {e}"
@@ -586,7 +602,7 @@ class ProcessingService:
             Awaitable[bool],
         ]
         | None,
-    ) -> tuple[LLMStreamEvent, dict[str, Any], dict[str, Any]]:
+    ) -> ToolExecutionResult:
         """Execute a single tool call and return the result.
 
         Args:
@@ -600,7 +616,7 @@ class ProcessingService:
             request_confirmation_callback: Callback for tool confirmation
 
         Returns:
-            Tuple of (event, tool_response_message, llm_message)
+            Tuple of (event, tool_response_message, llm_message, auto_attachment_id)
         """
         call_id = tool_call_item_obj.id
         function_name = tool_call_item_obj.function.name
@@ -624,15 +640,16 @@ class ProcessingService:
             history_message = llm_message.copy()
             history_message["tool_name"] = function_name or "unknown_function"
 
-            return (
-                LLMStreamEvent(
+            return ToolExecutionResult(
+                stream_event=LLMStreamEvent(
                     type="tool_result",
                     tool_call_id=call_id,
                     tool_result=error_content,
                     error=error_traceback,
                 ),
-                llm_message,
-                history_message,
+                llm_message=llm_message,
+                history_message=history_message,
+                auto_attachment_id=None,  # No attachment for error cases
             )
 
         # Parse arguments
@@ -657,15 +674,16 @@ class ProcessingService:
             history_message = llm_message.copy()
             history_message["tool_name"] = function_name
 
-            return (
-                LLMStreamEvent(
+            return ToolExecutionResult(
+                stream_event=LLMStreamEvent(
                     type="tool_result",
                     tool_call_id=call_id,
                     tool_result=error_content,
                     error=error_traceback,
                 ),
-                llm_message,
-                history_message,
+                llm_message=llm_message,
+                history_message=history_message,
+                auto_attachment_id=None,  # No attachment for error cases
             )
 
         # Execute tool
@@ -702,6 +720,7 @@ class ProcessingService:
                 llm_message = result.to_llm_message(call_id, function_name)
                 history_message = result.to_history_message(call_id, function_name)
                 content_for_stream = result.text
+                auto_attachment_id = None  # Track attachment ID for auto-queuing
 
                 # Extract attachment metadata for streaming
                 stream_metadata = None
@@ -733,8 +752,9 @@ class ProcessingService:
                             attachment_data["attachment_id"] = attachment_metadata[
                                 "attachment_id"
                             ]
+                            auto_attachment_id = attachment_metadata["attachment_id"]
                             logger.info(
-                                f"Stored tool result attachment: {attachment_metadata['attachment_id']}"
+                                f"Stored tool result attachment: {auto_attachment_id}"
                             )
                         except Exception as e:
                             logger.error(f"Failed to store tool result attachment: {e}")
@@ -744,6 +764,7 @@ class ProcessingService:
             else:
                 # Backward compatible string handling
                 content_for_stream = str(result)
+                auto_attachment_id = None  # String results don't generate attachments
                 llm_message = {
                     "role": "tool",
                     "tool_call_id": call_id,
@@ -812,15 +833,16 @@ class ProcessingService:
                         )
                         # Continue with normal processing if parsing fails
 
-            return (
-                LLMStreamEvent(
+            return ToolExecutionResult(
+                stream_event=LLMStreamEvent(
                     type="tool_result",
                     tool_call_id=call_id,
                     tool_result=content_for_stream,
                     metadata=stream_metadata,
                 ),
-                llm_message,
-                history_message,
+                llm_message=llm_message,
+                history_message=history_message,
+                auto_attachment_id=auto_attachment_id,
             )
 
         except ToolNotFoundError:
@@ -835,20 +857,21 @@ class ProcessingService:
                 "error_traceback": error_traceback,
             }
 
-            return (
-                LLMStreamEvent(
+            return ToolExecutionResult(
+                stream_event=LLMStreamEvent(
                     type="tool_result",
                     tool_call_id=call_id,
                     tool_result=error_content,
                     error=error_traceback,
                 ),
-                tool_response_message,
-                {
+                llm_message=tool_response_message,
+                history_message={
                     "tool_call_id": call_id,
                     "role": "tool",
                     "name": function_name,
                     "content": error_content,
                 },
+                auto_attachment_id=None,  # No attachment for error cases
             )
 
         except Exception as e:
@@ -863,20 +886,21 @@ class ProcessingService:
                 "error_traceback": error_traceback,
             }
 
-            return (
-                LLMStreamEvent(
+            return ToolExecutionResult(
+                stream_event=LLMStreamEvent(
                     type="tool_result",
                     tool_call_id=call_id,
                     tool_result=error_content,
                     error=error_traceback,
                 ),
-                tool_response_message,
-                {
+                llm_message=tool_response_message,
+                history_message={
                     "tool_call_id": call_id,
                     "role": "tool",
                     "name": function_name,
                     "content": error_content,
                 },
+                auto_attachment_id=None,  # No attachment for error cases
             )
 
     async def _convert_attachment_urls_to_data_uris(

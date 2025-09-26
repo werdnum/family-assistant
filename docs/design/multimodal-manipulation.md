@@ -638,3 +638,100 @@ The testing is successful when:
 - Focus on core functionality before optimization
 - Simple permission model prioritized over complex access control
 - Keep memory usage efficient with lazy loading
+
+## Automatic Tool Attachment Display (Addendum)
+
+### Problem Statement
+
+When tools return attachments (e.g., camera snapshots, generated images), the LLM often doesn't
+realize it should call `attach_to_response` to send them to the user. This results in attachments
+being stored but not displayed, creating a poor user experience where users ask for images but don't
+see them.
+
+### Solution: Auto-Attachment with LLM Override
+
+#### Core Mechanism
+
+1. **Automatic Collection**: When any tool returns a `ToolResult` with an attachment, automatically
+   add it to `pending_attachment_ids`
+2. **LLM Override**: If the LLM calls `attach_to_response`, treat this as taking explicit control:
+   - Replace (not append to) the auto-collected list with LLM-specified attachments
+   - This allows the LLM to show only final results in multi-step workflows
+3. **Default Display**: If the LLM doesn't call `attach_to_response`, all auto-collected attachments
+   are sent with the response
+
+#### Implementation Changes
+
+1. **src/family_assistant/processing.py** (~line 738)
+
+   ```python
+   # After storing tool result attachment
+   if result.attachment and attachment_metadata:
+       attachment_id = attachment_metadata["attachment_id"]
+       if attachment_id not in pending_attachment_ids:
+           pending_attachment_ids.append(attachment_id)
+           logger.info(f"Auto-queued tool attachment {attachment_id} for display")
+   ```
+
+   Modify attach_to_response handling (~line 512):
+
+   ```python
+   if function_name == "attach_to_response":
+       # LLM is taking control - replace auto-collected with explicit list
+       pending_attachment_ids.clear()
+       pending_attachment_ids.extend(attachment_ids)
+       logger.info("LLM explicitly controlling attachments via attach_to_response")
+   ```
+
+2. **Tool Descriptions** - Update to clarify behavior:
+
+   - "Captures and displays camera image to the user"
+   - "Generates and displays an image based on the description"
+
+3. **System Prompt** (prompts.yaml):
+
+   ```yaml
+   * Tools that generate images or files automatically display them with your response
+   * To control which attachments are shown (e.g., only final results), use attach_to_response
+   * Progressive disclosure: The web UI shows all tool results; Telegram shows only final attachments
+   ```
+
+#### Interface-Specific Behavior
+
+- **Web UI**: Shows all tool results inline (progressive disclosure already exists)
+  - TODO: Improve multimodal tool result display in tool call UI
+- **Telegram**: Shows only final attachments (those in `pending_attachment_ids` at response end)
+  - Better for linear chat format
+  - Avoids cluttering conversation with intermediate images
+
+#### Examples
+
+**Simple Case**: "Show me the front door camera"
+
+- `get_camera_snapshot` returns image → auto-queued → displayed
+
+**Multi-Step Case**: "Get the camera image and highlight any people"
+
+- `get_camera_snapshot` returns image → auto-queued
+- `highlight_image` returns image → auto-queued
+- Both displayed (user sees original and highlighted)
+
+**LLM Control Case**: Same multi-step, but LLM calls `attach_to_response([highlighted_id])`
+
+- Auto-queued attachments replaced
+- Only highlighted image displayed
+
+#### Benefits
+
+- **Better Default UX**: Users get attachments automatically when expected
+- **Backward Compatible**: Existing `attach_to_response` calls continue working
+- **LLM Control**: Can override when appropriate for cleaner output
+- **Interface Appropriate**: Different behavior for web vs Telegram
+
+#### Implementation Status
+
+- [ ] Modify processing.py to auto-queue tool attachments
+- [ ] Update attach_to_response handling for LLM override
+- [ ] Update tool descriptions for clarity
+- [ ] Update system prompt in prompts.yaml
+- [ ] Update and create tests for new behavior

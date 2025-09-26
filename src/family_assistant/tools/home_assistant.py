@@ -88,7 +88,7 @@ HOME_ASSISTANT_TOOLS_DEFINITION: list[dict[str, Any]] = [
                 "If no camera_entity_id is provided, returns a list of available cameras.\n\n"
                 "Common camera entities include doorbell cameras, security cameras, and webcams. "
                 "Examples: camera.front_door, camera.doorbell_camera, camera.backyard_cam\n\n"
-                "Returns: On success with entity_id, returns the camera image. "
+                "Returns: Captures and displays the camera image to the user when entity_id is provided. "
                 "Without entity_id, returns list of available cameras. "
                 "On errors, returns descriptive error messages."
             ),
