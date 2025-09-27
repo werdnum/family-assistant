@@ -150,7 +150,7 @@ if [ -f "pyproject.toml" ]; then
     
     # Install dependencies using uv sync to respect lock file
     echo "Installing Python dependencies..."
-    uv sync --dev
+    uv sync --extra dev
     
     # Ensure poethepoet is installed
     echo "Installing poethepoet..."
