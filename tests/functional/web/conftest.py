@@ -18,7 +18,6 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from playwright.async_api import Page, async_playwright
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
@@ -486,13 +485,6 @@ async def web_test_fixture(
 
     api_port, _ = api_socket_and_port
     base_url = f"http://localhost:{api_port}"
-
-    # Clean up any existing data from previous tests
-    async with DatabaseContext(engine=web_only_assistant.database_engine) as db_context:
-        # Clear conversation history from previous tests
-        await db_context.execute_with_retry(text("DELETE FROM message_history"))
-        await db_context.execute_with_retry(text("DELETE FROM notes"))
-        await db_context.execute_with_retry(text("DELETE FROM tasks"))
 
     # Navigate to base URL for test readiness
     await page.goto(base_url)
