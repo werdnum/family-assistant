@@ -5,11 +5,13 @@ This module defines the protocol for image generation backends and provides
 concrete implementations including mock (PIL-based) and Gemini API backends.
 """
 
+import asyncio
 import base64
 import io
 import logging
 import random
 from abc import abstractmethod
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
@@ -297,9 +299,9 @@ class MockImageBackend:
         img_small = img.resize((1, 1))
         pixel = img_small.getpixel((0, 0))
         # Ensure we return a valid RGB tuple
-        if isinstance(pixel, (tuple, list)) and len(pixel) >= 3:
+        if isinstance(pixel, tuple | list) and len(pixel) >= 3:
             return (int(pixel[0]), int(pixel[1]), int(pixel[2]))
-        elif isinstance(pixel, (int, float)):
+        elif isinstance(pixel, int | float):
             # Grayscale image
             gray_val = int(pixel)
             return (gray_val, gray_val, gray_val)
@@ -445,8 +447,10 @@ class GeminiImageBackend:
                                 self.logger.error(f"Invalid image data: {e}")
                                 # Try to save raw data for analysis
                                 try:
-                                    with open("/tmp/debug_image_data.bin", "wb") as f:
-                                        f.write(final_image_data)
+                                    await asyncio.to_thread(
+                                        Path("/tmp/debug_image_data.bin").write_bytes,
+                                        final_image_data,
+                                    )
                                     self.logger.info(
                                         "Saved raw data to /tmp/debug_image_data.bin for analysis"
                                     )

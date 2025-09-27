@@ -320,6 +320,8 @@ select = [
     "ANN",
     # Commented out code
     "ERA",
+    # Async best practices
+    "ASYNC",
     # FastAPI
     "FAST",
     # Type Checking

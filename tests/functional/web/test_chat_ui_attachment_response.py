@@ -1,10 +1,12 @@
 """Test for attachment response functionality in the web UI."""
 
+import asyncio
 import io
 import json
 import os
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -47,8 +49,7 @@ async def create_test_attachment(
     # Write the file to the filesystem using the same structure as AttachmentService
     # AttachmentService expects files to have extensions, so add .png for our image
     file_path = f"{hash_dir}/{attachment_id}.png"
-    with open(file_path, "wb") as f:
-        f.write(image_data)
+    await asyncio.to_thread(Path(file_path).write_bytes, image_data)
 
     # Insert attachment metadata directly into database
     db_engine = web_test_fixture.assistant.database_engine

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -113,8 +114,7 @@ async def process_document_ingestion_request(
 
             document_storage_path.mkdir(parents=True, exist_ok=True)
 
-            with open(target_file_path, "wb") as f:
-                f.write(uploaded_file_content)
+            await asyncio.to_thread(target_file_path.write_bytes, uploaded_file_content)
 
             file_ref = str(target_file_path)
             logger.info(

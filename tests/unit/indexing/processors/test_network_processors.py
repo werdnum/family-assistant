@@ -1,8 +1,10 @@
 """Unit tests for network_processors.py."""
 
+import asyncio
 import logging
 import os
 import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
@@ -242,8 +244,8 @@ async def test_fetch_image_content_success(
         # Verify temp file content
         assert_that(result_item.ref).exists()
         if result_item.ref is not None:  # Guard for type checker
-            with open(result_item.ref, "rb") as f:
-                assert_that(f.read()).is_equal_to(image_bytes)
+            file_bytes = await asyncio.to_thread(Path(result_item.ref).read_bytes)
+            assert_that(file_bytes).is_equal_to(image_bytes)
 
         # Test cleanup
         assert_that(processor._temp_files).is_length(1)
