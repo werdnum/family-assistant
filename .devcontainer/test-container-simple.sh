@@ -15,6 +15,6 @@ podman run --rm \
   --workdir /workspace \
   --entrypoint /bin/bash \
   localhost/family-assistant-devcontainer:latest \
-  -c "rm -rf .venv && uv venv .venv && source .venv/bin/activate && uv pip install -e '.[dev]' && uv pip install pytest-xdist && echo 'Running some integration tests with postgres...' && timeout 300 pytest tests/integration/ --db=postgres -x --tb=short -q"
+  -c "rm -rf .venv && uv venv .venv && source .venv/bin/activate && uv sync --dev && uv pip install pytest-xdist && echo 'Running some integration tests with postgres...' && timeout 300 pytest tests/integration/ --db=postgres -x --tb=short -q"
 
 echo "Test complete!"

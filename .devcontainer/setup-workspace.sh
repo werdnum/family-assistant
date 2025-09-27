@@ -148,9 +148,9 @@ if [ -f "pyproject.toml" ]; then
     # Activate the virtual environment
     source .venv/bin/activate
     
-    # Install dependencies
+    # Install dependencies using uv sync to respect lock file
     echo "Installing Python dependencies..."
-    uv pip install -e ".[dev]"
+    uv sync --dev
     
     # Ensure poethepoet is installed
     echo "Installing poethepoet..."
