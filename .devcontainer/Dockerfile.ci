@@ -1,65 +1,71 @@
-# CI-optimized version of the devcontainer
+# CI-optimized version of the devcontainer with multi-stage builds
 # Pre-installs project dependencies for faster CI runs
-ARG BASE_IMAGE=ghcr.io/werdnum/family-assistant-devcontainer:latest
-FROM ${BASE_IMAGE}
 
-# Switch to root for setup
+ARG BASE_IMAGE=ghcr.io/werdnum/family-assistant-devcontainer:latest
+
+# Frontend build stage - runs independently for better parallelization
+FROM ${BASE_IMAGE} AS frontend-builder
+
+# Switch to claude user for frontend operations
+USER claude
+WORKDIR /opt/frontend
+
+# Copy only package files first for better caching (from project root context)
+COPY --chown=claude:claude frontend/package*.json ./
+
+# Install frontend dependencies with cache mount
+RUN --mount=type=cache,target=/home/claude/.npm,sharing=locked,uid=1001,gid=1001 \
+    npm ci --no-audit --no-fund
+
+# Copy frontend source (from project root context)
+COPY --chown=claude:claude frontend/ ./
+# Create the output directory structure that Vite expects
+RUN mkdir -p /opt/src/family_assistant/static && \
+    npm run build && \
+    # Build outputs to ../src/family_assistant/static/dist relative to /opt/frontend
+    # Copy built assets to a clean output directory for the final stage
+    mkdir -p /tmp/frontend-dist && \
+    cp -r /opt/src/family_assistant/static/dist/. /tmp/frontend-dist/
+
+# Backend preparation stage - for Python dependencies if needed in future
+FROM ${BASE_IMAGE} AS backend-prep
+
+USER root
+# Create cache directory with proper permissions
+RUN mkdir -p /opt/uv-cache && chown claude:claude /opt/uv-cache
+
+# Pre-install any additional Python dependencies for CI if needed
+# Currently minimal since pyproject.toml is installed at runtime
+USER claude
+
+# Final stage - combines frontend and backend
+FROM ${BASE_IMAGE} AS final
+
+# Switch to root for initial setup
 USER root
 
 # Create cache directory with proper permissions
 RUN mkdir -p /opt/uv-cache && chown claude:claude /opt/uv-cache
 
-# The UV cache will be mounted at runtime and persist between builds
-# No need to pre-populate - BuildKit cache mounts handle this efficiently
+# Copy pre-built frontend assets from frontend stage
+COPY --from=frontend-builder --chown=claude:claude /tmp/frontend-dist /opt/frontend-dist/
 
-# Pre-install Playwright system dependencies (as root)
-# These are OS-level dependencies needed by Chromium
-RUN npx --yes playwright@1.55.0 install-deps chromium
-
-# Create the browsers directory with correct permissions
-RUN mkdir -p /home/claude/.cache/playwright-browsers && \
-    chown -R claude:claude /home/claude/.cache
-
-# Install browsers using npx (npm playwright) at specific version
-# Since PLAYWRIGHT_BROWSERS_PATH is set, the browsers will be shared between npm and Python
-# The Python playwright will be installed at runtime from pyproject.toml
-RUN npx --yes playwright@1.55.0 install chromium
-
-# Pre-build frontend assets for CI
-# First copy only package files for better layer caching
+# Pre-build frontend node_modules for linting (separate from build artifacts)
+# Copy from project root context
 COPY --chown=claude:claude frontend/package*.json /opt/frontend/
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    cd /opt/frontend && \
+    npm ci --no-audit --no-fund && \
+    chown -R claude:claude /opt/frontend
 
-# Switch to claude user for npm operations
-USER claude
-WORKDIR /opt/frontend
-
-# Install dependencies (cached when package.json doesn't change)
-RUN npm ci --no-audit --no-fund
-
-# Now copy the rest of the frontend source
-COPY --chown=claude:claude frontend /opt/frontend/
-
-# Build frontend and prepare dist assets
-# Create the directory structure that Vite expects for build output
-RUN mkdir -p /opt/src/family_assistant/static/dist && \
-    npm run build && \
-    # Create output directory for CI
-    mkdir -p /opt/frontend-dist && \
-    # The Vite build outputs to ../src/family_assistant/static/dist relative to /opt/frontend/
-    # which is /opt/src/family_assistant/static/dist
-    # Copy all files including hidden directories like .vite/
-    cp -r /opt/src/family_assistant/static/dist/. /opt/frontend-dist/ && \
-    # Clean up source files but keep node_modules for CI linting
-    rm -rf src *.html *.js *.json
-
-# The /opt/frontend directory now contains only node_modules
-# which will be bind-mounted over during CI runs
+# The /opt/frontend directory now contains only node_modules for CI linting
+# The /opt/frontend-dist directory contains the built frontend assets
 
 # Set environment variables for CI mode
 ENV UV_CACHE_DIR=/opt/uv-cache
 ENV IS_CI_CONTAINER=true
 
-# Switch back to claude user
+# Switch to claude user
 USER claude
 WORKDIR /workspace
 

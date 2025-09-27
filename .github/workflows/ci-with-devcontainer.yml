@@ -26,10 +26,10 @@ jobs:
           TAG="ci-${{ github.run_id }}-${{ github.run_attempt }}"
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:${TAG}" >> $GITHUB_OUTPUT
-  build-devcontainer:
+  build-ci-container:
     needs: prepare
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45 # Increased timeout for two-stage build
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -43,7 +43,25 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build devcontainer image
+      - name: Cache warming - pull base images for better cache hits
+        run: |
+          docker pull ghcr.io/${{ env.IMAGE_PREFIX }}-devcontainer:latest || true
+          docker pull ghcr.io/${{ env.IMAGE_PREFIX }}-devcontainer:buildcache || true
+      - name: Build base devcontainer image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: .devcontainer/Dockerfile
+          platforms: linux/amd64 # Single arch for CI speed
+          push: false # Don't push, just load into Docker daemon
+          load: true # Load into Docker daemon for next stage
+          tags: base-devcontainer:${{ github.run_id }}
+          cache-from: |
+            type=gha
+            type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}-devcontainer:buildcache
+          cache-to: |
+            type=gha,mode=max
+      - name: Build CI devcontainer image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -51,13 +69,17 @@ jobs:
           platforms: linux/amd64 # Single arch for CI speed
           push: true
           tags: ${{ needs.prepare.outputs.image-name }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: |
+            type=gha
+            type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}-devcontainer:buildcache
+          cache-to: |
+            type=gha,mode=max
+            type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}-devcontainer:buildcache,mode=max
           build-args: |
-            BASE_IMAGE=ghcr.io/${{ env.IMAGE_PREFIX }}-devcontainer:latest
+            BASE_IMAGE=base-devcontainer:${{ github.run_id }}
           load: false
   lint:
-    needs: [prepare, build-devcontainer]
+    needs: [prepare, build-ci-container]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -85,7 +107,7 @@ jobs:
               fi && \
               scripts/format-and-lint.sh'
   test-frontend:
-    needs: [prepare, build-devcontainer]
+    needs: [prepare, build-ci-container]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -123,7 +145,7 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
   test-sqlite:
-    needs: [prepare, build-devcontainer]
+    needs: [prepare, build-ci-container]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -183,7 +205,7 @@ jobs:
           echo ""
           echo "💡 Download with: gh run download ${{ github.run_id }} --name playwright-artifacts-sqlite-${{ github.run_id }}"
   test-postgres:
-    needs: [prepare, build-devcontainer]
+    needs: [prepare, build-ci-container]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -273,3 +295,4 @@ jobs:
           echo "All tests passed!"
 
 # Note: Test images with unique tags will be cleaned up by GHCR retention policies
+
