@@ -22,7 +22,11 @@ services:
     restart: always
   # Backend service container (runs both backend and frontend dev servers)
   backend:
-    build: .
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+      cache_from:
+      - ghcr.io/werdnum/family-assistant:devcontainer
     restart: always
     depends_on:
       postgres:
@@ -57,7 +61,11 @@ services:
   # Claude Code container (runs claude-code-webui)
   claude:
     restart: always
-    build: .
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+      cache_from:
+      - ghcr.io/werdnum/family-assistant:devcontainer
     depends_on:
       postgres:
         condition: service_healthy
