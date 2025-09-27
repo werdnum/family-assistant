@@ -56,9 +56,9 @@ RUN ARCH=$(dpkg --print-architecture) && \
     curl -sSL "https://github.com/ast-grep/ast-grep/releases/latest/download/app-${AST_GREP_ARCH}-unknown-linux-gnu.zip" \
     -o /tmp/ast-grep.zip && \
     unzip /tmp/ast-grep.zip -d /tmp/ && \
-    mv /tmp/sg /usr/local/bin/ast-grep && \
-    chmod +x /usr/local/bin/ast-grep && \
-    rm /tmp/ast-grep.zip && \
+    install -m 0755 /tmp/ast-grep /usr/local/bin/ast-grep && \
+    install -m 0755 /tmp/sg /usr/local/bin/sg && \
+    rm /tmp/ast-grep /tmp/sg /tmp/ast-grep.zip && \
     # Install yq for YAML/JSON processing
     YQ_VERSION="v4.47.1" && \
     curl -sSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${ARCH}" -o /usr/local/bin/yq && \
