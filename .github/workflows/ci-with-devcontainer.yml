@@ -25,7 +25,7 @@ jobs:
         run: |
           TAG="ci-${{ github.run_id }}-${{ github.run_attempt }}"
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
-          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:${TAG}" >> $GITHUB_OUTPUT
+          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-${TAG}" >> $GITHUB_OUTPUT
   build-ci-container:
     needs: prepare
     runs-on: ubuntu-latest
@@ -45,8 +45,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Cache warming - pull base images for better cache hits
         run: |
-          docker pull ghcr.io/${{ env.IMAGE_PREFIX }}-devcontainer:latest || true
-          docker pull ghcr.io/${{ env.IMAGE_PREFIX }}-devcontainer:buildcache || true
+          docker pull ghcr.io/${{ env.IMAGE_PREFIX }}:devcontainer-latest || true
+          docker pull ghcr.io/${{ env.IMAGE_PREFIX }}:devcontainer-buildcache || true
       - name: Build base devcontainer image
         uses: docker/build-push-action@v6
         with:
@@ -54,10 +54,10 @@ jobs:
           file: .devcontainer/Dockerfile
           platforms: linux/amd64 # Single arch for CI speed
           push: true # Push to registry for next stage access
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:base-${{ github.run_id }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-base-${{ github.run_id }}
           cache-from: |
             type=gha
-            type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}-devcontainer:buildcache
+            type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}:devcontainer-buildcache
           cache-to: |
             type=gha,mode=max
       - name: Build CI devcontainer image
@@ -70,12 +70,12 @@ jobs:
           tags: ${{ needs.prepare.outputs.image-name }}
           cache-from: |
             type=gha
-            type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}-devcontainer:buildcache
+            type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}:devcontainer-buildcache
           cache-to: |
             type=gha,mode=max
-            type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}-devcontainer:buildcache,mode=max
+            type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}:devcontainer-buildcache,mode=max
           build-args: |
-            BASE_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:base-${{ github.run_id }}
+            BASE_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-base-${{ github.run_id }}
           load: false
   lint:
     needs: [prepare, build-ci-container]

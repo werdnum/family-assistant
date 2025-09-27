@@ -24,7 +24,7 @@ check_test_status() {
         select(.type == "tool_use" and (.name == "Edit" or .name == "Write" or .name == "MultiEdit")) |
         select(
             .input.file_path and 
-            (.input.file_path | test("(docs/|\\.claude/|\\.devcontainer/|\\.(md|txt)$|scratch/|tmp/|README)"; "i") | not)
+            (.input.file_path | test("(docs/|\\.claude/|\\.devcontainer/|\\.github/|\\.(md|txt)$|scratch/|tmp/|README)"; "i") | not)
         ) |
         {id: .id, name: .name, file: .input.file_path}
     ' 2>/dev/null | tail -1)
