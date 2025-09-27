@@ -19,6 +19,21 @@ from tests.functional.web.pages.chat_page import ChatPage
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 
+def should_handle_attach_tool_follow_up(args: dict) -> bool:
+    """Handle follow-up LLM call after attach_to_response tool execution.
+
+    Returns True if the messages contain an attach_to_response tool result,
+    indicating this is a follow-up call that should return empty content.
+    """
+    messages = args.get("messages", [])
+    # Check if there's an attach_to_response tool result in the messages
+    has_attach_tool_result = any(
+        msg.get("role") == "tool" and msg.get("name") == "attach_to_response"
+        for msg in messages
+    )
+    return has_attach_tool_result
+
+
 async def create_test_attachment(
     web_test_fixture: WebTestFixture,
     attachment_id: str,
@@ -126,16 +141,6 @@ async def test_attachment_response_flow(
         # Only trigger if we have the phrase but no tool results yet
         return has_trigger and not has_tool_results
 
-    # Handle follow-up call after tool execution
-    def should_handle_tool_follow_up(args: dict) -> bool:
-        messages = args.get("messages", [])
-        # Check if there's an attach_to_response tool result in the messages
-        has_attach_tool_result = any(
-            msg.get("role") == "tool" and msg.get("name") == "attach_to_response"
-            for msg in messages
-        )
-        return has_attach_tool_result
-
     mock_llm_client.rules = [
         (
             should_trigger_attach_tool,
@@ -154,7 +159,7 @@ async def test_attachment_response_flow(
             ),
         ),
         (
-            should_handle_tool_follow_up,
+            should_handle_attach_tool_follow_up,
             LLMOutput(
                 content=""  # Empty content to avoid appending additional text
             ),
@@ -317,6 +322,12 @@ async def test_attachment_response_with_multiple_attachments(
                 ],
             ),
         ),
+        (
+            should_handle_attach_tool_follow_up,
+            LLMOutput(
+                content=""  # Empty content to avoid appending additional text
+            ),
+        ),
     ]
     mock_llm_client.default_response = LLMOutput(content="Default response")
 
@@ -470,6 +481,12 @@ async def test_attachment_response_error_handling(
                 ],
             ),
         ),
+        (
+            should_handle_attach_tool_follow_up,
+            LLMOutput(
+                content=""  # Empty content to avoid appending additional text
+            ),
+        ),
     ]
 
     await chat_page.navigate_to_chat()
@@ -572,7 +589,13 @@ async def test_tool_attachment_persistence_after_page_reload(
                     )
                 ],
             ),
-        )
+        ),
+        (
+            should_handle_attach_tool_follow_up,
+            LLMOutput(
+                content=""  # Empty content to avoid appending additional text
+            ),
+        ),
     ]
 
     # Navigate and trigger the tool attachment
