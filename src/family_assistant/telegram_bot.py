@@ -13,6 +13,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+import aiofiles
 import telegramify_markdown  # type: ignore[import-untyped]
 from sqlalchemy import update as sqlalchemy_update
 from telegram import (
@@ -51,7 +52,7 @@ from family_assistant.storage.message_history import (
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
 
-    from family_assistant.processing import ProcessingService
+    from family_assistant.processing import ChatInteractionResult, ProcessingService
     from family_assistant.services.attachments import AttachmentService
     from family_assistant.storage.context import DatabaseContext
 
@@ -394,6 +395,70 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             with contextlib.suppress(asyncio.CancelledError):
                 await asyncio.wait_for(typing_task, timeout=1.0)
 
+    async def _send_attachment(
+        self,
+        context: ContextTypes.DEFAULT_TYPE,
+        chat_id: int,
+        attachment_metadata: dict[str, Any],
+        reply_to_message_id: int | None = None,
+    ) -> Message | None:
+        """Send an attachment to Telegram based on metadata."""
+        try:
+            attachment_id = attachment_metadata.get("attachment_id")
+            if not attachment_id:
+                logger.warning("Attachment metadata missing attachment_id")
+                return None
+
+            # Get the file path from the attachment service
+            file_path = self.telegram_service.attachment_service.get_attachment_path(
+                attachment_id
+            )
+            if not file_path or not file_path.exists():
+                logger.warning(f"Attachment file not found for ID: {attachment_id}")
+                return None
+
+            # Read the file content asynchronously
+            async with aiofiles.open(file_path, "rb") as f:
+                file_content = await f.read()
+
+            # Determine the sending method based on mime type
+            mime_type = attachment_metadata.get("mime_type", "")
+            description = attachment_metadata.get("description", "")
+            filename = attachment_metadata.get("name", file_path.name)
+
+            if mime_type.startswith("image/"):
+                # Send as photo
+                sent_message = await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=file_content,
+                    caption=description if description else None,
+                    reply_to_message_id=reply_to_message_id,
+                )
+                logger.info(
+                    f"Sent attachment {attachment_id} as photo to chat {chat_id}"
+                )
+                return sent_message
+            else:
+                # Send as document
+                sent_message = await context.bot.send_document(
+                    chat_id=chat_id,
+                    document=file_content,
+                    filename=filename,
+                    caption=description if description else None,
+                    reply_to_message_id=reply_to_message_id,
+                )
+                logger.info(
+                    f"Sent attachment {attachment_id} as document to chat {chat_id}"
+                )
+                return sent_message
+
+        except Exception as e:
+            logger.error(
+                f"Failed to send attachment {attachment_metadata.get('attachment_id', 'unknown')}: {e}",
+                exc_info=True,
+            )
+            return None
+
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Sends a welcome message when the /start command is issued."""
         if not update.effective_user:
@@ -735,23 +800,26 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
                     # Use the wrapper function as the callback
                     # Call the refactored handle_chat_interaction method
-                    (
-                        final_llm_content_to_send,
-                        last_assistant_internal_id,  # Renamed from final_assistant_message_internal_id for brevity here
-                        _final_reasoning_info,  # Not directly used in this handler for now
-                        processing_error_traceback,
-                    ) = await selected_processing_service.handle_chat_interaction(
-                        db_context=db_context,
-                        interface_type=interface_type,
-                        conversation_id=conversation_id,
-                        trigger_content_parts=trigger_content_parts,
-                        trigger_interface_message_id=trigger_interface_message_id,
-                        user_name=user_name,
-                        replied_to_interface_id=replied_to_interface_id,
-                        chat_interface=self.telegram_service.chat_interface,
-                        request_confirmation_callback=confirmation_callback_wrapper,
-                        trigger_attachments=trigger_attachments,
+                    result: ChatInteractionResult = (
+                        await selected_processing_service.handle_chat_interaction(
+                            db_context=db_context,
+                            interface_type=interface_type,
+                            conversation_id=conversation_id,
+                            trigger_content_parts=trigger_content_parts,
+                            trigger_interface_message_id=trigger_interface_message_id,
+                            user_name=user_name,
+                            replied_to_interface_id=replied_to_interface_id,
+                            chat_interface=self.telegram_service.chat_interface,
+                            request_confirmation_callback=confirmation_callback_wrapper,
+                            trigger_attachments=trigger_attachments,
+                        )
                     )
+                    final_llm_content_to_send = result.final_text
+                    last_assistant_internal_id = result.final_assistant_message_id  # Renamed from final_assistant_message_internal_id for brevity here
+                    _final_reasoning_info = (
+                        result.reasoning_info
+                    )  # Not directly used in this handler for now
+                    processing_error_traceback = result.error_traceback
                     # Message saving is now handled within handle_chat_interaction.
                     # We only need to send the final reply and update its interface_id.
 
@@ -808,6 +876,25 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         logger.warning(
                             f"Sent assistant message {sent_assistant_message.message_id} but couldn't find its internal_id ({last_assistant_internal_id}) to update."
                         )
+
+                    # Send any attachments from the result
+                    if result.attachments:
+                        logger.info(
+                            f"Sending {len(result.attachments)} attachments to chat {chat_id}"
+                        )
+                        for attachment in result.attachments:
+                            try:
+                                await self._send_attachment(
+                                    context=context,
+                                    chat_id=chat_id,
+                                    attachment_metadata=attachment,
+                                    reply_to_message_id=reply_target_message_id,
+                                )
+                            except Exception as attachment_err:
+                                logger.error(
+                                    f"Failed to send attachment {attachment.get('attachment_id', 'unknown')}: {attachment_err}",
+                                    exc_info=True,
+                                )
                 elif processing_error_traceback and reply_target_message_id:
                     error_message_to_send = (
                         "Sorry, something went wrong while processing your request."
@@ -1172,12 +1259,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     )
 
                 async with self._typing_notifications(context, chat_id):
-                    (
-                        final_llm_content_to_send,
-                        last_assistant_internal_id,
-                        _final_reasoning_info,  # Not directly used here
-                        processing_error_traceback,
-                    ) = await targeted_processing_service.handle_chat_interaction(
+                    result: ChatInteractionResult = await targeted_processing_service.handle_chat_interaction(
                         db_context=db_ctx,
                         interface_type="telegram",
                         conversation_id=str(chat_id),
@@ -1191,6 +1273,12 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         request_confirmation_callback=confirmation_callback_wrapper,
                         trigger_attachments=None,  # TODO: Update slash command photo handling to use AttachmentService
                     )
+                    final_llm_content_to_send = result.final_text
+                    last_assistant_internal_id = result.final_assistant_message_id
+                    _final_reasoning_info = (
+                        result.reasoning_info
+                    )  # Not directly used here
+                    processing_error_traceback = result.error_traceback
 
                 # --- Sending and Updating Logic ---
                 force_reply_markup = ForceReply(selective=False)
@@ -1241,6 +1329,25 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         logger.warning(
                             f"Sent assistant message {sent_assistant_message.message_id} (slash command) but couldn't find its internal_id ({last_assistant_internal_id}) to update."
                         )
+
+                    # Send any attachments from the result (slash command)
+                    if result.attachments:
+                        logger.info(
+                            f"Sending {len(result.attachments)} attachments to chat {chat_id} (slash command)"
+                        )
+                        for attachment in result.attachments:
+                            try:
+                                await self._send_attachment(
+                                    context=context,
+                                    chat_id=chat_id,
+                                    attachment_metadata=attachment,
+                                    reply_to_message_id=reply_target_message_id_for_bot,
+                                )
+                            except Exception as attachment_err:
+                                logger.error(
+                                    f"Failed to send attachment {attachment.get('attachment_id', 'unknown')} (slash command): {attachment_err}",
+                                    exc_info=True,
+                                )
                 elif processing_error_traceback:
                     error_message_to_send = (
                         "Sorry, something went wrong while processing your command."

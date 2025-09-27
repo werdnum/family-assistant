@@ -202,13 +202,8 @@ async def test_add_and_retrieve_note_rule_mock(
     # Note: db_engine fixture comes from the root conftest.py
     async with DatabaseContext(engine=db_engine) as db_context:
         # Call the method on the ProcessingService instance
-        # Unpack the 4 return values correctly
-        (
-            add_final_text_reply,
-            _add_final_assistant_msg_id,  # Not used here
-            _add_reasoning_info,  # Not used here
-            add_error,
-        ) = await processing_service.handle_chat_interaction(
+        # Fixed: Use dataclass access instead of tuple unpacking
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",  # Added interface type
@@ -220,6 +215,9 @@ async def test_add_and_retrieve_note_rule_mock(
             ),  # Added missing argument
             user_name=TEST_USER_NAME,
         )
+        add_final_text_reply = result.final_text
+        add_error = result.error_traceback
+
     # Assertions remain outside the context manager
     assert add_error is None, f"Error during add note: {add_error}"
     assert add_final_text_reply is not None, (
@@ -259,12 +257,7 @@ async def test_add_and_retrieve_note_rule_mock(
     # Create a new context for the retrieval part (or reuse if appropriate, but new is safer for isolation)
     async with DatabaseContext(engine=db_engine) as db_context:
         # Call the method on the ProcessingService instance again
-        (
-            retrieve_final_text_reply,
-            _retrieve_final_assistant_msg_id,  # Not used
-            _retrieve_final_reasoning_info,  # Not used
-            retrieve_error,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",  # Added missing interface type
@@ -276,6 +269,8 @@ async def test_add_and_retrieve_note_rule_mock(
             ),  # Added missing argument
             user_name=TEST_USER_NAME,
         )
+        retrieve_final_text_reply = result.final_text
+        retrieve_error = result.error_traceback
 
         # model_name argument removed
     assert retrieve_error is None, (

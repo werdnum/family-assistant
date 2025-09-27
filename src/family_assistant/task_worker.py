@@ -283,12 +283,7 @@ async def handle_llm_callback(
 
         # Call the ProcessingService.
         # NOTE: `handle_chat_interaction` now handles saving of all messages in the turn.
-        (
-            final_llm_content_to_send,
-            final_assistant_message_internal_id,
-            _final_reasoning_info,  # Not used directly by this handler
-            processing_error_traceback,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=chat_interface,
             interface_type=interface_type,
@@ -300,6 +295,10 @@ async def handle_llm_callback(
             replied_to_interface_id=None,  # Not a reply
             request_confirmation_callback=None,  # No confirmation for system callbacks
         )
+
+        final_llm_content_to_send = result.final_text
+        final_assistant_message_internal_id = result.final_assistant_message_id
+        processing_error_traceback = result.error_traceback
 
         if final_llm_content_to_send:
             sent_message_id_str = await chat_interface.send_message(

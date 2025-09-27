@@ -492,12 +492,7 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_reply,
-            _,
-            _,
-            error,
-        ) = await awaited_primary_service.handle_chat_interaction(
+        result = await awaited_primary_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
             conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
@@ -507,6 +502,8 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
             chat_interface=MagicMock(spec=ChatInterface),
             request_confirmation_callback=awaited_mock_confirmation_callback,
         )
+        final_reply = result.final_text
+        error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply is not None
@@ -567,12 +564,7 @@ async def test_delegation_confirm_target_granted(
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_reply,
-            _,
-            _,
-            error,
-        ) = await awaited_primary_service.handle_chat_interaction(
+        result = await awaited_primary_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
             conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
@@ -582,6 +574,8 @@ async def test_delegation_confirm_target_granted(
             chat_interface=MagicMock(spec=ChatInterface),
             request_confirmation_callback=awaited_mock_confirmation_callback,
         )
+        final_reply = result.final_text
+        error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply is not None
@@ -635,12 +629,7 @@ async def test_delegation_confirm_target_denied(
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_reply,
-            _,
-            _,
-            error,
-        ) = await awaited_primary_service.handle_chat_interaction(
+        result = await awaited_primary_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
             conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
@@ -650,6 +639,8 @@ async def test_delegation_confirm_target_denied(
             chat_interface=MagicMock(spec=ChatInterface),
             request_confirmation_callback=awaited_mock_confirmation_callback,
         )
+        final_reply = result.final_text
+        error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply is not None
@@ -691,12 +682,7 @@ async def test_delegation_blocked_target(
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_reply,
-            _,
-            _,
-            error,
-        ) = await awaited_primary_service.handle_chat_interaction(
+        result = await awaited_primary_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
             conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
@@ -706,6 +692,8 @@ async def test_delegation_blocked_target(
             chat_interface=MagicMock(spec=ChatInterface),
             request_confirmation_callback=awaited_mock_confirmation_callback,
         )
+        final_reply = result.final_text
+        error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply is not None
@@ -752,12 +740,7 @@ async def test_delegation_unrestricted_confirm_arg_granted(
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_reply,
-            _,
-            _,
-            error,
-        ) = await awaited_primary_service.handle_chat_interaction(
+        result = await awaited_primary_service.handle_chat_interaction(
             db_context=db_context,
             interface_type=TEST_INTERFACE_TYPE,
             conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
@@ -767,6 +750,8 @@ async def test_delegation_unrestricted_confirm_arg_granted(
             chat_interface=MagicMock(spec=ChatInterface),
             request_confirmation_callback=awaited_mock_confirmation_callback,
         )
+        final_reply = result.final_text
+        error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply is not None

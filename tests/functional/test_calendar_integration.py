@@ -261,12 +261,7 @@ async def test_add_event_and_verify_in_system_prompt(
     # --- Simulate User Interaction to Create Event ---
     user_message_create = f"Please schedule {event_summary} for tomorrow at 10 AM."
     async with DatabaseContext(engine=db_engine) as db_context:
-        (
-            final_reply,
-            _,
-            _,
-            error_create,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -275,6 +270,8 @@ async def test_add_event_and_verify_in_system_prompt(
             trigger_interface_message_id="msg_add_event_prompt_test",  # Unique message ID
             user_name=TEST_USER_NAME,
         )
+        final_reply = result.final_text
+        error_create = result.error_traceback
 
     assert error_create is None, f"Error during event creation: {error_create}"
     assert final_reply and final_llm_response_content in final_reply, (
@@ -455,12 +452,7 @@ async def test_modify_event(
         f"Please schedule {original_summary} for day after tomorrow at 2 PM."
     )
     async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        (
-            final_reply_create,
-            _,
-            _,
-            error_create,
-        ) = await processing_service_for_add.handle_chat_interaction(
+        result = await processing_service_for_add.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),  # Mock interface for this interaction
             interface_type="test_initial_add",  # Distinguish interface type
@@ -471,6 +463,8 @@ async def test_modify_event(
             trigger_interface_message_id="msg_create_orig_for_modify",
             user_name=TEST_USER_NAME,
         )
+        final_reply_create = result.final_text
+        error_create = result.error_traceback
 
     assert error_create is None, (
         f"Error during LLM-based initial event creation: {error_create}"
@@ -670,12 +664,7 @@ async def test_modify_event(
     # --- Simulate User Interaction to Modify ---
     user_message_modify = f"Please change event {original_summary} to start at 3 PM and call it {modified_summary}."
     async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        (
-            final_reply_modify,
-            _,
-            _,
-            error_modify,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -684,6 +673,8 @@ async def test_modify_event(
             trigger_interface_message_id="msg_mod",
             user_name=TEST_USER_NAME,
         )
+        final_reply_modify = result.final_text
+        error_modify = result.error_traceback
 
     assert error_modify is None, f"Error during modify chat interaction: {error_modify}"
     assert (
@@ -867,12 +858,7 @@ async def test_delete_event(
         f"Please schedule {event_to_delete_summary} for 3 days from now at 11 AM."
     )
     async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        (
-            final_reply_create_del,
-            _,
-            _,
-            error_create_del,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -883,6 +869,8 @@ async def test_delete_event(
             trigger_interface_message_id="msg_create_del",
             user_name=TEST_USER_NAME,
         )
+        final_reply_create_del = result.final_text
+        error_create_del = result.error_traceback
 
     assert error_create_del is None, (
         f"Error during creation of event to delete: {error_create_del}"
@@ -959,12 +947,7 @@ async def test_delete_event(
     # --- Simulate User Interaction to Delete ---
     user_message_delete = f"Please delete event {event_to_delete_summary}."
     async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        (
-            final_reply_delete,
-            _,
-            _,
-            error_delete,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -973,6 +956,8 @@ async def test_delete_event(
             trigger_interface_message_id="msg_del",
             user_name=TEST_USER_NAME,
         )
+        final_reply_delete = result.final_text
+        error_delete = result.error_traceback
 
     assert error_delete is None, f"Error during delete chat interaction: {error_delete}"
     assert (
@@ -1130,7 +1115,7 @@ async def test_search_events(
         ]
     )
     async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        _, _, _, err_add1 = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test_search",
@@ -1141,6 +1126,7 @@ async def test_search_events(
             trigger_interface_message_id="msg_add_event1_for_search",
             user_name=TEST_USER_NAME,
         )
+        err_add1 = result.error_traceback
     assert err_add1 is None, f"Error creating event1 for search test: {err_add1}"
     assert (
         await get_event_by_summary_from_radicale(radicale_server, event1_summary)
@@ -1195,7 +1181,7 @@ async def test_search_events(
         ]
     )
     async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        _, _, _, err_add2 = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test_search",
@@ -1206,6 +1192,7 @@ async def test_search_events(
             trigger_interface_message_id="msg_add_event2_for_search",
             user_name=TEST_USER_NAME,
         )
+        err_add2 = result.error_traceback
     assert err_add2 is None, f"Error creating event2 for search test: {err_add2}"
     assert (
         await get_event_by_summary_from_radicale(radicale_server, event2_summary)
@@ -1321,12 +1308,7 @@ async def test_search_events(
     # User asks a general question, LLM will refine it to search_query_text ("Search Event")
     user_message_search = "What are my events for day after tomorrow plus two?"
     async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        (
-            final_reply_search,
-            _,
-            _,
-            error_search,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -1335,6 +1317,8 @@ async def test_search_events(
             trigger_interface_message_id="msg_search",
             user_name=TEST_USER_NAME,
         )
+        final_reply_search = result.final_text
+        error_search = result.error_traceback
 
     assert error_search is None, f"Error during search chat interaction: {error_search}"
     assert final_reply_search is not None

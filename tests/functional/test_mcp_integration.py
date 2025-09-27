@@ -396,12 +396,7 @@ async def test_mcp_time_conversion_stdio(db_engine: AsyncEngine) -> None:
     async with DatabaseContext(engine=db_engine) as db_context:
         # Call generate_llm_response_for_chat directly
         # Unpack the correct return values: generated_turn_messages, final_reasoning_info, processing_error_traceback
-        (
-            final_assistant_message_content,
-            _final_assistant_message_id,  # Not used in this assertion
-            _final_reasoning_info,  # Not used in this assertion
-            processing_error_traceback,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -411,6 +406,8 @@ async def test_mcp_time_conversion_stdio(db_engine: AsyncEngine) -> None:
             trigger_interface_message_id=str(user_message_id),
             user_name=TEST_USER_NAME,
         )
+        final_assistant_message_content = result.final_text
+        processing_error_traceback = result.error_traceback
 
     # --- Verification (Assert on final response content) ---
     logger.info("--- Verifying final response content (stdio) ---")
@@ -597,12 +594,7 @@ async def test_mcp_time_conversion_sse(
 
     async with DatabaseContext(engine=db_engine) as db_context:
         # Correct unpacking based on function signature
-        (
-            final_assistant_message_content_sse,
-            _final_assistant_message_id_sse,  # Not used
-            _final_reasoning_info_sse,  # Not used
-            processing_error_traceback,
-        ) = await processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=MagicMock(),
             interface_type="test",
@@ -612,6 +604,8 @@ async def test_mcp_time_conversion_sse(
             trigger_interface_message_id=str(user_message_id),
             user_name=TEST_USER_NAME,
         )
+        final_assistant_message_content_sse = result.final_text
+        processing_error_traceback = result.error_traceback
 
     # --- Verification (Assert on final response content) ---
     logger.info("--- Verifying final response content (SSE) ---")

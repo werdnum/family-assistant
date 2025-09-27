@@ -191,12 +191,7 @@ async def delegate_to_service_tool(
 
     logger.info(f"Delegating request to service profile: '{target_service_id}'")
     try:
-        (
-            final_text_reply,
-            _final_assistant_message_id,  # Ignored
-            _final_reasoning_info,  # Ignored
-            error_traceback,
-        ) = await target_service.handle_chat_interaction(
+        result = await target_service.handle_chat_interaction(
             db_context=exec_context.db_context,
             interface_type=exec_context.interface_type,  # Use current interface type
             conversation_id=exec_context.conversation_id,  # Use current conversation ID
@@ -208,21 +203,21 @@ async def delegate_to_service_tool(
             request_confirmation_callback=exec_context.request_confirmation_callback,  # Pass through
         )
 
-        if error_traceback:
+        if result.error_traceback:
             logger.error(
-                f"Delegated service '{target_service_id}' returned an error: {error_traceback}"
+                f"Delegated service '{target_service_id}' returned an error: {result.error_traceback}"
             )
             return f"Error from '{target_service_id}' service: An error occurred during processing."
-        if final_text_reply is None:
+        if result.final_text is None:
             logger.info(
                 f"Delegated service '{target_service_id}' returned no textual reply."
             )
             return f"Service '{target_service_id}' processed the request but provided no textual response."
 
         logger.info(
-            f"Received reply from delegated service '{target_service_id}': '{final_text_reply[:100]}...'"
+            f"Received reply from delegated service '{target_service_id}': '{result.final_text[:100]}...'"
         )
-        return final_text_reply
+        return result.final_text
 
     except Exception as e:
         logger.error(
