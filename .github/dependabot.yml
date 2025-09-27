@@ -3,14 +3,14 @@ updates:
   - package-ecosystem: "uv"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
       day: "monday"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 2
     cooldown:
-      default: "5days"
+      default: "14days"
       major: "30days"
-      minor: "7days"
-      patch: "3days"
+      minor: "14days"
+      patch: "7days"
     groups:
       python-dev-tools:
         patterns:
@@ -20,30 +20,41 @@ updates:
           - "isort*"
           - "pre-commit*"
           - "pytest*"
-      python-minor-patch:
-        dependency-type: "production"
+          - "mypy*"
+          - "basedpyright*"
+      python-updates:
         update-types:
           - "minor"
           - "patch"
+        exclude-patterns:
+          - "pylint*"
+          - "ruff*"
+          - "black*"
+          - "isort*"
+          - "pre-commit*"
+          - "pytest*"
+          - "mypy*"
+          - "basedpyright*"
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
       day: "wednesday"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 2
     cooldown:
-      default: "5days"
+      default: "14days"
       major: "30days"
-      minor: "7days"
-      patch: "3days"
+      minor: "14days"
+      patch: "7days"
     groups:
-      radix-ui:
-        patterns:
-          - "@radix-ui/*"
       react-ecosystem:
         patterns:
           - "react*"
           - "@types/react*"
+          - "@radix-ui/*"
+          - "@assistant-ui/*"
+          - "@hookform/*"
+          - "react-router*"
       frontend-dev-tools:
         dependency-type: "development"
         patterns:
@@ -51,20 +62,42 @@ updates:
           - "@biomejs/*"
           - "eslint*"
           - "vite*"
-      frontend-minor-patch:
-        dependency-type: "production"
+          - "tailwindcss*"
+          - "jsdom*"
+          - "@types/*"
+      frontend-updates:
         update-types:
           - "minor"
           - "patch"
+        exclude-patterns:
+          - "react*"
+          - "@types/react*"
+          - "@radix-ui/*"
+          - "@assistant-ui/*"
+          - "@hookform/*"
+          - "react-router*"
+          - "@testing-library/*"
+          - "@biomejs/*"
+          - "eslint*"
+          - "vite*"
+          - "tailwindcss*"
+          - "jsdom*"
+          - "@types/*"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
       day: "friday"
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 1
     cooldown:
-      default: "7days"
+      default: "14days"
       major: "30days"
+    groups:
+      github-actions:
+        update-types:
+          - "major"
+          - "minor"
+          - "patch"
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
@@ -76,8 +109,9 @@ updates:
   - package-ecosystem: "docker"
     directory: "/.devcontainer"
     schedule:
-      interval: "monthly"
-    open-pull-requests-limit: 2
+      interval: "quarterly"
+    open-pull-requests-limit: 1
     cooldown:
-      default: "14days"
-      major: "60days"
+      default: "30days"
+      major: "90days"
+
