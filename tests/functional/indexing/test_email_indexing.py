@@ -15,6 +15,7 @@ from collections.abc import (
     AsyncGenerator,  # Add missing typing imports & AsyncGenerator
 )
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock  # unittest.mock.AsyncMock removed
 
@@ -1211,8 +1212,7 @@ async def test_email_with_pdf_attachment_indexing_e2e(
     # Read the content from the existing PDF file
     pdf_file_path = "tests/data/test_doc.pdf"
     try:
-        with open(pdf_file_path, "rb") as f:
-            pdf_content_bytes = f.read()
+        pdf_content_bytes = await asyncio.to_thread(Path(pdf_file_path).read_bytes)
     except FileNotFoundError:
         pytest.fail(f"Test PDF file not found at {pdf_file_path}")
     assert_that(pdf_content_bytes).described_as(

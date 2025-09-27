@@ -4,9 +4,9 @@ import copy
 import logging
 import os
 import socket
-import subprocess
 import sys
 import zoneinfo
+from asyncio import subprocess as asyncio_subprocess
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -205,42 +205,72 @@ class Assistant:
         """Ensure Playwright browsers are installed, install if missing."""
         try:
             # Check if browsers are installed by trying to get the path
+            dry_run_process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "playwright",
+                "install",
+                "--dry-run",
+                stdout=asyncio_subprocess.PIPE,
+                stderr=asyncio_subprocess.PIPE,
+            )
+
             try:
-                dry_run = subprocess.run(
-                    [sys.executable, "-m", "playwright", "install", "--dry-run"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    check=True,
+                dry_run_stdout, dry_run_stderr = await asyncio.wait_for(
+                    dry_run_process.communicate(), timeout=10
                 )
-                dry_run_output = dry_run.stdout
-                needs_install = "chromium" in dry_run_output.lower()
-            except subprocess.CalledProcessError as dry_run_error:
-                dry_run_output = (dry_run_error.stdout or "").lower()
+            except asyncio.TimeoutError:
+                dry_run_process.kill()
+                await dry_run_process.communicate()
+                logger.warning("Playwright browser check timed out")
+                return
+
+            dry_run_output = (dry_run_stdout or b"").decode()
+            needs_install = "chromium" in dry_run_output.lower()
+
+            if dry_run_process.returncode != 0:
                 needs_install = True
+                dry_run_error_output = (dry_run_stderr or b"").decode().strip()
+                if dry_run_error_output:
+                    logger.debug(
+                        "Playwright dry-run returned non-zero exit code: %s",
+                        dry_run_error_output,
+                    )
 
             # If dry-run suggests installation is needed, install chromium
             if needs_install:
                 logger.info("Playwright browsers not found, installing chromium...")
+                install_process = await asyncio.create_subprocess_exec(
+                    sys.executable,
+                    "-m",
+                    "playwright",
+                    "install",
+                    "chromium",
+                    stdout=asyncio_subprocess.PIPE,
+                    stderr=asyncio_subprocess.PIPE,
+                )
+
                 try:
-                    subprocess.run(
-                        [sys.executable, "-m", "playwright", "install", "chromium"],
-                        capture_output=True,
-                        text=True,
-                        timeout=300,  # 5 minute timeout for installation
-                        check=True,
+                    _, install_stderr = await asyncio.wait_for(
+                        install_process.communicate(), timeout=300
                     )
+                except asyncio.TimeoutError:
+                    install_process.kill()
+                    await install_process.communicate()
+                    logger.warning("Playwright browser installation timed out")
+                    return
+
+                if install_process.returncode == 0:
                     logger.info("Playwright chromium browser installed successfully")
-                except subprocess.CalledProcessError as install_error:
+                else:
+                    install_error_output = (install_stderr or b"").decode().strip()
                     logger.warning(
                         "Failed to install Playwright browsers: %s",
-                        install_error.stderr,
+                        install_error_output,
                     )
             else:
                 logger.debug("Playwright browsers already installed")
-        except subprocess.TimeoutExpired:
-            logger.warning("Playwright browser check timed out")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(f"Could not check/install Playwright browsers: {e}")
 
     async def setup_dependencies(self) -> None:
