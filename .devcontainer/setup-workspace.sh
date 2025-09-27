@@ -67,8 +67,24 @@ if [ "$(id -u)" = "0" ]; then
     RUNNING_AS_ROOT=true
 fi
 
-# Change to workspace directory
-cd /workspace
+# Handle migration to worktree structure
+if [ -d "/workspace/.git" ] && [ ! -d "/workspace/main" ]; then
+    echo "Migrating to worktree-enabled structure..."
+
+    # Create main directory
+    mkdir -p /workspace/main
+
+    # Move all files to main (excluding the main directory itself)
+    find /workspace -maxdepth 1 -mindepth 1 ! -name 'main' \
+         -exec mv {} /workspace/main/ \;
+
+    echo "Migration complete - repository now at /workspace/main"
+fi
+
+# Change to worktree directory
+WORKTREE_DIR="/workspace/${WORKTREE_NAME:-main}"
+mkdir -p "$WORKTREE_DIR"
+cd "$WORKTREE_DIR"
 
 # Clone repository if CLAUDE_PROJECT_REPO is set and .git doesn't exist
 if [ -n "$CLAUDE_PROJECT_REPO" ] && [ ! -d ".git" ]; then
@@ -111,9 +127,9 @@ if [ -n "$CLAUDE_PROJECT_REPO" ] && [ ! -d ".git" ]; then
         fi
     fi
     
-    # Ensure claude owns the workspace if running as root
+    # Ensure claude owns the worktree if running as root
     if [ "$RUNNING_AS_ROOT" = "true" ]; then
-        chown -R claude:claude /workspace
+        chown -R claude:claude "$WORKTREE_DIR"
     fi
 elif [ -d ".git" ]; then
     echo "Workspace already exists, updating dependencies..."
@@ -267,7 +283,7 @@ fi
 
 # Configure MCP servers for Claude
 echo "Configuring MCP servers..."
-cd /workspace
+cd "$WORKTREE_DIR"
 
 # Find full paths for executables
 DENO_PATH=$(which deno 2>/dev/null || echo "/home/claude/.deno/bin/deno")
@@ -284,7 +300,7 @@ if $CLAUDE_BIN mcp list 2>/dev/null | grep -q ":"; then
 fi
 $CLAUDE_BIN mcp add --scope user context7 $(which npx) -- -y -q @upstash/context7-mcp
 $CLAUDE_BIN mcp add --scope user scraper /workspace-bin/scrape_mcp
-$CLAUDE_BIN mcp add --scope user serena -- sh -c "$(which uvx) -q --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant --project /workspace"
+$CLAUDE_BIN mcp add --scope user serena -- sh -c "$(which uvx) -q --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant --project $WORKTREE_DIR"
 $CLAUDE_BIN mcp add --scope user playwright $(which npx) -- -y -q @playwright/mcp@latest --allowed-origins "localhost:8000;localhost:5173;localhost:8001;unpkg.com;cdn.jsdelivr.net;cdnjs.cloudflare.com;cdn.simplecss.org;devcontainer-backend-1" --headless --isolated --browser chromium
 # $CLAUDE_BIN mcp add --scope user github -t http https://api.githubcopilot.com/mcp/ -H "Authorization: Bearer $GITHUB_TOKEN"
 
