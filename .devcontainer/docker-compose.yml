@@ -31,9 +31,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    working_dir: /workspace
+    working_dir: /workspace/${WORKTREE_NAME:-main}
     user: "1001:1001"
-    command: ["/bin/bash", "-c", "cd /workspace && source .venv/bin/activate && echo 'Waiting for PostgreSQL...' && for i in {1..30}; do if pg_isready -h postgres -U test; then echo 'PostgreSQL is ready!'; break; fi; sleep 1; done && mkdir -p /var/log/family-assistant && exec poe dev 2>&1 | tee /var/log/family-assistant/dev-server.log"]
+    command: ["/bin/bash", "-c", "cd /workspace/${WORKTREE_NAME:-main} && source .venv/bin/activate && echo 'Waiting for PostgreSQL...' && for i in {1..30}; do if pg_isready -h postgres -U test; then echo 'PostgreSQL is ready!'; break; fi; sleep 1; done && mkdir -p /var/log/family-assistant && exec poe dev 2>&1 | tee /var/log/family-assistant/dev-server.log"]
     ports:
       - "8000:8000" # Backend API
       - "5173:5173" # Frontend dev server
@@ -45,6 +45,7 @@ services:
       # Pass through any additional environment variables
       - CLAUDE_PROJECT_REPO=${CLAUDE_PROJECT_REPO:-https://github.com/werdnum/family-assistant.git}
       - CLAUDE_PROJECT_BRANCH=${CLAUDE_PROJECT_BRANCH:-}
+      - WORKTREE_NAME=${WORKTREE_NAME:-main}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -69,11 +70,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    working_dir: /workspace
+    working_dir: /workspace/${WORKTREE_NAME:-main}
     stdin_open: true
     tty: true
     user: "1001:1001"
-    command: ["/bin/bash", "-c", "cd /workspace && source .venv/bin/activate && export NPM_CONFIG_PREFIX=/home/claude/.npm-global && echo 'Claude Code environment ready!' && echo 'Starting claude-code-webui on port 8080...' && (cd /opt/claude-code-webui && env PORT=8080 npm run server)"]
+    command: ["/bin/bash", "-c", "cd /workspace/${WORKTREE_NAME:-main} && source .venv/bin/activate && export NPM_CONFIG_PREFIX=/home/claude/.npm-global && echo 'Claude Code environment ready!' && echo 'Starting claude-code-webui on port 8080...' && (cd /opt/claude-code-webui && env PORT=8080 npm run server)"]
     ports:
       - "8080:8080" # Claude Code WebUI
     environment:
@@ -88,6 +89,7 @@ services:
       - ONESHOT_TASK=${ONESHOT_TASK:-}
       - CLAUDE_PROJECT_REPO=${CLAUDE_PROJECT_REPO:-}
       - CLAUDE_PROJECT_BRANCH=${CLAUDE_PROJECT_BRANCH:-}
+      - WORKTREE_NAME=${WORKTREE_NAME:-main}
       # Additional environment variables for family-assistant
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
@@ -123,3 +125,4 @@ volumes:
 networks:
   devnet:
     driver: bridge
+
