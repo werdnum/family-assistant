@@ -62,7 +62,7 @@ jobs:
       - name: Build and conditionally push devcontainer image
         uses: docker/build-push-action@v6
         with:
-          context: .devcontainer
+          context: .
           file: .devcontainer/Dockerfile
           platforms: ${{ needs.prepare.outputs.platforms }}
           push: ${{ needs.prepare.outputs.should-push }}
@@ -70,8 +70,13 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:${{ needs.prepare.outputs.tag }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:main
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:buildcache
+          cache-from: |
+            type=gha
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:buildcache
+          cache-to: |
+            type=gha,mode=max
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:buildcache,mode=max
   build-main:
     needs: prepare
     runs-on: ubuntu-latest
