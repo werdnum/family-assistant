@@ -44,6 +44,7 @@ from telegram.ext import (
 # Import necessary types for type hinting
 from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.interfaces import ChatInterface  # Import the new interface
+from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.message_history import (
     message_history_table,  # For error handling db update
 )
@@ -53,7 +54,6 @@ if TYPE_CHECKING:
 
     from family_assistant.processing import ProcessingService
     from family_assistant.services.attachment_registry import AttachmentRegistry
-    from family_assistant.storage.context import DatabaseContext
 
 logger = logging.getLogger(__name__)
 
@@ -754,9 +754,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         result.reasoning_info
                     )  # Not directly used in this handler for now
                     processing_error_traceback = result.error_traceback
-                    _response_attachment_ids = (
-                        result.attachment_ids
-                    )  # Not yet implemented in telegram handler
+                    response_attachment_ids = result.attachment_ids
                     # Message saving is now handled within handle_chat_interaction.
                     # We only need to send the final reply and update its interface_id.
 
@@ -813,6 +811,22 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         logger.warning(
                             f"Sent assistant message {sent_assistant_message.message_id} but couldn't find its internal_id ({last_assistant_internal_id}) to update."
                         )
+
+                    # Send attachments after the text message
+                    if response_attachment_ids:
+                        try:
+                            await (
+                                self.telegram_service.chat_interface._send_attachments(
+                                    chat_id=chat_id,
+                                    attachment_ids=response_attachment_ids,
+                                    reply_to_msg_id=reply_target_message_id,
+                                )
+                            )
+                        except Exception as attachment_err:
+                            logger.error(
+                                f"Failed to send attachments {response_attachment_ids}: {attachment_err}",
+                                exc_info=True,
+                            )
                 elif processing_error_traceback and reply_target_message_id:
                     error_message_to_send = (
                         "Sorry, something went wrong while processing your request."
@@ -1198,9 +1212,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         result.reasoning_info
                     )  # Not directly used here
                     processing_error_traceback = result.error_traceback
-                    _response_attachment_ids = (
-                        result.attachment_ids
-                    )  # Not yet implemented in telegram handler
+                    response_attachment_ids = result.attachment_ids
 
                 # --- Sending and Updating Logic ---
                 force_reply_markup = ForceReply(selective=False)
@@ -1251,6 +1263,22 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         logger.warning(
                             f"Sent assistant message {sent_assistant_message.message_id} (slash command) but couldn't find its internal_id ({last_assistant_internal_id}) to update."
                         )
+
+                    # Send attachments after the text message
+                    if response_attachment_ids:
+                        try:
+                            await (
+                                self.telegram_service.chat_interface._send_attachments(
+                                    chat_id=chat_id,
+                                    attachment_ids=response_attachment_ids,
+                                    reply_to_msg_id=reply_target_message_id_for_bot,
+                                )
+                            )
+                        except Exception as attachment_err:
+                            logger.error(
+                                f"Failed to send attachments {response_attachment_ids}: {attachment_err}",
+                                exc_info=True,
+                            )
                 elif processing_error_traceback:
                     error_message_to_send = (
                         "Sorry, something went wrong while processing your command."
@@ -1660,7 +1688,9 @@ class TelegramService:
         self.application = ApplicationBuilder().token(telegram_token).build()
         self._was_started: bool = False
         self._last_error: Exception | None = None
-        self.chat_interface = TelegramChatInterface(self.application)
+        self.chat_interface = TelegramChatInterface(
+            self.application, attachment_registry
+        )
 
         # Use AttachmentRegistry (replaces AttachmentService)
         self.attachment_registry = attachment_registry
@@ -1911,14 +1941,20 @@ class TelegramChatInterface(ChatInterface):
     Uses an underlying telegram.ext.Application instance to send messages.
     """
 
-    def __init__(self, application: Application) -> None:
+    def __init__(
+        self,
+        application: Application,
+        attachment_registry: AttachmentRegistry | None = None,
+    ) -> None:
         """
         Initializes the TelegramChatInterface.
 
         Args:
             application: The telegram.ext.Application instance.
+            attachment_registry: The AttachmentRegistry for handling file attachments.
         """
         self.application = application
+        self.attachment_registry = attachment_registry
 
     async def send_message(
         self,
@@ -2025,21 +2061,75 @@ class TelegramChatInterface(ChatInterface):
         Returns:
             List of message IDs for sent attachments.
         """
-
         message_ids = []
 
-        # Get attachment service from the application's context
-        # Note: This assumes the attachment service is available from the bot context
-        # In a real implementation, this would need to be properly dependency-injected
-        try:
-            # We need access to the attachment service here
-            # For now, we'll skip sending attachments and log a warning
-            # This will need to be properly implemented with DI
+        if not self.attachment_registry:
             logger.warning(
                 f"TelegramChatInterface: Cannot send {len(attachment_ids)} attachments - "
-                "AttachmentRegistry not available. This feature needs proper dependency injection."
+                "AttachmentRegistry not available."
             )
             return message_ids
+
+        try:
+            async with DatabaseContext(
+                self.attachment_registry.db_engine
+            ) as db_context:
+                for attachment_id in attachment_ids:
+                    try:
+                        # Get attachment metadata
+                        metadata = await self.attachment_registry.get_attachment(
+                            db_context, attachment_id
+                        )
+                        if not metadata:
+                            logger.warning(f"Attachment {attachment_id} not found")
+                            continue
+
+                        # Get attachment content
+                        content = await self.attachment_registry.get_attachment_content(
+                            db_context, attachment_id
+                        )
+                        if not content:
+                            logger.warning(
+                                f"Content for attachment {attachment_id} not found"
+                            )
+                            continue
+
+                        # Determine how to send based on content type
+                        content_type = metadata.mime_type or ""
+                        filename = metadata.description or f"attachment_{attachment_id}"
+
+                        # Send as photo for image types
+                        if content_type.startswith("image/"):
+                            sent_msg = await self.application.bot.send_photo(
+                                chat_id=chat_id,
+                                photo=io.BytesIO(content),
+                                caption=filename,
+                                reply_to_message_id=reply_to_msg_id,
+                            )
+                            message_ids.append(str(sent_msg.message_id))
+                            logger.info(
+                                f"Sent image attachment {attachment_id} as message {sent_msg.message_id}"
+                            )
+
+                        # Send as document for other types
+                        else:
+                            sent_msg = await self.application.bot.send_document(
+                                chat_id=chat_id,
+                                document=io.BytesIO(content),
+                                filename=filename,
+                                reply_to_message_id=reply_to_msg_id,
+                            )
+                            message_ids.append(str(sent_msg.message_id))
+                            logger.info(
+                                f"Sent document attachment {attachment_id} as message {sent_msg.message_id}"
+                            )
+
+                    except Exception as e:
+                        logger.error(
+                            f"Error sending attachment {attachment_id}: {e}",
+                            exc_info=True,
+                        )
+                        continue
 
         except Exception as e:
             logger.error(f"Error in _send_attachments: {e}", exc_info=True)
