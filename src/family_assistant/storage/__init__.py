@@ -66,8 +66,6 @@ except ImportError:
     VECTOR_STORAGE_ENABLED = False
 
 
-# logger definition moved here to be after potential vector_storage import logs
-logger = logging.getLogger(__name__)
 # --- Helper Functions for Database Initialization (Refactored) ---
 
 
