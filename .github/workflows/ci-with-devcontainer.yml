@@ -53,9 +53,8 @@ jobs:
           context: .
           file: .devcontainer/Dockerfile
           platforms: linux/amd64 # Single arch for CI speed
-          push: false # Don't push, just load into Docker daemon
-          load: true # Load into Docker daemon for next stage
-          tags: base-devcontainer:${{ github.run_id }}
+          push: true # Push to registry for next stage access
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:base-${{ github.run_id }}
           cache-from: |
             type=gha
             type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}-devcontainer:buildcache
@@ -76,7 +75,7 @@ jobs:
             type=gha,mode=max
             type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}-devcontainer:buildcache,mode=max
           build-args: |
-            BASE_IMAGE=base-devcontainer:${{ github.run_id }}
+            BASE_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:base-${{ github.run_id }}
           load: false
   lint:
     needs: [prepare, build-ci-container]
