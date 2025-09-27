@@ -18,6 +18,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from playwright.async_api import Page, async_playwright
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
@@ -486,28 +487,14 @@ async def web_test_fixture(
     api_port, _ = api_socket_and_port
     base_url = f"http://localhost:{api_port}"
 
-    # WORKAROUND: Pre-load the router to avoid race conditions with dynamic imports
-    # The first test that navigates to a page with dynamic imports (like /history or /docs)
-    # can fail with 404 errors if the router hasn't fully initialized.
-    # This ensures the router and its import resolution is ready.
-    print("Pre-loading router to initialize dynamic import resolution...")
-    await page.goto(base_url)
-    await page.wait_for_load_state("networkidle", timeout=15000)
+    # Clean up any existing data from previous tests
+    async with DatabaseContext(engine=web_only_assistant.database_engine) as db_context:
+        # Clear conversation history from previous tests
+        await db_context.execute_with_retry(text("DELETE FROM message_history"))
+        await db_context.execute_with_retry(text("DELETE FROM notes"))
+        await db_context.execute_with_retry(text("DELETE FROM tasks"))
 
-    # Pre-load critical dynamic imports that tests frequently navigate to
-    # This prevents "Failed to fetch" errors on first navigation
-    critical_routes = ["/docs", "/history", "/notes", "/events"]
-    for route in critical_routes:
-        print(f"Pre-loading route: {route}")
-        try:
-            await page.goto(f"{base_url}{route}")
-            # Wait for the route to load - use networkidle to ensure all resources are fetched
-            await page.wait_for_load_state("networkidle", timeout=15000)
-        except Exception as e:
-            print(f"Warning: Failed to pre-load {route}: {e}")
-            # Continue with other routes even if one fails
-
-    # Return to root for a clean start
+    # Navigate to base URL for test readiness
     await page.goto(base_url)
     await page.wait_for_load_state("networkidle", timeout=15000)
 
