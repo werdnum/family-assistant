@@ -27,7 +27,7 @@ podman run --rm \
   --env TEST_DATABASE_URL=postgresql+asyncpg://test:test@localhost:5432/test \
   --env PATH="/root/.local/bin:/root/.deno/bin:$PATH" \
   family-assistant-test \
-  -c "uv pip install -e '.[dev]' && poe test"
+  -c "uv sync --dev && poe test"
 
 # Cleanup
 rm -f .devcontainer/Dockerfile.test
