@@ -125,6 +125,16 @@ async def test_attachment_response_flow(
         # Only trigger if we have the phrase but no tool results yet
         return has_trigger and not has_tool_results
 
+    # Handle follow-up call after tool execution
+    def should_handle_tool_follow_up(args: dict) -> bool:
+        messages = args.get("messages", [])
+        # Check if there's an attach_to_response tool result in the messages
+        has_attach_tool_result = any(
+            msg.get("role") == "tool" and msg.get("name") == "attach_to_response"
+            for msg in messages
+        )
+        return has_attach_tool_result
+
     mock_llm_client.rules = [
         (
             should_trigger_attach_tool,
@@ -140,6 +150,12 @@ async def test_attachment_response_flow(
                         ),
                     )
                 ],
+            ),
+        ),
+        (
+            should_handle_tool_follow_up,
+            LLMOutput(
+                content=""  # Empty content to avoid appending additional text
             ),
         ),
     ]
