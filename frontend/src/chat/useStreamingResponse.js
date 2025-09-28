@@ -142,11 +142,23 @@ export const useStreamingResponse = ({
                 if (payload.tool_call_id && payload.result) {
                   const toolCallIndex = toolCalls.findIndex((tc) => tc.id === payload.tool_call_id);
                   if (toolCallIndex !== -1) {
-                    toolCalls[toolCallIndex].result = payload.result;
-                    if (payload.attachments && payload.attachments.length > 0) {
-                      toolCalls[toolCallIndex].attachments = payload.attachments;
-                    }
-                    onToolCall([...toolCalls]);
+                    // Create a new tool call object to ensure React detects the change
+                    const updatedToolCall = {
+                      ...toolCalls[toolCallIndex],
+                      result: payload.result,
+                      attachments: payload.attachments || toolCalls[toolCallIndex].attachments,
+                    };
+
+                    // Create new array with the updated tool call
+                    const newToolCalls = [...toolCalls];
+                    newToolCalls[toolCallIndex] = updatedToolCall;
+
+                    // Update the toolCalls array reference
+                    toolCalls.length = 0;
+                    toolCalls.push(...newToolCalls);
+
+                    // Trigger the callback with the new array
+                    onToolCall(newToolCalls);
                   }
                 }
 
