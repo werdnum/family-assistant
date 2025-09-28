@@ -189,17 +189,14 @@ async def test_attachment_response_flow(
 
     await chat_page.send_message("send this image back to me")
 
-    # Wait for assistant response to stabilize, then tool UI to mount
+    # Wait for assistant response to complete, then for attachment tool to be ready
     await chat_page.wait_for_assistant_response(timeout=45000)
-    await chat_page.wait_for_tool_call_display(timeout=45000)
+    await chat_page.wait_for_attachments_ready(timeout=45000)
 
-    # Check that the attach_to_response tool call is shown with attachment display
+    # Verify that the attach_to_response tool call is shown with attachment display
     tool_call_element = page.locator('[data-ui="tool-call-content"]')
     tool_call_text = await tool_call_element.text_content()
     assert tool_call_text is not None and "Attachments" in tool_call_text
-
-    # Wait for the attachment preview to appear within the tool UI
-    await page.wait_for_selector('[data-testid="attachment-preview"]', timeout=10000)
 
     # Verify that attachment preview is displayed
     attachment_previews = page.locator('[data-testid="attachment-preview"]')
@@ -352,22 +349,22 @@ async def test_attachment_response_with_multiple_attachments(
 
     await chat_page.send_message("send me both images")
 
-    # Wait for the assistant response and tool execution
+    # Wait for assistant response to complete, then for attachment tool to be ready
     await chat_page.wait_for_assistant_response(timeout=45000)
-    await page.wait_for_selector('[data-testid="tool-result"]', timeout=45000)
+    await chat_page.wait_for_attachments_ready(timeout=45000)
 
-    # Wait for the tool call to be displayed
-    await chat_page.wait_for_tool_call_display(timeout=45000)
-
-    # Check that the attach_to_response tool call is shown with attachment display
+    # Verify that the attach_to_response tool call is shown with attachment display
     tool_call_element = page.locator('[data-ui="tool-call-content"]')
     tool_call_text = await tool_call_element.text_content()
     assert tool_call_text is not None and "Attachments" in tool_call_text
 
-    # Wait for the attachment previews to appear within the tool UI
+    # Verify attachment previews are now available
     try:
-        await page.wait_for_selector(
-            '[data-testid="attachment-preview"]', timeout=15000
+        # The wait_for_attachments_ready should have already ensured these exist
+        attachment_previews = page.locator('[data-testid="attachment-preview"]')
+        preview_count = await attachment_previews.count()
+        assert preview_count > 0, (
+            "Attachment previews should be available after wait_for_attachments_ready"
         )
     except Exception:
         # If attachment previews not found, get console errors to help debug
@@ -388,14 +385,10 @@ async def test_attachment_response_with_multiple_attachments(
         print(html[:2000])
         raise
 
+    # Get attachment preview count for logging - these should already be available
     attachment_previews = page.locator('[data-testid="attachment-preview"]')
     preview_count = await attachment_previews.count()
-
-    # We expect to see multiple attachment previews (at least 1, ideally 2)
-    # The exact count depends on how the UI handles multiple attachments
-    assert preview_count > 0, (
-        f"Expected at least 1 attachment preview, found {preview_count}"
-    )
+    print(f"Found {preview_count} attachment previews")
 
     # Check for images within attachment previews and verify they load
     images = page.locator('[data-testid="attachment-preview"] img')
@@ -497,30 +490,31 @@ async def test_attachment_response_error_handling(
     await chat_page.navigate_to_chat()
     await chat_page.send_message("send invalid image")
 
-    # Wait for the assistant response and tool execution to stabilize
+    # Wait for assistant response to complete, then for attachment tool to be ready
     await chat_page.wait_for_assistant_response(timeout=45000)
-    await chat_page.wait_for_tool_call_display(timeout=45000)
+    await chat_page.wait_for_attachments_ready(timeout=45000)
 
-    # Check that the attach_to_response tool call is shown with error state
+    # Verify that the attach_to_response tool call is shown (it should handle errors gracefully)
     tool_call_element = page.locator('[data-ui="tool-call-content"]')
     tool_call_text = await tool_call_element.text_content()
     assert tool_call_text is not None and "Attachments" in tool_call_text
 
-    # Check for error indication in the tool UI - either in status text or no attachment previews
-    # The tool should show either an error message or display no attachment previews
-    try:
-        # Try to find any tool result text that indicates an error
-        await page.wait_for_selector('[data-testid="tool-result"]', timeout=2000)
-        tool_result_element = page.locator('[data-testid="tool-result"]')
+    # Check for error indication in the tool UI - should show tool result with error or no attachment previews
+    # After wait_for_attachments_ready, either tool-result or attachment-preview should exist
+    tool_result_element = page.locator('[data-testid="tool-result"]')
+    tool_result_count = await tool_result_element.count()
+
+    error_found = False
+    if tool_result_count > 0:
+        # Check if tool result indicates an error
         tool_result_text = await tool_result_element.text_content()
-        # Accept if there's an error message or "Failed to process" message
         error_found = tool_result_text is not None and (
             "error" in tool_result_text.lower()
             or "failed" in tool_result_text.lower()
             or "no valid attachments found" in tool_result_text.lower()
         )
-    except Exception:
-        # If no tool result is found, that's also acceptable for an error case
+    else:
+        # If no tool result, that might also indicate an error state
         error_found = True
 
     # Verify that no attachment preview is displayed for the error case
@@ -621,10 +615,8 @@ async def test_tool_attachment_persistence_after_page_reload(
 
     # Wait for tool execution and attachment display
     await chat_page.wait_for_assistant_response(timeout=45000)
-    await chat_page.wait_for_tool_call_display(timeout=45000)
-    print("[DEBUG] Tool call found")
-    await page.wait_for_selector('[data-testid="attachment-preview"]', timeout=10000)
-    print("[DEBUG] Attachment preview found")
+    await chat_page.wait_for_attachments_ready(timeout=45000)
+    print("[DEBUG] Attachment tool ready with content")
 
     # Verify attachment is displayed initially
     attachment_preview = page.locator('[data-testid="attachment-preview"]').first
@@ -655,16 +647,12 @@ async def test_tool_attachment_persistence_after_page_reload(
     await page.reload()
     await page.wait_for_load_state("networkidle")
 
-    # Wait for the chat history to reload
-    # Stabilize after reload, then wait for tool UI using helper
+    # Wait for the chat history to reload and attachment tool to be ready
     await chat_page.wait_for_assistant_response(timeout=45000)
-    await chat_page.wait_for_tool_call_display(timeout=45000)
+    await chat_page.wait_for_attachments_ready(timeout=45000)
 
-    # THE BUG FIX TEST: Verify attachment is still visible and accessible after reload
+    # THE BUG FIX TEST: Verify attachment is still accessible after reload
     try:
-        await page.wait_for_selector(
-            '[data-testid="attachment-preview"]', timeout=10000
-        )
         attachment_preview_after_reload = page.locator(
             '[data-testid="attachment-preview"]'
         ).first
