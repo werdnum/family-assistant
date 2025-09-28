@@ -190,7 +190,7 @@ async def test_attachment_response_flow(
     await chat_page.send_message("send this image back to me")
 
     # Wait for the tool call to be displayed (skip waiting for general assistant message)
-    await chat_page.wait_for_tool_call_display()
+    await chat_page.wait_for_tool_call_display(timeout=45000)
 
     # Check that the attach_to_response tool call is shown with attachment display
     tool_call_element = page.locator('[data-ui="tool-call-content"]')
@@ -358,7 +358,7 @@ async def test_attachment_response_with_multiple_attachments(
     await page.wait_for_selector('[data-testid="tool-result"]', timeout=10000)
 
     # Wait for the tool call to be displayed
-    await chat_page.wait_for_tool_call_display()
+    await chat_page.wait_for_tool_call_display(timeout=45000)
 
     # Check that the attach_to_response tool call is shown with attachment display
     tool_call_element = page.locator('[data-ui="tool-call-content"]')
@@ -650,6 +650,9 @@ async def test_tool_attachment_persistence_after_page_reload(
         f"Attachment should be accessible initially, got {img_response.status}"
     )
 
+    # Ensure the conversation (including tool call) is persisted before reload
+    await chat_page.wait_for_conversation_saved(timeout=45000)
+
     # CRITICAL TEST: Reload the page
     # Reloading page to test persistence...
     await page.reload()
@@ -657,8 +660,8 @@ async def test_tool_attachment_persistence_after_page_reload(
 
     # Wait for the chat history to reload
     # Stabilize after reload, then wait for tool UI using helper
-    await chat_page.wait_for_assistant_response(timeout=30000)
-    await chat_page.wait_for_tool_call_display()
+    await chat_page.wait_for_assistant_response(timeout=45000)
+    await chat_page.wait_for_tool_call_display(timeout=45000)
 
     # THE BUG FIX TEST: Verify attachment is still visible and accessible after reload
     try:

@@ -437,10 +437,10 @@ class ChatPage(BasePage):
             timeout=5000,
         )
 
-    async def wait_for_tool_call_display(self) -> None:
+    async def wait_for_tool_call_display(self, timeout: int = 30000) -> None:
         """Wait for tool call content to be displayed."""
         await self.page.wait_for_selector(
-            self.MESSAGE_TOOL_CALL, state="visible", timeout=30000
+            self.MESSAGE_TOOL_CALL, state="visible", timeout=timeout
         )
 
     async def get_tool_calls(self) -> list[dict[str, Any]]:
