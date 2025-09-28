@@ -438,10 +438,46 @@ class ChatPage(BasePage):
         )
 
     async def wait_for_tool_call_display(self, timeout: int = 30000) -> None:
-        """Wait for tool call content to be displayed."""
+        """Wait for tool call content to be attached to DOM.
+
+        Note: This only waits for the element to exist in the DOM, not for it to be visible.
+        Use wait_for_attachments_ready() if you need to wait for specific attachment content.
+        """
         await self.page.wait_for_selector(
-            self.MESSAGE_TOOL_CALL, state="visible", timeout=timeout
+            self.MESSAGE_TOOL_CALL, state="attached", timeout=timeout
         )
+
+    async def wait_for_attachments_ready(self, timeout: int = 30000) -> None:
+        """Wait for attachment tool to be ready with actual attachment content.
+
+        This waits for either:
+        1. Attachment previews to appear (successful case)
+        2. Tool result text to appear (loading/error states)
+
+        This is more semantic than waiting for generic tool visibility.
+        """
+        try:
+            # First, wait for either attachment previews OR tool result text
+            await self.page.wait_for_selector(
+                '[data-testid="attachment-preview"], [data-testid="tool-result"]',
+                state="attached",
+                timeout=timeout,
+            )
+        except Exception:
+            # If neither appears, check if the tool container exists but is in an error state
+            tool_container = self.page.locator(self.MESSAGE_TOOL_CALL)
+            if await tool_container.count() > 0:
+                # Tool container exists but no content - likely an error state
+                tool_text = await tool_container.text_content()
+                raise AssertionError(
+                    f"Tool container found but no attachment previews or tool results. "
+                    f"Tool content: {tool_text[:200] if tool_text else 'None'}"
+                ) from None
+            else:
+                # Tool container doesn't exist at all
+                raise AssertionError(
+                    "No tool container found - tool execution may have failed"
+                ) from None
 
     async def get_tool_calls(self) -> list[dict[str, Any]]:
         """Get information about tool calls displayed in the conversation.
