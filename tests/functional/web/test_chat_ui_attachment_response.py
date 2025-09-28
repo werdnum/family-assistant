@@ -502,7 +502,8 @@ async def test_attachment_response_error_handling(
     await page.wait_for_selector(
         '[data-testid="assistant-message-content"]', timeout=10000
     )
-    await page.wait_for_selector('[data-ui="tool-call-content"]', timeout=30000)
+    # Use resilient page object helper to wait for tool-call UI
+    await chat_page.wait_for_tool_call_display()
 
     # Check that the attach_to_response tool call is shown with error state
     tool_call_element = page.locator('[data-ui="tool-call-content"]')
@@ -623,7 +624,7 @@ async def test_tool_attachment_persistence_after_page_reload(
     await chat_page.send_message("show attachment")
 
     # Wait for tool execution and attachment display
-    await page.wait_for_selector('[data-ui="tool-call-content"]', timeout=15000)
+    await chat_page.wait_for_tool_call_display()
     print("[DEBUG] Tool call found")
     await page.wait_for_selector('[data-testid="attachment-preview"]', timeout=10000)
     print("[DEBUG] Attachment preview found")
@@ -655,7 +656,9 @@ async def test_tool_attachment_persistence_after_page_reload(
     await page.wait_for_load_state("networkidle")
 
     # Wait for the chat history to reload
-    await page.wait_for_selector('[data-ui="tool-call-content"]', timeout=10000)
+    # Stabilize after reload, then wait for tool UI using helper
+    await chat_page.wait_for_assistant_response(timeout=30000)
+    await chat_page.wait_for_tool_call_display()
 
     # THE BUG FIX TEST: Verify attachment is still visible and accessible after reload
     try:
