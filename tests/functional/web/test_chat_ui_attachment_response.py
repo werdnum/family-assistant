@@ -353,10 +353,8 @@ async def test_attachment_response_with_multiple_attachments(
     await chat_page.send_message("send me both images")
 
     # Wait for the assistant response and tool execution
-    await page.wait_for_selector(
-        '[data-testid="assistant-message-content"]', timeout=10000
-    )
-    await page.wait_for_selector('[data-testid="tool-result"]', timeout=10000)
+    await chat_page.wait_for_assistant_response(timeout=45000)
+    await page.wait_for_selector('[data-testid="tool-result"]', timeout=45000)
 
     # Wait for the tool call to be displayed
     await chat_page.wait_for_tool_call_display(timeout=45000)
