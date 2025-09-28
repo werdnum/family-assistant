@@ -3,6 +3,7 @@ Mock LLM implementations for testing purposes.
 """
 
 import asyncio
+import json
 import logging
 import os
 from collections.abc import AsyncIterator, Callable
@@ -131,8 +132,16 @@ class RuleBasedMockLLMClient(LLMInterface):
                     logger.info(
                         f"Rule {i + 1} matched for 'generate_response'. {log_message_action}"
                     )
-                    logger.debug(
-                        f" -> Response Content: {bool(actual_response_output.content)}, Tool Calls: {len(actual_response_output.tool_calls) if actual_response_output.tool_calls else 0}"
+                    tool_names = (
+                        [tc.function.name for tc in actual_response_output.tool_calls]
+                        if actual_response_output.tool_calls
+                        else []
+                    )
+                    content_preview = (actual_response_output.content or "")[:50]
+                    logger.info(
+                        f" -> Mock LLM returning: content='{content_preview}...', "
+                        f"tool_calls={len(actual_response_output.tool_calls) if actual_response_output.tool_calls else 0}, "
+                        f"tool_names={tool_names}"
                     )
                     return actual_response_output
             except Exception as e:
@@ -145,10 +154,13 @@ class RuleBasedMockLLMClient(LLMInterface):
                 # Continue to next rule or default if matcher/response itself fails
                 continue
 
+        # Enhanced logging for debugging test failures
+        messages = actual_kwargs.get("messages", [])
         logger.warning(
-            "No rules matched for 'generate_response'. Returning default response. Input kwargs: %r",
-            actual_kwargs,
+            f"No mock LLM rule matched for 'generate_response' with {len(messages)} messages. "
+            f"Returning default response."
         )
+        logger.warning(f"Messages received:\n{json.dumps(messages, indent=2)}")
         return self.default_response
 
     def generate_response_stream(

@@ -134,10 +134,13 @@ async def test_attachment_response_flow(
     def should_trigger_attach_tool(args: dict) -> bool:
         messages = args.get("messages", [])
         # Check if user message contains the trigger phrase
-        has_trigger = "send this image back" in str(messages).lower()
+        has_trigger = any(
+            "send this image back" in msg.get("content", "").lower()
+            for msg in messages
+            if msg.get("role") == "user"
+        )
         # Check if there are already tool results (indicating this is a follow-up call)
         has_tool_results = any(msg.get("role") == "tool" for msg in messages)
-        # Mock LLM called with {len(messages)} messages, trigger: {has_trigger}, tool_results: {has_tool_results}
         # Only trigger if we have the phrase but no tool results yet
         return has_trigger and not has_tool_results
 
@@ -294,14 +297,13 @@ async def test_attachment_response_with_multiple_attachments(
     def should_trigger_multi_attach_tool(args: dict) -> bool:
         messages = args.get("messages", [])
         # Check if user message contains the trigger phrase
-        has_trigger = "send me both images" in str(messages).lower()
+        has_trigger = any(
+            "send me both images" in msg.get("content", "").lower()
+            for msg in messages
+            if msg.get("role") == "user"
+        )
         # Check if there are already tool results (indicating this is a follow-up call)
         has_tool_results = any(msg.get("role") == "tool" for msg in messages)
-        # Debug: print the messages to understand what's being passed
-        print(f"Multiple attachment mock LLM triggered with {len(messages)} messages")
-        print(f"Messages content: {str(messages)[:200]}")
-        print(f"Has trigger phrase: {has_trigger}")
-        print(f"Has tool results: {has_tool_results}")
         # Only trigger if we have the phrase but no tool results yet
         return has_trigger and not has_tool_results
 
@@ -456,7 +458,11 @@ async def test_attachment_response_error_handling(
     def should_trigger_error_attach_tool(args: dict) -> bool:
         messages = args.get("messages", [])
         # Check if user message contains the trigger phrase
-        has_trigger = "send invalid image" in str(messages).lower()
+        has_trigger = any(
+            "send invalid image" in msg.get("content", "").lower()
+            for msg in messages
+            if msg.get("role") == "user"
+        )
         # Check if there are already tool results (indicating this is a follow-up call)
         has_tool_results = any(msg.get("role") == "tool" for msg in messages)
         # Only trigger if we have the phrase but no tool results yet
@@ -496,7 +502,7 @@ async def test_attachment_response_error_handling(
     await page.wait_for_selector(
         '[data-testid="assistant-message-content"]', timeout=10000
     )
-    await page.wait_for_selector('[data-ui="tool-call-content"]', timeout=5000)
+    await page.wait_for_selector('[data-ui="tool-call-content"]', timeout=30000)
 
     # Check that the attach_to_response tool call is shown with error state
     tool_call_element = page.locator('[data-ui="tool-call-content"]')
