@@ -189,7 +189,8 @@ async def test_attachment_response_flow(
 
     await chat_page.send_message("send this image back to me")
 
-    # Wait for the tool call to be displayed (skip waiting for general assistant message)
+    # Wait for assistant response to stabilize, then tool UI to mount
+    await chat_page.wait_for_assistant_response(timeout=45000)
     await chat_page.wait_for_tool_call_display(timeout=45000)
 
     # Check that the attach_to_response tool call is shown with attachment display
