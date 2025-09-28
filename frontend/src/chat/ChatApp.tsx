@@ -255,10 +255,30 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
   // Handle tool calls during streaming
   const handleStreamingToolCall = useCallback((toolCalls: Array<Record<string, unknown>>) => {
+    console.log(
+      `[ATTACH-STATE] handleStreamingToolCall called | toolCallCount=${toolCalls?.length || 0} | messageId=${streamingMessageIdRef.current} | ts=${Date.now()}`
+    );
+
+    // Check for attach_to_response specifically
+    const attachToolCalls = toolCalls?.filter((tc) => tc.name === 'attach_to_response') || [];
+    if (attachToolCalls.length > 0) {
+      console.log(
+        `[ATTACH-STATE] Found attach_to_response | count=${attachToolCalls.length} | hasAttachments=${attachToolCalls.some((tc) => tc.attachments)} | ts=${Date.now()}`
+      );
+    }
+
     if (toolCalls && toolCalls.length > 0) {
       setMessages((prev) => {
+        console.log(
+          `[ATTACH-STATE] setMessages called | prevMessageCount=${prev.length} | targetMessageId=${streamingMessageIdRef.current} | ts=${Date.now()}`
+        );
+
         const updatedMessages = prev.map((msg) => {
           if (msg.id === streamingMessageIdRef.current) {
+            console.log(
+              `[ATTACH-STATE] Updating message | messageId=${msg.id} | existingContentLength=${msg.content?.length || 0} | newToolCount=${toolCalls.length} | ts=${Date.now()}`
+            );
+
             // This is the message to update.
             // It might be a 'loading' message, or it might already have text.
             toolCallMessageIdRef.current = msg.id;
@@ -285,8 +305,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               };
             });
 
-            // Return completely new message object
-            return {
+            // Log the new message structure
+            const newMsg = {
               ...msg,
               content: [...existingTextContent, ...toolParts],
               isLoading: false,
@@ -294,9 +314,19 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               // Add a key that changes when tool results arrive to force re-render
               _updateKey: Date.now(),
             };
+            console.log(
+              `[ATTACH-STATE] Message updated | messageId=${newMsg.id} | contentTypes=${newMsg.content?.map((c) => c.type).join(',')} | ts=${Date.now()}`
+            );
+
+            // Return completely new message object
+            return newMsg;
           }
           return msg;
         });
+
+        console.log(
+          `[ATTACH-STATE] setMessages complete | updatedCount=${updatedMessages.filter((m) => m.id === streamingMessageIdRef.current).length} | ts=${Date.now()}`
+        );
         return updatedMessages;
       });
     }

@@ -443,9 +443,13 @@ class ChatPage(BasePage):
         Note: This only waits for the element to exist in the DOM, not for it to be visible.
         Use wait_for_attachments_ready() if you need to wait for specific attachment content.
         """
+        print(
+            f"[ATTACH-TEST] wait_for_tool_call_display started | timeout={timeout} | ts={int(time.time() * 1000)}"
+        )
         await self.page.wait_for_selector(
             self.MESSAGE_TOOL_CALL, state="attached", timeout=timeout
         )
+        print(f"[ATTACH-TEST] Tool call display found | ts={int(time.time() * 1000)}")
 
     async def wait_for_attachments_ready(self, timeout: int = 30000) -> None:
         """Wait for attachment tool to be ready with actual attachment content.
@@ -457,6 +461,10 @@ class ChatPage(BasePage):
 
         This is more semantic than waiting for generic tool visibility.
         """
+        print(
+            f"[ATTACH-TEST] wait_for_attachments_ready started | timeout={timeout} | ts={int(time.time() * 1000)}"
+        )
+
         try:
             # First, wait for either attachment previews OR tool result text
             await self.page.wait_for_selector(
@@ -464,7 +472,13 @@ class ChatPage(BasePage):
                 state="attached",
                 timeout=timeout,
             )
-        except Exception:
+            print(
+                f"[ATTACH-TEST] Attachment elements found | ts={int(time.time() * 1000)}"
+            )
+        except Exception as e:
+            print(
+                f"[ATTACH-TEST] Primary wait failed | error={str(e)} | ts={int(time.time() * 1000)}"
+            )
             # If neither appears, check if the tool container exists
             # This handles cases where the tool fails to render content but still shows an error
             try:
@@ -474,8 +488,14 @@ class ChatPage(BasePage):
                     timeout=5000,  # Short timeout for fallback
                 )
                 # Tool container exists - this is acceptable, even without specific content
+                print(
+                    f"[ATTACH-TEST] Tool container found (fallback) | ts={int(time.time() * 1000)}"
+                )
                 print("DEBUG: Tool container found but no specific attachment content")
-            except Exception:
+            except Exception as fallback_e:
+                print(
+                    f"[ATTACH-TEST] Fallback wait failed | error={str(fallback_e)} | ts={int(time.time() * 1000)}"
+                )
                 # Neither content nor container - likely a more serious failure
                 tool_container = self.page.locator(self.MESSAGE_TOOL_CALL)
                 if await tool_container.count() > 0:
@@ -487,6 +507,9 @@ class ChatPage(BasePage):
                     ) from None
                 else:
                     # Tool container doesn't exist at all
+                    print(
+                        f"[ATTACH-TEST] No tool container found | ts={int(time.time() * 1000)}"
+                    )
                     raise AssertionError(
                         "No tool container found - tool execution may have failed"
                     ) from None
