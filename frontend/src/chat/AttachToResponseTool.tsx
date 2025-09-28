@@ -195,6 +195,12 @@ export const AttachToResponseTool: React.FC<AttachToResponseToolProps> = ({
     statusIcon = <AlertCircleIcon size={16} />;
     statusClass = 'tool-error';
     statusText = 'Failed to process attachments';
+  } else {
+    // Default case for undefined status or unrecognized status types
+    // This ensures statusText is always set so tool-result div always renders
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+    statusText = 'Initializing...';
   }
 
   // If we're still running or there are no attachments, show a minimal status
