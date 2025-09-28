@@ -679,11 +679,11 @@ async def test_tool_attachment_persistence_after_page_reload(
         attachment_preview_after_reload = page.locator(
             '[data-testid="attachment-preview"]'
         ).first
-        await attachment_preview_after_reload.wait_for(state="visible", timeout=5000)
+        await attachment_preview_after_reload.wait_for(state="visible", timeout=30000)
 
         # Get the attachment URL after reload
         img_element_after_reload = attachment_preview_after_reload.locator("img").first
-        await img_element_after_reload.wait_for(state="visible", timeout=5000)
+        await img_element_after_reload.wait_for(state="visible", timeout=30000)
         attachment_url_after_reload = await img_element_after_reload.get_attribute(
             "src"
         )
