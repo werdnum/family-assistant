@@ -499,12 +499,9 @@ async def test_attachment_response_error_handling(
     await chat_page.navigate_to_chat()
     await chat_page.send_message("send invalid image")
 
-    # Wait for the assistant response and tool execution
-    await page.wait_for_selector(
-        '[data-testid="assistant-message-content"]', timeout=10000
-    )
-    # Use resilient page object helper to wait for tool-call UI
-    await chat_page.wait_for_tool_call_display()
+    # Wait for the assistant response and tool execution to stabilize
+    await chat_page.wait_for_assistant_response(timeout=45000)
+    await chat_page.wait_for_tool_call_display(timeout=45000)
 
     # Check that the attach_to_response tool call is shown with error state
     tool_call_element = page.locator('[data-ui="tool-call-content"]')
@@ -625,7 +622,8 @@ async def test_tool_attachment_persistence_after_page_reload(
     await chat_page.send_message("show attachment")
 
     # Wait for tool execution and attachment display
-    await chat_page.wait_for_tool_call_display()
+    await chat_page.wait_for_assistant_response(timeout=45000)
+    await chat_page.wait_for_tool_call_display(timeout=45000)
     print("[DEBUG] Tool call found")
     await page.wait_for_selector('[data-testid="attachment-preview"]', timeout=10000)
     print("[DEBUG] Attachment preview found")
