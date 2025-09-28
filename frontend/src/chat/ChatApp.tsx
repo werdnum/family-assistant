@@ -267,6 +267,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               msg.content?.filter((part) => part.type === 'text' && part.text !== LOADING_MARKER) ||
               [];
 
+            // Create new tool parts with new object references
             const toolParts: MessageContent[] = toolCalls.map((tc) => {
               const args = parseToolArguments(tc.arguments);
               return {
@@ -276,16 +277,22 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
                 args: args,
                 argsText:
                   typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments),
+                // Ensure result and attachments are new objects if present
                 ...(tc.result && { result: tc.result as string }),
-                ...(tc.attachments && { attachments: tc.attachments }),
+                ...(tc.attachments && {
+                  attachments: Array.isArray(tc.attachments) ? [...tc.attachments] : tc.attachments,
+                }),
               };
             });
 
+            // Return completely new message object
             return {
               ...msg,
               content: [...existingTextContent, ...toolParts],
               isLoading: false,
               status: { type: 'running' },
+              // Add a key that changes when tool results arrive to force re-render
+              _updateKey: Date.now(),
             };
           }
           return msg;
