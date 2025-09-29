@@ -547,6 +547,31 @@ When Playwright tests fail, these artifacts are automatically generated:
 
 Open traces with: `npx playwright show-trace trace.zip`
 
+### Testing Chat API Endpoints
+
+To test the chat API functionality manually, you can use curl to make requests to both streaming and
+non-streaming endpoints:
+
+**Non-streaming chat:**
+
+```bash
+curl -X POST http://devcontainer-backend-1:8000/api/v1/chat/send_message \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Hello, can you tell me what 2+2 equals?"}'
+```
+
+**Streaming chat:**
+
+```bash
+curl -X POST http://devcontainer-backend-1:8000/api/v1/chat/send_message_stream \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What is 5+7? Please calculate it for me."}'
+```
+
+**Debug Logging:** To see detailed LLM request/response debugging, set the `DEBUG_LLM_MESSAGES=true`
+environment variable when running the application. This will log the exact messages being sent to
+the LLM, including system prompts, user messages, tool calls, and tool responses.
+
 ### Running the Application
 
 ```bash
