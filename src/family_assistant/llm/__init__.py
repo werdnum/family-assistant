@@ -107,6 +107,119 @@ else:
     logger.info("LiteLLM verbose logging is disabled (LITELLM_DEBUG not set or false).")
 # --- End Debug Logging Control ---
 
+# --- Debug LLM Messages Control ---
+DEBUG_LLM_MESSAGES_ENABLED = os.getenv("DEBUG_LLM_MESSAGES", "false").lower() in {
+    "true",
+    "1",
+    "yes",
+}
+if DEBUG_LLM_MESSAGES_ENABLED:
+    logger.info("Debug LLM messages logging is enabled (DEBUG_LLM_MESSAGES is set).")
+else:
+    logger.info(
+        "Debug LLM messages logging is disabled (DEBUG_LLM_MESSAGES not set or false)."
+    )
+
+
+def _truncate_content(content: str, max_length: int = 500) -> str:
+    """Truncate content for debug logging, preserving readability."""
+    if len(content) <= max_length:
+        return content
+
+    # Check if it's base64 data (common for images)
+    if content.startswith("data:") and ";base64," in content:
+        # Extract the data type and estimate size
+        parts = content.split(";base64,")
+        if len(parts) == 2:
+            data_type = parts[0]
+            b64_data = parts[1]
+            try:
+                decoded_size = len(base64.b64decode(b64_data, validate=True))
+                return f"[BASE64_DATA: {data_type}, {decoded_size} bytes]"
+            except Exception:
+                return f"[BASE64_DATA: {data_type}, invalid encoding]"
+
+    # For regular text, truncate with indication
+    return content[:max_length] + f"...[truncated {len(content) - max_length} chars]"
+
+
+def _format_tool_calls_for_debug(tool_calls: list | None) -> str:
+    """Format tool calls for debug logging."""
+    if not tool_calls:
+        return ""
+
+    formatted_calls = []
+    for call in tool_calls:
+        if isinstance(call, dict):
+            name = call.get("function", {}).get("name", call.get("name", "unknown"))
+            call_id = call.get("id", "no_id")
+            formatted_calls.append(f"{name}(id={call_id})")
+        else:
+            formatted_calls.append(str(call))
+
+    return " + tool_call(" + ", ".join(formatted_calls) + ")"
+
+
+def _format_messages_for_debug(
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | None = None,
+) -> str:
+    """Format messages for debug logging."""
+    lines = [f"=== LLM Request ({len(messages)} messages) ==="]
+
+    for i, msg in enumerate(messages):
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+
+        # Handle different content types
+        if isinstance(content, list):
+            # Multi-part content (text + images)
+            content_parts = []
+            for part in content:
+                if isinstance(part, dict):
+                    if part.get("type") == "text":
+                        text = part.get("text", "")
+                        content_parts.append(_truncate_content(text))
+                    elif part.get("type") == "image_url":
+                        url = part.get("image_url", {}).get("url", "")
+                        content_parts.append(_truncate_content(url))
+                    else:
+                        content_parts.append(f"[{part.get('type', 'unknown')}]")
+                else:
+                    content_parts.append(_truncate_content(str(part)))
+            content_str = " + ".join(content_parts)
+        else:
+            content_str = _truncate_content(str(content))
+
+        # Format tool calls if present
+        tool_calls_str = _format_tool_calls_for_debug(msg.get("tool_calls"))
+
+        # Format tool call info for tool role
+        tool_info = ""
+        if role == "tool":
+            tool_call_id = msg.get("tool_call_id", "unknown")
+            name = msg.get("name", "unknown")
+            tool_info = f"({name}, id={tool_call_id})"
+
+        # Build the line
+        line = f'  [{i}] {role}{tool_info}: "{content_str}"{tool_calls_str}'
+        lines.append(line)
+
+    # Add tools information
+    if tools:
+        tool_names = [tool.get("function", {}).get("name", "unknown") for tool in tools]
+        lines.append(f"Tools: {', '.join(tool_names)} ({len(tools)} available)")
+    else:
+        lines.append("Tools: none")
+
+    if tool_choice:
+        lines.append(f"Tool choice: {tool_choice}")
+
+    lines.append("=" * 50)
+
+    return "\n".join(lines)
+
 
 @dataclass(frozen=True)
 class ToolCallFunction:
@@ -418,6 +531,11 @@ class LiteLLMClient(BaseLLMClient):
         # LiteLLM automatically drops unsupported parameters, so we pass them all.
         if tools:
             sanitized_tools_arg = _sanitize_tools_for_litellm(tools)
+            if DEBUG_LLM_MESSAGES_ENABLED:
+                logger.info(
+                    f"LLM Request to {model_id}:\n"
+                    f"{_format_messages_for_debug(messages, tools, tool_choice)}"
+                )
             logger.debug(
                 f"Calling LiteLLM model {model_id} with {len(messages)} messages. "
                 f"Tools provided. Tool choice: {tool_choice}. Filtered params: {json.dumps(completion_params, default=str)}"
@@ -432,6 +550,11 @@ class LiteLLMClient(BaseLLMClient):
             )
             response = cast("ModelResponse", response)
         else:
+            if DEBUG_LLM_MESSAGES_ENABLED:
+                logger.info(
+                    f"LLM Request to {model_id}:\n"
+                    f"{_format_messages_for_debug(messages, tools, tool_choice)}"
+                )
             logger.debug(
                 f"Calling LiteLLM model {model_id} with {len(messages)} messages. "
                 f"No tools provided. Filtered params: {json.dumps(completion_params, default=str)}"
@@ -862,6 +985,12 @@ class LiteLLMClient(BaseLLMClient):
                 sanitized_tools = _sanitize_tools_for_litellm(tools)
                 stream_params["tools"] = sanitized_tools
                 stream_params["tool_choice"] = tool_choice
+
+            if DEBUG_LLM_MESSAGES_ENABLED:
+                logger.info(
+                    f"LLM Streaming Request to {self.model}:\n"
+                    f"{_format_messages_for_debug(messages, tools, tool_choice)}"
+                )
 
             logger.debug(
                 f"Starting streaming response from LiteLLM model {self.model} "
