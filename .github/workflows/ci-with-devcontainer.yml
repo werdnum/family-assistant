@@ -57,7 +57,7 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-base-${{ github.run_id }}
           cache-from: |
             type=gha
-            type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}:devcontainer-main
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-main
             type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}:devcontainer-buildcache
           cache-to: |
             type=gha,mode=max
