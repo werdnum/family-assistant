@@ -529,13 +529,14 @@ class LiteLLMClient(BaseLLMClient):
             )
 
         # LiteLLM automatically drops unsupported parameters, so we pass them all.
+        if DEBUG_LLM_MESSAGES_ENABLED:
+            logger.info(
+                f"LLM Request to {model_id}:\n"
+                f"{_format_messages_for_debug(messages, tools, tool_choice)}"
+            )
+
         if tools:
             sanitized_tools_arg = _sanitize_tools_for_litellm(tools)
-            if DEBUG_LLM_MESSAGES_ENABLED:
-                logger.info(
-                    f"LLM Request to {model_id}:\n"
-                    f"{_format_messages_for_debug(messages, tools, tool_choice)}"
-                )
             logger.debug(
                 f"Calling LiteLLM model {model_id} with {len(messages)} messages. "
                 f"Tools provided. Tool choice: {tool_choice}. Filtered params: {json.dumps(completion_params, default=str)}"
@@ -550,11 +551,6 @@ class LiteLLMClient(BaseLLMClient):
             )
             response = cast("ModelResponse", response)
         else:
-            if DEBUG_LLM_MESSAGES_ENABLED:
-                logger.info(
-                    f"LLM Request to {model_id}:\n"
-                    f"{_format_messages_for_debug(messages, tools, tool_choice)}"
-                )
             logger.debug(
                 f"Calling LiteLLM model {model_id} with {len(messages)} messages. "
                 f"No tools provided. Filtered params: {json.dumps(completion_params, default=str)}"
