@@ -26,6 +26,7 @@ import { MarkdownText } from './MarkdownText';
 import { TooltipIconButton } from './TooltipIconButton';
 import { LOADING_MARKER } from './constants';
 import { DynamicToolUI } from './DynamicToolUI';
+import { ToolGroup } from './ToolGroup';
 import {
   ComposerAttachments,
   ComposerAddAttachment,
@@ -57,6 +58,7 @@ const useProfiles = () => useContext(ProfilesContext);
 
 const messageContentComponents = {
   Text: MarkdownText,
+  ToolGroup, // ToolGroup should be at root level, not nested under tools
   tools: {
     // Use DynamicToolUI as the fallback which will handle all tools
     Fallback: DynamicToolUI,
