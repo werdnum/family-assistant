@@ -30,24 +30,6 @@ export const AttachToResponseTool: React.FC<AttachToResponseToolProps> = ({
   const [fetchedAttachments, setFetchedAttachments] = useState<Attachment[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Component lifecycle logging
-  useEffect(() => {
-    console.log(
-      `[ATTACH-COMP] MOUNT | hasArgs=${!!args} | hasResult=${!!result} | hasDirectAttachments=${!!directAttachments} | statusType=${status?.type} | ts=${Date.now()}`
-    );
-
-    return () => {
-      console.log(`[ATTACH-COMP] UNMOUNT | ts=${Date.now()}`);
-    };
-  }, []);
-
-  // Props change logging
-  useEffect(() => {
-    console.log(
-      `[ATTACH-COMP] Props changed | statusType=${status?.type} | hasResult=${!!result} | directAttachmentsCount=${directAttachments?.length || 0} | ts=${Date.now()}`
-    );
-  }, [status, result, directAttachments]);
-
   // Extract attachment IDs from args for cases where result doesn't have enriched data
   const getAttachmentIdsFromArgs = (): string[] => {
     if (!args) {
@@ -76,14 +58,7 @@ export const AttachToResponseTool: React.FC<AttachToResponseToolProps> = ({
     const hasEnrichedData = Array.isArray(directAttachments) && directAttachments.length > 0;
     const hasResultAttachments = result && typeof result === 'object' && 'attachments' in result;
 
-    console.log(
-      `[ATTACH-COMP] Effect running | attachmentIdCount=${attachmentIds.length} | hasEnrichedData=${hasEnrichedData} | hasResultAttachments=${hasResultAttachments} | ts=${Date.now()}`
-    );
-
     if (attachmentIds.length > 0 && !hasEnrichedData && !hasResultAttachments) {
-      console.log(
-        `[ATTACH-COMP] Starting fallback fetch | attachmentIdCount=${attachmentIds.length} | ts=${Date.now()}`
-      );
       // Log for debugging - this fallback should not be needed if data flow works correctly
       console.warn('AttachToResponseTool: Using fallback attachment metadata fetching');
 
@@ -126,16 +101,10 @@ export const AttachToResponseTool: React.FC<AttachToResponseToolProps> = ({
         })
       )
         .then((attachments) => {
-          console.log(
-            `[ATTACH-COMP] Fallback fetch complete | fetchedCount=${attachments.length} | ts=${Date.now()}`
-          );
           setFetchedAttachments(attachments);
           setIsLoading(false);
         })
         .catch((error) => {
-          console.log(
-            `[ATTACH-COMP] Fallback fetch failed | error=${error.message} | ts=${Date.now()}`
-          );
           console.warn('Failed to fetch attachments:', error);
           setIsLoading(false);
         });
@@ -144,10 +113,6 @@ export const AttachToResponseTool: React.FC<AttachToResponseToolProps> = ({
 
   // Extract attachments from multiple possible sources
   const extractAttachments = (): Attachment[] => {
-    console.log(
-      `[ATTACH-COMP] extractAttachments called | fetchedCount=${fetchedAttachments.length} | ts=${Date.now()}`
-    );
-
     // If we have fetched attachments, use those first
     if (fetchedAttachments.length > 0) {
       return fetchedAttachments;
@@ -208,11 +173,7 @@ export const AttachToResponseTool: React.FC<AttachToResponseToolProps> = ({
       }
     });
 
-    const result = validAttachments;
-    console.log(
-      `[ATTACH-COMP] extractAttachments result | count=${result.length} | ts=${Date.now()}`
-    );
-    return result;
+    return validAttachments;
   };
 
   const attachments = extractAttachments();
@@ -236,22 +197,13 @@ export const AttachToResponseTool: React.FC<AttachToResponseToolProps> = ({
     statusText = 'Failed to process attachments';
   } else {
     // Default case for undefined status or unrecognized status types
-    // This ensures statusText is always set so tool-result div always renders
     statusIcon = <ClockIcon size={16} className="animate-spin" />;
     statusClass = 'tool-running';
     statusText = 'Initializing...';
   }
 
-  // Render decision logging
-  console.log(
-    `[ATTACH-COMP] Render decision | statusType=${status?.type} | attachmentCount=${attachments.length} | isLoading=${isLoading} | willRenderMinimal=${status?.type === 'running' || attachments.length === 0} | ts=${Date.now()}`
-  );
-
   // If we're still running or there are no attachments, show a minimal status
   if (status?.type === 'running' || attachments.length === 0) {
-    console.log(
-      `[ATTACH-COMP] Rendering minimal UI | statusText="${statusText}" | ts=${Date.now()}`
-    );
     return (
       <div className={`tool-call-container ${statusClass}`} data-ui="tool-call-content">
         <div className="tool-call-header">
@@ -267,9 +219,6 @@ export const AttachToResponseTool: React.FC<AttachToResponseToolProps> = ({
     );
   }
 
-  console.log(
-    `[ATTACH-COMP] Rendering full UI | attachmentCount=${attachments.length} | ts=${Date.now()}`
-  );
   // Main rendering when attachments are available
   return (
     <div className={`tool-call-container ${statusClass}`} data-ui="tool-call-content">
