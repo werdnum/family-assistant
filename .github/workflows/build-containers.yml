@@ -67,16 +67,17 @@ jobs:
           platforms: ${{ needs.prepare.outputs.platforms }}
           push: ${{ needs.prepare.outputs.should-push }}
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:${{ needs.prepare.outputs.tag }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:main
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:buildcache
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-${{ needs.prepare.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-main
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-buildcache
           cache-from: |
             type=gha
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:buildcache
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-main
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-buildcache
           cache-to: |
             type=gha,mode=max
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-devcontainer:buildcache,mode=max
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-buildcache,mode=max
   build-main:
     needs: prepare
     runs-on: ubuntu-latest
@@ -107,8 +108,14 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:${{ needs.prepare.outputs.tag }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:main
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:buildcache
+          cache-from: |
+            type=gha
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:main
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:buildcache
+          cache-to: |
+            type=gha,mode=max
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:buildcache,mode=max
       - name: Trigger Concourse Deployment
         if: needs.prepare.outputs.should-push == 'true'
         run: |
