@@ -2,7 +2,7 @@
 # Wrapper script to ensure virtual environment is activated when running claude
 
 # Auto-pull latest changes
-if [ -d "/workspace/.git" ]; then
+if [ -d "/workspace/main/.git" ]; then
     cd /workspace
     
     # Save current commit to restore if needed
@@ -52,7 +52,7 @@ if [ -d "/workspace/.git" ]; then
 fi
 
 # Activate the virtual environment if it exists
-if [ -f "/workspace/.venv/bin/activate" ]; then
+if [ -f "/workspace/main/.venv/bin/activate" ]; then
     source /workspace/.venv/bin/activate
 fi
 
