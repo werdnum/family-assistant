@@ -163,7 +163,7 @@ def _format_tool_calls_for_debug(tool_calls: list | None) -> str:
 def _format_messages_for_debug(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
-    tool_choice: str | None = None,
+    return f" + tool_call({', '.join(formatted_calls)})"
 ) -> str:
     """Format messages for debug logging."""
     lines = [f"=== LLM Request ({len(messages)} messages) ==="]
