@@ -2,7 +2,7 @@
 set -e
 
 # Ensure uv is in PATH and include user paths and PostgreSQL binaries
-export PATH="/home/claude/.npm-global/bin:/home/claude/.deno/bin:/home/claude/.local/bin:/root/.local/bin:/usr/lib/postgresql/17/bin:$PATH"
+export PATH="/workspace/main/.venv/bin:/home/claude/.npm-global/bin:/home/claude/.deno/bin:/home/claude/.local/bin:/root/.local/bin:/usr/lib/postgresql/17/bin:$PATH"
 
 echo "Starting workspace setup..."
 
