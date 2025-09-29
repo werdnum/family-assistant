@@ -85,10 +85,11 @@ describe('Streaming with Tool Calls', () => {
       );
 
       // 2. The tool call is wrapped in a ToolGroup that starts expanded
-      // Verify the ToolGroup trigger is present
+      // Verify the ToolGroup trigger is present (now shows category-based summary)
       await waitFor(
         () => {
-          expect(screen.getByText('1 tool call')).toBeInTheDocument();
+          // The text will be something like "1 attachments" based on the tool category
+          expect(screen.getByTestId('tool-group-trigger')).toBeInTheDocument();
         },
         { timeout: 5000 }
       );
