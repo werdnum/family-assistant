@@ -7,10 +7,10 @@ updates:
       day: "monday"
     open-pull-requests-limit: 2
     cooldown:
-      default: "14days"
-      major: "30days"
-      minor: "14days"
-      patch: "7days"
+      default-days: 14
+      semver-major-days: 30
+      semver-minor-days: 14
+      semver-patch-days: 7
     groups:
       python-dev-tools:
         patterns:
@@ -42,10 +42,10 @@ updates:
       day: "wednesday"
     open-pull-requests-limit: 2
     cooldown:
-      default: "14days"
-      major: "30days"
-      minor: "14days"
-      patch: "7days"
+      default-days: 14
+      semver-major-days: 30
+      semver-minor-days: 14
+      semver-patch-days: 7
     groups:
       react-ecosystem:
         patterns:
@@ -90,8 +90,8 @@ updates:
       day: "friday"
     open-pull-requests-limit: 1
     cooldown:
-      default: "14days"
-      major: "30days"
+      default-days: 14
+      semver-major-days: 30
     groups:
       github-actions:
         update-types:
@@ -104,14 +104,13 @@ updates:
       interval: "monthly"
     open-pull-requests-limit: 2
     cooldown:
-      default: "14days"
-      major: "60days"
+      default-days: 14
+      semver-major-days: 60
   - package-ecosystem: "docker"
     directory: "/.devcontainer"
     schedule:
       interval: "quarterly"
     open-pull-requests-limit: 1
     cooldown:
-      default: "30days"
-      major: "90days"
-
+      default-days: 30
+      semver-major-days: 90
