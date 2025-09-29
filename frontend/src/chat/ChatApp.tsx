@@ -255,8 +255,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
   // Handle tool calls during streaming
   const handleStreamingToolCall = useCallback((toolCalls: Array<Record<string, unknown>>) => {
+    // CRITICAL FIX: Capture the ref value immediately to avoid closure issues
+    // This prevents race conditions where the ref gets cleared before setState callback executes
+    const targetMessageId = streamingMessageIdRef.current;
+
     console.log(
-      `[ATTACH-STATE] handleStreamingToolCall called | toolCallCount=${toolCalls?.length || 0} | messageId=${streamingMessageIdRef.current} | ts=${Date.now()}`
+      `[ATTACH-STATE] handleStreamingToolCall called | toolCallCount=${toolCalls?.length || 0} | messageId=${targetMessageId} | ts=${Date.now()}`
     );
 
     // Check for attach_to_response specifically
@@ -267,14 +271,14 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       );
     }
 
-    if (toolCalls && toolCalls.length > 0) {
+    if (toolCalls && toolCalls.length > 0 && targetMessageId) {
       setMessages((prev) => {
         console.log(
-          `[ATTACH-STATE] setMessages called | prevMessageCount=${prev.length} | targetMessageId=${streamingMessageIdRef.current} | ts=${Date.now()}`
+          `[ATTACH-STATE] setMessages called | prevMessageCount=${prev.length} | targetMessageId=${targetMessageId} | ts=${Date.now()}`
         );
 
         const updatedMessages = prev.map((msg) => {
-          if (msg.id === streamingMessageIdRef.current) {
+          if (msg.id === targetMessageId) {
             console.log(
               `[ATTACH-STATE] Updating message | messageId=${msg.id} | existingContentLength=${msg.content?.length || 0} | newToolCount=${toolCalls.length} | ts=${Date.now()}`
             );
@@ -325,7 +329,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         });
 
         console.log(
-          `[ATTACH-STATE] setMessages complete | updatedCount=${updatedMessages.filter((m) => m.id === streamingMessageIdRef.current).length} | ts=${Date.now()}`
+          `[ATTACH-STATE] setMessages complete | updatedCount=${updatedMessages.filter((m) => m.id === targetMessageId).length} | ts=${Date.now()}`
         );
         return updatedMessages;
       });
