@@ -84,6 +84,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
         "embedding_dimensions": 1536,
         "database_url": "sqlite+aiosqlite:///family_assistant.db",
         "litellm_debug": False,
+        "debug_llm_messages": False,
         "server_url": "http://localhost:8000",
         "document_storage_path": "/mnt/data/files",
         "attachment_storage_path": "/mnt/data/mailbox/attachments",
@@ -386,6 +387,11 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
     )
     config_data["litellm_debug"] = os.getenv(
         "LITELLM_DEBUG", str(config_data["litellm_debug"])
+    ).lower() in {"true", "1", "yes"}
+
+    # Set debug_llm_messages from environment variable
+    config_data["debug_llm_messages"] = os.getenv(
+        "DEBUG_LLM_MESSAGES", "false"
     ).lower() in {"true", "1", "yes"}
 
     # Parse comma-separated lists from Env Vars
