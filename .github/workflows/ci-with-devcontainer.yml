@@ -61,7 +61,7 @@ jobs:
             type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}:devcontainer-buildcache
           cache-to: |
             type=gha,mode=max
-            type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}:devcontainer-buildcache,mode=max
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-buildcache,mode=max
       - name: Build CI devcontainer image
         uses: docker/build-push-action@v6
         with:
