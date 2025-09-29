@@ -57,9 +57,11 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-base-${{ github.run_id }}
           cache-from: |
             type=gha
+            type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}:devcontainer-main
             type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}:devcontainer-buildcache
           cache-to: |
             type=gha,mode=max
+            type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}:devcontainer-buildcache,mode=max
       - name: Build CI devcontainer image
         uses: docker/build-push-action@v6
         with:
@@ -70,6 +72,7 @@ jobs:
           tags: ${{ needs.prepare.outputs.image-name }}
           cache-from: |
             type=gha
+            type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}:devcontainer-main
             type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}:devcontainer-buildcache
           cache-to: |
             type=gha,mode=max
