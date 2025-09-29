@@ -140,23 +140,15 @@ export const useStreamingResponse = ({
 
                 // Handle tool result
                 if (payload.tool_call_id && payload.result) {
-                  console.log(
-                    `[ATTACH-SSE] Tool result received | toolCallId=${payload.tool_call_id} | hasResult=${!!payload.result} | hasAttachments=${!!payload.attachments} | attachmentCount=${payload.attachments?.length || 0} | ts=${Date.now()}`
-                  );
-
-                  // Log attachment details if present
-                  if (payload.attachments) {
+                  // Log when tool results include attachments
+                  if (payload.attachments && payload.attachments.length > 0) {
                     console.log(
-                      `[ATTACH-SSE] Attachment data | toolCallId=${payload.tool_call_id} | attachments=${JSON.stringify(payload.attachments).substring(0, 200)} | ts=${Date.now()}`
+                      `[ATTACH-SSE] Tool result with ${payload.attachments.length} attachment(s) | toolCallId=${payload.tool_call_id}`
                     );
                   }
 
                   const toolCallIndex = toolCalls.findIndex((tc) => tc.id === payload.tool_call_id);
                   if (toolCallIndex !== -1) {
-                    console.log(
-                      `[ATTACH-SSE] Updating toolCall at index=${toolCallIndex} | ts=${Date.now()}`
-                    );
-
                     // Create a new tool call object to ensure React detects the change
                     const updatedToolCall = {
                       ...toolCalls[toolCallIndex],
@@ -174,9 +166,6 @@ export const useStreamingResponse = ({
 
                     // Trigger the callback with the new array
                     onToolCall(newToolCalls);
-                    console.log(
-                      `[ATTACH-SSE] onToolCall callback triggered | toolCallCount=${newToolCalls.length} | ts=${Date.now()}`
-                    );
                   }
                 }
 

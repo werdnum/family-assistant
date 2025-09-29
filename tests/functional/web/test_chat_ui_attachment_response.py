@@ -190,8 +190,8 @@ async def test_attachment_response_flow(
     await chat_page.send_message("send this image back to me")
 
     # Wait for assistant response to complete, then for attachment tool to be ready
-    await chat_page.wait_for_assistant_response(timeout=45000)
-    await chat_page.wait_for_attachments_ready(timeout=45000)
+    await chat_page.wait_for_assistant_response(timeout=30000)
+    await chat_page.wait_for_attachments_ready(timeout=30000)
 
     # Verify that the attach_to_response tool call is shown with attachment display
     tool_call_element = page.locator('[data-ui="tool-call-content"]')
@@ -350,8 +350,8 @@ async def test_attachment_response_with_multiple_attachments(
     await chat_page.send_message("send me both images")
 
     # Wait for assistant response to complete, then for attachment tool to be ready
-    await chat_page.wait_for_assistant_response(timeout=45000)
-    await chat_page.wait_for_attachments_ready(timeout=45000)
+    await chat_page.wait_for_assistant_response(timeout=30000)
+    await chat_page.wait_for_attachments_ready(timeout=30000)
 
     # Verify that the attach_to_response tool call is shown with attachment display
     tool_call_element = page.locator('[data-ui="tool-call-content"]')
@@ -491,11 +491,11 @@ async def test_attachment_response_error_handling(
     await chat_page.send_message("send invalid image")
 
     # Wait for assistant response to complete, then for attachment tool to be ready (or error)
-    await chat_page.wait_for_assistant_response(timeout=45000)
+    await chat_page.wait_for_assistant_response(timeout=30000)
 
     # Use a more lenient wait for error cases - the tool might not render full content
     try:
-        await chat_page.wait_for_attachments_ready(timeout=45000)
+        await chat_page.wait_for_attachments_ready(timeout=30000)
         tool_call_rendered = True
     except AssertionError:
         # If the tool doesn't render at all, that's also a valid error state
@@ -637,8 +637,8 @@ async def test_tool_attachment_persistence_after_page_reload(
     await chat_page.send_message("show attachment")
 
     # Wait for tool execution and attachment display
-    await chat_page.wait_for_assistant_response(timeout=45000)
-    await chat_page.wait_for_attachments_ready(timeout=45000)
+    await chat_page.wait_for_assistant_response(timeout=30000)
+    await chat_page.wait_for_attachments_ready(timeout=30000)
     print("[DEBUG] Attachment tool ready with content")
 
     # Verify attachment is displayed initially
@@ -663,7 +663,7 @@ async def test_tool_attachment_persistence_after_page_reload(
     )
 
     # Ensure the conversation (including tool call) is persisted before reload
-    await chat_page.wait_for_conversation_saved(timeout=45000)
+    await chat_page.wait_for_conversation_saved(timeout=30000)
 
     # CRITICAL TEST: Reload the page
     # Reloading page to test persistence...
@@ -671,19 +671,19 @@ async def test_tool_attachment_persistence_after_page_reload(
     await page.wait_for_load_state("networkidle")
 
     # Wait for the chat history to reload and attachment tool to be ready
-    await chat_page.wait_for_assistant_response(timeout=45000)
-    await chat_page.wait_for_attachments_ready(timeout=45000)
+    await chat_page.wait_for_assistant_response(timeout=30000)
+    await chat_page.wait_for_attachments_ready(timeout=30000)
 
     # THE BUG FIX TEST: Verify attachment is still accessible after reload
     try:
         attachment_preview_after_reload = page.locator(
             '[data-testid="attachment-preview"]'
         ).first
-        await attachment_preview_after_reload.wait_for(state="visible", timeout=30000)
+        await attachment_preview_after_reload.wait_for(state="visible", timeout=10000)
 
         # Get the attachment URL after reload
         img_element_after_reload = attachment_preview_after_reload.locator("img").first
-        await img_element_after_reload.wait_for(state="visible", timeout=30000)
+        await img_element_after_reload.wait_for(state="visible", timeout=10000)
         attachment_url_after_reload = await img_element_after_reload.get_attribute(
             "src"
         )
