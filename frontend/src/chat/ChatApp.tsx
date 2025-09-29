@@ -259,10 +259,6 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     // This prevents race conditions where the ref gets cleared before setState callback executes
     const targetMessageId = streamingMessageIdRef.current;
 
-    console.log(
-      `[ATTACH-STATE] handleStreamingToolCall called | toolCallCount=${toolCalls?.length || 0} | messageId=${targetMessageId} | ts=${Date.now()}`
-    );
-
     // Check for attach_to_response specifically
     const attachToolCalls = toolCalls?.filter((tc) => tc.name === 'attach_to_response') || [];
     if (attachToolCalls.length > 0) {
@@ -273,16 +269,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
     if (toolCalls && toolCalls.length > 0 && targetMessageId) {
       setMessages((prev) => {
-        console.log(
-          `[ATTACH-STATE] setMessages called | prevMessageCount=${prev.length} | targetMessageId=${targetMessageId} | ts=${Date.now()}`
-        );
-
         const updatedMessages = prev.map((msg) => {
           if (msg.id === targetMessageId) {
-            console.log(
-              `[ATTACH-STATE] Updating message | messageId=${msg.id} | existingContentLength=${msg.content?.length || 0} | newToolCount=${toolCalls.length} | ts=${Date.now()}`
-            );
-
             // This is the message to update.
             // It might be a 'loading' message, or it might already have text.
             toolCallMessageIdRef.current = msg.id;
@@ -309,28 +297,16 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               };
             });
 
-            // Log the new message structure
-            const newMsg = {
+            return {
               ...msg,
               content: [...existingTextContent, ...toolParts],
               isLoading: false,
               status: { type: 'running' },
-              // Add a key that changes when tool results arrive to force re-render
-              _updateKey: Date.now(),
             };
-            console.log(
-              `[ATTACH-STATE] Message updated | messageId=${newMsg.id} | contentTypes=${newMsg.content?.map((c) => c.type).join(',')} | ts=${Date.now()}`
-            );
-
-            // Return completely new message object
-            return newMsg;
           }
           return msg;
         });
 
-        console.log(
-          `[ATTACH-STATE] setMessages complete | updatedCount=${updatedMessages.filter((m) => m.id === targetMessageId).length} | ts=${Date.now()}`
-        );
         return updatedMessages;
       });
     }
