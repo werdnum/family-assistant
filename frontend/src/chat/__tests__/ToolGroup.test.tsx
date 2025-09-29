@@ -204,13 +204,16 @@ describe('ToolGroup', () => {
     const chevron = trigger.querySelector('svg:last-child');
 
     expect(chevron).toBeInTheDocument();
-    // Initially expanded, so chevron should be rotated
-    expect(chevron).toHaveClass('rotate-180');
+    // Initially expanded, trigger should have data-state="open"
+    expect(trigger).toHaveAttribute('data-state', 'open');
 
     // Click to collapse
     await user.click(trigger);
 
-    // Chevron should no longer be rotated
-    expect(chevron).not.toHaveClass('rotate-180');
+    // Trigger should have data-state="closed"
+    expect(trigger).toHaveAttribute('data-state', 'closed');
+
+    // Note: The rotation is applied via CSS selector [&[data-state=open]>svg]:rotate-180
+    // in the CollapsibleTrigger component, so we don't directly test the rotate-180 class
   });
 });

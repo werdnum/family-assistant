@@ -1,6 +1,7 @@
 """Tests for tool call grouping and collapsible UI functionality."""
 
 import pytest
+from playwright.async_api import expect
 
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from tests.functional.web.conftest import WebTestFixture
@@ -259,21 +260,13 @@ async def test_tool_group_expand_collapse_interaction(
     await trigger.click()
 
     # Wait for collapse animation and verify content is hidden
-    await page.wait_for_timeout(300)  # Allow animation to complete
-    is_hidden_after_collapse = await content.get_attribute("hidden")
-    assert is_hidden_after_collapse is not None, (
-        "ToolGroup content should be hidden after clicking trigger"
-    )
+    await expect(content).not_to_be_visible(timeout=1000)
 
     # Test expansion functionality
     await trigger.click()
 
     # Wait for expansion animation and verify content is visible again
-    await page.wait_for_timeout(300)  # Allow animation to complete
-    is_hidden_after_expand = await content.get_attribute("hidden")
-    assert is_hidden_after_expand is None, (
-        "ToolGroup content should be visible after clicking trigger again"
-    )
+    await expect(content).to_be_visible(timeout=1000)
 
 
 @pytest.mark.playwright
@@ -370,8 +363,4 @@ async def test_single_tool_call_uses_toolgroup(
 
     # Should be able to collapse
     await trigger.click()
-    await page.wait_for_timeout(300)  # Allow animation
-    is_hidden_after_collapse = await content.get_attribute("hidden")
-    assert is_hidden_after_collapse is not None, (
-        "Single tool call should be collapsible"
-    )
+    await expect(content).not_to_be_visible(timeout=1000)

@@ -30,9 +30,7 @@ const ToolGroup: React.FC<ToolGroupProps> = ({ startIndex, endIndex, children })
               {toolCount} tool {toolCount === 1 ? 'call' : 'calls'}
             </span>
           </div>
-          <ChevronDownIcon
-            className={cn('h-4 w-4 transition-transform duration-200', isExpanded && 'rotate-180')}
-          />
+          <ChevronDownIcon className="h-4 w-4 transition-transform duration-200" />
         </CollapsibleTrigger>
         <CollapsibleContent className="space-y-2 pt-2" data-testid="tool-group-content">
           {children}
