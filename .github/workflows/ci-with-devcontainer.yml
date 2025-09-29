@@ -58,7 +58,7 @@ jobs:
           cache-from: |
             type=gha
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-main
-            type=registry,ref=ghcr.io/${{ env.IMAGE_PREFIX }}:devcontainer-buildcache
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-buildcache
           cache-to: |
             type=gha,mode=max
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-buildcache,mode=max
