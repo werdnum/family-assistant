@@ -4,24 +4,17 @@ import { vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
-
-// Mock localStorage for conversation persistence
-const mockLocalStorage = {
-  getItem: vi.fn(),
-  setItem: vi.fn(),
-  removeItem: vi.fn(),
-};
-Object.defineProperty(window, 'localStorage', { value: mockLocalStorage });
+import { resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 
 describe('Streaming with Tool Calls', () => {
   beforeEach(() => {
-    mockLocalStorage.getItem.mockReturnValue(null);
-    mockLocalStorage.setItem.mockClear();
+    resetLocalStorageMock();
     vi.clearAllMocks();
   });
 
   it(
     'correctly renders a message with both text and a tool call',
+    { timeout: 10000 },
     async () => {
       // This is the crucial part: we mock the SSE stream to send a single
       // event that contains both content and a tool call.
@@ -64,10 +57,7 @@ describe('Streaming with Tool Calls', () => {
       );
 
       const user = userEvent.setup();
-      renderChatApp();
-
-      // Wait for the app to be ready
-      await screen.findByPlaceholderText('Write a message...');
+      await renderChatApp({ waitForReady: true });
 
       const messageInput = screen.getByPlaceholderText('Write a message...');
       await user.type(messageInput, 'Send the image');

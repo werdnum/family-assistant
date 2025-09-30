@@ -3,6 +3,8 @@
  */
 
 import { vi } from 'vitest';
+import { http, HttpResponse } from 'msw';
+import { server } from '../../test/setup.js';
 import {
   FileAttachmentAdapter,
   CompositeAttachmentAdapter,
@@ -157,14 +159,52 @@ describe('FileAttachmentAdapter', () => {
       // MSW handled the API call
     });
 
-    test.skip('handles upload failure gracefully', async () => {
-      // This test requires error mocking which doesn't align with MSW approach
-      // In a real scenario, we would test error handling separately
+    test('handles upload failure gracefully', async () => {
+      // Override the upload handler to return an error
+      server.use(
+        http.post('/api/attachments/upload', () => {
+          return HttpResponse.json({ error: 'Upload failed' }, { status: 500 });
+        })
+      );
+
+      const file = new File(['test content'], 'test.png', { type: 'image/png' });
+      const attachment = {
+        id: 'test-id',
+        type: 'image',
+        name: 'test.png',
+        file,
+        status: { type: 'running' },
+      };
+
+      const result = await adapter.send(attachment);
+
+      expect(result.id).toBe('test-id');
+      expect(result.status.type).toBe('error');
+      expect(result.status.error).toContain('Failed to upload file');
     });
 
-    test.skip('handles network error gracefully', async () => {
-      // This test requires error mocking which doesn't align with MSW approach
-      // In a real scenario, we would test error handling separately
+    test('handles network error gracefully', async () => {
+      // Override the upload handler to return a network error
+      server.use(
+        http.post('/api/attachments/upload', () => {
+          return HttpResponse.error();
+        })
+      );
+
+      const file = new File(['test content'], 'test.png', { type: 'image/png' });
+      const attachment = {
+        id: 'test-id',
+        type: 'image',
+        name: 'test.png',
+        file,
+        status: { type: 'running' },
+      };
+
+      const result = await adapter.send(attachment);
+
+      expect(result.id).toBe('test-id');
+      expect(result.status.type).toBe('error');
+      expect(result.status.error).toContain('Failed to upload file');
     });
   });
 
