@@ -451,10 +451,23 @@ async def _create_web_assistant(
 
 @pytest_asyncio.fixture(scope="session")
 async def session_db_engine() -> AsyncGenerator[AsyncEngine, None]:
-    """Create a session-scoped in-memory SQLite database for read-only tests."""
-    # Create in-memory database
+    """Create a session-scoped SQLite database for read-only tests.
+
+    Uses a file-based database (not in-memory) to work correctly with
+    pytest-xdist parallel testing. Each worker gets its own database file.
+    """
+    # Get worker ID from environment (for pytest-xdist)
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER", "master")
+
+    # Use file-based database for pytest-xdist compatibility
+    # Each worker gets its own database file
+    with tempfile.NamedTemporaryFile(
+        suffix=f"_playwright_session_{worker_id}.db", delete=False
+    ) as db_file:
+        db_path = db_file.name
+
     engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
+        f"sqlite+aiosqlite:///{db_path}",
         echo=False,
         connect_args={"check_same_thread": False},
     )
@@ -465,6 +478,10 @@ async def session_db_engine() -> AsyncGenerator[AsyncEngine, None]:
     yield engine
 
     await engine.dispose()
+
+    # Clean up database file
+    with contextlib.suppress(OSError):
+        os.unlink(db_path)
 
 
 @pytest.fixture(scope="session")
