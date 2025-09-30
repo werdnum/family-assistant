@@ -18,7 +18,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from playwright.async_api import Page, async_playwright
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from family_assistant.assistant import Assistant
 from family_assistant.context_providers import (
@@ -266,31 +266,35 @@ def build_frontend_assets() -> None:
         pytest.fail(f"No built assets found in {dist_dir}")
 
 
-@pytest.fixture(scope="function")
-def mock_llm_client() -> RuleBasedMockLLMClient:
-    """Create a mock LLM client that tests can configure."""
-    return RuleBasedMockLLMClient(
-        rules=[],
-        default_response=MockLLMOutput(content="Test response from mock LLM"),
-    )
+# ==================================================================================
+# Session-Scoped Fixtures for Read-Only Tests (Performance Optimization)
+# ==================================================================================
+# These fixtures enable sharing a single Assistant instance across multiple tests
+# to reduce setup time from ~9s per test to ~0.01s per test.
+# Only use for read-only tests that don't modify persistent state.
+# ==================================================================================
 
 
-@pytest_asyncio.fixture(scope="function")
-async def web_only_assistant(
+async def _create_web_assistant(
     db_engine: AsyncEngine,
     api_socket_and_port: tuple[int, socket.socket],
-    build_frontend_assets: None,  # Ensure assets are built
     mock_llm_client: RuleBasedMockLLMClient,
+    scope_label: str = "",
 ) -> AsyncGenerator[Assistant, None]:
-    """Start Assistant in web-only mode for testing."""
-    # Auth is already disabled at module level
-    # DEV_MODE is already set to false at module level
+    """Helper function to create a web-only Assistant instance.
 
-    # Get the API port and socket
+    Args:
+        db_engine: Database engine to use
+        api_socket_and_port: Tuple of (port, socket) for the API server
+        mock_llm_client: Mock LLM client instance
+        scope_label: Label for logging (e.g., "SESSION" or "")
+    """
     api_port, api_socket = api_socket_and_port
-    print(f"\n=== Starting API server on port {api_port} with pre-bound socket ===")
+    log_prefix = f"{scope_label} " if scope_label else ""
+    print(f"\n=== Starting {log_prefix}API server on port {api_port} ===")
 
     # Create minimal test configuration
+    storage_suffix = f"_{scope_label.lower()}" if scope_label else ""
     test_config: dict[str, Any] = {
         "telegram_enabled": False,
         "telegram_token": None,
@@ -302,10 +306,10 @@ async def web_only_assistant(
         "database_url": str(db_engine.url),
         "server_url": f"http://localhost:{api_port}",
         "server_port": api_port,
-        "document_storage_path": "/tmp/test_docs",
-        "attachment_storage_path": "/tmp/test_attachments",
+        "document_storage_path": f"/tmp/test_docs{storage_suffix}",
+        "attachment_storage_path": f"/tmp/test_attachments{storage_suffix}",
         "litellm_debug": False,
-        "dev_mode": False,  # Explicitly set dev_mode to False for tests
+        "dev_mode": False,
         "oidc": {
             "client_id": "",
             "client_secret": "",
@@ -333,7 +337,7 @@ async def web_only_assistant(
                         "attach_to_response",
                     ],
                     "confirm_tools": ["delete_calendar_event", "add_or_update_note"],
-                    "confirmation_timeout_seconds": 10.0,  # Short timeout for tests (10s instead of default 1hr)
+                    "confirmation_timeout_seconds": 10.0,
                     "mcp_initialization_timeout_seconds": 5,
                 },
                 "chat_id_to_name_map": {},
@@ -387,48 +391,41 @@ async def web_only_assistant(
         "event_system": {"enabled": False},
     }
 
-    # Create Assistant instance using the provided mock LLM client and test database engine
+    # Create Assistant instance
     assistant = Assistant(
         config=test_config,
         llm_client_overrides={
             "default_assistant": mock_llm_client,
             "test_browser": mock_llm_client,
             "test_research": mock_llm_client,
-        },  # Key by profile ID, not model name
-        database_engine=db_engine,  # Inject the test database engine
-        server_socket=api_socket,  # Pass the pre-bound socket to avoid race conditions
+        },
+        database_engine=db_engine,
+        server_socket=api_socket,
     )
-
-    # Enable debug mode for tests to get detailed error messages
 
     configure_app_debug(debug=True)
 
     # Set up dependencies
-    print("Setting up dependencies...")
+    print(f"Setting up {log_prefix}dependencies...")
     await assistant.setup_dependencies()
-    print("Dependencies set up")
+    print(f"{log_prefix}dependencies set up")
 
-    # Set SERVER_URL env var so document upload knows where to send API calls
+    # Set SERVER_URL env var
     os.environ["SERVER_URL"] = f"http://localhost:{api_port}"
 
-    # Start services in background task
-    print(f"Starting API services on port {api_port}...")
+    # Start services
+    print(f"Starting {log_prefix}API services on port {api_port}...")
     start_task = asyncio.create_task(assistant.start_services())
 
-    # Give the server a moment to start initialization
-    print("Waiting for server initialization...")
+    # Wait for server
     await asyncio.sleep(2)
-    print("Starting health checks...")
+    print(f"Waiting for {log_prefix}server...")
 
-    # Wait for web server to be ready
     try:
-        await wait_for_server(
-            f"http://localhost:{api_port}", timeout=120
-        )  # Give it 2 minutes
-        print(f"\n=== API server ready on port {api_port} ===")
+        await wait_for_server(f"http://localhost:{api_port}", timeout=120)
+        print(f"\n=== {log_prefix}API server ready on port {api_port} ===")
     except Exception as e:
-        print(f"\n=== Failed to start API server: {e} ===")
-        # Cancel the start task
+        print(f"\n=== Failed to start {log_prefix}API server: {e} ===")
         start_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await start_task
@@ -437,19 +434,122 @@ async def web_only_assistant(
     yield assistant
 
     # Cleanup
-    assistant.initiate_shutdown("TEST")
+    shutdown_label = f"{log_prefix}TEST_END" if scope_label else "TEST"
+    print(f"\n=== Shutting down {log_prefix}API server ===")
+    assistant.initiate_shutdown(shutdown_label)
 
-    # Stop task worker
     if hasattr(assistant, "task_worker_instance") and assistant.task_worker_instance:
         assistant.task_worker_instance.shutdown_event.set()
 
-    # Wait for services to stop
     try:
         await asyncio.wait_for(start_task, timeout=5.0)
     except asyncio.TimeoutError:
         start_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await start_task
+
+
+@pytest_asyncio.fixture(scope="session")
+async def session_db_engine() -> AsyncGenerator[AsyncEngine, None]:
+    """Create a session-scoped in-memory SQLite database for read-only tests."""
+    # Create in-memory database
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        echo=False,
+        connect_args={"check_same_thread": False},
+    )
+
+    # Initialize schema
+    await init_db(engine)
+
+    yield engine
+
+    await engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def session_api_socket_and_port() -> Generator[tuple[int, socket.socket], None, None]:
+    """Create a session-scoped socket and port for the API server."""
+    api_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    api_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    api_socket.bind(("", 0))  # Bind to any available port
+    api_socket.listen(1)
+    api_port = api_socket.getsockname()[1]
+
+    print(f"\n=== Session API socket bound to port {api_port} ===")
+
+    yield (api_port, api_socket)
+
+    api_socket.close()
+
+
+@pytest.fixture(scope="session")
+def session_mock_llm_client() -> RuleBasedMockLLMClient:
+    """Create a session-scoped mock LLM client for read-only tests."""
+    return RuleBasedMockLLMClient(
+        rules=[],
+        default_response=MockLLMOutput(
+            content="Test response from session-scoped mock LLM"
+        ),
+    )
+
+
+@pytest_asyncio.fixture(scope="session")
+async def web_readonly_assistant(
+    session_db_engine: AsyncEngine,
+    session_api_socket_and_port: tuple[int, socket.socket],
+    build_frontend_assets: None,  # Ensure assets are built
+    session_mock_llm_client: RuleBasedMockLLMClient,
+) -> AsyncGenerator[Assistant, None]:
+    """Session-scoped Assistant for read-only tests.
+
+    This fixture creates a single Assistant instance shared across all read-only tests.
+    The shared instance includes a shared database, which means:
+    - Tests can view data created by previous tests
+    - Tests MUST NOT assume empty database state
+    - Tests MUST filter results by unique IDs (e.g., UUIDs)
+    - Tests MUST NOT make strict count assertions (use >= not ==)
+
+    Use this fixture for tests that only:
+    - Navigate pages
+    - View UI elements
+    - Check element visibility/styling
+    - Perform read-only operations
+
+    For tests that create/modify data, use web_test_fixture (function-scoped) instead.
+    """
+    async for assistant in _create_web_assistant(
+        session_db_engine,
+        session_api_socket_and_port,
+        session_mock_llm_client,
+        scope_label="SESSION",
+    ):
+        yield assistant
+
+
+@pytest.fixture(scope="function")
+def mock_llm_client() -> RuleBasedMockLLMClient:
+    """Create a mock LLM client that tests can configure."""
+    return RuleBasedMockLLMClient(
+        rules=[],
+        default_response=MockLLMOutput(content="Test response from mock LLM"),
+    )
+
+
+@pytest_asyncio.fixture(scope="function")
+async def web_only_assistant(
+    db_engine: AsyncEngine,
+    api_socket_and_port: tuple[int, socket.socket],
+    build_frontend_assets: None,  # Ensure assets are built
+    mock_llm_client: RuleBasedMockLLMClient,
+) -> AsyncGenerator[Assistant, None]:
+    """Start Assistant in web-only mode for testing."""
+    async for assistant in _create_web_assistant(
+        db_engine,
+        api_socket_and_port,
+        mock_llm_client,
+    ):
+        yield assistant
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -523,6 +623,79 @@ async def web_test_fixture(
         print(f"Warning: Error closing page: {e}")
 
     # Additional delay to ensure all connections are fully closed and cleanup completes
+    print("Waiting for connection cleanup...")
+    await asyncio.sleep(1.0)
+
+
+@pytest_asyncio.fixture(scope="function")
+async def web_test_fixture_readonly(
+    page: Page,
+    web_readonly_assistant: Assistant,
+    session_api_socket_and_port: tuple[int, socket.socket],
+    build_frontend_assets: None,  # Ensure frontend is built before tests
+) -> AsyncGenerator[WebTestFixture, None]:
+    """Combined fixture providing web test dependencies with session-scoped Assistant.
+
+    This fixture uses a session-scoped Assistant instance for better performance.
+    Use for read-only tests that don't modify persistent state.
+
+    For tests that create/modify data, use web_test_fixture instead.
+    """
+
+    # Set up console message logging for debugging
+    def log_console(msg: Any) -> None:  # noqa: ANN401  # playwright console message
+        with open("/tmp/browser_console.log", "a", encoding="utf-8") as f:
+            f.write(f"{msg.type}: {msg.text}\n")
+        # Also log location for errors
+        if msg.type == "error":
+            with open("/tmp/browser_console.log", "a", encoding="utf-8") as f:
+                f.write(f"  Location: {msg.location}\n")
+
+    page.on("console", log_console)
+
+    # Set up request/response logging for debugging
+    def log_request(req: Any) -> None:  # noqa: ANN401  # playwright request object
+        print(f"[Request] {req.method} {req.url}")
+
+    def log_response(res: Any) -> None:  # noqa: ANN401  # playwright response object
+        print(f"[Response] {res.status} {res.url}")
+
+    page.on("request", log_request)
+    page.on("response", log_response)
+
+    api_port, _ = session_api_socket_and_port
+    base_url = f"http://localhost:{api_port}"
+
+    # Navigate to base URL for test readiness
+    await page.goto(base_url)
+    await page.wait_for_load_state("networkidle", timeout=15000)
+
+    await asyncio.sleep(1)
+    print("Router and dynamic imports initialization complete")
+
+    fixture = WebTestFixture(
+        assistant=web_readonly_assistant,
+        page=page,
+        base_url=base_url,
+    )
+
+    yield fixture
+
+    # Teardown: Wait for any in-flight requests to complete
+    print("Waiting for in-flight requests to complete...")
+    try:
+        await page.wait_for_load_state("networkidle", timeout=5000)
+    except Exception as e:
+        print(f"Warning: Could not wait for network idle during teardown: {e}")
+
+    # Close the page to terminate any active SSE streams
+    print("Closing page to terminate streaming connections...")
+    try:
+        await page.close()
+    except Exception as e:
+        print(f"Warning: Error closing page: {e}")
+
+    # Additional delay to ensure all connections are fully closed
     print("Waiting for connection cleanup...")
     await asyncio.sleep(1.0)
 

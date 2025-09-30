@@ -77,9 +77,11 @@ async def test_console_error_checker_warnings(
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_base_page_with_fixtures(web_test_fixture: WebTestFixture) -> None:
+async def test_base_page_with_fixtures(
+    web_test_fixture_readonly: WebTestFixture,
+) -> None:
     """Test that BasePage works with web fixtures."""
-    page = BasePage(web_test_fixture.page, web_test_fixture.base_url)
+    page = BasePage(web_test_fixture_readonly.page, web_test_fixture_readonly.base_url)
 
     # Should be able to navigate
     await page.navigate_to("/")

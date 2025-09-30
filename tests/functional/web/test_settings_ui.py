@@ -8,11 +8,11 @@ from .conftest import WebTestFixture
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_token_management_page_loads(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test that token management page loads successfully."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to token management page
     await page.goto(f"{server_url}/settings/tokens")
@@ -46,11 +46,11 @@ async def test_token_management_page_loads(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_token_create_form_interaction(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test token creation form interaction."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to token management page
     await page.goto(f"{server_url}/settings/tokens")
@@ -86,11 +86,11 @@ async def test_token_create_form_interaction(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_token_list_display(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test that token list displays properly."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to token management page
     await page.goto(f"{server_url}/settings/tokens")
@@ -127,11 +127,11 @@ async def test_token_list_display(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_token_responsive_design(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test responsive design of token management page."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to token management page
     await page.goto(f"{server_url}/settings/tokens")

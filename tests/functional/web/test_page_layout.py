@@ -8,14 +8,14 @@ from tests.functional.web.conftest import WebTestFixture
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_navigation_dropdowns_open_and_position(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test that navigation dropdowns open and are positioned correctly to be usable.
 
     This test handles the timing complexities of RadixUI NavigationMenu which uses
     animations and asynchronous state updates."""
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
 
     # Navigate to notes page which has the full navigation menu
     await page.goto(f"{base_url}/notes")
@@ -248,10 +248,12 @@ async def test_navigation_dropdowns_open_and_position(
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_navigation_responsive_behavior(web_test_fixture: WebTestFixture) -> None:
+async def test_navigation_responsive_behavior(
+    web_test_fixture_readonly: WebTestFixture,
+) -> None:
     """Test that navigation layout adapts to different viewport sizes."""
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
 
     # Desktop viewport
     await page.set_viewport_size({"width": 1280, "height": 720})
@@ -290,10 +292,12 @@ async def test_navigation_responsive_behavior(web_test_fixture: WebTestFixture) 
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_navigation_hover_states(web_test_fixture: WebTestFixture) -> None:
+async def test_navigation_hover_states(
+    web_test_fixture_readonly: WebTestFixture,
+) -> None:
     """Test that navigation menu items have proper hover states."""
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
 
     await page.goto(f"{base_url}/notes")
     await page.wait_for_load_state("networkidle")
