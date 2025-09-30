@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Disable due to Claude bug
+exit 0
+
 # Read JSON from stdin once and store it
 json_input=$(cat)
 
