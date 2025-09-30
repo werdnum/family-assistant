@@ -7,10 +7,10 @@ from tests.functional.web.conftest import WebTestFixture
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_tools_page_loads(web_test_fixture: WebTestFixture) -> None:
+async def test_tools_page_loads(web_test_fixture_readonly: WebTestFixture) -> None:
     """Test that the tools page loads successfully."""
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
 
     # Navigate to tools page
     await page.goto(f"{base_url}/tools")
@@ -63,10 +63,10 @@ async def test_tools_page_loads(web_test_fixture: WebTestFixture) -> None:
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_tools_list_loads(web_test_fixture: WebTestFixture) -> None:
+async def test_tools_list_loads(web_test_fixture_readonly: WebTestFixture) -> None:
     """Test that the tools list loads and displays available tools."""
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
 
     # Navigate to tools page
     await page.goto(f"{base_url}/tools")
@@ -104,10 +104,12 @@ async def test_tools_list_loads(web_test_fixture: WebTestFixture) -> None:
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_tool_execution_interface(web_test_fixture: WebTestFixture) -> None:
+async def test_tool_execution_interface(
+    web_test_fixture_readonly: WebTestFixture,
+) -> None:
     """Test that clicking on a tool shows the execution interface."""
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
 
     # Navigate to tools page
     await page.goto(f"{base_url}/tools")
@@ -158,10 +160,10 @@ async def test_tool_execution_interface(web_test_fixture: WebTestFixture) -> Non
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_responsive_design(web_test_fixture: WebTestFixture) -> None:
+async def test_responsive_design(web_test_fixture_readonly: WebTestFixture) -> None:
     """Test that the tools UI is responsive and works on mobile viewport."""
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
 
     # Set mobile viewport
     await page.set_viewport_size({"width": 375, "height": 667})
@@ -197,10 +199,10 @@ async def test_responsive_design(web_test_fixture: WebTestFixture) -> None:
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_no_javascript_errors(web_test_fixture: WebTestFixture) -> None:
+async def test_no_javascript_errors(web_test_fixture_readonly: WebTestFixture) -> None:
     """Test that the tools page loads without JavaScript errors."""
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
 
     # Collect console errors
     console_errors = []

@@ -285,12 +285,12 @@ async def test_form_interactions(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_loading_states(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
     console_error_checker: ConsoleErrorCollector,
 ) -> None:
     """Test that pages show appropriate loading states."""
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
     base_page = BasePage(page, base_url)
 
     # Navigate to tasks page (likely to have loading states)
@@ -299,9 +299,9 @@ async def test_loading_states(
     # Check for loading indicators or quick page load
     # Most pages should either show content quickly or show a loader
     try:
-        # Wait for either main content or loading indicator
+        # Wait for either main content (h1, task items) or loading indicator
         await page.wait_for_selector(
-            "h1, .loading, .spinner, [role='progressbar']",
+            "h1, .task-item, .loading, .spinner, [role='progressbar']",
             timeout=3000,
         )
     except Exception:

@@ -8,9 +8,9 @@ from tests.functional.web.pages import BasePage
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_base_page_navigation(web_test_fixture: WebTestFixture) -> None:
+async def test_base_page_navigation(web_test_fixture_readonly: WebTestFixture) -> None:
     """Test that the base page can navigate to different routes."""
-    page = BasePage(web_test_fixture.page, web_test_fixture.base_url)
+    page = BasePage(web_test_fixture_readonly.page, web_test_fixture_readonly.base_url)
 
     # Navigate to homepage (which shows notes)
     await page.navigate_to("/")
@@ -20,14 +20,16 @@ async def test_base_page_navigation(web_test_fixture: WebTestFixture) -> None:
     # Navigate to notes page
     await page.navigate_to("/notes")
     # The page should exist even if there are no notes
-    assert "/notes" in web_test_fixture.page.url
+    assert "/notes" in web_test_fixture_readonly.page.url
 
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_base_page_console_errors(web_test_fixture: WebTestFixture) -> None:
+async def test_base_page_console_errors(
+    web_test_fixture_readonly: WebTestFixture,
+) -> None:
     """Test that we can capture console errors."""
-    page = BasePage(web_test_fixture.page, web_test_fixture.base_url)
+    page = BasePage(web_test_fixture_readonly.page, web_test_fixture_readonly.base_url)
 
     # Start capturing console errors
     errors = page.setup_console_error_collection()

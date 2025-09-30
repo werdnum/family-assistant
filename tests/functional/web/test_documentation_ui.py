@@ -12,11 +12,11 @@ logger = logging.getLogger(__name__)
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_documentation_list_page_loads(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test that documentation list page loads successfully."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to documentation page
     await page.goto(f"{server_url}/docs")
@@ -59,11 +59,11 @@ async def test_documentation_list_page_loads(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_documentation_view_page_loads(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test that documentation view page loads successfully."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to a specific document (USER_GUIDE.md should exist)
     await page.goto(f"{server_url}/docs/USER_GUIDE.md")
@@ -92,11 +92,11 @@ async def test_documentation_view_page_loads(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_documentation_navigation(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test navigation between documentation pages."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Start on documentation list
     await page.goto(f"{server_url}/docs")
