@@ -461,9 +461,32 @@ class ProcessingService:
             # Include attachment IDs if any were captured from attach_to_response calls
             done_metadata: dict[str, Any] = {"message": assistant_message_for_turn}
             if pending_attachment_ids:
+                # Fetch full metadata for each attachment for web UI display
+                attachment_details = []
+                if self.attachment_registry:
+                    for att_id in pending_attachment_ids:
+                        try:
+                            metadata = await self.attachment_registry.get_attachment_with_context(
+                                att_id
+                            )
+                            if metadata:
+                                attachment_details.append({
+                                    "id": att_id,
+                                    "type": "image",  # Currently all are images, could use metadata.mime_type
+                                    "name": metadata.description or "Attachment",
+                                    "content": f"/api/attachments/{att_id}",
+                                    "mime_type": metadata.mime_type,
+                                    "size": metadata.size,
+                                })
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to fetch metadata for attachment {att_id}: {e}"
+                            )
+
                 done_metadata["attachment_ids"] = pending_attachment_ids
+                done_metadata["attachments"] = attachment_details
                 logger.info(
-                    f"Including {len(pending_attachment_ids)} attachment IDs in done event"
+                    f"Including {len(pending_attachment_ids)} attachment IDs and {len(attachment_details)} attachment details in done event"
                 )
 
             yield (
@@ -720,12 +743,12 @@ class ProcessingService:
             # Handle both string and ToolResult
             if isinstance(result, ToolResult):
                 llm_message = result.to_llm_message(call_id, function_name)
-                history_message = result.to_history_message(call_id, function_name)
                 content_for_stream = result.text
                 auto_attachment_id = None  # Track attachment ID for auto-queuing
 
                 # Extract attachment metadata for streaming
                 stream_metadata = None
+                attachment_data = None
                 if result.attachment:
                     attachment_data = {
                         "type": "tool_result",
@@ -769,6 +792,7 @@ class ProcessingService:
                                 )
                                 # Set auto_attachment_id for automatic queuing
                                 auto_attachment_id = registered_metadata.attachment_id
+
                                 logger.info(
                                     f"Stored and registered tool attachment: {registered_metadata.attachment_id}"
                                 )
@@ -777,6 +801,13 @@ class ProcessingService:
                             # Continue without URL if storage fails
 
                     stream_metadata = {"attachments": [attachment_data]}
+
+                # Create history_message AFTER storing attachment so it includes attachment_id
+                history_message = llm_message.copy()
+                history_message.pop("_attachment", None)
+                history_message["tool_name"] = function_name
+                if attachment_data:
+                    history_message["attachments"] = [attachment_data]
             else:
                 # Backward compatible string handling
                 content_for_stream = str(result)

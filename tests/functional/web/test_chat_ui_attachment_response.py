@@ -214,7 +214,18 @@ async def test_attachment_response_flow(
         for i in range(image_count):
             img = images.nth(i)
             src = await img.get_attribute("src")
-            natural_width = await img.evaluate("(element) => element.naturalWidth")
+
+            # Wait for image to actually load by checking if naturalWidth becomes > 0
+            try:
+                await page.wait_for_function(
+                    f"document.querySelectorAll('[data-testid=\"attachment-preview\"] img')[{i}].complete && "
+                    f"document.querySelectorAll('[data-testid=\"attachment-preview\"] img')[{i}].naturalWidth > 0",
+                    timeout=5000,
+                )
+                natural_width = await img.evaluate("(element) => element.naturalWidth")
+            except Exception as e:
+                print(f"Image {i} failed to load within timeout: {e}")
+                natural_width = await img.evaluate("(element) => element.naturalWidth")
 
             print(f"Image {i}: src={src}, naturalWidth={natural_width}")
 

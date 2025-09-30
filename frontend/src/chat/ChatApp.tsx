@@ -393,10 +393,20 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
         const processedMessages: Message[] = [];
         const toolResponses = new Map<string, string>();
+        const toolAttachments = new Map<string, any[]>();
 
+        // First pass: collect tool responses and attachments
         data.messages.forEach((msg) => {
           if (msg.role === 'tool' && msg.tool_call_id) {
             toolResponses.set(msg.tool_call_id, msg.content || 'Tool executed successfully');
+
+            // Collect attachments from tool messages for synthesis
+            if (msg.attachments && Array.isArray(msg.attachments) && msg.attachments.length > 0) {
+              console.log(
+                `[AUTO-ATTACH-HISTORY] Found ${msg.attachments.length} attachment(s) in tool message ${msg.internal_id} for call ${msg.tool_call_id}`
+              );
+              toolAttachments.set(msg.tool_call_id, msg.attachments);
+            }
           }
         });
 
@@ -405,7 +415,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             return;
           }
 
-          if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
+          if (
+            msg.role === 'assistant' &&
+            ((msg.tool_calls && msg.tool_calls.length > 0) ||
+              (msg.metadata?.attachments && msg.metadata.attachments.length > 0))
+          ) {
             const content: MessageContent[] = [];
             if (msg.content) {
               // Handle content - filter out image_url if present
@@ -421,28 +435,93 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               }
             }
 
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            msg.tool_calls.forEach((toolCall: any) => {
-              const toolResponse = toolResponses.get(toolCall.id);
-              // Extract the function name from the tool call
-              const toolName = toolCall.function?.name || toolCall.name || 'unknown';
-              // Parse arguments if they're a string
-              const args = parseToolArguments(toolCall.function?.arguments || toolCall.arguments);
+            // Process explicit tool calls if present
+
+            if (msg.tool_calls && msg.tool_calls.length > 0) {
+              msg.tool_calls.forEach((toolCall: any) => {
+                const toolResponse = toolResponses.get(toolCall.id);
+                // Extract the function name from the tool call
+                const toolName = toolCall.function?.name || toolCall.name || 'unknown';
+                // Parse arguments if they're a string
+                const args = parseToolArguments(toolCall.function?.arguments || toolCall.arguments);
+
+                content.push({
+                  type: 'tool-call',
+                  toolCallId: toolCall.id,
+                  toolName: toolName,
+                  args: args,
+                  argsText:
+                    typeof toolCall.function?.arguments === 'string'
+                      ? toolCall.function.arguments
+                      : typeof toolCall.arguments === 'string'
+                        ? toolCall.arguments
+                        : JSON.stringify(args),
+                  result: toolResponse ?? undefined,
+                });
+              });
+            }
+
+            // Synthesize attach_to_response for tool call attachments
+            // This extracts attachments from tool messages and associates them with the
+            // assistant message that made the tool call
+            // Collect all attachments from tool calls in this message
+            const allToolAttachments: any[] = [];
+            const allAttachmentIds: string[] = [];
+
+            if (msg.tool_calls && msg.tool_calls.length > 0) {
+              msg.tool_calls.forEach((toolCall: any) => {
+                const attachments = toolAttachments.get(toolCall.id);
+                if (attachments && attachments.length > 0) {
+                  console.log(
+                    `[AUTO-ATTACH-HISTORY] Tool call ${toolCall.id} has ${attachments.length} attachment(s)`
+                  );
+                  allToolAttachments.push(...attachments);
+                  attachments.forEach((att: any) => {
+                    if (att.attachment_id) {
+                      allAttachmentIds.push(att.attachment_id);
+                    }
+                  });
+                }
+              });
+            }
+
+            // Also check for attachments in the assistant message's metadata
+            // These are attachments queued by tools like attach_to_response
+            if (msg.metadata?.attachments && Array.isArray(msg.metadata.attachments)) {
+              console.log(
+                `[AUTO-ATTACH-HISTORY] Found ${msg.metadata.attachments.length} attachment(s) in message metadata`
+              );
+              // Add attachments from metadata to the collection
+              allToolAttachments.push(...msg.metadata.attachments);
+              msg.metadata.attachments.forEach((att: any) => {
+                if (att.attachment_id) {
+                  allAttachmentIds.push(att.attachment_id);
+                }
+              });
+            }
+
+            if (allToolAttachments.length > 0) {
+              console.log(
+                `[AUTO-ATTACH-HISTORY] Synthesizing attach_to_response for msg ${msg.internal_id} with ${allToolAttachments.length} tool attachment(s)`
+              );
 
               content.push({
                 type: 'tool-call',
-                toolCallId: toolCall.id,
-                toolName: toolName,
-                args: args,
-                argsText:
-                  typeof toolCall.function?.arguments === 'string'
-                    ? toolCall.function.arguments
-                    : typeof toolCall.arguments === 'string'
-                      ? toolCall.arguments
-                      : JSON.stringify(args),
-                result: toolResponse ?? undefined,
+                toolCallId: `history_attach_tool_${msg.internal_id}`,
+                toolName: 'attach_to_response',
+                args: { attachment_ids: allAttachmentIds },
+                argsText: JSON.stringify({ attachment_ids: allAttachmentIds }),
+                result: JSON.stringify({
+                  status: 'attachments_queued',
+                  count: allToolAttachments.length,
+                  attachments: allToolAttachments,
+                }),
+                attachments: allToolAttachments,
+                artifact: {
+                  attachments: allToolAttachments,
+                },
               });
-            });
+            }
 
             processedMessages.push({
               id: `msg_${msg.internal_id}`,

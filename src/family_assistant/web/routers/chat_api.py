@@ -256,6 +256,7 @@ class ConversationMessage(BaseModel):
     processing_profile_id: str | None = Field(
         None, description="ID of the processing profile that generated this message"
     )
+    metadata: dict | None = Field(None, description="Additional message metadata")
 
 
 class ConversationMessagesResponse(BaseModel):
@@ -537,6 +538,9 @@ async def get_conversations(
 async def get_conversation_messages(
     conversation_id: str,
     db_context: Annotated[DatabaseContext, Depends(get_db)],
+    attachment_registry: Annotated[
+        "AttachmentRegistry", Depends(get_attachment_registry)
+    ],
     before: str | None = None,  # ISO timestamp string
     after: str | None = None,  # ISO timestamp string
     limit: int = 50,
@@ -613,6 +617,46 @@ async def get_conversation_messages(
         if not all(key in msg for key in ["internal_id", "role", "timestamp"]):
             continue
 
+        # Process metadata to include attachment details if present
+        msg_metadata = None
+        if msg.get("metadata"):
+            try:
+                metadata_dict = (
+                    json.loads(msg["metadata"])
+                    if isinstance(msg["metadata"], str)
+                    else msg["metadata"]
+                )
+                if metadata_dict and "attachment_ids" in metadata_dict:
+                    # Fetch full attachment metadata for each attachment
+                    attachments = []
+                    for att_id in metadata_dict["attachment_ids"]:
+                        try:
+                            att_metadata = (
+                                await attachment_registry.get_attachment_with_context(
+                                    att_id
+                                )
+                            )
+                            if att_metadata:
+                                attachments.append({
+                                    "id": att_id,
+                                    "type": "image",
+                                    "name": att_metadata.description or "Attachment",
+                                    "content": f"/api/attachments/{att_id}",
+                                    "mime_type": att_metadata.mime_type,
+                                    "size": att_metadata.size,
+                                })
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to fetch attachment metadata for {att_id}: {e}"
+                            )
+
+                    msg_metadata = {
+                        "attachment_ids": metadata_dict["attachment_ids"],
+                        "attachments": attachments,
+                    }
+            except Exception as e:
+                logger.warning(f"Failed to parse message metadata: {e}")
+
         response_messages.append(
             ConversationMessage(
                 internal_id=msg["internal_id"],
@@ -624,6 +668,7 @@ async def get_conversation_messages(
                 error_traceback=msg.get("error_traceback"),
                 attachments=msg.get("attachments"),
                 processing_profile_id=msg.get("processing_profile_id"),
+                metadata=msg_metadata,
             )
         )
 
