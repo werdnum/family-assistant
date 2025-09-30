@@ -5,7 +5,7 @@ updates:
     schedule:
       interval: "monthly"
       day: "monday"
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 1
     cooldown:
       default-days: 14
       semver-major-days: 30
@@ -22,10 +22,21 @@ updates:
           - "pytest*"
           - "mypy*"
           - "basedpyright*"
+      python-types:
+        patterns:
+          - "types-*"
+      python-web-framework:
+        patterns:
+          - "fastapi*"
+          - "starlette*"
+          - "uvicorn*"
+          - "httpx*"
       python-updates:
         update-types:
           - "minor"
           - "patch"
+        patterns:
+          - "*"
         exclude-patterns:
           - "pylint*"
           - "ruff*"
@@ -35,12 +46,17 @@ updates:
           - "pytest*"
           - "mypy*"
           - "basedpyright*"
+          - "types-*"
+          - "fastapi*"
+          - "starlette*"
+          - "uvicorn*"
+          - "httpx*"
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
       interval: "monthly"
       day: "wednesday"
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 1
     cooldown:
       default-days: 14
       semver-major-days: 30
@@ -60,15 +76,18 @@ updates:
         patterns:
           - "@testing-library/*"
           - "@biomejs/*"
-          - "eslint*"
+          - "*eslint*"
           - "vite*"
           - "tailwindcss*"
           - "jsdom*"
           - "@types/*"
+          - "msw*"
       frontend-updates:
         update-types:
           - "minor"
           - "patch"
+        patterns:
+          - "*"
         exclude-patterns:
           - "react*"
           - "@types/react*"
@@ -78,11 +97,12 @@ updates:
           - "react-router*"
           - "@testing-library/*"
           - "@biomejs/*"
-          - "eslint*"
+          - "*eslint*"
           - "vite*"
           - "tailwindcss*"
           - "jsdom*"
           - "@types/*"
+          - "msw*"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -91,7 +111,6 @@ updates:
     open-pull-requests-limit: 1
     cooldown:
       default-days: 14
-      semver-major-days: 30
     groups:
       github-actions:
         update-types:
@@ -105,7 +124,6 @@ updates:
     open-pull-requests-limit: 2
     cooldown:
       default-days: 14
-      semver-major-days: 60
   - package-ecosystem: "docker"
     directory: "/.devcontainer"
     schedule:
@@ -113,4 +131,4 @@ updates:
     open-pull-requests-limit: 1
     cooldown:
       default-days: 30
-      semver-major-days: 90
+
