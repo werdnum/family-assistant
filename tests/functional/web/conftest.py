@@ -781,6 +781,7 @@ def api_test_processing_service(
     api_test_tools_provider: ToolsProvider,
     api_mock_processing_service_config: ProcessingServiceConfig,
     api_db_context: DatabaseContext,
+    attachment_registry_fixture: AttachmentRegistry,
 ) -> ProcessingService:
     """Creates a ProcessingService instance with mock/test components."""
 
@@ -820,6 +821,7 @@ def api_test_processing_service(
         context_providers=context_providers,
         server_url="http://testserver",
         app_config={},  # Minimal app_config for this test
+        attachment_registry=attachment_registry_fixture,
     )
 
 

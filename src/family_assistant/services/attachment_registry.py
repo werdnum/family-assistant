@@ -256,8 +256,8 @@ class AttachmentRegistry:
         if not row:
             return None
 
-        # Update access time
-        await self._update_access_time(db_context, attachment_id)
+        # Note: We don't update access_time here to avoid blocking the response
+        # Access time is primarily tracked through claim_attachment for user uploads
 
         return AttachmentMetadata.from_row(row)
 
@@ -497,17 +497,6 @@ class AttachmentRegistry:
 
         return success
 
-    async def _update_access_time(
-        self, db_context: DatabaseContext, attachment_id: str
-    ) -> None:
-        """Update the access time for an attachment."""
-        update_stmt = (
-            update(attachment_metadata_table)
-            .where(attachment_metadata_table.c.attachment_id == attachment_id)
-            .values(accessed_at=datetime.now(timezone.utc))
-        )
-        await db_context.execute_with_retry(update_stmt)
-
     async def cleanup_orphaned_attachments(self, db_context: DatabaseContext) -> int:
         """
         Clean up file system attachments that are no longer referenced in the database.
@@ -614,8 +603,7 @@ class AttachmentRegistry:
             logger.info(
                 f"Successfully claimed attachment {attachment_id} for conversation {conversation_id}"
             )
-            # Update access time since we're accessing it
-            await self._update_access_time(db_context, attachment_id)
+            # Note: access_time is updated by the claim operation above
             return AttachmentMetadata.from_row(row)
 
         return None

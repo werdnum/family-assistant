@@ -343,4 +343,9 @@ describe('ChatApp', () => {
     // Should NOT see telegram conversations (they should be filtered out by the interface_type filter)
     expect(screen.queryByText('Telegram message that should not appear')).not.toBeInTheDocument();
   });
+
+  // Note: Attachment display from assistant message metadata is covered by E2E Playwright tests:
+  // - test_tool_attachment_persistence_after_page_reload (tests/functional/web/test_chat_ui_attachment_response.py)
+  // - test_attachment_response_flow (tests/functional/web/test_chat_ui_attachment_response.py)
+  // These tests verify the full user-visible behavior including page reloads and attachment display.
 });
