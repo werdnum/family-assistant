@@ -7,6 +7,7 @@ lifecycle, and access control across user-sourced and tool-generated attachments
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import mimetypes
@@ -256,9 +257,6 @@ class AttachmentRegistry:
         if not row:
             return None
 
-        # Note: We don't update access_time here to avoid blocking the response
-        # Access time is primarily tracked through claim_attachment for user uploads
-
         return AttachmentMetadata.from_row(row)
 
     async def list_attachments(
@@ -497,6 +495,48 @@ class AttachmentRegistry:
 
         return success
 
+    async def _update_access_time(
+        self, db_context: DatabaseContext, attachment_id: str
+    ) -> None:
+        """Update the access time for an attachment.
+
+        Silently ignores cancellation and database errors during shutdown,
+        since access time tracking is not critical to application functionality.
+        """
+        try:
+            update_stmt = (
+                update(attachment_metadata_table)
+                .where(attachment_metadata_table.c.attachment_id == attachment_id)
+                .values(accessed_at=datetime.now(timezone.utc))
+            )
+            await db_context.execute_with_retry(update_stmt)
+        except asyncio.CancelledError:
+            # Operation cancelled during shutdown - this is fine, access time isn't critical
+            pass
+        except Exception:
+            # Silently ignore other errors (e.g., connection closed during teardown)
+            # Access time tracking is informational and shouldn't break operations
+            pass
+
+    async def update_access_time_background(self, attachment_id: str) -> None:
+        """
+        Update attachment access time in a background task.
+
+        Creates its own database context since this is called from FastAPI
+        BackgroundTasks after the request context is closed.
+
+        Args:
+            attachment_id: The attachment ID to update
+        """
+        try:
+            async with DatabaseContext() as db:
+                await self._update_access_time(db, attachment_id)
+        except Exception as e:
+            # Log but don't fail - access time tracking is not critical
+            logger.debug(
+                f"Background access time update failed for {attachment_id}: {e}"
+            )
+
     async def cleanup_orphaned_attachments(self, db_context: DatabaseContext) -> int:
         """
         Clean up file system attachments that are no longer referenced in the database.
@@ -584,7 +624,10 @@ class AttachmentRegistry:
                     attachment_metadata_table.c.source_id == required_source_id,
                 )
             )
-            .values(conversation_id=conversation_id)
+            .values(
+                conversation_id=conversation_id,
+                accessed_at=datetime.now(timezone.utc),
+            )
         )
 
         result = await db_context.execute_with_retry(update_stmt)
@@ -603,7 +646,7 @@ class AttachmentRegistry:
             logger.info(
                 f"Successfully claimed attachment {attachment_id} for conversation {conversation_id}"
             )
-            # Note: access_time is updated by the claim operation above
+            # Note: accessed_at is updated by the claim UPDATE statement above
             return AttachmentMetadata.from_row(row)
 
         return None

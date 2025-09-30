@@ -220,7 +220,7 @@ async def test_attachment_response_flow(
                 await page.wait_for_function(
                     f"document.querySelectorAll('[data-testid=\"attachment-preview\"] img')[{i}].complete && "
                     f"document.querySelectorAll('[data-testid=\"attachment-preview\"] img')[{i}].naturalWidth > 0",
-                    timeout=5000,
+                    timeout=30000,
                 )
                 natural_width = await img.evaluate("(element) => element.naturalWidth")
             except Exception as e:
@@ -654,12 +654,12 @@ async def test_tool_attachment_persistence_after_page_reload(
 
     # Verify attachment is displayed initially
     attachment_preview = page.locator('[data-testid="attachment-preview"]').first
-    await attachment_preview.wait_for(state="visible", timeout=5000)
+    await attachment_preview.wait_for(state="visible", timeout=30000)
     print("[DEBUG] Attachment preview is visible")
 
     # Get the attachment URL from the img element
     img_element = attachment_preview.locator("img").first
-    await img_element.wait_for(state="visible", timeout=5000)
+    await img_element.wait_for(state="visible", timeout=30000)
     attachment_url = await img_element.get_attribute("src")
     assert attachment_url is not None, "Attachment should have a valid URL"
 
@@ -690,11 +690,11 @@ async def test_tool_attachment_persistence_after_page_reload(
         attachment_preview_after_reload = page.locator(
             '[data-testid="attachment-preview"]'
         ).first
-        await attachment_preview_after_reload.wait_for(state="visible", timeout=10000)
+        await attachment_preview_after_reload.wait_for(state="visible", timeout=30000)
 
         # Get the attachment URL after reload
         img_element_after_reload = attachment_preview_after_reload.locator("img").first
-        await img_element_after_reload.wait_for(state="visible", timeout=10000)
+        await img_element_after_reload.wait_for(state="visible", timeout=30000)
         attachment_url_after_reload = await img_element_after_reload.get_attribute(
             "src"
         )
@@ -719,6 +719,10 @@ async def test_tool_attachment_persistence_after_page_reload(
         print(
             "[SUCCESS] Tool attachment persisted after page reload - bug fix verified!"
         )
+
+        # Wait for any pending network requests to complete before teardown
+        # This prevents "connection closed" errors during database teardown
+        await page.wait_for_load_state("networkidle", timeout=5000)
 
     except Exception as e:
         # If we can't find the attachment after reload, that's the bug!

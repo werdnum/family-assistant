@@ -4,7 +4,7 @@ import logging
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -109,6 +109,7 @@ async def upload_attachment(
 )
 async def serve_attachment(
     attachment_id: str,
+    background_tasks: BackgroundTasks,
     current_user: Annotated[dict, Depends(get_current_user)],
     attachment_registry: Annotated[
         AttachmentRegistry, Depends(get_attachment_registry)
@@ -138,6 +139,7 @@ async def serve_attachment(
         ) from e
 
     # Check access via attachment registry (respects conversation scoping)
+    # Note: get_attachment() no longer updates access time synchronously
     attachment_metadata = await attachment_registry.get_attachment(
         db_context, attachment_id
     )
@@ -145,6 +147,11 @@ async def serve_attachment(
         raise HTTPException(
             status_code=404, detail="Attachment not found or access denied"
         )
+
+    # Schedule access time update as background task (non-blocking)
+    background_tasks.add_task(
+        attachment_registry.update_access_time_background, attachment_id
+    )
 
     # Note: Ownership verification removed since API endpoints are public
     # All authenticated users can access any attachment for simplicity

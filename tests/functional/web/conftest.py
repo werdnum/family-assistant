@@ -458,7 +458,7 @@ async def web_test_fixture(
     web_only_assistant: Assistant,
     api_socket_and_port: tuple[int, socket.socket],
     build_frontend_assets: None,  # Ensure frontend is built before tests
-) -> WebTestFixture:
+) -> AsyncGenerator[WebTestFixture, None]:
     """Combined fixture providing all web test dependencies."""
 
     # Set up console message logging for debugging
@@ -499,11 +499,32 @@ async def web_test_fixture(
     await asyncio.sleep(1)
     print("Router and dynamic imports initialization complete")
 
-    return WebTestFixture(
+    fixture = WebTestFixture(
         assistant=web_only_assistant,
         page=page,
         base_url=base_url,  # Direct to API server (serves built assets)
     )
+
+    yield fixture
+
+    # Teardown: Wait for any in-flight requests to complete before assistant shutdown
+    # This prevents "database closed" errors during teardown when requests are still processing
+    print("Waiting for in-flight requests to complete...")
+    try:
+        await page.wait_for_load_state("networkidle", timeout=5000)
+    except Exception as e:
+        print(f"Warning: Could not wait for network idle during teardown: {e}")
+
+    # Close the page to terminate any active SSE streams
+    print("Closing page to terminate streaming connections...")
+    try:
+        await page.close()
+    except Exception as e:
+        print(f"Warning: Error closing page: {e}")
+
+    # Additional delay to ensure all connections are fully closed and cleanup completes
+    print("Waiting for connection cleanup...")
+    await asyncio.sleep(1.0)
 
 
 @pytest_asyncio.fixture(scope="function")
