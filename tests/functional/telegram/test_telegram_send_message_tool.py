@@ -342,16 +342,19 @@ async def test_send_message_to_self_rejected(
     def tool_error_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         # Look for the tool response with error message
-        # Look for the tool response with error message
         return any(
             msg.get("role") == "tool"
             and msg.get("tool_call_id") == tool_call_id
             and (
-                "Cannot send a message to yourself" in (content := str(msg.get("content", "")))
-                and "respond directly in this conversation" in content
+                "Cannot use send_message_to_user tool"
+                in (content := str(msg.get("content", "")))
+                and "already replying to" in content
             )
             for msg in messages
         )
+
+    error_acknowledgment_output = LLMOutput(
+        content="I understand - my response will be delivered directly to you in this conversation.",
         tool_calls=None,
     )
     rule_error_acknowledgment: Rule = (tool_error_matcher, error_acknowledgment_output)
@@ -396,7 +399,7 @@ async def test_send_message_to_self_rejected(
             alice_chat_id
         )
         expected_text = telegramify_markdown.markdownify(
-            "I cannot send a message to yourself. You'll see my responses directly in this conversation."
+            "I understand - my response will be delivered directly to you in this conversation."
         )
         assert_that(kwargs["text"]).described_as("Response text").is_equal_to(
             expected_text
@@ -453,11 +456,13 @@ async def test_callback_send_message_to_self_rejected(
             msg.get("role") == "tool"
             and msg.get("tool_call_id") == tool_call_id
             and (
-                "Cannot send a message to yourself" in (content := str(msg.get("content", "")))
-                and "respond directly in this conversation" in content
+                "Cannot use send_message_to_user tool"
+                in (content := str(msg.get("content", "")))
+                and "already replying to" in content
             )
             for msg in messages
         )
+
     callback_correction_output = LLMOutput(
         content="Don't forget about your meeting! 📅", tool_calls=None
     )
