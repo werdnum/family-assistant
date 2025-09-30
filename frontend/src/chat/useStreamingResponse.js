@@ -190,6 +190,35 @@ export const useStreamingResponse = ({
                   });
                 }
 
+                // Handle done event with auto-attachments
+                // When tools return attachments without explicit attach_to_response call,
+                // synthesize a tool call to display them in the UI
+                if (
+                  payload.attachment_ids &&
+                  payload.attachments &&
+                  Array.isArray(payload.attachments)
+                ) {
+                  console.log(
+                    `[AUTO-ATTACH] Synthesizing tool call for ${payload.attachments.length} attachment(s)`
+                  );
+
+                  const syntheticToolCall = {
+                    id: `web_attach_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                    name: 'attach_to_response',
+                    arguments: JSON.stringify({ attachment_ids: payload.attachment_ids }),
+                    result: JSON.stringify({
+                      status: 'attachments_queued',
+                      count: payload.attachments.length,
+                      attachments: payload.attachments,
+                    }),
+                    attachments: payload.attachments,
+                    _synthetic: true,
+                  };
+
+                  toolCalls.push(syntheticToolCall);
+                  onToolCall([...toolCalls]);
+                }
+
                 // Handle error
                 if (payload.error) {
                   onError(new Error(payload.error || 'Unknown error'));

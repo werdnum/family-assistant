@@ -160,7 +160,15 @@ class RuleBasedMockLLMClient(LLMInterface):
             f"No mock LLM rule matched for 'generate_response' with {len(messages)} messages. "
             f"Returning default response."
         )
-        logger.warning(f"Messages received:\n{json.dumps(messages, indent=2)}")
+        # Sanitize messages for JSON serialization (remove _attachment objects)
+        sanitized_messages = []
+        for msg in messages:
+            sanitized = msg.copy()
+            sanitized.pop("_attachment", None)
+            sanitized_messages.append(sanitized)
+        logger.warning(
+            f"Messages received:\n{json.dumps(sanitized_messages, indent=2)}"
+        )
         return self.default_response
 
     def generate_response_stream(

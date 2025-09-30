@@ -8,7 +8,7 @@ import pytest
 from httpx import AsyncClient
 from PIL import Image
 
-from family_assistant.llm import LLMOutput
+from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 
@@ -302,6 +302,139 @@ async def test_chat_api_null_attachments(
 
     content = response.content.decode("utf-8")
     assert "Response" in content
+
+
+@pytest.mark.asyncio
+async def test_tool_result_attachments_include_complete_metadata(
+    api_test_client: AsyncClient, api_mock_llm_client: RuleBasedMockLLMClient
+) -> None:
+    """Test that tool result attachments include attachment_id and content_url in all contexts.
+
+    This test verifies the fix for auto-attached attachments not appearing in the web UI.
+    The issue was that tool messages were missing attachment_id and content_url in their
+    metadata, preventing the frontend from synthesizing attach_to_response tool calls.
+    """
+
+    # Configure mock LLM to call generate_image tool
+    def call_generate_image_matcher(args: dict) -> bool:
+        messages = args.get("messages", [])
+        # Match only when there's a user message requesting image generation
+        # and no tool messages yet (to avoid infinite loops)
+        has_user_request = False
+        has_tool_result = False
+
+        for msg in messages:
+            if (
+                msg.get("role") == "user"
+                and "image" in str(msg.get("content", "")).lower()
+            ):
+                has_user_request = True
+            if msg.get("role") == "tool":
+                has_tool_result = True
+
+        return has_user_request and not has_tool_result
+
+    api_mock_llm_client.rules = [
+        (
+            call_generate_image_matcher,
+            LLMOutput(
+                content="Here's your image!",
+                tool_calls=[
+                    ToolCallItem(
+                        id="call_test_generate_image",
+                        type="function",
+                        function=ToolCallFunction(
+                            name="generate_image",
+                            arguments=json.dumps({"prompt": "A test image"}),
+                        ),
+                    )
+                ],
+            ),
+        )
+    ]
+
+    # After tool execution, just return a final response
+    api_mock_llm_client.default_response = LLMOutput(content="Here's your image!")
+
+    conversation_id = "test_conv_tool_attachment_metadata"
+
+    # Send request to streaming endpoint
+    payload = {
+        "prompt": "Generate an image for me",
+        "conversation_id": conversation_id,
+        "interface_type": "web",
+    }
+
+    response = await api_test_client.post(
+        "/api/v1/chat/send_message_stream", json=payload
+    )
+
+    assert response.status_code == 200
+
+    # Parse streaming response to find tool_result event
+    content = response.content.decode("utf-8")
+    lines = content.strip().split("\n")
+
+    tool_result_found = False
+    attachment_metadata = None
+
+    for i, line in enumerate(lines):
+        if (
+            line == "event: tool_result"
+            and i + 1 < len(lines)
+            and lines[i + 1].startswith("data: ")
+        ):
+            # Next line should be data
+            try:
+                data = json.loads(lines[i + 1][6:])  # Remove 'data: ' prefix
+                if "attachments" in data and data["attachments"]:
+                    tool_result_found = True
+                    attachment_metadata = data["attachments"][0]
+                    break
+            except json.JSONDecodeError:
+                continue
+
+    # Verify streaming response includes complete attachment metadata
+    assert tool_result_found, (
+        "Tool result with attachment not found in streaming response"
+    )
+    assert attachment_metadata is not None
+    assert "attachment_id" in attachment_metadata, (
+        "Missing attachment_id in streaming response"
+    )
+    assert "content_url" in attachment_metadata, (
+        "Missing content_url in streaming response"
+    )
+    assert attachment_metadata["attachment_id"], "attachment_id is empty"
+    assert attachment_metadata["content_url"], "content_url is empty"
+    assert attachment_metadata["type"] == "tool_result"
+    assert attachment_metadata["mime_type"] == "image/png"
+
+    # Now verify the conversation history also includes complete metadata
+    history_response = await api_test_client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages"
+    )
+
+    assert history_response.status_code == 200
+    history_data = history_response.json()
+
+    # Find the tool message in history
+    tool_messages = [msg for msg in history_data["messages"] if msg["role"] == "tool"]
+
+    assert len(tool_messages) == 1, "Expected exactly one tool message in history"
+    tool_message = tool_messages[0]
+
+    # Verify history includes complete attachment metadata
+    assert tool_message["attachments"] is not None
+    assert len(tool_message["attachments"]) == 1
+
+    history_attachment = tool_message["attachments"][0]
+    assert "attachment_id" in history_attachment, "Missing attachment_id in history"
+    assert "content_url" in history_attachment, "Missing content_url in history"
+    assert history_attachment["attachment_id"] == attachment_metadata["attachment_id"]
+    assert history_attachment["content_url"] == attachment_metadata["content_url"]
+    assert history_attachment["type"] == "tool_result"
+    assert history_attachment["mime_type"] == "image/png"
 
 
 # Note: Removed test_chat_api_trigger_content_structure as it was testing internal
