@@ -281,6 +281,39 @@ Given the auto-formatting tools in place, the reviewer should focus on:
 6. **Documentation completeness** (not formatting)
 7. **Test coverage** and quality
 
+### Test Quality Requirements
+
+**CRITICAL: Tests must NEVER use fixed time-based waits.** This is a **LOGIC_ERROR** severity issue.
+
+Tests using `setTimeout`, `sleep`, or fixed delays are flaky and will fail under load or in CI:
+
+❌ **Block these patterns:**
+
+- `await new Promise(resolve => setTimeout(resolve, 2000))`
+- `await sleep(500)` (without condition check)
+- `time.sleep(1.0)` (without condition check)
+- Any arbitrary delay before checking a condition
+
+✅ **Require these patterns:**
+
+- `await waitFor(() => expect(element).toBeEnabled())`
+- `await screen.findByText('Success message')`
+- `while not condition and time.time() < deadline: await asyncio.sleep(0.1)`
+- Condition-based waits with timeouts
+
+**Rationale:**
+
+- Fixed waits are always wrong: too short (flaky) or too long (slow)
+- Condition-based waits complete as soon as the condition is met
+- Tests must be reliable across different hardware and CI environments
+
+**When reviewing test changes:**
+
+1. Flag any new `setTimeout`, `sleep`, or fixed delays as **LOGIC_ERROR**
+2. Suggest condition-based alternatives
+3. Accept fixed waits ONLY if modeling actual user behavior timing
+4. Ensure test helpers use condition-based waits internally
+
 The reviewer should **NOT** focus on:
 
 1. Code formatting (handled by ruff)

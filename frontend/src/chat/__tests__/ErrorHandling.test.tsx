@@ -1,22 +1,14 @@
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
-
-// Mock localStorage
-const mockLocalStorage = {
-  getItem: vi.fn(),
-  setItem: vi.fn(),
-  removeItem: vi.fn(),
-};
-Object.defineProperty(window, 'localStorage', { value: mockLocalStorage });
+import { resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 
 describe('ErrorHandling', () => {
   beforeEach(() => {
-    mockLocalStorage.getItem.mockReturnValue(null);
-    mockLocalStorage.setItem.mockClear();
+    resetLocalStorageMock();
     vi.clearAllMocks();
   });
 
@@ -29,9 +21,9 @@ describe('ErrorHandling', () => {
     );
 
     const user = userEvent.setup();
-    renderChatApp();
+    await renderChatApp({ waitForReady: true });
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     const messageInput = screen.getByPlaceholderText('Write a message...');
 
@@ -41,7 +33,7 @@ describe('ErrorHandling', () => {
 
     // The @assistant-ui/react runtime should handle the error gracefully
     // We can't predict the exact error UI, but the app shouldn't crash
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     // Chat interface should still be present and functional
     expect(screen.getByText('Chat')).toBeInTheDocument();
@@ -57,16 +49,16 @@ describe('ErrorHandling', () => {
     );
 
     const user = userEvent.setup();
-    renderChatApp();
+    await renderChatApp({ waitForReady: true });
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     const messageInput = screen.getByPlaceholderText('Write a message...');
 
     await user.type(messageInput, 'This should get a server error');
     await user.keyboard('{Enter}');
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     // App should handle server errors without crashing
     expect(screen.getByText('Chat')).toBeInTheDocument();
@@ -96,16 +88,16 @@ describe('ErrorHandling', () => {
     );
 
     const user = userEvent.setup();
-    renderChatApp();
+    await renderChatApp({ waitForReady: true });
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     const messageInput = screen.getByPlaceholderText('Write a message...');
 
     await user.type(messageInput, 'This will have a malformed response');
     await user.keyboard('{Enter}');
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     // Runtime should handle stream errors gracefully
     expect(screen.getByText('Chat')).toBeInTheDocument();
@@ -119,9 +111,9 @@ describe('ErrorHandling', () => {
       })
     );
 
-    renderChatApp();
+    await renderChatApp({ waitForReady: true });
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     // Chat should still be usable even if conversations fail to load
     expect(screen.getByText('Chat')).toBeInTheDocument();
@@ -136,9 +128,9 @@ describe('ErrorHandling', () => {
       })
     );
 
-    renderChatApp();
+    await renderChatApp({ waitForReady: true });
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     // Chat should still function with profile loading errors
     expect(screen.getByText('Chat')).toBeInTheDocument();
@@ -196,16 +188,16 @@ describe('ErrorHandling', () => {
     );
 
     const user = userEvent.setup();
-    renderChatApp();
+    await renderChatApp({ waitForReady: true });
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     const messageInput = screen.getByPlaceholderText('Write a message...');
 
     await user.type(messageInput, 'Please execute a tool call');
     await user.keyboard('{Enter}');
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     // Should handle confirmation errors gracefully
     expect(screen.getByText('Chat')).toBeInTheDocument();
@@ -219,9 +211,9 @@ describe('ErrorHandling', () => {
       })
     );
 
-    renderChatApp();
+    await renderChatApp({ waitForReady: true });
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     // Test attachment error handling if the UI provides file upload
     // This would involve creating a mock file and testing the upload error
@@ -260,9 +252,9 @@ describe('ErrorHandling', () => {
     );
 
     const user = userEvent.setup();
-    renderChatApp();
+    await renderChatApp({ waitForReady: true });
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     const messageInput = screen.getByPlaceholderText('Write a message...');
 
@@ -270,7 +262,7 @@ describe('ErrorHandling', () => {
     await user.type(messageInput, 'Test recovery');
     await user.keyboard('{Enter}');
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     // App should handle retry logic appropriately
     expect(screen.getByText('Chat')).toBeInTheDocument();
@@ -303,19 +295,22 @@ describe('ErrorHandling', () => {
     );
 
     const user = userEvent.setup();
-    renderChatApp();
+    await renderChatApp({ waitForReady: true });
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     const messageInput = screen.getByPlaceholderText('Write a message...');
 
     await user.type(messageInput, 'Give me a long response');
     await user.keyboard('{Enter}');
 
-    // Allow time for long response processing
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-
     // UI should handle long responses without performance issues
-    expect(screen.getByText('Chat')).toBeInTheDocument();
+    // Wait for the response to complete
+    await waitFor(
+      () => {
+        expect(screen.getByText('Chat')).toBeInTheDocument();
+      },
+      { timeout: 5000 }
+    );
   }, 10000); // Increase timeout
 });

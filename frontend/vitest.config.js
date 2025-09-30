@@ -12,6 +12,8 @@ export default defineConfig({
     globals: true,
     setupFiles: './src/test/setup.js',
     css: true,
+    testTimeout: 10000, // 10s per test (default 5s was too short)
+    hookTimeout: 10000, // 10s for setup/teardown hooks
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],

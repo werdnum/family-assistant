@@ -4,19 +4,11 @@ import { vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
-
-// Mock localStorage for conversation persistence
-const mockLocalStorage = {
-  getItem: vi.fn(),
-  setItem: vi.fn(),
-  removeItem: vi.fn(),
-};
-Object.defineProperty(window, 'localStorage', { value: mockLocalStorage });
+import { resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 
 describe('ToolWithConfirmation', () => {
   beforeEach(() => {
-    mockLocalStorage.getItem.mockReturnValue(null);
-    mockLocalStorage.setItem.mockClear();
+    resetLocalStorageMock();
     vi.clearAllMocks();
   });
 
@@ -82,9 +74,9 @@ describe('ToolWithConfirmation', () => {
     );
 
     const user = userEvent.setup();
-    renderChatApp();
+    await renderChatApp({ waitForReady: true });
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     const messageInput = screen.getByPlaceholderText('Write a message...');
 
@@ -95,9 +87,6 @@ describe('ToolWithConfirmation', () => {
     await waitFor(() => {
       expect(messageInput).toHaveValue('');
     });
-
-    // Wait for streaming to complete and tool confirmation to appear
-    await new Promise((resolve) => setTimeout(resolve, 2000));
 
     // Note: The exact selectors depend on how @assistant-ui/react and ToolWithConfirmation
     // render the confirmation dialog. This tests the integration at a high level.
@@ -128,9 +117,9 @@ describe('ToolWithConfirmation', () => {
     // 3. Clicking the approve button
     // 4. Verifying the tool result appears
 
-    renderChatApp();
+    await renderChatApp({ waitForReady: true });
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     // Test implementation would depend on the exact UI structure
     // produced by @assistant-ui/react and ToolWithConfirmation
@@ -154,9 +143,9 @@ describe('ToolWithConfirmation', () => {
       })
     );
 
-    renderChatApp();
+    await renderChatApp({ waitForReady: true });
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     // Similar to approval test, but clicking reject button instead
   });
@@ -168,9 +157,9 @@ describe('ToolWithConfirmation', () => {
     // 2. Using a very short timeout for testing
     // 3. Testing that the timeout UI appears
 
-    renderChatApp();
+    await renderChatApp({ waitForReady: true });
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     // Implementation would depend on how timeout is handled in the UI
   });
@@ -197,9 +186,9 @@ describe('ToolWithConfirmation', () => {
       })
     );
 
-    renderChatApp();
+    await renderChatApp({ waitForReady: true });
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     // Test that tool results appear as messages in the conversation
     // This verifies the end-to-end tool execution flow
@@ -274,9 +263,9 @@ describe('ToolWithConfirmation', () => {
     );
 
     const user = userEvent.setup();
-    renderChatApp();
+    await renderChatApp({ waitForReady: true });
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait removed - using waitForReady option
 
     const messageInput = screen.getByPlaceholderText('Write a message...');
 

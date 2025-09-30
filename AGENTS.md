@@ -138,6 +138,36 @@ This script runs:
   have already tried with `-q` and you are sure there is information in the output of `-s` or `-v`
   that you need for debugging.
 
+- **CRITICAL: Avoid Fixed Waits in Tests**: Tests must NEVER use arbitrary time-based waits like
+  `setTimeout`, `sleep`, or fixed delays. These cause flaky tests that fail under load or in CI.
+
+  **Always wait for the specific condition you care about:**
+
+  - ✅ GOOD: `await waitFor(() => expect(element).toBeEnabled())`
+  - ✅ GOOD: `await screen.findByText('Success message')`
+  - ✅ GOOD: `await waitForMessageSent(input)` (waits for input.value === '')
+  - ❌ BAD: `await new Promise(resolve => setTimeout(resolve, 2000))`
+  - ❌ BAD: `await sleep(500)`
+
+  **For frontend tests (Vitest/React Testing Library):**
+
+  - Use `waitFor()` to wait for conditions
+  - Use `findBy*` queries which wait automatically
+  - Create reusable condition-based wait helpers
+  - Only use fixed waits if modeling actual user behavior timing (e.g., 500ms between rapid actions)
+
+  **For backend tests (pytest):**
+
+  - Use `pytest-asyncio` with condition-based waits
+  - Poll with timeouts: `while not condition and time.time() < deadline: await asyncio.sleep(0.1)`
+  - Never use bare `time.sleep()` or `asyncio.sleep()` without a condition check
+
+  **Why this matters:**
+
+  - Fixed waits are always too short (fail under load) or too long (waste time)
+  - Condition-based waits complete as soon as possible
+  - Tests become reliable across different hardware and CI environments
+
 - **Finding Flaky Tests**: When debugging test flakiness, use pytest's `--flake-finder` plugin:
 
   ```bash

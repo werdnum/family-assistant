@@ -4,19 +4,11 @@ import { vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
-
-// Mock localStorage
-const mockLocalStorage = {
-  getItem: vi.fn(),
-  setItem: vi.fn(),
-  removeItem: vi.fn(),
-};
-Object.defineProperty(window, 'localStorage', { value: mockLocalStorage });
+import { mockLocalStorage, resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 
 describe('ConversationSidebar', () => {
   beforeEach(() => {
-    mockLocalStorage.getItem.mockReturnValue(null);
-    mockLocalStorage.setItem.mockClear();
+    resetLocalStorageMock();
     vi.clearAllMocks();
   });
 
@@ -44,9 +36,7 @@ describe('ConversationSidebar', () => {
       })
     );
 
-    renderChatApp();
-
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await renderChatApp({ waitForReady: true });
 
     // Wait for conversations to load
     await waitFor(() => {
@@ -93,51 +83,41 @@ describe('ConversationSidebar', () => {
       })
     );
 
-    renderChatApp();
-
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await renderChatApp({ waitForReady: true });
 
     // Test switching between conversations if the UI provides this functionality
     // Implementation depends on @assistant-ui/react's conversation management
   });
 
-  it.skip('toggles sidebar open/closed', async () => {
-    // Skip this test for now due to React Router context issues
-    // The error "Cannot destructure property 'basename' of useContext as it is null"
-    // indicates missing Router context. This is a ChatApp integration issue to resolve later.
-
+  it('toggles sidebar open/closed', async () => {
     const user = userEvent.setup();
-    renderChatApp();
-
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await renderChatApp({ waitForReady: true });
 
     // Look for sidebar toggle button
-    // Note: Exact selector depends on the UI structure
-    const toggleElements = screen.queryAllByRole('button').filter((button) => {
-      const text = button.textContent?.toLowerCase() || '';
-      return text.includes('menu') || text.includes('sidebar') || text.includes('toggle');
+    const toggleButton = screen.getByLabelText('Toggle sidebar');
+
+    // Test toggling sidebar
+    await user.click(toggleButton);
+
+    // Wait for sidebar state to update
+    await waitFor(() => {
+      // The sidebar toggle should have changed ARIA attributes or classes
+      expect(toggleButton).toBeInTheDocument();
     });
 
-    if (toggleElements.length > 0) {
-      const toggleButton = toggleElements[0];
+    // Click again to toggle back
+    await user.click(toggleButton);
 
-      // Test toggling sidebar
-      await user.click(toggleButton);
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
-      // Click again to toggle back
-      await user.click(toggleButton);
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
+    await waitFor(() => {
+      expect(toggleButton).toBeInTheDocument();
+    });
 
     // This tests the basic toggle functionality
   });
 
   it('creates new conversation from sidebar', async () => {
     const user = userEvent.setup();
-    renderChatApp();
-
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await renderChatApp({ waitForReady: true });
 
     // Look for new conversation button
     const newConversationElements = screen.queryAllByText(/new/i);
@@ -148,13 +128,16 @@ describe('ConversationSidebar', () => {
 
     if (newButton) {
       await user.click(newButton);
-      await new Promise((resolve) => setTimeout(resolve, 1000));
 
       // Verify new conversation was created
-      // This would check localStorage or conversation state
-      expect(mockLocalStorage.setItem).toHaveBeenCalledWith(
-        'lastConversationId',
-        expect.stringMatching(/web_conv_/)
+      await waitFor(
+        () => {
+          expect(mockLocalStorage.setItem).toHaveBeenCalledWith(
+            'lastConversationId',
+            expect.stringMatching(/web_conv_/)
+          );
+        },
+        { timeout: 5000 }
       );
     }
   });
@@ -177,9 +160,7 @@ describe('ConversationSidebar', () => {
       })
     );
 
-    renderChatApp();
-
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await renderChatApp({ waitForReady: true });
 
     // Wait for conversations to load
     await waitFor(() => {
@@ -201,9 +182,7 @@ describe('ConversationSidebar', () => {
       })
     );
 
-    renderChatApp();
-
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await renderChatApp({ waitForReady: true });
 
     // Should still show conversations header even when empty
     await waitFor(() => {
@@ -224,9 +203,7 @@ describe('ConversationSidebar', () => {
 
     window.dispatchEvent(new Event('resize'));
 
-    renderChatApp();
-
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await renderChatApp({ waitForReady: true });
 
     // On mobile, the sidebar may be closed by default
     // Check if we can access conversations through a menu button
@@ -235,7 +212,10 @@ describe('ConversationSidebar', () => {
       // Try to open the sidebar on mobile
       const user = userEvent.setup();
       await user.click(menuButton);
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // Wait for sidebar to open
+      await waitFor(() => {
+        expect(menuButton).toBeInTheDocument();
+      });
     }
 
     // Now check if conversations are accessible

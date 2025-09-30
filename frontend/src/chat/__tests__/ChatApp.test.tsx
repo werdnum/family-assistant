@@ -2,14 +2,8 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { vi } from 'vitest';
 import { renderChatApp } from '../../test/utils/renderChatApp';
-
-// Mock localStorage for conversation persistence
-const mockLocalStorage = {
-  getItem: vi.fn(),
-  setItem: vi.fn(),
-  removeItem: vi.fn(),
-};
-Object.defineProperty(window, 'localStorage', { value: mockLocalStorage });
+import { waitForMessageSent } from '../../test/utils/waitHelpers';
+import { mockLocalStorage, resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 
 // Mock window.history for navigation
 Object.defineProperty(window, 'history', {
@@ -29,16 +23,12 @@ Object.defineProperty(window, 'innerWidth', {
 describe('ChatApp', () => {
   beforeEach(() => {
     // Reset mocks
-    mockLocalStorage.getItem.mockReturnValue(null);
-    mockLocalStorage.setItem.mockClear();
+    resetLocalStorageMock();
     vi.clearAllMocks();
   });
 
   it('renders the chat interface', async () => {
-    renderChatApp();
-
-    // Wait a moment for the component to stabilize
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await renderChatApp({ waitForReady: true });
 
     // Verify basic UI elements are present
     expect(screen.getByText('Chat')).toBeInTheDocument();
@@ -48,10 +38,7 @@ describe('ChatApp', () => {
 
   it('sends and receives messages', async () => {
     const user = userEvent.setup();
-    renderChatApp();
-
-    // Wait for the component to stabilize
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await renderChatApp({ waitForReady: true });
 
     // Find the message input by placeholder text (we know it says "Write a message...")
     const messageInput = screen.getByPlaceholderText('Write a message...');
@@ -63,14 +50,11 @@ describe('ChatApp', () => {
     // For assistant-ui, we typically submit by pressing Enter rather than clicking a button
     await user.keyboard('{Enter}');
 
+    // Get fresh reference (input may have been re-rendered after submission)
+    const submittedInput = screen.getByPlaceholderText('Write a message...');
+
     // Verify the message was sent by checking if the input was cleared
-    // (This is a common pattern in chat UIs - input clears after sending)
-    await waitFor(
-      () => {
-        expect(messageInput).toHaveValue('');
-      },
-      { timeout: 1000 }
-    );
+    await waitForMessageSent(submittedInput);
 
     // Note: The actual message sending and response display depends on the
     // @assistant-ui/react runtime behavior, which may not show messages
@@ -78,10 +62,7 @@ describe('ChatApp', () => {
   });
 
   it('handles conversation loading', async () => {
-    renderChatApp();
-
-    // Wait for component to stabilize and profiles to load
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await renderChatApp({ waitForReady: true });
 
     // Check that conversations are loaded by looking for the sidebar
     await waitFor(() => {
@@ -94,10 +75,7 @@ describe('ChatApp', () => {
 
   it('creates new conversations', async () => {
     const user = userEvent.setup();
-    renderChatApp();
-
-    // Wait for component to load
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await renderChatApp({ waitForReady: true });
 
     // Look for a "new chat" or similar button
     const newChatButton =
@@ -107,20 +85,19 @@ describe('ChatApp', () => {
       await user.click(newChatButton);
 
       // Should create a new conversation
-      expect(mockLocalStorage.setItem).toHaveBeenCalledWith(
-        'lastConversationId',
-        expect.stringMatching(/web_conv_/)
-      );
+      await waitFor(() => {
+        expect(mockLocalStorage.setItem).toHaveBeenCalledWith(
+          'lastConversationId',
+          expect.stringMatching(/web_conv_/)
+        );
+      });
     }
   });
 
   it('handles profile switching', async () => {
-    renderChatApp({ profileId: 'browser_profile' });
+    await renderChatApp({ profileId: 'browser_profile', waitForReady: true });
 
-    // Wait for component to load
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-
-    // Check that the profile selector is present (even if still loading)
+    // Check that the profile selector is present
     await waitFor(() => {
       expect(screen.getByRole('combobox')).toBeInTheDocument();
     });
@@ -130,10 +107,7 @@ describe('ChatApp', () => {
 
   it('handles multiple messages in a conversation', async () => {
     const user = userEvent.setup();
-    renderChatApp();
-
-    // Wait for component to stabilize
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await renderChatApp({ waitForReady: true });
 
     const messageInput = screen.getByPlaceholderText('Write a message...');
 
@@ -141,33 +115,65 @@ describe('ChatApp', () => {
     await user.type(messageInput, 'First message');
     await user.keyboard('{Enter}');
 
+    // Wait for input to be cleared (message sent)
+    await waitForMessageSent(messageInput);
+
+    // Wait for the assistant's response by checking that we have 2 messages total (1 user + 1 assistant)
+    await waitFor(
+      () => {
+        const userMessages = screen.queryAllByTestId('user-message');
+        const assistantMessages = screen.queryAllByTestId('assistant-message');
+        expect(userMessages.length + assistantMessages.length).toBe(2);
+      },
+      { timeout: 10000 }
+    );
+
+    // Wait for any loading indicators to disappear
+    await waitFor(
+      () => {
+        const loadingIndicators = document.querySelectorAll('.animate-bounce');
+        expect(loadingIndicators.length).toBe(0);
+      },
+      { timeout: 2000 }
+    );
+
+    // Ensure input is ready for the next message
     await waitFor(() => {
-      expect(messageInput).toHaveValue('');
+      const input = screen.getByPlaceholderText('Write a message...');
+      expect(input).toBeEnabled();
+      expect(input).toHaveValue('');
     });
 
-    // Wait a bit for streaming to complete
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    // NOTE: This delay is necessary for @assistant-ui/react's internal state to fully settle
+    // after streaming completes. Even though the input appears enabled and empty, the library
+    // needs additional time before it can successfully accept and submit a new message.
+    // This mirrors similar delays in the Playwright tests (wait_for_timeout after typing).
+    // Without this, pressing Enter after typing doesn't submit the message.
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
-    // Send second message
-    await user.type(messageInput, 'Second message');
+    // Get a fresh reference and send second message
+    const input2 = screen.getByPlaceholderText('Write a message...');
+    await user.click(input2);
+    await user.type(input2, 'Second message');
     await user.keyboard('{Enter}');
 
-    await waitFor(() => {
-      expect(messageInput).toHaveValue('');
-    });
+    // Wait for second message to be sent
+    await waitForMessageSent(input2);
 
-    // Wait for both responses to complete
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-
-    // Both messages should be processed
-    // Note: Specific DOM validation depends on @assistant-ui/react implementation
-  }, 10000); // Add 10s timeout
+    // Wait for the second assistant response - we should now have 4 messages total (2 user + 2 assistant)
+    await waitFor(
+      () => {
+        const userMessages = screen.queryAllByTestId('user-message');
+        const assistantMessages = screen.queryAllByTestId('assistant-message');
+        expect(userMessages.length + assistantMessages.length).toBe(4);
+      },
+      { timeout: 10000 }
+    );
+  }, 20000); // 20s timeout for full test
 
   it('displays streaming responses correctly', async () => {
     const user = userEvent.setup();
-    renderChatApp();
-
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await renderChatApp({ waitForReady: true });
 
     const messageInput = screen.getByPlaceholderText('Write a message...');
 
@@ -176,20 +182,15 @@ describe('ChatApp', () => {
     await user.keyboard('{Enter}');
 
     // Verify input cleared (message sent)
-    await waitFor(() => {
-      expect(messageInput).toHaveValue('');
-    });
+    await waitForMessageSent(messageInput);
 
     // The streaming response should be processed by @assistant-ui/react
     // We can't easily test the individual chunks, but can verify the final state
-    await new Promise((resolve) => setTimeout(resolve, 2000));
   }, 10000); // Add 10s timeout
 
   it('handles conversation switching', async () => {
     const user = userEvent.setup();
-    renderChatApp();
-
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await renderChatApp({ waitForReady: true });
 
     const messageInput = screen.getByPlaceholderText('Write a message...');
 
@@ -197,12 +198,7 @@ describe('ChatApp', () => {
     await user.type(messageInput, 'Message in first conversation');
     await user.keyboard('{Enter}');
 
-    await waitFor(() => {
-      expect(messageInput).toHaveValue('');
-    });
-
-    // Wait for first conversation to complete
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await waitForMessageSent(messageInput);
 
     // Look for new conversation button/functionality
     // Note: The exact selector depends on how @assistant-ui/react exposes conversation controls
@@ -214,7 +210,10 @@ describe('ChatApp', () => {
       );
       if (newButton) {
         await user.click(newButton);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        // Wait for new conversation to be created
+        await waitFor(() => {
+          expect(messageInput).toBeInTheDocument();
+        });
       }
     }
 
@@ -223,10 +222,7 @@ describe('ChatApp', () => {
   }, 10000); // Add 10s timeout
 
   it('handles empty conversation state', async () => {
-    renderChatApp();
-
-    // Wait for component to load
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await renderChatApp({ waitForReady: true });
 
     // Chat input should be available even with no messages
     const messageInput = screen.getByPlaceholderText('Write a message...');
@@ -253,9 +249,7 @@ describe('ChatApp', () => {
     // Dispatch resize event
     window.dispatchEvent(new Event('resize'));
 
-    renderChatApp();
-
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await renderChatApp({ waitForReady: true });
 
     // Chat should still be functional on mobile
     expect(screen.getByText('Chat')).toBeInTheDocument();
@@ -326,7 +320,7 @@ describe('ChatApp', () => {
       })
     );
 
-    renderChatApp();
+    await renderChatApp({ waitForReady: true });
 
     // Wait for conversations to load
     await waitFor(
