@@ -5,6 +5,7 @@ import io
 import json
 import os
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -127,7 +128,7 @@ async def test_attachment_response_flow(
     page.on("pageerror", handle_page_error)
 
     tool_call_id = "attach_tool_call"
-    attachment_id = "3156da24-5b94-44ce-9dd1-014f538841c0"  # From screenshot
+    attachment_id = str(uuid.uuid4())
     llm_initial_response = "Of course, here is your photo"
 
     # Mock the LLM to respond with attach_to_response tool call - only on initial request
@@ -260,9 +261,11 @@ async def test_attachment_response_flow(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_attachment_response_with_multiple_attachments(
-    web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
+    web_test_fixture: WebTestFixture,
+    mock_llm_client: RuleBasedMockLLMClient,
 ) -> None:
     """Test that multiple attachments from attach_to_response are displayed correctly."""
+    mock_llm_client.rules = []
     page = web_test_fixture.page
     chat_page = ChatPage(page, web_test_fixture.base_url)
 
@@ -297,8 +300,8 @@ async def test_attachment_response_with_multiple_attachments(
 
     tool_call_id = "multi_attach_tool_call"
     attachment_ids = [
-        "3156da24-5b94-44ce-9dd1-014f538841c0",
-        "4267eb35-6ca5-55df-ae12-125f649952d1",
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
     ]
     llm_response = "Here are both images you requested"
 
@@ -355,7 +358,10 @@ async def test_attachment_response_with_multiple_attachments(
     # Create test attachments in the database
     for attachment_id in attachment_ids:
         await create_test_attachment(
-            web_test_fixture, attachment_id, conversation_id, chat_page.base_url
+            web_test_fixture,
+            attachment_id,
+            conversation_id,
+            chat_page.base_url,
         )
 
     await chat_page.send_message("send me both images")
@@ -573,7 +579,8 @@ async def test_attachment_response_error_handling(
 
 @pytest.mark.playwright
 async def test_tool_attachment_persistence_after_page_reload(
-    web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
+    web_test_fixture: WebTestFixture,
+    mock_llm_client: RuleBasedMockLLMClient,
 ) -> None:
     """
     Test that tool-generated attachments persist after page reload.
@@ -585,7 +592,7 @@ async def test_tool_attachment_persistence_after_page_reload(
     chat_page = ChatPage(page, web_test_fixture.base_url)
 
     # Create a test attachment to simulate a tool-generated attachment
-    attachment_id = "3156da24-5b94-44ce-9dd1-014f538841c0"  # Valid UUID
+    attachment_id = str(uuid.uuid4())
 
     # Mock the LLM to respond with attach_to_response tool call
     def should_trigger_attach_tool(args: dict[str, list[dict[str, str]]]) -> bool:
@@ -642,7 +649,10 @@ async def test_tool_attachment_persistence_after_page_reload(
 
     # Create a test attachment in the database with the correct conversation ID
     await create_test_attachment(
-        web_test_fixture, attachment_id, conversation_id, web_test_fixture.base_url
+        web_test_fixture,
+        attachment_id,
+        conversation_id,
+        web_test_fixture.base_url,
     )
 
     await chat_page.send_message("show attachment")
