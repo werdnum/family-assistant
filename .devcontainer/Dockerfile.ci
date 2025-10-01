@@ -1,7 +1,7 @@
 # CI-optimized version of the devcontainer with multi-stage builds
 # Pre-installs project dependencies for faster CI runs
 
-ARG BASE_IMAGE=ghcr.io/werdnum/family-assistant-devcontainer:latest
+ARG BASE_IMAGE=ghcr.io/werdnum/family-assistant:devcontainer-base-latest
 
 # Frontend build stage - runs independently for better parallelization
 FROM ${BASE_IMAGE} AS frontend-builder
