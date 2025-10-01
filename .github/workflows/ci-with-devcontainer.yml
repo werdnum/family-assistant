@@ -243,6 +243,15 @@ jobs:
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace/main && \
+              if [ -d "/opt/frontend-dist" ]; then \
+                echo "Copying pre-built frontend assets..."; \
+                mkdir -p /workspace/main/src/family_assistant/static/dist; \
+                cp -r /opt/frontend-dist/. /workspace/main/src/family_assistant/static/dist/; \
+                echo "Frontend assets copied successfully"; \
+                ls -la /workspace/main/src/family_assistant/static/dist/; \
+              else \
+                echo "No pre-built frontend assets found at /opt/frontend-dist"; \
+              fi && \
               mkdir -p test-results && \
               .venv/bin/pytest -q --timeout=300 --db sqlite -m "not postgres and not playwright" \
                 --json-report --json-report-file=test-results/backend-sqlite-report.json'
@@ -295,6 +304,15 @@ jobs:
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace/main && \
+              if [ -d "/opt/frontend-dist" ]; then \
+                echo "Copying pre-built frontend assets..."; \
+                mkdir -p /workspace/main/src/family_assistant/static/dist; \
+                cp -r /opt/frontend-dist/. /workspace/main/src/family_assistant/static/dist/; \
+                echo "Frontend assets copied successfully"; \
+                ls -la /workspace/main/src/family_assistant/static/dist/; \
+              else \
+                echo "No pre-built frontend assets found at /opt/frontend-dist"; \
+              fi && \
               mkdir -p test-results && \
               .venv/bin/pytest --postgres -q --timeout=300 -m "not playwright" \
                 --json-report --json-report-file=test-results/backend-postgres-report.json'
@@ -339,8 +357,7 @@ jobs:
               if [ -d "/opt/frontend-dist" ]; then \
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/main/src/family_assistant/static/dist; \
-                cp -r /opt/frontend-dist/* /workspace/main/src/family_assistant/static/dist/; \
-                [ -d "/opt/frontend-dist/.vite" ] && cp -r /opt/frontend-dist/.vite /workspace/main/src/family_assistant/static/dist/.vite; \
+                cp -r /opt/frontend-dist/. /workspace/main/src/family_assistant/static/dist/; \
                 echo "Frontend assets copied successfully"; \
                 ls -la /workspace/main/src/family_assistant/static/dist/; \
               else \
@@ -417,8 +434,7 @@ jobs:
               if [ -d "/opt/frontend-dist" ]; then \
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/main/src/family_assistant/static/dist; \
-                cp -r /opt/frontend-dist/* /workspace/main/src/family_assistant/static/dist/; \
-                [ -d "/opt/frontend-dist/.vite" ] && cp -r /opt/frontend-dist/.vite /workspace/main/src/family_assistant/static/dist/.vite; \
+                cp -r /opt/frontend-dist/. /workspace/main/src/family_assistant/static/dist/; \
                 echo "Frontend assets copied successfully"; \
                 ls -la /workspace/main/src/family_assistant/static/dist/; \
               else \
