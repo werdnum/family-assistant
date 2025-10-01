@@ -174,6 +174,7 @@ jobs:
             -v ${{ github.workspace }}:/workspace/main \
             -e CLAUDE_PROJECT_REPO="" \
             -e UV_CACHE_DIR=/opt/uv-cache \
+            -e VIRTUAL_ENV=/venv \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace/main && \
@@ -207,6 +208,7 @@ jobs:
             -v ${{ github.workspace }}:/workspace/main \
             -e CLAUDE_PROJECT_REPO="" \
             -e UV_CACHE_DIR=/opt/uv-cache \
+            -e VIRTUAL_ENV=/venv \
             -e CI=true \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
@@ -250,6 +252,7 @@ jobs:
             -v ${{ github.workspace }}:/workspace/main \
             -e CLAUDE_PROJECT_REPO="" \
             -e UV_CACHE_DIR=/opt/uv-cache \
+            -e VIRTUAL_ENV=/venv \
             -e CI=true \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
@@ -312,6 +315,7 @@ jobs:
             -e TEST_DATABASE_URL="postgresql://test:test@localhost:5432/test" \
             -e CLAUDE_PROJECT_REPO="" \
             -e UV_CACHE_DIR=/opt/uv-cache \
+            -e VIRTUAL_ENV=/venv \
             -e CI=true \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
@@ -364,6 +368,7 @@ jobs:
             -v ${{ github.workspace }}:/workspace/main \
             -e CLAUDE_PROJECT_REPO="" \
             -e UV_CACHE_DIR=/opt/uv-cache \
+            -e VIRTUAL_ENV=/venv \
             -e CI=true \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
@@ -443,6 +448,7 @@ jobs:
             -e TEST_DATABASE_URL="postgresql://test:test@localhost:5432/test" \
             -e CLAUDE_PROJECT_REPO="" \
             -e UV_CACHE_DIR=/opt/uv-cache \
+            -e VIRTUAL_ENV=/venv \
             -e CI=true \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
