@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 import uuid
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -122,6 +123,46 @@ async def get_event_by_summary_from_radicale(
         except Exception as e:
             logger.error(f"Error parsing event data from Radicale: {e}", exc_info=True)
     return None
+
+
+async def wait_for_radicale_indexing(
+    exec_context: ToolExecutionContext,
+    calendar_config: dict[str, Any],
+    event_summary: str,
+    timeout_seconds: float = 5.0,
+) -> bool:
+    """
+    Wait for Radicale to index a newly created event.
+
+    Radicale CalDAV server doesn't immediately make events searchable after creation.
+    This function polls the search functionality until the event appears or timeout.
+
+    Args:
+        exec_context: Tool execution context
+        calendar_config: Calendar configuration
+        event_summary: Summary of the event to wait for
+        timeout_seconds: Maximum time to wait in seconds (default: 5.0)
+
+    Returns:
+        True if event became searchable, False if timeout
+    """
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        # Try to search for the event
+        search_result = await search_calendar_events_tool(
+            exec_context=exec_context,
+            calendar_config=calendar_config,
+            search_text=event_summary,
+        )
+
+        # Check if the exact event title appears in results
+        if event_summary in search_result:
+            return True
+
+        # Sleep briefly before retrying
+        await asyncio.sleep(0.1)
+
+    return False
 
 
 @pytest.mark.asyncio
@@ -1984,6 +2025,383 @@ async def test_similarity_search_score_sorting(
         )
 
     logger.info("Test similarity search score sorting PASSED.")
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_duplicate_detection_warning_shown(
+    pg_vector_db_engine: AsyncEngine,
+    radicale_server: tuple[str, str, str, str],
+) -> None:
+    """
+    Test that duplicate detection shows warning when creating similar events.
+
+    Verifies that after creating an event, if similar events exist at nearby times,
+    a warning is shown with similarity scores and UIDs so the LLM can decide
+    whether to delete the duplicate.
+    """
+    logger.info("Starting test_duplicate_detection_warning_shown...")
+
+    base_url, username, password, calendar_url = radicale_server
+
+    # Create test config with fuzzy similarity (fast, zero dependencies)
+    test_calendar_config = {
+        "caldav": {
+            "base_url": base_url,
+            "username": username,
+            "password": password,
+            "calendar_urls": [calendar_url],
+            # RADICALE WORKAROUND: Use naive datetimes for search compatibility
+            "_use_naive_datetimes_for_search": True,
+        },
+        "duplicate_detection": {
+            "enabled": True,
+            "similarity_strategy": "fuzzy",
+            "similarity_threshold": 0.30,
+            "time_window_hours": 2,
+        },
+    }
+
+    # Create execution context
+    async with DatabaseContext(pg_vector_db_engine) as db_context:
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="testuser",
+            turn_id="test_turn",
+            db_context=db_context,
+            timezone_str="America/New_York",
+        )
+
+        # Create first event
+        tomorrow = date.today() + timedelta(days=1)
+        event1_start = datetime(
+            tomorrow.year, tomorrow.month, tomorrow.day, 14, 0, 0
+        ).replace(tzinfo=ZoneInfo("America/New_York"))
+        event1_end = event1_start + timedelta(hours=1)
+
+        event1_result = await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary="Doctor appointment",
+            start_time=event1_start.isoformat(),
+            end_time=event1_end.isoformat(),
+        )
+
+        assert "OK. Event 'Doctor appointment' added" in event1_result
+        assert "WARNING" not in event1_result, (
+            "First event should not trigger duplicate warning"
+        )
+
+        # RADICALE WORKAROUND: Wait for first event to become searchable
+        # Radicale CalDAV server doesn't immediately index events for search
+        # Real CalDAV servers (iCloud, Google Calendar) don't need this
+        indexed = await wait_for_radicale_indexing(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            event_summary="Doctor appointment",
+            timeout_seconds=5.0,
+        )
+        assert indexed, "First event should become searchable within timeout"
+
+        # Create second event with similar name at nearby time (15 min later)
+        event2_start = event1_start + timedelta(minutes=15)
+        event2_end = event2_start + timedelta(hours=1)
+
+        event2_result = await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary="Doctor appt",  # Very similar to "Doctor appointment" (fuzzy similarity ~0.88)
+            start_time=event2_start.isoformat(),
+            end_time=event2_end.isoformat(),
+        )
+
+        logger.info(f"Event 2 result:\n{event2_result}")
+
+        # Verify warning is shown
+        assert "OK. Event 'Doctor appt' added" in event2_result, (
+            "Event should be created successfully"
+        )
+        assert "⚠️  WARNING:" in event2_result, (
+            "Warning should be shown for similar event at nearby time"
+        )
+        assert "similar event(s) at nearby times" in event2_result
+        assert "Doctor appointment" in event2_result, (
+            "Warning should mention the similar event"
+        )
+        assert "similarity:" in event2_result, "Warning should include similarity score"
+        assert "UID:" in event2_result, "Warning should include UID for deletion"
+        assert "delete it using delete_calendar_event" in event2_result, (
+            "Warning should tell LLM how to delete if duplicate"
+        )
+
+    logger.info("Test duplicate detection warning shown PASSED.")
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_duplicate_detection_no_warning_different_time(
+    pg_vector_db_engine: AsyncEngine,
+    radicale_server: tuple[str, str, str, str],
+) -> None:
+    """
+    Test that duplicate detection does NOT show warning for similar events
+    at different times (outside the time window).
+
+    Verifies that the time window filtering works correctly - same-titled
+    events on different days should not trigger warnings.
+    """
+    logger.info("Starting test_duplicate_detection_no_warning_different_time...")
+
+    base_url, username, password, calendar_url = radicale_server
+
+    test_calendar_config = {
+        "caldav": {
+            "base_url": base_url,
+            "username": username,
+            "password": password,
+            "calendar_urls": [calendar_url],
+            "_use_naive_datetimes_for_search": True,
+        },
+        "duplicate_detection": {
+            "enabled": True,
+            "similarity_strategy": "fuzzy",
+            "similarity_threshold": 0.30,
+            "time_window_hours": 2,
+        },
+    }
+
+    async with DatabaseContext(pg_vector_db_engine) as db_context:
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="testuser",
+            turn_id="test_turn",
+            db_context=db_context,
+            timezone_str="America/New_York",
+        )
+
+        # Create first event
+        tomorrow = date.today() + timedelta(days=1)
+        event1_start = datetime(
+            tomorrow.year, tomorrow.month, tomorrow.day, 14, 0, 0
+        ).replace(tzinfo=ZoneInfo("America/New_York"))
+        event1_end = event1_start + timedelta(hours=1)
+
+        event1_result = await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary="Weekly team meeting",
+            start_time=event1_start.isoformat(),
+            end_time=event1_end.isoformat(),
+        )
+
+        assert "OK. Event 'Weekly team meeting' added" in event1_result
+
+        # Create second event with same title but different day (outside time window)
+        next_week = date.today() + timedelta(days=8)
+        event2_start = datetime(
+            next_week.year, next_week.month, next_week.day, 14, 0, 0
+        ).replace(tzinfo=ZoneInfo("America/New_York"))
+        event2_end = event2_start + timedelta(hours=1)
+
+        event2_result = await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary="Weekly team meeting",  # Exact same title
+            start_time=event2_start.isoformat(),
+            end_time=event2_end.isoformat(),
+        )
+
+        logger.info(f"Event 2 result:\n{event2_result}")
+
+        # Verify NO warning is shown (events are on different days)
+        assert "OK. Event 'Weekly team meeting' added" in event2_result
+        assert "WARNING" not in event2_result, (
+            "No warning should be shown for events outside time window"
+        )
+
+    logger.info("Test duplicate detection no warning different time PASSED.")
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_duplicate_detection_disabled(
+    pg_vector_db_engine: AsyncEngine,
+    radicale_server: tuple[str, str, str, str],
+) -> None:
+    """
+    Test that duplicate detection can be disabled via configuration.
+
+    Verifies that when duplicate_detection.enabled=False, no warnings
+    are shown even for similar events at nearby times.
+    """
+    logger.info("Starting test_duplicate_detection_disabled...")
+
+    base_url, username, password, calendar_url = radicale_server
+
+    # Config with duplicate detection DISABLED
+    test_calendar_config = {
+        "caldav": {
+            "base_url": base_url,
+            "username": username,
+            "password": password,
+            "calendar_urls": [calendar_url],
+            "_use_naive_datetimes_for_search": True,
+        },
+        "duplicate_detection": {
+            "enabled": False,  # Disabled
+            "similarity_strategy": "fuzzy",
+            "similarity_threshold": 0.30,
+        },
+    }
+
+    async with DatabaseContext(pg_vector_db_engine) as db_context:
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="testuser",
+            turn_id="test_turn",
+            db_context=db_context,
+            timezone_str="America/New_York",
+        )
+
+        # Create first event
+        tomorrow = date.today() + timedelta(days=1)
+        event1_start = datetime(
+            tomorrow.year, tomorrow.month, tomorrow.day, 14, 0, 0
+        ).replace(tzinfo=ZoneInfo("America/New_York"))
+        event1_end = event1_start + timedelta(hours=1)
+
+        event1_result = await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary="Doctor appointment",
+            start_time=event1_start.isoformat(),
+            end_time=event1_end.isoformat(),
+        )
+
+        assert "OK. Event 'Doctor appointment' added" in event1_result
+
+        # Create second similar event at nearby time
+        event2_start = event1_start + timedelta(minutes=15)
+        event2_end = event2_start + timedelta(hours=1)
+
+        event2_result = await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary="Dr. Smith checkup",
+            start_time=event2_start.isoformat(),
+            end_time=event2_end.isoformat(),
+        )
+
+        logger.info(f"Event 2 result:\n{event2_result}")
+
+        # Verify NO warning is shown (duplicate detection disabled)
+        assert "OK. Event 'Dr. Smith checkup' added" in event2_result
+        assert "WARNING" not in event2_result, (
+            "No warning should be shown when duplicate detection is disabled"
+        )
+
+    logger.info("Test duplicate detection disabled PASSED.")
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_duplicate_detection_all_day_events(
+    pg_vector_db_engine: AsyncEngine,
+    radicale_server: tuple[str, str, str, str],
+) -> None:
+    """
+    Test that duplicate detection works for all-day events.
+
+    Verifies that all-day events trigger warnings for similar events on
+    the same date, but not for events on different dates.
+    """
+    logger.info("Starting test_duplicate_detection_all_day_events...")
+
+    base_url, username, password, calendar_url = radicale_server
+
+    test_calendar_config = {
+        "caldav": {
+            "base_url": base_url,
+            "username": username,
+            "password": password,
+            "calendar_urls": [calendar_url],
+            "_use_naive_datetimes_for_search": True,
+        },
+        "duplicate_detection": {
+            "enabled": True,
+            "similarity_strategy": "fuzzy",
+            "similarity_threshold": 0.30,
+        },
+    }
+
+    async with DatabaseContext(pg_vector_db_engine) as db_context:
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="testuser",
+            turn_id="test_turn",
+            db_context=db_context,
+            timezone_str="America/New_York",
+        )
+
+        # Create first all-day event
+        tomorrow = date.today() + timedelta(days=1)
+        day_after = tomorrow + timedelta(days=1)
+
+        event1_result = await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary="Birthday party",
+            start_time=str(tomorrow),
+            end_time=str(day_after),  # All-day events end on the day after
+            all_day=True,
+        )
+
+        assert "OK. Event 'Birthday party' added" in event1_result
+
+        # Create second all-day event with similar name on SAME date
+        event2_result = await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary="Birthday celebration",  # Similar
+            start_time=str(tomorrow),
+            end_time=str(day_after),
+            all_day=True,
+        )
+
+        logger.info(f"Event 2 (same date) result:\n{event2_result}")
+
+        # Should show warning for same-date similar event
+        assert "OK. Event 'Birthday celebration' added" in event2_result
+        assert "⚠️  WARNING:" in event2_result, (
+            "Warning should be shown for similar all-day events on same date"
+        )
+
+        # Create third all-day event with similar name on DIFFERENT date
+        next_week = date.today() + timedelta(days=8)
+        next_week_day_after = next_week + timedelta(days=1)
+
+        event3_result = await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary="Birthday party",  # Same title as event1
+            start_time=str(next_week),
+            end_time=str(next_week_day_after),
+            all_day=True,
+        )
+
+        logger.info(f"Event 3 (different date) result:\n{event3_result}")
+
+        # Should NOT show warning for different-date event
+        assert "OK. Event 'Birthday party' added" in event3_result
+        assert "WARNING" not in event3_result, (
+            "No warning for all-day events on different dates"
+        )
+
+    logger.info("Test duplicate detection all-day events PASSED.")
 
 
 # TODO: Add tests for basic recurring events.
