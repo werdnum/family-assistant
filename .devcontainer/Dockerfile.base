@@ -1,0 +1,121 @@
+# Base container image for both CI and development containers
+# Contains OS packages, language runtimes, and build tools
+# Does NOT contain development tools (claude-code, gemini-cli, etc.)
+
+# Build stage for shpool
+FROM rust:latest AS shpool-builder
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash \
+    && cargo binstall -y shpool
+
+FROM ubuntu:24.04
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Stage 1: System packages and dependencies (most stable layer)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y \
+        curl git wget gnupg ca-certificates lsb-release \
+        ripgrep fd-find micro unzip build-essential \
+        python3 python3-pip python3-venv \
+    && ln -s /usr/bin/fdfind /usr/bin/fd
+
+# Stage 2: Add PostgreSQL repository and install (stable dependencies)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    wget -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /etc/apt/keyrings/postgres.gpg && \
+    sh -c 'echo "deb [signed-by=/etc/apt/keyrings/postgres.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list' && \
+    apt-get update && \
+    apt-get install -y \
+        jq \
+        postgresql-client-17 \
+        postgresql-17 \
+        postgresql-17-pgvector
+
+# Stage 3: Install Node.js (language runtime)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs
+
+# Stage 4: Install binary tools (architecture-dependent but stable)
+# Copy shpool binary from builder stage
+COPY --from=shpool-builder /usr/local/cargo/bin/shpool /usr/local/bin/shpool
+
+# Install uv for fast Python package management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Install ast-grep and yq (architecture-dependent binaries)
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "amd64" ]; then \
+        AST_GREP_ARCH="x86_64"; \
+    elif [ "$ARCH" = "arm64" ]; then \
+        AST_GREP_ARCH="aarch64"; \
+    else \
+        echo "Unsupported architecture: $ARCH" && exit 1; \
+    fi && \
+    curl -sSL "https://github.com/ast-grep/ast-grep/releases/latest/download/app-${AST_GREP_ARCH}-unknown-linux-gnu.zip" \
+    -o /tmp/ast-grep.zip && \
+    unzip /tmp/ast-grep.zip -d /tmp/ && \
+    install -m 0755 /tmp/ast-grep /usr/local/bin/ast-grep && \
+    install -m 0755 /tmp/sg /usr/local/bin/sg && \
+    rm /tmp/ast-grep /tmp/sg /tmp/ast-grep.zip && \
+    # Install yq for YAML/JSON processing
+    YQ_VERSION="v4.47.1" && \
+    curl -sSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${ARCH}" -o /usr/local/bin/yq && \
+    chmod +x /usr/local/bin/yq
+
+# Stage 5: User setup and environment variables
+RUN useradd -m -s /bin/bash -u 1001 claude && \
+    mkdir -p /home/claude/.cache/uv && \
+    mkdir -p /home/claude/.npm-global && \
+    mkdir -p /home/claude/.cache/deno && \
+    mkdir -p /home/claude/.deno && \
+    mkdir -p /home/claude/.cache/playwright-browsers && \
+    chown -R claude:claude /home/claude && \
+    mkdir -p /opt && chown -R claude:claude /opt
+
+# Set up environment variables
+ENV NPM_CONFIG_PREFIX=/home/claude/.npm-global
+ENV PATH="/usr/local/bin:/home/claude/.npm-global/bin:/home/claude/.deno/bin:/home/claude/.local/bin:/usr/lib/postgresql/17/bin:$PATH"
+ENV PLAYWRIGHT_BROWSERS_PATH=/home/claude/.cache/playwright-browsers
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+# Switch to claude user for user-specific installations
+USER claude
+
+# Stage 6: Install Deno (rarely changes)
+RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/home/claude/.deno sh
+
+# Stage 7: Install Playwright (needed for CI tests)
+RUN --mount=type=cache,target=/home/claude/.npm,sharing=locked,uid=1001,gid=1001 \
+    npm install -g playwright@1.55.0
+
+# Switch back to root for Playwright setup
+USER root
+
+# Stage 8: Install Playwright system dependencies and browsers (consolidated)
+RUN npx --yes playwright@1.55.0 install-deps chromium && \
+    npx --yes playwright@1.55.0 install chromium
+
+# Stage 9: Create Python venv with shared Playwright browsers
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    uv venv /venv && \
+    uv pip install -p /venv/bin/python --system "playwright==1.55.0" "markitdown[html]>=0.1.0" "jsonmerge>=1.9.0" && \
+    chown -R claude:claude /venv && \
+    chmod -R 755 /venv
+
+# Set PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD for Python installation to use shared browsers
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+# Create workspace directory
+WORKDIR /workspace
+
+# Switch to claude user for final setup
+USER claude
+
+# This base image stops here - no dev tools, no application-specific configuration
+# Derived images (Dockerfile and Dockerfile.ci) will add their specific requirements
