@@ -112,7 +112,9 @@ async def process_document_ingestion_request(
             unique_filename = f"{uuid.uuid4()}_{safe_basename}"
             target_file_path = document_storage_path / unique_filename
 
-            document_storage_path.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(
+                document_storage_path.mkdir, parents=True, exist_ok=True
+            )
 
             await asyncio.to_thread(target_file_path.write_bytes, uploaded_file_content)
 
