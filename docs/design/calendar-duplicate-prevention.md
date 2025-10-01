@@ -128,7 +128,7 @@ Found 3 event(s):
 
 ### 3. Server-Side Duplicate Detection
 
-**Add validation to `add_calendar_event_tool` BEFORE creating event:**
+**Add validation to `add_calendar_event_tool` AFTER creating event:**
 
 ```python
 async def add_calendar_event_tool(
@@ -140,25 +140,26 @@ async def add_calendar_event_tool(
     description: str | None = None,
     all_day: bool = False,
     recurrence_rule: str | None = None,
-    allow_similar: bool = False,  # NEW: Bypass duplicate detection
 ) -> str:
     """
     Adds an event to the calendar.
 
     NEW BEHAVIOR:
-    1. Before creating, search for similar events in time window:
+    1. Create the event as requested
+    2. AFTER creation, search for similar events in time window:
        - Timed events: ±2 hours
        - All-day events: same date
-    2. Compute similarity using configured strategy
-    3. If similarity >= 0.30, return ERROR with specific conflicts
-    4. User can bypass with allow_similar=True
+    3. If similar events found (similarity >= threshold), include warning in response
+    4. LLM sees the warning and can decide to delete the event if it's a duplicate
     """
 ```
 
-**Error message format:**
+**Response format with warning:**
 
 ```
-ERROR: Found 2 potentially duplicate event(s):
+OK. Event 'Doctor appointment' added to the calendar.
+
+⚠️  WARNING: Found 2 similar event(s) at nearby times:
 
 1. 'Dr. Smith checkup' at Tomorrow 14:00 (similarity: 0.70)
    UID: abc-123
@@ -166,13 +167,12 @@ ERROR: Found 2 potentially duplicate event(s):
 2. 'Medical appointment' at Tomorrow 14:15 (similarity: 0.94)
    UID: def-456
 
-These events may be duplicates of the event you're trying to create.
-
-If you're certain this is a different event, call add_calendar_event again with:
-  allow_similar=True
+Please verify these are different events. If 'Doctor appointment' is a duplicate,
+you should delete it using delete_calendar_event.
 ```
 
-**This is a HARD BLOCK** - not just a warning. Forces explicit acknowledgment.
+**This is a WARNING, not a hard block** - event is created, but assistant is strongly signaled to
+check.
 
 ### 4. Configuration
 
@@ -221,8 +221,8 @@ calendar:
   3. Each result includes a similarity score (0.0-1.0) showing how close the match is
   4. If an event exists at the same time with high similarity (>0.7), it's likely a duplicate
 
-  The system will block duplicate creation if similar events exist at the same time.
-  To override, you must explicitly set allow_similar=True and explain why they're different.
+  After creating an event, if the response includes a WARNING about similar events,
+  you MUST review those events and delete the newly created event if it's a duplicate.
 ```
 
 ## Implementation Plan
@@ -307,20 +307,28 @@ Based on experimental data:
 
 1. **19.4% false positive rate** - Some distinct events flagged as similar
 
-   - Mitigated by: `allow_similar` override, similarity scores visible to LLM
+   - Mitigated by: Warning (not hard block), similarity scores visible to LLM
+   - LLM can make final judgment call
    - Better than missing 1.2% of duplicates with higher threshold
 
-2. **Extra latency** - 55ms per similarity comparison (embedding mode)
+2. **Event created before warning** - Warning shown AFTER creation
+
+   - Tradeoff: Allows event to be created, then LLM must delete if duplicate
+   - Benefit: Ensures LLM always KNOWS about potential duplicates
+   - Better UX than hard blocking and requiring retries
+
+3. **Extra latency** - 55ms per similarity comparison (embedding mode)
 
    - Typical duplicate check: 1-5 events in time window = 55-275ms overhead
+   - Runs AFTER event creation, doesn't block user response
    - Acceptable for calendar operations (not high-frequency)
 
-3. **Memory footprint** - 87MB for all-MiniLM-L6-v2 model
+4. **Memory footprint** - 87MB for all-MiniLM-L6-v2 model
 
    - Only loaded if `similarity_strategy: "embedding"`
    - Unit tests use fuzzy matching (0 MB)
 
-4. **Configuration complexity** - Multiple strategy options
+5. **Configuration complexity** - Multiple strategy options
 
    - Mitigated by: sensible defaults, clear documentation
    - Most users never need to change defaults
@@ -371,7 +379,8 @@ After implementation, test against these scenarios:
 
 1. **Threshold tuning:** Is 0.30 appropriate, or should we be more/less aggressive?
 2. **Time windows:** Are ±2 hours (timed) and same-day (all-day) reasonable?
-3. **Hard block vs warning:** Should duplicate detection be a hard error or just a warning?
+3. ~~**Hard block vs warning:**~~ **RESOLVED** - Use warning (not hard block) to ensure assistant
+   knows there might be a duplicate
 4. **Strategy naming:** `FuzzySimilarityStrategy` vs `DifflibSimilarityStrategy`?
 5. **Config location:** Should this be under `calendar.duplicate_detection` or top-level
    `duplicate_detection`?
