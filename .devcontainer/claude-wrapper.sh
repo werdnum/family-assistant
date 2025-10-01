@@ -51,9 +51,50 @@ if [ -d "/workspace/main/.git" ]; then
     fi
 fi
 
-# Activate the virtual environment if it exists
-if [ -f "/workspace/main/.venv/bin/activate" ]; then
-    source /workspace/.venv/bin/activate
+# Set up Claude settings for this worktree if not already configured
+if [ ! -f ".claude/settings.local.json" ]; then
+    mkdir -p .claude
+
+    # Copy default settings if available
+    if [ -f "/opt/claude-settings/settings.local.json" ]; then
+        cp /opt/claude-settings/settings.local.json .claude/
+    fi
+
+    # Override with user's settings if provided
+    if [ -f "/home/claude/.claude/settings.local.json" ]; then
+        cp /home/claude/.claude/settings.local.json .claude/
+    fi
+fi
+
+# Copy user's CLAUDE.local.md if provided and not already present
+if [ -f "/home/claude/.claude/CLAUDE.local.md" ] && [ ! -f ".claude/CLAUDE.local.md" ]; then
+    mkdir -p .claude
+    cp /home/claude/.claude/CLAUDE.local.md .claude/
+fi
+
+# Set up Python virtual environment if this is a Python project
+if [ -f "pyproject.toml" ]; then
+    # Create virtual environment if it doesn't exist or is invalid
+    if [ ! -d ".venv" ] || [ ! -f ".venv/bin/python" ]; then
+        echo "Creating virtual environment..."
+        rm -rf .venv
+        uv venv .venv
+
+        # Activate and install dependencies
+        source .venv/bin/activate
+        echo "Installing Python dependencies..."
+        uv sync --extra dev
+        uv pip install poethepoet pytest-xdist
+    else
+        # Just activate existing venv
+        source .venv/bin/activate
+    fi
+fi
+
+# Install frontend dependencies if needed
+if [ -f "frontend/package.json" ] && [ ! -d "frontend/node_modules" ]; then
+    echo "Installing frontend dependencies..."
+    npm install --prefix frontend
 fi
 
 export BASH_DEFAULT_TIMEOUT_MS=300000
