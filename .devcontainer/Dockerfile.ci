@@ -65,15 +65,8 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
 ENV UV_CACHE_DIR=/opt/uv-cache
 ENV IS_CI_CONTAINER=true
 
-# Copy setup script (needed for ENTRYPOINT)
-# Switch to root to copy files
-COPY .devcontainer/setup-workspace.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/setup-workspace.sh
-
 # Switch to claude user
 USER claude
 WORKDIR /workspace
 
-# Set up entry point that handles workspace initialization
-ENTRYPOINT ["/usr/local/bin/setup-workspace.sh"]
-CMD ["bash"]
+# No ENTRYPOINT - CI workflow will run setup commands directly
