@@ -31,7 +31,7 @@ jobs:
   detect-changes:
     runs-on: ubuntu-latest
     outputs:
-      skip_all: ${{ steps.filter.outputs.skip_all }}
+      has_code_changes: ${{ steps.filter.outputs.has_code_changes }}
       frontend_source: ${{ steps.filter.outputs.frontend_source }}
       frontend_tests: ${{ steps.filter.outputs.frontend_tests }}
       backend_source: ${{ steps.filter.outputs.backend_source }}
@@ -46,30 +46,31 @@ jobs:
         id: filter
         with:
           filters: |
-            skip_all:
-              - 'docs/**'
-              - '*.md'
-              - '.claude/**'
-              - '.serena/**'
-              - '.github/workflows/gemini-*.yml'
-              - '.github/workflows/build-containers.yml'
-              - '.github/dependabot.yml'
-              - '.devcontainer/claude-wrapper.sh'
-              - '.devcontainer/throttle_backspaces.py'
-              - '.devcontainer/setup-workspace.sh'
-              - '.devcontainer/run-claude-isolated.sh'
-              - '.devcontainer/run-oneshot.sh'
-              - '.devcontainer/merge-settings.py'
-              - '.devcontainer/*.md'
-              - 'contrib/**'
-              - '.gitignore'
-              - '.dockerignore'
-              - '.markdownlint.json'
-              - '.mdformat.toml'
-              - 'aider.yaml'
-              - '.mcp.json'
-              - 'mcp_config.dev.json'
-              - '.build'
+            # Detect if there are any code changes (anything NOT in the docs-only list)
+            has_code_changes:
+              - '!docs/**'
+              - '!*.md'
+              - '!.claude/**'
+              - '!.serena/**'
+              - '!.github/workflows/gemini-*.yml'
+              - '!.github/workflows/build-containers.yml'
+              - '!.github/dependabot.yml'
+              - '!.devcontainer/claude-wrapper.sh'
+              - '!.devcontainer/throttle_backspaces.py'
+              - '!.devcontainer/setup-workspace.sh'
+              - '!.devcontainer/run-claude-isolated.sh'
+              - '!.devcontainer/run-oneshot.sh'
+              - '!.devcontainer/merge-settings.py'
+              - '!.devcontainer/*.md'
+              - '!contrib/**'
+              - '!.gitignore'
+              - '!.dockerignore'
+              - '!.markdownlint.json'
+              - '!.mdformat.toml'
+              - '!aider.yaml'
+              - '!.mcp.json'
+              - '!mcp_config.dev.json'
+              - '!.build'
             frontend_source:
               - 'frontend/src/**'
               - 'frontend/*.html'
@@ -90,7 +91,7 @@ jobs:
               - 'src/family_assistant/web/**/*.py'
   build-ci-container:
     needs: [prepare, detect-changes]
-    if: needs.detect-changes.outputs.skip_all != 'true'
+    if: needs.detect-changes.outputs.has_code_changes == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45 # Increased timeout for two-stage build
     steps:
@@ -145,7 +146,7 @@ jobs:
           load: false
   lint:
     needs: [prepare, build-ci-container, detect-changes]
-    if: needs.detect-changes.outputs.skip_all != 'true'
+    if: needs.detect-changes.outputs.has_code_changes == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -175,7 +176,7 @@ jobs:
   test-frontend-unit:
     needs: [prepare, build-ci-container, detect-changes]
     if: |
-      needs.detect-changes.outputs.skip_all != 'true' &&
+      needs.detect-changes.outputs.has_code_changes == 'true' &&
       (needs.detect-changes.outputs.frontend_source == 'true' ||
        needs.detect-changes.outputs.frontend_tests == 'true')
     runs-on: ubuntu-latest
@@ -217,7 +218,7 @@ jobs:
   test-backend-sqlite:
     needs: [prepare, build-ci-container, detect-changes]
     if: |
-      needs.detect-changes.outputs.skip_all != 'true' &&
+      needs.detect-changes.outputs.has_code_changes == 'true' &&
       (needs.detect-changes.outputs.backend_source == 'true' ||
        needs.detect-changes.outputs.backend_tests_unit == 'true')
     runs-on: ubuntu-latest
@@ -256,7 +257,7 @@ jobs:
   test-backend-postgres:
     needs: [prepare, build-ci-container, detect-changes]
     if: |
-      needs.detect-changes.outputs.skip_all != 'true' &&
+      needs.detect-changes.outputs.has_code_changes == 'true' &&
       (needs.detect-changes.outputs.backend_source == 'true' ||
        needs.detect-changes.outputs.backend_tests_unit == 'true')
     runs-on: ubuntu-latest
@@ -309,7 +310,7 @@ jobs:
   test-playwright-sqlite:
     needs: [prepare, build-ci-container, detect-changes]
     if: |
-      needs.detect-changes.outputs.skip_all != 'true' &&
+      needs.detect-changes.outputs.has_code_changes == 'true' &&
       (needs.detect-changes.outputs.frontend_source == 'true' ||
        needs.detect-changes.outputs.backend_source == 'true' ||
        needs.detect-changes.outputs.playwright_tests == 'true')
@@ -374,7 +375,7 @@ jobs:
   test-playwright-postgres:
     needs: [prepare, build-ci-container, detect-changes]
     if: |
-      needs.detect-changes.outputs.skip_all != 'true' &&
+      needs.detect-changes.outputs.has_code_changes == 'true' &&
       (needs.detect-changes.outputs.frontend_source == 'true' ||
        needs.detect-changes.outputs.backend_source == 'true' ||
        needs.detect-changes.outputs.playwright_tests == 'true')
