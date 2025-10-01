@@ -26,8 +26,70 @@ jobs:
           TAG="ci-${{ github.run_id }}-${{ github.run_attempt }}"
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-${TAG}" >> $GITHUB_OUTPUT
+
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      skip_all: ${{ steps.filter.outputs.skip_all }}
+      frontend_source: ${{ steps.filter.outputs.frontend_source }}
+      frontend_tests: ${{ steps.filter.outputs.frontend_tests }}
+      backend_source: ${{ steps.filter.outputs.backend_source }}
+      backend_tests_unit: ${{ steps.filter.outputs.backend_tests_unit }}
+      playwright_tests: ${{ steps.filter.outputs.playwright_tests }}
+      web_api: ${{ steps.filter.outputs.web_api }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Detect changed paths
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            skip_all:
+              - 'docs/**'
+              - '*.md'
+              - '.claude/**'
+              - '.serena/**'
+              - '.github/workflows/gemini-*.yml'
+              - '.github/workflows/build-containers.yml'
+              - '.github/dependabot.yml'
+              - '.devcontainer/claude-wrapper.sh'
+              - '.devcontainer/throttle_backspaces.py'
+              - '.devcontainer/setup-workspace.sh'
+              - '.devcontainer/run-claude-isolated.sh'
+              - '.devcontainer/run-oneshot.sh'
+              - '.devcontainer/merge-settings.py'
+              - '.devcontainer/*.md'
+              - 'contrib/**'
+              - '.gitignore'
+              - '.dockerignore'
+              - '.markdownlint.json'
+              - '.mdformat.toml'
+              - 'aider.yaml'
+              - '.mcp.json'
+              - 'mcp_config.dev.json'
+              - '.build'
+            frontend_source:
+              - 'frontend/src/**'
+              - 'frontend/*.html'
+              - 'frontend/*.json'
+              - 'frontend/*.js'
+              - 'frontend/package*.json'
+            frontend_tests:
+              - 'frontend/**/*.test.*'
+              - 'frontend/**/__tests__/**'
+            backend_source:
+              - 'src/**/*.py'
+            backend_tests_unit:
+              - 'tests/**/*.py'
+              - '!tests/functional/web/test_*.py'
+            playwright_tests:
+              - 'tests/functional/web/test_*.py'
+            web_api:
+              - 'src/family_assistant/web/**/*.py'
   build-ci-container:
-    needs: prepare
+    needs: [prepare, detect-changes]
+    if: needs.detect-changes.outputs.skip_all != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45 # Increased timeout for two-stage build
     steps:
@@ -81,7 +143,8 @@ jobs:
             BASE_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-base-${{ github.run_id }}
           load: false
   lint:
-    needs: [prepare, build-ci-container]
+    needs: [prepare, build-ci-container, detect-changes]
+    if: needs.detect-changes.outputs.skip_all != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -108,8 +171,12 @@ jobs:
                 ln -s /opt/frontend/node_modules frontend/node_modules; \
               fi && \
               scripts/format-and-lint.sh'
-  test-frontend:
-    needs: [prepare, build-ci-container]
+  test-frontend-unit:
+    needs: [prepare, build-ci-container, detect-changes]
+    if: |
+      needs.detect-changes.outputs.skip_all != 'true' &&
+      (needs.detect-changes.outputs.frontend_source == 'true' ||
+       needs.detect-changes.outputs.frontend_tests == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -146,8 +213,12 @@ jobs:
           path: test-results/frontend-report.json
           retention-days: 7
           if-no-files-found: ignore
-  test-sqlite:
-    needs: [prepare, build-ci-container]
+  test-backend-sqlite:
+    needs: [prepare, build-ci-container, detect-changes]
+    if: |
+      needs.detect-changes.outputs.skip_all != 'true' &&
+      (needs.detect-changes.outputs.backend_source == 'true' ||
+       needs.detect-changes.outputs.backend_tests_unit == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -159,7 +230,7 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Run SQLite tests in devcontainer
+      - name: Run backend SQLite tests in devcontainer
         run: |
           docker run \
             --rm \
@@ -170,44 +241,23 @@ jobs:
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace/main && \
-              if [ -d "/opt/frontend-dist" ]; then \
-                echo "Copying pre-built frontend assets..."; \
-                mkdir -p /workspace/main/src/family_assistant/static/dist; \
-                cp -r /opt/frontend-dist/* /workspace/main/src/family_assistant/static/dist/; \
-                # Also copy the .vite directory which contains the manifest \
-                [ -d "/opt/frontend-dist/.vite" ] && cp -r /opt/frontend-dist/.vite /workspace/main/src/family_assistant/static/dist/.vite; \
-                echo "Frontend assets copied successfully"; \
-                ls -la /workspace/main/src/family_assistant/static/dist/; \
-              else \
-                echo "No pre-built frontend assets found at /opt/frontend-dist"; \
-              fi && \
               mkdir -p test-results && \
-              .venv/bin/pytest -q --timeout=300 --db sqlite -m "not postgres" \
-                --screenshot=on --video=retain-on-failure --tracing=retain-on-failure \
-                --json-report --json-report-file=test-results/sqlite-report.json \
-                --output=test-results'
-      - name: Upload Playwright test artifacts (SQLite)
+              .venv/bin/pytest -q --timeout=300 --db sqlite -m "not postgres and not playwright" \
+                --json-report --json-report-file=test-results/backend-sqlite-report.json'
+      - name: Upload backend test results (SQLite)
         uses: actions/upload-artifact@v4
-        if: always() # Upload artifacts even if tests fail
+        if: always()
         with:
-          name: playwright-artifacts-sqlite-${{ github.run_id }}
-          path: |
-            test-results/
-            /tmp/history_page_*.png
+          name: backend-test-artifacts-sqlite-${{ github.run_id }}
+          path: test-results/backend-sqlite-report.json
           retention-days: 7
           if-no-files-found: ignore
-      - name: Output artifact info
-        if: always()
-        run: |
-          echo "🔍 Debug artifacts uploaded to: playwright-artifacts-sqlite-${{ github.run_id }}"
-          echo "📊 JSON test report: test-results/sqlite-report.json"
-          echo "📱 Screenshots: test-results/**/test-failed-*.png"
-          echo "🎥 Videos: test-results/**/test-*.webm"
-          echo "🕵️ Traces: test-results/**/trace.zip"
-          echo ""
-          echo "💡 Download with: gh run download ${{ github.run_id }} --name playwright-artifacts-sqlite-${{ github.run_id }}"
-  test-postgres:
-    needs: [prepare, build-ci-container]
+  test-backend-postgres:
+    needs: [prepare, build-ci-container, detect-changes]
+    if: |
+      needs.detect-changes.outputs.skip_all != 'true' &&
+      (needs.detect-changes.outputs.backend_source == 'true' ||
+       needs.detect-changes.outputs.backend_tests_unit == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -230,7 +280,128 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Run PostgreSQL tests in devcontainer
+      - name: Run backend PostgreSQL tests in devcontainer
+        run: |
+          docker run \
+            --rm \
+            --network host \
+            -v ${{ github.workspace }}:/workspace/main \
+            -e TEST_DATABASE_URL="postgresql://test:test@localhost:5432/test" \
+            -e CLAUDE_PROJECT_REPO="" \
+            -e UV_CACHE_DIR=/opt/uv-cache \
+            -e CI=true \
+            -u claude \
+            ${{ needs.prepare.outputs.image-name }} \
+            bash -c 'cd /workspace/main && \
+              mkdir -p test-results && \
+              .venv/bin/pytest --postgres -q --timeout=300 -m "not playwright" \
+                --json-report --json-report-file=test-results/backend-postgres-report.json'
+      - name: Upload backend test results (PostgreSQL)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-test-artifacts-postgres-${{ github.run_id }}
+          path: test-results/backend-postgres-report.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+  test-playwright-sqlite:
+    needs: [prepare, build-ci-container, detect-changes]
+    if: |
+      needs.detect-changes.outputs.skip_all != 'true' &&
+      (needs.detect-changes.outputs.frontend_source == 'true' ||
+       needs.detect-changes.outputs.web_api == 'true' ||
+       needs.detect-changes.outputs.backend_source == 'true' ||
+       needs.detect-changes.outputs.playwright_tests == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run Playwright tests with SQLite in devcontainer
+        run: |
+          docker run \
+            --rm \
+            -v ${{ github.workspace }}:/workspace/main \
+            -e CLAUDE_PROJECT_REPO="" \
+            -e UV_CACHE_DIR=/opt/uv-cache \
+            -e CI=true \
+            -u claude \
+            ${{ needs.prepare.outputs.image-name }} \
+            bash -c 'cd /workspace/main && \
+              if [ -d "/opt/frontend-dist" ]; then \
+                echo "Copying pre-built frontend assets..."; \
+                mkdir -p /workspace/main/src/family_assistant/static/dist; \
+                cp -r /opt/frontend-dist/* /workspace/main/src/family_assistant/static/dist/; \
+                [ -d "/opt/frontend-dist/.vite" ] && cp -r /opt/frontend-dist/.vite /workspace/main/src/family_assistant/static/dist/.vite; \
+                echo "Frontend assets copied successfully"; \
+                ls -la /workspace/main/src/family_assistant/static/dist/; \
+              else \
+                echo "No pre-built frontend assets found at /opt/frontend-dist"; \
+              fi && \
+              mkdir -p test-results && \
+              .venv/bin/pytest -q --timeout=300 --db sqlite -m "playwright" \
+                --screenshot=on --video=retain-on-failure --tracing=retain-on-failure \
+                --json-report --json-report-file=test-results/playwright-sqlite-report.json \
+                --output=test-results'
+      - name: Upload Playwright test artifacts (SQLite)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-artifacts-sqlite-${{ github.run_id }}
+          path: |
+            test-results/
+            /tmp/history_page_*.png
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Output artifact info
+        if: always()
+        run: |
+          echo "🔍 Debug artifacts uploaded to: playwright-artifacts-sqlite-${{ github.run_id }}"
+          echo "📊 JSON test report: test-results/playwright-sqlite-report.json"
+          echo "📱 Screenshots: test-results/**/test-failed-*.png"
+          echo "🎥 Videos: test-results/**/test-*.webm"
+          echo "🕵️ Traces: test-results/**/trace.zip"
+          echo ""
+          echo "💡 Download with: gh run download ${{ github.run_id }} --name playwright-artifacts-sqlite-${{ github.run_id }}"
+
+  test-playwright-postgres:
+    needs: [prepare, build-ci-container, detect-changes]
+    if: |
+      needs.detect-changes.outputs.skip_all != 'true' &&
+      (needs.detect-changes.outputs.frontend_source == 'true' ||
+       needs.detect-changes.outputs.web_api == 'true' ||
+       needs.detect-changes.outputs.backend_source == 'true' ||
+       needs.detect-changes.outputs.playwright_tests == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.0-pg17
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        options: >-
+          --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run Playwright tests with PostgreSQL in devcontainer
         run: |
           docker run \
             --rm \
@@ -247,7 +418,6 @@ jobs:
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/main/src/family_assistant/static/dist; \
                 cp -r /opt/frontend-dist/* /workspace/main/src/family_assistant/static/dist/; \
-                # Also copy the .vite directory which contains the manifest \
                 [ -d "/opt/frontend-dist/.vite" ] && cp -r /opt/frontend-dist/.vite /workspace/main/src/family_assistant/static/dist/.vite; \
                 echo "Frontend assets copied successfully"; \
                 ls -la /workspace/main/src/family_assistant/static/dist/; \
@@ -255,13 +425,13 @@ jobs:
                 echo "No pre-built frontend assets found at /opt/frontend-dist"; \
               fi && \
               mkdir -p test-results && \
-              .venv/bin/pytest --postgres -q --timeout=300 \
+              .venv/bin/pytest --postgres -q --timeout=300 -m "playwright" \
                 --screenshot=on --video=retain-on-failure --tracing=retain-on-failure \
-                --json-report --json-report-file=test-results/postgres-report.json \
+                --json-report --json-report-file=test-results/playwright-postgres-report.json \
                 --output=test-results'
       - name: Upload Playwright test artifacts (PostgreSQL)
         uses: actions/upload-artifact@v4
-        if: always() # Upload artifacts even if tests fail
+        if: always()
         with:
           name: playwright-artifacts-postgres-${{ github.run_id }}
           path: |
@@ -273,28 +443,62 @@ jobs:
         if: always()
         run: |
           echo "🔍 Debug artifacts uploaded to: playwright-artifacts-postgres-${{ github.run_id }}"
-          echo "📊 JSON test report: test-results/postgres-report.json"
+          echo "📊 JSON test report: test-results/playwright-postgres-report.json"
           echo "📱 Screenshots: test-results/**/test-failed-*.png"
           echo "🎥 Videos: test-results/**/test-*.webm"
           echo "🕵️ Traces: test-results/**/trace.zip"
           echo ""
           echo "💡 Download with: gh run download ${{ github.run_id }} --name playwright-artifacts-postgres-${{ github.run_id }}"
+
   # Require all test jobs to pass
   all-tests:
-    needs: [lint, test-frontend, test-sqlite, test-postgres]
+    needs: [lint, test-frontend-unit, test-backend-sqlite, test-backend-postgres, test-playwright-sqlite, test-playwright-postgres]
     runs-on: ubuntu-latest
     if: always()
     steps:
       - name: Check all tests passed
         run: |
-          if [[ "${{ needs.lint.result }}" != "success" || \
-                "${{ needs.test-frontend.result }}" != "success" || \
-                "${{ needs.test-sqlite.result }}" != "success" || \
-                "${{ needs.test-postgres.result }}" != "success" ]]; then
-            echo "One or more test jobs failed"
+          # Job results can be: success, failure, cancelled, skipped
+          # We fail if any job failed or was cancelled
+          # Skipped jobs are OK (means they were intentionally skipped by conditionals)
+
+          function check_job() {
+            local job_name=$1
+            local job_result=$2
+
+            if [[ "$job_result" == "failure" || "$job_result" == "cancelled" ]]; then
+              echo "❌ $job_name: $job_result"
+              return 1
+            elif [[ "$job_result" == "skipped" ]]; then
+              echo "⏭️  $job_name: skipped"
+              return 0
+            elif [[ "$job_result" == "success" ]]; then
+              echo "✅ $job_name: success"
+              return 0
+            else
+              echo "❓ $job_name: unknown status ($job_result)"
+              return 1
+            fi
+          }
+
+          echo "Checking test results..."
+          FAILED=0
+
+          check_job "lint" "${{ needs.lint.result }}" || FAILED=1
+          check_job "test-frontend-unit" "${{ needs.test-frontend-unit.result }}" || FAILED=1
+          check_job "test-backend-sqlite" "${{ needs.test-backend-sqlite.result }}" || FAILED=1
+          check_job "test-backend-postgres" "${{ needs.test-backend-postgres.result }}" || FAILED=1
+          check_job "test-playwright-sqlite" "${{ needs.test-playwright-sqlite.result }}" || FAILED=1
+          check_job "test-playwright-postgres" "${{ needs.test-playwright-postgres.result }}" || FAILED=1
+
+          if [[ $FAILED -eq 1 ]]; then
+            echo ""
+            echo "❌ One or more test jobs failed"
             exit 1
           fi
-          echo "All tests passed!"
+
+          echo ""
+          echo "✅ All tests passed or were skipped!"
 
 # Note: Test images with unique tags will be cleaned up by GHCR retention policies
 
