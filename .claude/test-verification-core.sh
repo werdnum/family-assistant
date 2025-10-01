@@ -17,14 +17,31 @@ check_test_status() {
     fi
 
     # Find the last file modification (Edit, Write, MultiEdit) with timestamp
-    # Exclude modifications to docs, .claude, .devcontainer and other non-code directories
+    # Exclude modifications to files that don't affect poe test results
     local LAST_MODIFICATION=$(cat "$TRANSCRIPT_PATH" | jq -c '
         select(.type == "assistant" and .message.content and (.message.content | type == "array")) |
         .message.content[] |
         select(.type == "tool_use" and (.name == "Edit" or .name == "Write" or .name == "MultiEdit")) |
         select(
-            .input.file_path and 
-            (.input.file_path | test("(docs/|\\.claude/|\\.devcontainer/|\\.github/|\\.(md|txt)$|scratch/|tmp/|README)"; "i") | not)
+            .input.file_path and
+            (.input.file_path | test("(
+                docs/|
+                \\.claude/|
+                \\.github/|
+                deploy/|
+                contrib/|
+                scripts/review-changes\\.(py|sh)|
+                scripts/format-and-lint\\.sh|
+                \\.pre-commit-config\\.yaml|
+                \\.gitignore|
+                \\.dockerignore|
+                \\.(md|txt)$|
+                scratch/|
+                tmp/|
+                README|
+                LICENSE|
+                CHANGELOG
+            )"; "ix") | not)
         ) |
         {id: .id, name: .name, file: .input.file_path}
     ' 2>/dev/null | tail -1)

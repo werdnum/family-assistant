@@ -311,7 +311,6 @@ jobs:
     if: |
       needs.detect-changes.outputs.skip_all != 'true' &&
       (needs.detect-changes.outputs.frontend_source == 'true' ||
-       needs.detect-changes.outputs.web_api == 'true' ||
        needs.detect-changes.outputs.backend_source == 'true' ||
        needs.detect-changes.outputs.playwright_tests == 'true')
     runs-on: ubuntu-latest
@@ -377,7 +376,6 @@ jobs:
     if: |
       needs.detect-changes.outputs.skip_all != 'true' &&
       (needs.detect-changes.outputs.frontend_source == 'true' ||
-       needs.detect-changes.outputs.web_api == 'true' ||
        needs.detect-changes.outputs.backend_source == 'true' ||
        needs.detect-changes.outputs.playwright_tests == 'true')
     runs-on: ubuntu-latest
