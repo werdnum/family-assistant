@@ -157,8 +157,9 @@ COPY --chown=appuser:appuser contrib /app/contrib
 # --- Install the Package ---
 # Install the package using uv from pyproject.toml. This ensures that the package
 # is installed with all its source code.
+# Include local-embeddings extra for production embedding similarity support
 USER appuser
-RUN uv pip install .
+RUN uv pip install '.[local-embeddings]'
 
 # --- Runtime Configuration ---
 # Expose the port the web server listens on
