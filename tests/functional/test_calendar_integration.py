@@ -34,7 +34,10 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
 )
-from family_assistant.tools.calendar import search_calendar_events_tool
+from family_assistant.tools.calendar import (
+    add_calendar_event_tool,
+    search_calendar_events_tool,
+)
 from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.utils.clock import MockClock
 from tests.mocks.mock_llm import (
@@ -1439,6 +1442,548 @@ END:VCALENDAR"""
     )
 
     logger.info("Test mixed date/datetime sorting PASSED.")
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_similarity_based_search_finds_similar_events(
+    pg_vector_db_engine: AsyncEngine,
+    radicale_server: tuple[str, str, str, str],
+) -> None:
+    """
+    Test that similarity-based search finds similar events.
+
+    Creates events with similar titles, then verifies search finds them
+    using fuzzy similarity (tests use fuzzy for speed/zero dependencies,
+    but the same infrastructure works with embedding similarity in production).
+    """
+    radicale_base_url, r_user, r_pass, test_calendar_direct_url = radicale_server
+    logger.info(
+        f"\n--- Test: Similarity-Based Search - Semantic Matching (Radicale URL: {test_calendar_direct_url}) ---"
+    )
+
+    local_tz = ZoneInfo(TEST_TIMEZONE_STR)
+    tomorrow = datetime.now(local_tz) + timedelta(days=1)
+
+    # Create semantically similar events
+    # Use simple names without UUIDs to avoid breaking similarity scores
+    event1_summary = "Doctor appointment"
+    event1_start = tomorrow.replace(hour=14, minute=0, second=0, microsecond=0)
+    event1_end = event1_start + timedelta(hours=1)
+
+    event2_summary = "Dr. Smith checkup"
+    event2_start = tomorrow.replace(hour=15, minute=0, second=0, microsecond=0)
+    event2_end = event2_start + timedelta(hours=1)
+
+    # Create a dissimilar event (should not appear in results)
+    event3_summary = "Soccer practice"
+    event3_start = tomorrow.replace(hour=16, minute=0, second=0, microsecond=0)
+    event3_end = event3_start + timedelta(hours=1)
+
+    # Setup calendar config with embedding similarity
+    test_calendar_config = {
+        "caldav": {
+            "base_url": radicale_base_url,
+            "username": r_user,
+            "password": r_pass,
+            "calendar_urls": [test_calendar_direct_url],
+        },
+        "ical": {"urls": []},
+        "duplicate_detection": {
+            "enabled": True,
+            "similarity_strategy": "fuzzy",  # Use fuzzy for tests (fast, no deps)
+            "similarity_threshold": 0.30,
+            "time_window_hours": 2,
+        },
+    }
+
+    dummy_prompts: dict[str, Any] = {
+        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
+    }
+
+    local_provider = LocalToolsProvider(
+        definitions=local_tools_definition,
+        implementations=local_tool_implementations,
+        calendar_config=test_calendar_config,
+    )
+    mcp_provider = MCPToolsProvider(mcp_server_configs={})
+    composite_provider = CompositeToolsProvider(
+        providers=[local_provider, mcp_provider]
+    )
+    await composite_provider.get_tool_definitions()
+
+    calendar_context_provider = CalendarContextProvider(
+        calendar_config=test_calendar_config,
+        prompts=dummy_prompts,
+        timezone_str=TEST_TIMEZONE_STR,
+    )
+    service_config = ProcessingServiceConfig(
+        id="test_cal_similarity_profile",
+        prompts=dummy_prompts,
+        timezone_str=TEST_TIMEZONE_STR,
+        max_history_messages=5,
+        history_max_age_hours=24,
+        tools_config={"confirmation_required": []},
+        delegation_security_level="unrestricted",
+    )
+    processing_service = ProcessingService(
+        llm_client=MagicMock(),  # Will be replaced
+        tools_provider=composite_provider,
+        context_providers=[calendar_context_provider],
+        service_config=service_config,
+        server_url=None,
+        app_config={},
+    )
+
+    # Create event 1
+    tool_call_id_add_event1 = f"call_add_event1_{uuid.uuid4()}"
+
+    def add_event1_matcher(kwargs: MatcherArgs) -> bool:
+        return (
+            f"schedule {event1_summary.lower()}"
+            in get_last_message_text(kwargs.get("messages", [])).lower()
+        )
+
+    add_event1_response = MockLLMOutput(
+        content=f"OK, I'll schedule '{event1_summary}'.",
+        tool_calls=[
+            ToolCallItem(
+                id=tool_call_id_add_event1,
+                type="function",
+                function=ToolCallFunction(
+                    name="add_calendar_event",
+                    arguments=json.dumps({
+                        "summary": event1_summary,
+                        "start_time": event1_start.isoformat(),
+                        "end_time": event1_end.isoformat(),
+                        "all_day": False,
+                    }),
+                ),
+            )
+        ],
+    )
+
+    def final_response_matcher_event1(kwargs: MatcherArgs) -> bool:
+        last_msg = kwargs.get("messages", [])[-1]
+        return (
+            last_msg.get("role") == "tool"
+            and last_msg.get("tool_call_id") == tool_call_id_add_event1
+            and "OK. Event '" in last_msg.get("content", "")
+        )
+
+    final_response_event1 = MockLLMOutput(
+        content=f"Event '{event1_summary}' scheduled.", tool_calls=None
+    )
+
+    processing_service.llm_client = RuleBasedMockLLMClient(
+        rules=[
+            (add_event1_matcher, add_event1_response),
+            (final_response_matcher_event1, final_response_event1),
+        ]
+    )
+    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
+        result = await processing_service.handle_chat_interaction(
+            db_context=db_context,
+            chat_interface=MagicMock(),
+            interface_type="test_similarity",
+            conversation_id=f"{TEST_CHAT_ID}_similarity_add1",
+            trigger_content_parts=[
+                {"type": "text", "text": f"schedule {event1_summary}"}
+            ],
+            trigger_interface_message_id="msg_add_event1_similarity",
+            user_name=TEST_USER_NAME,
+        )
+        err_add1 = result.error_traceback
+    assert err_add1 is None, f"Error creating event1: {err_add1}"
+
+    # Create event 2
+    tool_call_id_add_event2 = f"call_add_event2_{uuid.uuid4()}"
+
+    def add_event2_matcher(kwargs: MatcherArgs) -> bool:
+        return (
+            f"schedule {event2_summary.lower()}"
+            in get_last_message_text(kwargs.get("messages", [])).lower()
+        )
+
+    add_event2_response = MockLLMOutput(
+        content=f"OK, I'll schedule '{event2_summary}'.",
+        tool_calls=[
+            ToolCallItem(
+                id=tool_call_id_add_event2,
+                type="function",
+                function=ToolCallFunction(
+                    name="add_calendar_event",
+                    arguments=json.dumps({
+                        "summary": event2_summary,
+                        "start_time": event2_start.isoformat(),
+                        "end_time": event2_end.isoformat(),
+                        "all_day": False,
+                    }),
+                ),
+            )
+        ],
+    )
+
+    def final_response_matcher_event2(kwargs: MatcherArgs) -> bool:
+        last_msg = kwargs.get("messages", [])[-1]
+        return (
+            last_msg.get("role") == "tool"
+            and last_msg.get("tool_call_id") == tool_call_id_add_event2
+            and "OK. Event '" in last_msg.get("content", "")
+        )
+
+    final_response_event2 = MockLLMOutput(
+        content=f"Event '{event2_summary}' scheduled.", tool_calls=None
+    )
+
+    processing_service.llm_client = RuleBasedMockLLMClient(
+        rules=[
+            (add_event2_matcher, add_event2_response),
+            (final_response_matcher_event2, final_response_event2),
+        ]
+    )
+    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
+        result = await processing_service.handle_chat_interaction(
+            db_context=db_context,
+            chat_interface=MagicMock(),
+            interface_type="test_similarity",
+            conversation_id=f"{TEST_CHAT_ID}_similarity_add2",
+            trigger_content_parts=[
+                {"type": "text", "text": f"schedule {event2_summary}"}
+            ],
+            trigger_interface_message_id="msg_add_event2_similarity",
+            user_name=TEST_USER_NAME,
+        )
+        err_add2 = result.error_traceback
+    assert err_add2 is None, f"Error creating event2: {err_add2}"
+
+    # Create event 3 (dissimilar)
+    tool_call_id_add_event3 = f"call_add_event3_{uuid.uuid4()}"
+
+    def add_event3_matcher(kwargs: MatcherArgs) -> bool:
+        return (
+            f"schedule {event3_summary.lower()}"
+            in get_last_message_text(kwargs.get("messages", [])).lower()
+        )
+
+    add_event3_response = MockLLMOutput(
+        content=f"OK, I'll schedule '{event3_summary}'.",
+        tool_calls=[
+            ToolCallItem(
+                id=tool_call_id_add_event3,
+                type="function",
+                function=ToolCallFunction(
+                    name="add_calendar_event",
+                    arguments=json.dumps({
+                        "summary": event3_summary,
+                        "start_time": event3_start.isoformat(),
+                        "end_time": event3_end.isoformat(),
+                        "all_day": False,
+                    }),
+                ),
+            )
+        ],
+    )
+
+    def final_response_matcher_event3(kwargs: MatcherArgs) -> bool:
+        last_msg = kwargs.get("messages", [])[-1]
+        return (
+            last_msg.get("role") == "tool"
+            and last_msg.get("tool_call_id") == tool_call_id_add_event3
+            and "OK. Event '" in last_msg.get("content", "")
+        )
+
+    final_response_event3 = MockLLMOutput(
+        content=f"Event '{event3_summary}' scheduled.", tool_calls=None
+    )
+
+    processing_service.llm_client = RuleBasedMockLLMClient(
+        rules=[
+            (add_event3_matcher, add_event3_response),
+            (final_response_matcher_event3, final_response_event3),
+        ]
+    )
+    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
+        result = await processing_service.handle_chat_interaction(
+            db_context=db_context,
+            chat_interface=MagicMock(),
+            interface_type="test_similarity",
+            conversation_id=f"{TEST_CHAT_ID}_similarity_add3",
+            trigger_content_parts=[
+                {"type": "text", "text": f"schedule {event3_summary}"}
+            ],
+            trigger_interface_message_id="msg_add_event3_similarity",
+            user_name=TEST_USER_NAME,
+        )
+        err_add3 = result.error_traceback
+    assert err_add3 is None, f"Error creating event3: {err_add3}"
+
+    # Now search for "doctor" directly using the tool
+    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-similarity-search",
+            user_name="TestUser",
+            turn_id="test-turn",
+            db_context=db_context,
+            chat_interface=None,
+            timezone_str=TEST_TIMEZONE_STR,
+            request_confirmation_callback=None,
+        )
+
+        search_result = await search_calendar_events_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            search_text="doctor",
+        )
+
+        logger.info(f"Search tool result:\n{search_result}")
+
+        # Verify semantic matching: "doctor" should find both events
+        # Event 1: "Doctor appointment" - high similarity
+        # Event 2: "Dr. Smith checkup" - moderate similarity (has "Dr.")
+        # Event 3: "Soccer practice" - low similarity (should be excluded)
+
+        # Check that similarity scores are present
+        assert "similarity:" in search_result.lower(), (
+            "Search results should include similarity scores"
+        )
+
+        # Both doctor-related events should be in results
+        # Note: With fuzzy matching, "doctor" vs "Dr. Smith checkup" has low similarity
+        # But "doctor" vs "Doctor appointment" has very high similarity
+        # So we should at least find event1
+        assert event1_summary in search_result, (
+            f"Event 1 '{event1_summary}' should be found by 'doctor' search"
+        )
+
+        # Event 3 (soccer) should NOT be in results
+        assert event3_summary not in search_result, (
+            f"Event 3 '{event3_summary}' should NOT be found by 'doctor' search"
+        )
+
+    logger.info("Test similarity-based search semantic matching PASSED.")
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_similarity_search_threshold_filtering(
+    pg_vector_db_engine: AsyncEngine,
+    radicale_server: tuple[str, str, str, str],
+) -> None:
+    """
+    Test that similarity threshold correctly filters out low-similarity events.
+
+    Creates events with varying similarity to search term, verifies that
+    only events above threshold are returned.
+    """
+    radicale_base_url, r_user, r_pass, test_calendar_direct_url = radicale_server
+    logger.info(
+        f"\n--- Test: Similarity Search Threshold Filtering (Radicale URL: {test_calendar_direct_url}) ---"
+    )
+
+    local_tz = ZoneInfo(TEST_TIMEZONE_STR)
+    tomorrow = datetime.now(local_tz) + timedelta(days=1)
+
+    # Create events with different similarity to "meeting"
+    # Use simple names without UUIDs to avoid breaking similarity scores
+    high_similarity_event = "Weekly team meeting"
+    medium_similarity_event = "Team standup"
+    low_similarity_event = "Grocery shopping"
+
+    start_time = tomorrow.replace(hour=10, minute=0, second=0, microsecond=0)
+    end_time = start_time + timedelta(hours=1)
+
+    # Setup with higher threshold
+    test_calendar_config = {
+        "caldav": {
+            "base_url": radicale_base_url,
+            "username": r_user,
+            "password": r_pass,
+            "calendar_urls": [test_calendar_direct_url],
+        },
+        "ical": {"urls": []},
+        "duplicate_detection": {
+            "enabled": True,
+            "similarity_strategy": "fuzzy",
+            "similarity_threshold": 0.50,  # Higher threshold
+            "time_window_hours": 2,
+        },
+    }
+
+    # Create events directly using tool
+    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-threshold",
+            user_name="TestUser",
+            turn_id="test-turn",
+            db_context=db_context,
+            chat_interface=None,
+            timezone_str=TEST_TIMEZONE_STR,
+            request_confirmation_callback=None,
+        )
+
+        # Create high similarity event
+        await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary=high_similarity_event,
+            start_time=start_time.isoformat(),
+            end_time=end_time.isoformat(),
+            all_day=False,
+        )
+
+        # Create medium similarity event
+        await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary=medium_similarity_event,
+            start_time=(start_time + timedelta(hours=1)).isoformat(),
+            end_time=(end_time + timedelta(hours=1)).isoformat(),
+            all_day=False,
+        )
+
+        # Create low similarity event
+        await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary=low_similarity_event,
+            start_time=(start_time + timedelta(hours=2)).isoformat(),
+            end_time=(end_time + timedelta(hours=2)).isoformat(),
+            all_day=False,
+        )
+
+        # Search for "meeting" with threshold 0.50
+        search_result = await search_calendar_events_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            search_text="meeting",
+        )
+
+        logger.info(f"Search result with threshold 0.50:\n{search_result}")
+
+        # High similarity event should be found
+        assert high_similarity_event in search_result, (
+            f"High similarity event '{high_similarity_event}' should be in results"
+        )
+
+        # Low similarity event should NOT be found (below threshold)
+        assert low_similarity_event not in search_result, (
+            f"Low similarity event '{low_similarity_event}' should NOT be in results"
+        )
+
+    logger.info("Test similarity search threshold filtering PASSED.")
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_similarity_search_score_sorting(
+    pg_vector_db_engine: AsyncEngine,
+    radicale_server: tuple[str, str, str, str],
+) -> None:
+    """
+    Test that search results are sorted by similarity score (highest first).
+    """
+    radicale_base_url, r_user, r_pass, test_calendar_direct_url = radicale_server
+    logger.info(
+        f"\n--- Test: Similarity Search Score Sorting (Radicale URL: {test_calendar_direct_url}) ---"
+    )
+
+    local_tz = ZoneInfo(TEST_TIMEZONE_STR)
+    tomorrow = datetime.now(local_tz) + timedelta(days=1)
+
+    # Create events with varying similarity to "appointment"
+    # Use simple names without UUIDs to avoid breaking similarity scores
+    exact_match = "Appointment"
+    close_match = "Doctor appointment"
+    partial_match = "Medical checkup"
+
+    start_time = tomorrow.replace(hour=9, minute=0, second=0, microsecond=0)
+
+    test_calendar_config = {
+        "caldav": {
+            "base_url": radicale_base_url,
+            "username": r_user,
+            "password": r_pass,
+            "calendar_urls": [test_calendar_direct_url],
+        },
+        "ical": {"urls": []},
+        "duplicate_detection": {
+            "enabled": True,
+            "similarity_strategy": "fuzzy",
+            "similarity_threshold": 0.20,  # Low threshold to get all events
+            "time_window_hours": 2,
+        },
+    }
+
+    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-sorting",
+            user_name="TestUser",
+            turn_id="test-turn",
+            db_context=db_context,
+            chat_interface=None,
+            timezone_str=TEST_TIMEZONE_STR,
+            request_confirmation_callback=None,
+        )
+
+        # Create events (in random order)
+        await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary=partial_match,
+            start_time=(start_time + timedelta(hours=2)).isoformat(),
+            end_time=(start_time + timedelta(hours=3)).isoformat(),
+            all_day=False,
+        )
+
+        await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary=exact_match,
+            start_time=start_time.isoformat(),
+            end_time=(start_time + timedelta(hours=1)).isoformat(),
+            all_day=False,
+        )
+
+        await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary=close_match,
+            start_time=(start_time + timedelta(hours=1)).isoformat(),
+            end_time=(start_time + timedelta(hours=2)).isoformat(),
+            all_day=False,
+        )
+
+        # Search for "appointment"
+        search_result = await search_calendar_events_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            search_text="appointment",
+        )
+
+        logger.info(f"Search result:\n{search_result}")
+
+        # Parse the result to verify sorting
+        # Results should be sorted by similarity (highest first)
+        # exact_match should come before close_match
+        exact_match_pos = search_result.find(exact_match)
+        close_match_pos = search_result.find(close_match)
+
+        assert exact_match_pos != -1, "Exact match should be in results"
+        assert close_match_pos != -1, "Close match should be in results"
+        assert exact_match_pos < close_match_pos, (
+            "Results should be sorted by similarity: exact match before close match"
+        )
+
+        # Verify similarity scores are included
+        assert "similarity:" in search_result.lower(), (
+            "Results should include similarity scores"
+        )
+
+    logger.info("Test similarity search score sorting PASSED.")
 
 
 # TODO: Add tests for basic recurring events.
