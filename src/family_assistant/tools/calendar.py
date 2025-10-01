@@ -138,14 +138,37 @@ async def _check_for_duplicate_events(
                     try:
                         calendar_obj = client.calendar(url=cal_url)
                         if not calendar_obj:
+                            logger.warning(
+                                f"Could not get calendar object for {cal_url}"
+                            )
                             continue
 
-                        events = calendar_obj.search(
-                            start=search_start_dt,
-                            end=search_end_dt,
-                            event=True,
-                            expand=True,
-                        )
+                        # WORKAROUND FOR CALDAV SERVERS WITH TIMEZONE ISSUES:
+                        # Some CalDAV servers (e.g., Radicale) don't handle timezone-aware
+                        # datetime searches reliably. If _use_naive_datetimes_for_search is set,
+                        # convert to naive datetimes using only date parts.
+                        # This is primarily for testing with Radicale.
+                        if caldav_config.get("_use_naive_datetimes_for_search", False):
+                            search_start_naive = datetime.combine(
+                                search_start_dt.date(), time.min
+                            )
+                            search_end_naive = datetime.combine(
+                                search_end_dt.date(), time.max
+                            )
+                            events = calendar_obj.search(
+                                start=search_start_naive,
+                                end=search_end_naive,
+                                event=True,
+                                expand=True,  # Include recurring event instances
+                            )
+                        else:
+                            # Standard search with timezone-aware datetimes
+                            events = calendar_obj.search(
+                                start=search_start_dt,
+                                end=search_end_dt,
+                                event=True,
+                                expand=True,  # Include recurring event instances
+                            )
 
                         for event in events:
                             try:
@@ -181,6 +204,7 @@ async def _check_for_duplicate_events(
 
                 return all_events
 
+        # Search for events
         loop = asyncio.get_running_loop()
         events_in_window = await loop.run_in_executor(None, search_events_sync)
 
@@ -194,9 +218,6 @@ async def _check_for_duplicate_events(
         try:
             similarity_strategy = create_similarity_strategy_from_config(
                 calendar_config
-            )
-            logger.info(
-                f"Checking for duplicates with strategy: {similarity_strategy.name}, threshold: {similarity_threshold}"
             )
         except Exception as e:
             logger.warning(
