@@ -21,8 +21,8 @@ RUN --mount=type=cache,target=/home/claude/.cache/uv,sharing=locked,uid=1001,gid
 RUN --mount=type=cache,target=/home/claude/.npm,sharing=locked,uid=1001,gid=1001 \
     git clone --depth 1 --branch main https://github.com/siteboon/claudecodeui.git /opt/claude-code-webui && \
     cd /opt/claude-code-webui && \
-    git fetch origin 3c9a4cab82b7e08a8c7429e67df8da8f12fa91ff && \
-    git checkout 3c9a4cab82b7e08a8c7429e67df8da8f12fa91ff && \
+    git fetch origin 3c9a4cab && \
+    git checkout 3c9a4cab && \
     npm install && \
     npm run build
 
