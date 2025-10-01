@@ -28,6 +28,229 @@ logger = logging.getLogger(__name__)
 
 
 # Calendar Tool Definitions
+async def _check_for_duplicate_events(
+    exec_context: ToolExecutionContext,
+    calendar_config: dict[str, Any],
+    summary: str,
+    start_time: str,
+    end_time: str,
+    all_day: bool,
+) -> str | None:
+    """
+    Check for similar events in a time window around the newly created event.
+
+    Returns a warning message if similar events are found, None otherwise.
+
+    Time windows:
+    - Timed events: ±2 hours from start time
+    - All-day events: same date
+
+    Args:
+        exec_context: Tool execution context
+        calendar_config: Calendar configuration
+        summary: Summary of the newly created event
+        start_time: Start time in ISO format
+        end_time: End time in ISO format
+        all_day: Whether this is an all-day event
+
+    Returns:
+        Warning message string if duplicates found, None otherwise
+    """
+    try:
+        # Parse the event time to determine search window
+        local_tz = ZoneInfo(exec_context.timezone_str)
+        if all_day:
+            # For all-day events, search on the same date
+            event_date = isoparse(start_time).date()
+            search_start_date = str(event_date)
+            search_end_date = str(event_date)
+        else:
+            # For timed events, search ±2 hours
+            event_dt = isoparse(start_time)
+            if event_dt.tzinfo is None:
+                event_dt = event_dt.replace(tzinfo=local_tz)
+
+            dup_detection = calendar_config.get("duplicate_detection", {})
+            time_window_hours = dup_detection.get("time_window_hours", 2)
+
+            search_start = event_dt - timedelta(hours=time_window_hours)
+            search_end = event_dt + timedelta(hours=time_window_hours)
+
+            search_start_date = search_start.isoformat()
+            search_end_date = search_end.isoformat()
+
+        # Search for events in the time window using the existing search infrastructure
+        # This will apply similarity-based filtering
+        caldav_config: dict[str, Any] | None = calendar_config.get("caldav")
+        if not caldav_config:
+            return None
+
+        username: str | None = caldav_config.get("username")
+        password: str | None = caldav_config.get("password")
+        calendar_urls_list: list[str] | None = caldav_config.get("calendar_urls", [])
+        base_url: str | None = caldav_config.get("base_url")
+
+        if not username or not password or not calendar_urls_list:
+            return None
+
+        # Determine client_url
+        client_url_to_use = base_url
+        if not client_url_to_use:
+            try:
+                parsed_first_cal_url = httpx.URL(calendar_urls_list[0])
+                client_url_to_use = (
+                    f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}"
+                )
+                if parsed_first_cal_url.port is not None:
+                    client_url_to_use += f":{parsed_first_cal_url.port}"
+            except Exception:
+                return None
+
+        if not client_url_to_use:
+            return None
+
+        # Parse search dates for CalDAV query
+        if all_day:
+            search_start_dt = datetime.combine(
+                isoparse(search_start_date).date(), time.min, tzinfo=local_tz
+            )
+            search_end_dt = datetime.combine(
+                isoparse(search_end_date).date(), time(23, 59, 59), tzinfo=local_tz
+            )
+        else:
+            search_start_dt = isoparse(search_start_date)
+            search_end_dt = isoparse(search_end_date)
+            if search_start_dt.tzinfo is None:
+                search_start_dt = search_start_dt.replace(tzinfo=local_tz)
+            if search_end_dt.tzinfo is None:
+                search_end_dt = search_end_dt.replace(tzinfo=local_tz)
+
+        # Search events in time window (synchronous, run in executor)
+        def search_events_sync() -> list[dict[str, Any]]:
+            with caldav.DAVClient(
+                url=client_url_to_use,
+                username=username,
+                password=password,
+                timeout=30,
+            ) as client:
+                all_events = []
+                for cal_url in calendar_urls_list:  # type: ignore
+                    try:
+                        calendar_obj = client.calendar(url=cal_url)
+                        if not calendar_obj:
+                            continue
+
+                        events = calendar_obj.search(
+                            start=search_start_dt,
+                            end=search_end_dt,
+                            event=True,
+                            expand=True,
+                        )
+
+                        for event in events:
+                            try:
+                                vevent = event.icalendar_component
+                                event_summary = str(vevent.get("summary", ""))
+                                uid = str(vevent.get("uid", ""))
+                                dtstart = vevent.get("dtstart")
+
+                                # Format start time for display
+                                if dtstart:
+                                    start_val = dtstart.dt
+                                    if isinstance(start_val, datetime):
+                                        start_str = start_val.strftime(
+                                            "%Y-%m-%d %H:%M %Z"
+                                        )
+                                    else:
+                                        start_str = str(start_val)
+                                else:
+                                    start_str = "Unknown time"
+
+                                all_events.append({
+                                    "summary": event_summary,
+                                    "uid": uid,
+                                    "start": start_str,
+                                })
+                            except Exception as e:
+                                logger.warning(f"Error processing event: {e}")
+                                continue
+
+                    except Exception as e:
+                        logger.error(f"Error searching calendar {cal_url}: {e}")
+                        continue
+
+                return all_events
+
+        loop = asyncio.get_running_loop()
+        events_in_window = await loop.run_in_executor(None, search_events_sync)
+
+        if not events_in_window:
+            return None
+
+        # Apply similarity filtering to find similar events
+        dup_detection = calendar_config.get("duplicate_detection", {})
+        similarity_threshold = dup_detection.get("similarity_threshold", 0.30)
+
+        try:
+            similarity_strategy = create_similarity_strategy_from_config(
+                calendar_config
+            )
+            logger.info(
+                f"Checking for duplicates with strategy: {similarity_strategy.name}, threshold: {similarity_threshold}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to create similarity strategy for duplicate detection: {e}"
+            )
+            return None
+
+        # Compute similarity for each event
+        similar_events = []
+        for event in events_in_window:
+            # Skip the event we just created (by comparing summary exactly)
+            if event["summary"] == summary:
+                continue
+
+            similarity = await similarity_strategy.compute_similarity(
+                summary, event["summary"]
+            )
+            if similarity >= similarity_threshold:
+                event["similarity"] = similarity
+                similar_events.append(event)
+
+        if not similar_events:
+            return None
+
+        # Sort by similarity (highest first)
+        similar_events.sort(key=lambda e: e.get("similarity", 0.0), reverse=True)
+
+        # Format warning message
+        warning_lines = [
+            f"⚠️  WARNING: Found {len(similar_events)} similar event(s) at nearby times:",
+            "",
+        ]
+
+        for idx, event in enumerate(similar_events, 1):
+            warning_lines.append(
+                f"{idx}. '{event['summary']}' at {event['start']} (similarity: {event['similarity']:.2f})"
+            )
+            warning_lines.append(f"   UID: {event['uid']}")
+            if idx < len(similar_events):
+                warning_lines.append("")
+
+        warning_lines.append("")
+        warning_lines.append(
+            f"Please verify these are different events. If '{summary}' is a duplicate,"
+        )
+        warning_lines.append("you should delete it using delete_calendar_event.")
+
+        return "\n".join(warning_lines)
+
+    except Exception as e:
+        logger.warning(f"Error checking for duplicate events: {e}", exc_info=True)
+        return None
+
+
 CALENDAR_TOOLS_DEFINITION = [
     {
         "type": "function",
@@ -322,6 +545,29 @@ async def add_calendar_event_tool(
         try:
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(None, save_event_sync)
+
+            # Check for duplicate events after creation (if duplicate detection is enabled)
+            dup_detection = calendar_config.get("duplicate_detection", {})
+            if dup_detection.get("enabled", True):
+                try:
+                    warning = await _check_for_duplicate_events(
+                        exec_context=exec_context,
+                        calendar_config=calendar_config,
+                        summary=summary,
+                        start_time=start_time,
+                        end_time=end_time,
+                        all_day=all_day,
+                    )
+                    if warning:
+                        # Append warning to result
+                        result = f"{result}\n\n{warning}"
+                except Exception as dup_check_err:
+                    # Don't fail the whole operation if duplicate detection fails
+                    logger.warning(
+                        f"Failed to check for duplicate events: {dup_check_err}",
+                        exc_info=True,
+                    )
+
             return result
         except (DAVError, ConnectionError, Exception) as sync_err:
             logger.error(
