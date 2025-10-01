@@ -147,14 +147,18 @@ describe('ChatApp', () => {
     // NOTE: This delay is necessary for @assistant-ui/react's internal state to fully settle
     // after streaming completes. Even though the input appears enabled and empty, the library
     // needs additional time before it can successfully accept and submit a new message.
-    // This mirrors similar delays in the Playwright tests (wait_for_timeout after typing).
-    // Without this, pressing Enter after typing doesn't submit the message.
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    // The Playwright tests have a 3000ms wait in send_message after pressing Enter, which gives
+    // the library time to process the response before the next message starts.
+    // Without sufficient delay, pressing Enter after typing doesn't submit the message.
+    await new Promise((resolve) => setTimeout(resolve, 2000));
 
     // Get a fresh reference and send second message
     const input2 = screen.getByPlaceholderText('Write a message...');
     await user.click(input2);
     await user.type(input2, 'Second message');
+
+    // Wait for input processing before pressing Enter (matches Playwright send_message pattern)
+    await new Promise((resolve) => setTimeout(resolve, 500));
     await user.keyboard('{Enter}');
 
     // Wait for second message to be sent
