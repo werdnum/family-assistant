@@ -540,6 +540,11 @@ async def web_readonly_assistant(
 
     For tests that create/modify data, use web_test_fixture (function-scoped) instead.
     """
+    # Ensure the database schema is initialized before starting the assistant.
+    # This helps prevent race conditions in parallel test runs.
+    print("\n=== Pre-assistant schema initialization for session ===")
+    await init_db(session_db_engine)
+
     async for assistant in _create_web_assistant(
         session_db_engine,
         session_api_socket_and_port,
@@ -566,6 +571,12 @@ async def web_only_assistant(
     mock_llm_client: RuleBasedMockLLMClient,
 ) -> AsyncGenerator[Assistant, None]:
     """Start Assistant in web-only mode for testing."""
+    # Ensure the database schema is initialized before starting the assistant.
+    # This helps prevent race conditions in parallel test runs, especially for
+    # function-scoped fixtures that create a fresh database each time.
+    print("\n=== Pre-assistant schema initialization for function-scoped test ===")
+    await init_db(db_engine)
+
     async for assistant in _create_web_assistant(
         db_engine,
         api_socket_and_port,
