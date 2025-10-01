@@ -175,11 +175,12 @@ jobs:
             -e CLAUDE_PROJECT_REPO="" \
             -e UV_CACHE_DIR=/opt/uv-cache \
             -e VIRTUAL_ENV=/venv \
+            -e PATH=/venv/bin:$PATH \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace/main && \
               echo "Installing project in editable mode..." && \
-              uv pip install -e ".[dev]" && \
+              uv sync && \
               if [ -d "/opt/frontend/node_modules" ] && [ ! -d "frontend/node_modules" ]; then \
                 echo "Symlinking pre-installed node_modules for frontend linting..."; \
                 ln -s /opt/frontend/node_modules frontend/node_modules; \
@@ -211,6 +212,7 @@ jobs:
             -e CLAUDE_PROJECT_REPO="" \
             -e UV_CACHE_DIR=/opt/uv-cache \
             -e VIRTUAL_ENV=/venv \
+            -e PATH=/venv/bin:$PATH \
             -e CI=true \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
@@ -255,12 +257,13 @@ jobs:
             -e CLAUDE_PROJECT_REPO="" \
             -e UV_CACHE_DIR=/opt/uv-cache \
             -e VIRTUAL_ENV=/venv \
+            -e PATH=/venv/bin:$PATH \
             -e CI=true \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace/main && \
               echo "Installing project in editable mode..." && \
-              uv pip install -e ".[dev]" && \
+              uv sync && \
               if [ -d "/opt/frontend-dist" ]; then \
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/main/src/family_assistant/static/dist; \
@@ -320,12 +323,13 @@ jobs:
             -e CLAUDE_PROJECT_REPO="" \
             -e UV_CACHE_DIR=/opt/uv-cache \
             -e VIRTUAL_ENV=/venv \
+            -e PATH=/venv/bin:$PATH \
             -e CI=true \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace/main && \
               echo "Installing project in editable mode..." && \
-              uv pip install -e ".[dev]" && \
+              uv sync && \
               if [ -d "/opt/frontend-dist" ]; then \
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/main/src/family_assistant/static/dist; \
@@ -375,12 +379,13 @@ jobs:
             -e CLAUDE_PROJECT_REPO="" \
             -e UV_CACHE_DIR=/opt/uv-cache \
             -e VIRTUAL_ENV=/venv \
+            -e PATH=/venv/bin:$PATH \
             -e CI=true \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace/main && \
               echo "Installing project in editable mode..." && \
-              uv pip install -e ".[dev]" && \
+              uv sync && \
               if [ -d "/opt/frontend-dist" ]; then \
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/main/src/family_assistant/static/dist; \
@@ -457,12 +462,13 @@ jobs:
             -e CLAUDE_PROJECT_REPO="" \
             -e UV_CACHE_DIR=/opt/uv-cache \
             -e VIRTUAL_ENV=/venv \
+            -e PATH=/venv/bin:$PATH \
             -e CI=true \
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace/main && \
               echo "Installing project in editable mode..." && \
-              uv pip install -e ".[dev]" && \
+              uv sync && \
               if [ -d "/opt/frontend-dist" ]; then \
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/main/src/family_assistant/static/dist; \
