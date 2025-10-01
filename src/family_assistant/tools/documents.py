@@ -6,6 +6,7 @@ documents including ingestion from URLs and accessing user documentation.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -293,7 +294,9 @@ async def search_documents_tool(
             file_path = res.get("file_path")
 
             # Check if original file is available
-            has_file = file_path and pathlib.Path(file_path).exists()
+            has_file = file_path and await asyncio.to_thread(
+                pathlib.Path(file_path).exists
+            )
 
             # Truncate snippet for brevity
             snippet = res.get("embedding_source_content", "")
@@ -313,7 +316,7 @@ async def search_documents_tool(
             if has_file and file_path:
                 try:
                     file_path_obj = pathlib.Path(file_path)
-                    file_size = file_path_obj.stat().st_size
+                    file_size = (await asyncio.to_thread(file_path_obj.stat)).st_size
                     original_filename = (
                         metadata.get("original_filename") or file_path_obj.name
                     )
@@ -375,10 +378,10 @@ async def get_full_document_content_tool(
         source_type = doc_result.get("source_type")
 
         # Try to return original file if available
-        if file_path and pathlib.Path(file_path).exists():
+        if file_path and await asyncio.to_thread(pathlib.Path(file_path).exists):
             try:
                 file_path_obj = pathlib.Path(file_path)
-                file_size = file_path_obj.stat().st_size
+                file_size = (await asyncio.to_thread(file_path_obj.stat)).st_size
 
                 # Check multimodal size limit from config
                 _, max_multimodal_size = get_attachment_limits(exec_context)
@@ -631,19 +634,24 @@ async def get_user_documentation_content_tool(
     # Assumes the script runs from the project root or similar context.
     docs_user_dir_env = os.getenv("DOCS_USER_DIR")
     if docs_user_dir_env:
-        docs_user_dir = pathlib.Path(docs_user_dir_env).resolve()
+        docs_user_dir = await asyncio.to_thread(pathlib.Path(docs_user_dir_env).resolve)
     else:
         docs_user_dir = pathlib.Path("docs") / "user"
         # Try Docker default if the calculated path doesn't exist
-        if not docs_user_dir.exists() and pathlib.Path("/app/docs/user").exists():
+        docs_user_exists = await asyncio.to_thread(docs_user_dir.exists)
+        docker_default_exists = await asyncio.to_thread(
+            pathlib.Path("/app/docs/user").exists
+        )
+        if not docs_user_exists and docker_default_exists:
             docs_user_dir = pathlib.Path("/app/docs/user")
 
-    file_path = (docs_user_dir / filename).resolve()
+    file_path = await asyncio.to_thread((docs_user_dir / filename).resolve)
 
     # Security Check: Ensure the resolved path is still within the intended directory
-    if docs_user_dir not in file_path.parents:
+    resolved_docs_dir = await asyncio.to_thread(docs_user_dir.resolve)
+    if resolved_docs_dir not in file_path.parents:
         logger.error(
-            f"Resolved path '{file_path}' is outside the allowed directory '{docs_user_dir.resolve()}'."
+            f"Resolved path '{file_path}' is outside the allowed directory '{resolved_docs_dir}'."
         )
         return f"Error: Access denied. Invalid path for filename '{filename}'."
 
