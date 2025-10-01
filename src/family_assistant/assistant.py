@@ -174,6 +174,8 @@ class Assistant:
         self.task_worker_instance: TaskWorker | None = None
         self.task_worker_task: asyncio.Task | None = None  # Track the worker task
         self.uvicorn_server_task: asyncio.Task | None = None
+        self.health_monitor_task: asyncio.Task | None = None  # Track health monitor
+        self.event_processor_task: asyncio.Task | None = None  # Track event processor
         self._is_shutdown_complete = False
 
         # Event system
@@ -1065,11 +1067,15 @@ class Assistant:
         self.task_worker_task = asyncio.create_task(self.task_worker_instance.run())
 
         # Start health monitoring for the task worker
-        asyncio.create_task(self._monitor_task_worker_health())
+        self.health_monitor_task = asyncio.create_task(
+            self._monitor_task_worker_health()
+        )
 
         # Start event processor if initialized
         if self.event_processor:
-            asyncio.create_task(self.event_processor.start())
+            self.event_processor_task = asyncio.create_task(
+                self.event_processor.start()
+            )
             logger.info("Event processor started")
 
             # Create system cleanup task
@@ -1256,17 +1262,22 @@ class Assistant:
         if not self.shutdown_event.is_set():
             self.shutdown_event.set()
 
-        # Cancel outstanding asyncio tasks
-        loop = asyncio.get_running_loop()
-        tasks = [
-            t for t in asyncio.all_tasks(loop=loop) if t is not asyncio.current_task()
-        ]
-        if tasks:
-            logger.info(f"Cancelling {len(tasks)} outstanding tasks...")
-            for task in tasks:
+        # Cancel only the background tasks we own (not all tasks in the event loop)
+        # This prevents interfering with pytest-xdist workers and other infrastructure
+        owned_tasks = []
+        if self.health_monitor_task and not self.health_monitor_task.done():
+            owned_tasks.append(self.health_monitor_task)
+        if self.event_processor_task and not self.event_processor_task.done():
+            owned_tasks.append(self.event_processor_task)
+        if self.task_worker_task and not self.task_worker_task.done():
+            owned_tasks.append(self.task_worker_task)
+
+        if owned_tasks:
+            logger.info(f"Cancelling {len(owned_tasks)} owned background tasks...")
+            for task in owned_tasks:
                 task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            logger.info("Outstanding tasks cancelled.")
+            await asyncio.gather(*owned_tasks, return_exceptions=True)
+            logger.info("Owned background tasks cancelled.")
 
         if self.telegram_service:
             await self.telegram_service.stop_polling()

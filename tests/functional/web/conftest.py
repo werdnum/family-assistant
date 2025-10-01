@@ -438,15 +438,20 @@ async def _create_web_assistant(
     print(f"\n=== Shutting down {log_prefix}API server ===")
     assistant.initiate_shutdown(shutdown_label)
 
-    if hasattr(assistant, "task_worker_instance") and assistant.task_worker_instance:
-        assistant.task_worker_instance.shutdown_event.set()
-
+    # Wait for start_task to complete first (it will stop the web server)
     try:
-        await asyncio.wait_for(start_task, timeout=5.0)
+        await asyncio.wait_for(start_task, timeout=10.0)
+        print(f"{log_prefix}start_task completed successfully")
     except asyncio.TimeoutError:
+        print(f"Timeout waiting for {log_prefix}start_task, cancelling...")
         start_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await start_task
+
+    # Now clean up any remaining background tasks (task worker, event processor, etc.)
+    # This must be done AFTER start_task completes to avoid cancelling it
+    print(f"Calling stop_services for final {log_prefix}cleanup...")
+    await assistant.stop_services()
 
 
 @pytest_asyncio.fixture(scope="session")
