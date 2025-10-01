@@ -180,7 +180,7 @@ jobs:
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace/main && \
               echo "Installing project in editable mode..." && \
-              uv sync && \
+              uv sync --extra dev && \
               if [ -d "/opt/frontend/node_modules" ] && [ ! -d "frontend/node_modules" ]; then \
                 echo "Symlinking pre-installed node_modules for frontend linting..."; \
                 ln -s /opt/frontend/node_modules frontend/node_modules; \
@@ -263,7 +263,7 @@ jobs:
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace/main && \
               echo "Installing project in editable mode..." && \
-              uv sync && \
+              uv sync --extra dev && \
               if [ -d "/opt/frontend-dist" ]; then \
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/main/src/family_assistant/static/dist; \
@@ -329,7 +329,7 @@ jobs:
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace/main && \
               echo "Installing project in editable mode..." && \
-              uv sync && \
+              uv sync --extra dev && \
               if [ -d "/opt/frontend-dist" ]; then \
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/main/src/family_assistant/static/dist; \
@@ -385,7 +385,7 @@ jobs:
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace/main && \
               echo "Installing project in editable mode..." && \
-              uv sync && \
+              uv sync --extra dev && \
               if [ -d "/opt/frontend-dist" ]; then \
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/main/src/family_assistant/static/dist; \
@@ -468,7 +468,7 @@ jobs:
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace/main && \
               echo "Installing project in editable mode..." && \
-              uv sync && \
+              uv sync --extra dev && \
               if [ -d "/opt/frontend-dist" ]; then \
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/main/src/family_assistant/static/dist; \
