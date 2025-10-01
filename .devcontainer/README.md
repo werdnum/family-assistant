@@ -16,6 +16,47 @@ The development container system provides:
 
 ## Architecture
 
+### Container Hierarchy
+
+The development environment uses a three-layer Docker architecture for optimal caching and
+separation of concerns:
+
+```
+┌──────────────────────────────────────────────────────┐
+│ Dockerfile.base (~2-3GB, stable)                     │
+│ - OS packages (Ubuntu, PostgreSQL, Node.js)          │
+│ - Language runtimes (Python, uv, Deno)               │
+│ - Build tools (ripgrep, fd, ast-grep, yq)            │
+│ - Playwright + browsers (for CI tests)               │
+│ - NO dev tools (claude-code, gemini-cli, etc.)       │
+└──────────────────────────────────────────────────────┘
+                       ▲
+                       │
+        ┌──────────────┴───────────────┐
+        │                              │
+┌───────────────────┐    ┌────────────────────────────┐
+│ Dockerfile        │    │ Dockerfile.ci (~3-4GB)     │
+│ (~5-6GB)          │    │                            │
+│                   │    │ - Pre-built frontend       │
+│ - Dev tools:      │    │ - Python test deps         │
+│   * claude-code   │    │ - NO dev tools (smaller!)  │
+│   * gemini-cli    │    │                            │
+│   * llm           │    │ Used by: CI workflows      │
+│   * claudecodeui  │    │                            │
+│                   │    │                            │
+│ Used by: devs     │    │                            │
+└───────────────────┘    └────────────────────────────┘
+```
+
+**Benefits:**
+
+- **Base layer caching**: OS/runtimes change rarely, cache hit rate >90%
+- **Smaller CI images**: CI doesn't need dev tools, saves 2-3GB
+- **Faster CI builds**: ~75% reduction in build time (45 min → 10-12 min)
+- **Clear separation**: CI vs dev concerns architecturally distinct
+
+### Service Architecture
+
 ```
 ┌─────────────────────────┐     ┌─────────────────────────┐
 │   PostgreSQL Sidecar    │     │    Claude Container     │
@@ -190,4 +231,63 @@ podman volume inspect workspace-claude
 
 # Clean up test volumes
 podman volume ls | grep family-assistant-test | awk '{print $2}' | xargs podman volume rm
+```
+
+## Container Caching Strategy
+
+### Cache Backends
+
+The CI workflows use **registry-primary caching** with unique scopes:
+
+- **Base image cache**: `type=registry,ref=ghcr.io/.../cache-devcontainer-base`
+- **CI image cache**: `type=registry,ref=ghcr.io/.../cache-devcontainer-ci`
+- **Dev image cache**: `type=registry,ref=ghcr.io/.../cache-devcontainer-dev`
+
+**Why registry over GHA cache?**
+
+- No size limits (GHA has 10GB limit per repo)
+- Better performance for large images (>2GB)
+- Shared across workflows and branches
+- No rate limiting issues
+
+### Pinned Dependencies
+
+**claudecodeui** is pinned to commit `3c9a4cab82` (as of 2025-10-01) to ensure:
+
+- Layer caching works consistently
+- Builds are reproducible
+- Git clone doesn't invalidate cache on every build
+
+To update the pinned commit:
+
+1. Find latest commit:
+   `curl -s https://api.github.com/repos/siteboon/claudecodeui/commits/main | jq -r '.sha'`
+2. Update `Dockerfile` line 24 with new commit SHA
+3. Rebuild and test
+
+### Cache Troubleshooting
+
+**Check cache usage in CI:**
+
+```bash
+# View recent build logs
+gh run view <run-id> --log | grep -i "cached\|cache\|pulling"
+
+# Look for "CACHED" steps (good!)
+# vs "downloading" or "pulling" (cache miss)
+```
+
+**Force cache rebuild:**
+
+```bash
+# Trigger workflow dispatch with new tag
+gh workflow run build-containers.yml -f tag=rebuild-$(date +%s)
+```
+
+**Clear registry caches (if corrupted):**
+
+```bash
+# Delete cache images from GHCR
+# Go to: https://github.com/werdnum/family-assistant/pkgs/container/family-assistant
+# Delete images with "cache-" prefix
 ```

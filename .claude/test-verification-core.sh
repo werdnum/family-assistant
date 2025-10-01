@@ -28,6 +28,7 @@ check_test_status() {
                 docs/|
                 \\.claude/|
                 \\.github/|
+                \\.devcontainer/|
                 deploy/|
                 contrib/|
                 scripts/review-changes\\.(py|sh)|
