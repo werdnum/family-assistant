@@ -38,7 +38,7 @@ USER claude
 WORKDIR /tmp/build
 
 # Copy project files needed for dependency installation
-COPY --chown=claude:claude pyproject.toml ./
+COPY --chown=claude:claude pyproject.toml uv.lock ./
 COPY --chown=claude:claude src ./src
 
 # Install project dependencies into the base /venv
