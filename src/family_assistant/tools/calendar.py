@@ -19,6 +19,8 @@ import vobject
 from caldav.lib.error import DAVError, NotFoundError
 from dateutil.parser import isoparse
 
+from family_assistant.similarity import create_similarity_strategy_from_config
+
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -77,14 +79,14 @@ CALENDAR_TOOLS_DEFINITION = [
         "function": {
             "name": "search_calendar_events",
             "description": (
-                "Searches for calendar events by summary text or within a date range. Use this to check for conflicts before adding new events, find existing events to modify/delete, or list upcoming events."
+                "Searches for calendar events by summary text or within a date range. Uses semantic similarity to find related events, not just exact matches. Each result includes a similarity score. Use this to check for conflicts before adding new events, find existing events to modify/delete, or list upcoming events."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "search_text": {
                         "type": "string",
-                        "description": "Optional text to search for in event summaries. Case-insensitive partial match.",
+                        "description": "Optional text to search for in event summaries. Uses similarity matching to find semantically related events (e.g., searching 'doctor' finds 'Doctor appointment', 'Dr. Smith checkup', 'Medical visit'). Results include similarity scores (0.0-1.0).",
                     },
                     "start_date": {
                         "type": "string",
@@ -353,7 +355,10 @@ async def search_calendar_events_tool(
 ) -> str:
     """
     Searches for calendar events by summary text or within a date range.
-    Returns a list of events with their UIDs and calendar URLs.
+    Returns a list of events with their UIDs, calendar URLs, and similarity scores.
+
+    When search_text is provided, uses similarity strategy from config to find
+    semantically similar events, not just exact substring matches.
     """
     logger.info(
         f"Executing search_calendar_events_tool: text='{search_text}', start={start_date}, end={end_date}"
@@ -425,8 +430,8 @@ async def search_calendar_events_tool(
 
         logger.info(f"Searching from {search_start} to {search_end}")
 
-        # Search events (synchronous, run in executor)
-        def search_events_sync() -> str:
+        # Search events (synchronous, run in executor) - returns structured data
+        def search_events_sync() -> list[dict[str, Any]]:
             logger.debug(f"Connecting to CalDAV server: {client_url_to_use}")
             with caldav.DAVClient(
                 url=client_url_to_use,
@@ -455,12 +460,8 @@ async def search_calendar_events_tool(
                                 vevent = event.icalendar_component
                                 summary = str(vevent.get("summary", ""))
 
-                                # Apply text filter if provided
-                                if (
-                                    search_text
-                                    and search_text.lower() not in summary.lower()
-                                ):
-                                    continue
+                                # Don't filter by text here - we'll do similarity-based filtering after
+                                # retrieving all events
 
                                 uid = str(vevent.get("uid", ""))
                                 dtstart = vevent.get("dtstart")
@@ -502,24 +503,75 @@ async def search_calendar_events_tool(
                         logger.error(f"Error searching calendar {cal_url}: {e}")
                         continue
 
-                if not all_events:
-                    return "No events found matching the search criteria."
-
-                # Format results
-                result_lines = [f"Found {len(all_events)} event(s):"]
-                for idx, event in enumerate(all_events, 1):
-                    result_lines.append(f"\n{idx}. {event['summary']}")
-                    result_lines.append(f"   Start: {event['start']}")
-                    result_lines.append(f"   End: {event['end']}")
-                    result_lines.append(f"   UID: {event['uid']}")
-                    result_lines.append(f"   Calendar: {event['calendar_url']}")
-
-                return "\n".join(result_lines)
+                return all_events
 
         try:
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, search_events_sync)
-            return result
+            all_events = await loop.run_in_executor(None, search_events_sync)
+
+            if not all_events:
+                return "No events found matching the search criteria."
+
+            # Apply similarity-based filtering if search_text is provided
+            if search_text:
+                # Get duplicate detection config for similarity strategy and threshold
+                dup_detection = calendar_config.get("duplicate_detection", {})
+                similarity_threshold = dup_detection.get("similarity_threshold", 0.30)
+
+                # Create similarity strategy from config
+                try:
+                    similarity_strategy = create_similarity_strategy_from_config(
+                        calendar_config
+                    )
+                    logger.info(
+                        f"Using similarity strategy: {similarity_strategy.name} with threshold {similarity_threshold}"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to create similarity strategy: {e}. Falling back to substring matching."
+                    )
+                    # Fallback to old substring matching behavior
+                    filtered_events = [
+                        event
+                        for event in all_events
+                        if search_text.lower() in event["summary"].lower()
+                    ]
+                    all_events = filtered_events
+                else:
+                    # Compute similarity for each event
+                    events_with_similarity = []
+                    for event in all_events:
+                        similarity = await similarity_strategy.compute_similarity(
+                            search_text, event["summary"]
+                        )
+                        if similarity >= similarity_threshold:
+                            event["similarity"] = similarity
+                            events_with_similarity.append(event)
+
+                    # Sort by similarity (highest first)
+                    events_with_similarity.sort(
+                        key=lambda e: e.get("similarity", 0.0), reverse=True
+                    )
+                    all_events = events_with_similarity
+
+            if not all_events:
+                return f"No events found matching '{search_text}' (threshold: {similarity_threshold if search_text else 'N/A'})."
+
+            # Format results
+            result_lines = [f"Found {len(all_events)} event(s):"]
+            for idx, event in enumerate(all_events, 1):
+                similarity_str = (
+                    f" (similarity: {event['similarity']:.2f})"
+                    if "similarity" in event
+                    else ""
+                )
+                result_lines.append(f"\n{idx}. {event['summary']}{similarity_str}")
+                result_lines.append(f"   Start: {event['start']}")
+                result_lines.append(f"   End: {event['end']}")
+                result_lines.append(f"   UID: {event['uid']}")
+                result_lines.append(f"   Calendar: {event['calendar_url']}")
+
+            return "\n".join(result_lines)
         except Exception as sync_err:
             logger.error(f"Error during calendar search: {sync_err}", exc_info=True)
             return f"Error: Failed to search calendar events. {sync_err}"
