@@ -27,16 +27,24 @@ RUN mkdir -p /opt/src/family_assistant/static && \
     mkdir -p /tmp/frontend-dist && \
     cp -r /opt/src/family_assistant/static/dist/. /tmp/frontend-dist/
 
-# Backend preparation stage - for Python dependencies if needed in future
+# Backend preparation stage - pre-install Python dependencies for CI
 FROM ${BASE_IMAGE} AS backend-prep
 
 USER root
 # Create cache directory with proper permissions
 RUN mkdir -p /opt/uv-cache && chown claude:claude /opt/uv-cache
 
-# Pre-install any additional Python dependencies for CI if needed
-# Currently minimal since pyproject.toml is installed at runtime
 USER claude
+WORKDIR /tmp/build
+
+# Copy project files needed for dependency installation
+COPY --chown=claude:claude pyproject.toml README.md ./
+COPY --chown=claude:claude src ./src
+
+# Install project dependencies into the base /venv
+RUN --mount=type=cache,target=/home/claude/.cache/uv,sharing=locked,uid=1001,gid=1001 \
+    . /venv/bin/activate && \
+    uv pip install -e '.[dev]'
 
 # Final stage - combines frontend and backend
 FROM ${BASE_IMAGE} AS final
@@ -49,6 +57,9 @@ RUN mkdir -p /opt/uv-cache && chown claude:claude /opt/uv-cache
 
 # Copy pre-built frontend assets from frontend stage
 COPY --from=frontend-builder --chown=claude:claude /tmp/frontend-dist /opt/frontend-dist/
+
+# Copy Python dependencies from backend-prep stage
+COPY --from=backend-prep --chown=claude:claude /venv /venv
 
 # Pre-build frontend node_modules for linting (separate from build artifacts)
 # Copy from project root context
