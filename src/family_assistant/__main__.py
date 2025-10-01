@@ -91,7 +91,18 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
         "chat_attachment_storage_path": "/tmp/chat_attachments",
         "willyweather_api_key": None,  # Added for Weather Provider
         "willyweather_location_id": None,  # Added for Weather Provider
-        "calendar_config": {},  # Calendar configuration - populated from CALDAV_*/ICAL_URLS env vars
+        "calendar_config": {
+            "duplicate_detection": {
+                "enabled": True,
+                "similarity_strategy": "embedding",  # Options: "embedding", "fuzzy"
+                "similarity_threshold": 0.30,
+                "time_window_hours": 2,  # For timed events
+                "embedding": {
+                    "model": "sentence-transformers/all-MiniLM-L6-v2",
+                    "device": "cpu",  # Options: "cpu", "cuda", "mps"
+                },
+            }
+        },  # Calendar configuration - populated from CALDAV_*/ICAL_URLS env vars + duplicate detection settings
         "llm_parameters": {},  # Global LLM parameters
         "mcp_config": {"mcpServers": {}},  # Global MCP server definitions
         "default_service_profile_id": "default_assistant",  # Default profile ID
@@ -324,8 +335,17 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
             logger.info("Loaded iCal config from environment variables.")
 
     # Only update top-level calendar_config if env vars provided valid config
+    # Preserve duplicate_detection settings from defaults/yaml when merging env vars
     if temp_calendar_config:
+        existing_dup_detection = config_data.get("calendar_config", {}).get(
+            "duplicate_detection", {}
+        )
         config_data["calendar_config"] = temp_calendar_config
+        # Preserve duplicate_detection settings
+        if existing_dup_detection:
+            config_data["calendar_config"]["duplicate_detection"] = (
+                existing_dup_detection
+            )
     elif not config_data.get("calendar_config"):  # If no config from yaml either
         logger.warning(
             "No calendar sources configured in config file or environment variables."
