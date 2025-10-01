@@ -177,6 +177,10 @@ jobs:
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace/main && \
+              echo "Setting up Python environment..." && \
+              uv venv .venv && \
+              . .venv/bin/activate && \
+              uv sync --extra dev && \
               if [ -d "/opt/frontend/node_modules" ] && [ ! -d "frontend/node_modules" ]; then \
                 echo "Symlinking pre-installed node_modules for frontend linting..."; \
                 ln -s /opt/frontend/node_modules frontend/node_modules; \
@@ -254,6 +258,10 @@ jobs:
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace/main && \
+              echo "Setting up Python environment..." && \
+              uv venv .venv && \
+              . .venv/bin/activate && \
+              uv sync --extra dev && \
               if [ -d "/opt/frontend-dist" ]; then \
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/main/src/family_assistant/static/dist; \
@@ -316,6 +324,10 @@ jobs:
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace/main && \
+              echo "Setting up Python environment..." && \
+              uv venv .venv && \
+              . .venv/bin/activate && \
+              uv sync --extra dev && \
               if [ -d "/opt/frontend-dist" ]; then \
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/main/src/family_assistant/static/dist; \
@@ -368,6 +380,10 @@ jobs:
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace/main && \
+              echo "Setting up Python environment..." && \
+              uv venv .venv && \
+              . .venv/bin/activate && \
+              uv sync --extra dev && \
               if [ -d "/opt/frontend-dist" ]; then \
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/main/src/family_assistant/static/dist; \
@@ -447,6 +463,10 @@ jobs:
             -u claude \
             ${{ needs.prepare.outputs.image-name }} \
             bash -c 'cd /workspace/main && \
+              echo "Setting up Python environment..." && \
+              uv venv .venv && \
+              . .venv/bin/activate && \
+              uv sync --extra dev && \
               if [ -d "/opt/frontend-dist" ]; then \
                 echo "Copying pre-built frontend assets..."; \
                 mkdir -p /workspace/main/src/family_assistant/static/dist; \
