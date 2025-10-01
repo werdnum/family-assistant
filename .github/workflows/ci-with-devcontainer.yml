@@ -36,7 +36,8 @@ jobs:
       frontend_tests: ${{ steps.filter.outputs.frontend_tests }}
       backend_source: ${{ steps.filter.outputs.backend_source }}
       backend_tests_unit: ${{ steps.filter.outputs.backend_tests_unit }}
-      playwright_tests: ${{ steps.filter.outputs.playwright_tests }}
+      backend_tests_playwright: ${{ steps.filter.outputs.backend_tests_playwright }}
+      ci_workflow: ${{ steps.filter.outputs.ci_workflow }}
       web_api: ${{ steps.filter.outputs.web_api }}
     steps:
       - name: Checkout code
@@ -84,9 +85,10 @@ jobs:
               - 'src/**/*.py'
             backend_tests_unit:
               - 'tests/**/*.py'
-              - '!tests/functional/web/test_*.py'
-            playwright_tests:
+            backend_tests_playwright:
               - 'tests/functional/web/test_*.py'
+            ci_workflow:
+              - '.github/workflows/ci-*.yml'
             web_api:
               - 'src/family_assistant/web/**/*.py'
   build-ci-container:
@@ -178,7 +180,8 @@ jobs:
     if: |
       needs.detect-changes.outputs.has_code_changes == 'true' &&
       (needs.detect-changes.outputs.frontend_source == 'true' ||
-       needs.detect-changes.outputs.frontend_tests == 'true')
+       needs.detect-changes.outputs.frontend_tests == 'true' ||
+       needs.detect-changes.outputs.ci_workflow == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -220,7 +223,8 @@ jobs:
     if: |
       needs.detect-changes.outputs.has_code_changes == 'true' &&
       (needs.detect-changes.outputs.backend_source == 'true' ||
-       needs.detect-changes.outputs.backend_tests_unit == 'true')
+       needs.detect-changes.outputs.backend_tests_unit == 'true' ||
+       needs.detect-changes.outputs.ci_workflow == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -268,7 +272,8 @@ jobs:
     if: |
       needs.detect-changes.outputs.has_code_changes == 'true' &&
       (needs.detect-changes.outputs.backend_source == 'true' ||
-       needs.detect-changes.outputs.backend_tests_unit == 'true')
+       needs.detect-changes.outputs.backend_tests_unit == 'true' ||
+       needs.detect-changes.outputs.ci_workflow == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -331,7 +336,9 @@ jobs:
       needs.detect-changes.outputs.has_code_changes == 'true' &&
       (needs.detect-changes.outputs.frontend_source == 'true' ||
        needs.detect-changes.outputs.backend_source == 'true' ||
-       needs.detect-changes.outputs.playwright_tests == 'true')
+       needs.detect-changes.outputs.web_api == 'true' ||
+       needs.detect-changes.outputs.backend_tests_playwright == 'true' ||
+       needs.detect-changes.outputs.ci_workflow == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -395,7 +402,9 @@ jobs:
       needs.detect-changes.outputs.has_code_changes == 'true' &&
       (needs.detect-changes.outputs.frontend_source == 'true' ||
        needs.detect-changes.outputs.backend_source == 'true' ||
-       needs.detect-changes.outputs.playwright_tests == 'true')
+       needs.detect-changes.outputs.web_api == 'true' ||
+       needs.detect-changes.outputs.backend_tests_playwright == 'true' ||
+       needs.detect-changes.outputs.ci_workflow == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
