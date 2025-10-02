@@ -46,8 +46,6 @@ from family_assistant.tools import (
     MCPToolsProvider,
     ToolsProvider,
 )
-from family_assistant.web.app_creator import app as actual_app
-from family_assistant.web.app_creator import configure_app_debug
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
@@ -403,12 +401,14 @@ async def _create_web_assistant(
         server_socket=api_socket,
     )
 
-    configure_app_debug(debug=True)
-
     # Set up dependencies
     print(f"Setting up {log_prefix}dependencies...")
     await assistant.setup_dependencies()
     print(f"{log_prefix}dependencies set up")
+
+    # Configure debug mode on the assistant's FastAPI instance (after setup)
+    if assistant.fastapi_app:
+        assistant.fastapi_app.state.debug_mode = True
 
     # Set SERVER_URL env var
     os.environ["SERVER_URL"] = f"http://localhost:{api_port}"
@@ -1050,6 +1050,13 @@ def attachment_registry_fixture(db_engine: AsyncEngine) -> AttachmentRegistry:
     )
 
 
+@pytest.fixture(scope="function")
+def actual_app(web_only_assistant: Assistant) -> FastAPI:
+    """Return the assistant's owned FastAPI app instance."""
+    assert web_only_assistant.fastapi_app is not None
+    return web_only_assistant.fastapi_app
+
+
 @pytest_asyncio.fixture(scope="function")
 async def app_fixture(
     db_engine: AsyncEngine,
@@ -1057,6 +1064,7 @@ async def app_fixture(
     api_test_processing_service: ProcessingService,
     api_test_tools_provider: ToolsProvider,
     api_mock_llm_client: LLMInterface,
+    actual_app: FastAPI,
 ) -> FastAPI:
     """
     Creates a FastAPI application instance for testing, with dependency-injected
