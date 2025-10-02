@@ -1077,6 +1077,9 @@ async def test_search_events(
             "calendar_urls": [test_calendar_direct_url],
         },
         "ical": {"urls": []},
+        "duplicate_detection": {
+            "enabled": False,  # Disable for this test - we're testing search, not duplicate detection
+        },
     }
     dummy_prompts: dict[str, Any] = {
         "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
@@ -1996,6 +1999,7 @@ async def test_similarity_search_score_sorting(
             start_time=(start_time + timedelta(hours=1)).isoformat(),
             end_time=(start_time + timedelta(hours=2)).isoformat(),
             all_day=False,
+            bypass_duplicate_check=True,  # Bypass since we want multiple similar events for sorting test
         )
 
         # Search for "appointment"
