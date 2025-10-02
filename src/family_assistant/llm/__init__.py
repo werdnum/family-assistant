@@ -172,6 +172,29 @@ def _format_messages_for_debug(
         role = msg.get("role", "unknown")
         content = msg.get("content", "")
 
+        # Check for parts field (used by some providers like Gemini)
+        if "parts" in msg and not content:
+            parts = msg["parts"]
+            if isinstance(parts, list):
+                parts_strs = []
+                for part in parts:
+                    if isinstance(part, dict):
+                        if "text" in part:
+                            parts_strs.append(_truncate_content(part["text"]))
+                        elif "inline_data" in part:
+                            inline = part["inline_data"]
+                            mime = inline.get("mime_type", "unknown")
+                            data_size = len(inline.get("data", b""))
+                            parts_strs.append(
+                                f"[INLINE_DATA: {mime}, {data_size} bytes]"
+                            )
+                        else:
+                            parts_strs.append(f"[PART: {list(part.keys())}]")
+                    else:
+                        # types.Part object or other
+                        parts_strs.append(f"[{type(part).__name__}]")
+                content = " + ".join(parts_strs) if parts_strs else "[empty parts]"
+
         # Handle different content types
         if isinstance(content, list):
             # Multi-part content (text + images)
@@ -202,8 +225,19 @@ def _format_messages_for_debug(
             name = msg.get("name", "unknown")
             tool_info = f"({name}, id={tool_call_id})"
 
+        # Check for _attachment field
+        attachment_info = ""
+        if "_attachment" in msg:
+            attachment = msg["_attachment"]
+            if hasattr(attachment, "mime_type"):
+                att_type = attachment.mime_type
+                att_size = len(attachment.content) if attachment.content else 0
+                attachment_info = f" [_attachment: {att_type}, {att_size} bytes]"
+            else:
+                attachment_info = f" [_attachment: {type(attachment).__name__}]"
+
         # Build the line
-        line = f'  [{i}] {role}{tool_info}: "{content_str}"{tool_calls_str}'
+        line = f'  [{i}] {role}{tool_info}: "{content_str}"{tool_calls_str}{attachment_info}'
         lines.append(line)
 
     # Add tools information

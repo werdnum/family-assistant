@@ -27,7 +27,16 @@ IMAGE_TOOLS_DEFINITION: list[dict[str, Any]] = [
             "description": (
                 "Draw colored rectangles or circles to highlight regions on an image. "
                 "Useful for marking objects, areas of interest, or annotations. "
-                "Creates and displays a new image with the highlighted regions."
+                "Creates and displays a new image with the highlighted regions.\n\n"
+                "Bounding box coordinates are in normalized [0, 1000] format (Gemini object detection format). "
+                "For example, x_min=100 means 10% from the left edge, x_max=900 means 90% from the left edge.\n\n"
+                "Example region format:\n"
+                "{\n"
+                '  "box": {"x_min": 100, "y_min": 200, "x_max": 300, "y_max": 400},\n'
+                '  "label": "chicken",\n'
+                '  "color": "red"\n'
+                "}\n\n"
+                "Note: thickness is automatically scaled to 1% of image size if not specified."
             ),
             "parameters": {
                 "type": "object",
@@ -38,26 +47,36 @@ IMAGE_TOOLS_DEFINITION: list[dict[str, Any]] = [
                     },
                     "regions": {
                         "type": "array",
-                        "description": "List of regions to highlight on the image",
+                        "description": "List of regions to highlight on the image. Each region is a bounding box with optional styling.",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "x": {
-                                    "type": "number",
-                                    "description": "X coordinate of the region (left edge for rectangle, center for circle)",
+                                "box": {
+                                    "type": "object",
+                                    "description": "Bounding box coordinates in normalized [0, 1000] format (Gemini object detection format)",
+                                    "properties": {
+                                        "x_min": {
+                                            "type": "number",
+                                            "description": "Left edge x-coordinate (0-1000, where 0=left edge, 1000=right edge)",
+                                        },
+                                        "y_min": {
+                                            "type": "number",
+                                            "description": "Top edge y-coordinate (0-1000, where 0=top edge, 1000=bottom edge)",
+                                        },
+                                        "x_max": {
+                                            "type": "number",
+                                            "description": "Right edge x-coordinate (0-1000, where 0=left edge, 1000=right edge)",
+                                        },
+                                        "y_max": {
+                                            "type": "number",
+                                            "description": "Bottom edge y-coordinate (0-1000, where 0=top edge, 1000=bottom edge)",
+                                        },
+                                    },
+                                    "required": ["x_min", "y_min", "x_max", "y_max"],
                                 },
-                                "y": {
-                                    "type": "number",
-                                    "description": "Y coordinate of the region (top edge for rectangle, center for circle)",
-                                },
-                                "width": {
-                                    "type": "number",
-                                    "description": "Width of rectangle or diameter of circle",
-                                },
-                                "height": {
-                                    "type": "number",
-                                    "description": "Height of rectangle (ignored for circles)",
-                                    "default": None,
+                                "label": {
+                                    "type": "string",
+                                    "description": "Optional description of what is being highlighted (e.g., 'chicken', 'car', 'person')",
                                 },
                                 "color": {
                                     "type": "string",
@@ -77,7 +96,7 @@ IMAGE_TOOLS_DEFINITION: list[dict[str, Any]] = [
                                 "shape": {
                                     "type": "string",
                                     "enum": ["rectangle", "circle"],
-                                    "description": "Shape of the highlight",
+                                    "description": "Shape of the highlight (note: circle uses bounding box center and treats width as diameter)",
                                     "default": "rectangle",
                                 },
                                 "thickness": {
@@ -86,7 +105,7 @@ IMAGE_TOOLS_DEFINITION: list[dict[str, Any]] = [
                                     "default": 3,
                                 },
                             },
-                            "required": ["x", "y", "width"],
+                            "required": ["box"],
                         },
                         "minItems": 1,
                     },
@@ -170,39 +189,71 @@ async def highlight_image_tool(
                 highlighted_img = img.copy()
                 draw = ImageDraw.Draw(highlighted_img)
 
+                # Get image dimensions for coordinate scaling
+                img_width, img_height = highlighted_img.size
+
+                # Calculate default thickness as ~1% of smaller dimension, minimum 2px
+                default_thickness = max(2, int(min(img_width, img_height) * 0.01))
+
                 # Draw each region
                 regions_drawn = []
                 for i, region in enumerate(regions):
                     try:
-                        x = region["x"]
-                        y = region["y"]
-                        width = region["width"]
-                        height = region.get("height", width)  # Default to square/circle
+                        # Extract bounding box (coordinates are in [0, 1000] normalized format from Gemini)
+                        box = region["box"]
+                        x_min_norm = box["x_min"]
+                        y_min_norm = box["y_min"]
+                        x_max_norm = box["x_max"]
+                        y_max_norm = box["y_max"]
+
+                        # Scale normalized [0, 1000] coordinates to actual pixel coordinates
+                        x_min = (x_min_norm / 1000.0) * img_width
+                        y_min = (y_min_norm / 1000.0) * img_height
+                        x_max = (x_max_norm / 1000.0) * img_width
+                        y_max = (y_max_norm / 1000.0) * img_height
+
+                        # Convert to x, y, width, height for logging
+                        x = x_min
+                        y = y_min
+                        width = x_max - x_min
+                        height = y_max - y_min
+
+                        # Get optional attributes
+                        label = region.get("label", "")
                         color = COLOR_MAP.get(region.get("color", "red"), "#FF0000")
                         shape = region.get("shape", "rectangle")
-                        thickness = region.get("thickness", 3)
+                        thickness = region.get("thickness", default_thickness)
 
                         if shape == "rectangle":
-                            # Draw rectangle outline
+                            # Draw rectangle outline using bounding box coordinates
                             draw.rectangle(
-                                [x, y, x + width, y + height],
+                                [x_min, y_min, x_max, y_max],
                                 outline=color,
                                 width=thickness,
                             )
+                            label_str = f" ({label})" if label else ""
                             regions_drawn.append(
-                                f"rectangle at ({x},{y}) {width}x{height} in {region.get('color', 'red')}"
+                                f"rectangle at ({x},{y}) {width}x{height}{label_str} in {region.get('color', 'red')}"
                             )
 
                         elif shape == "circle":
-                            # Draw circle outline (ellipse with equal width/height)
-                            radius = width / 2
+                            # Draw circle outline using bounding box center
+                            center_x = (x_min + x_max) / 2
+                            center_y = (y_min + y_max) / 2
+                            radius = width / 2  # Use width as diameter
                             draw.ellipse(
-                                [x - radius, y - radius, x + radius, y + radius],
+                                [
+                                    center_x - radius,
+                                    center_y - radius,
+                                    center_x + radius,
+                                    center_y + radius,
+                                ],
                                 outline=color,
                                 width=thickness,
                             )
+                            label_str = f" ({label})" if label else ""
                             regions_drawn.append(
-                                f"circle at ({x},{y}) radius {radius} in {region.get('color', 'red')}"
+                                f"circle at ({center_x},{center_y}) radius {radius}{label_str} in {region.get('color', 'red')}"
                             )
 
                         else:
