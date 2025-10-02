@@ -128,7 +128,7 @@ Found 3 event(s):
 
 ### 3. Server-Side Duplicate Detection
 
-**Add validation to `add_calendar_event_tool` AFTER creating event:**
+**Add validation to `add_calendar_event_tool` BEFORE creating event:**
 
 ```python
 async def add_calendar_event_tool(
@@ -140,26 +140,27 @@ async def add_calendar_event_tool(
     description: str | None = None,
     all_day: bool = False,
     recurrence_rule: str | None = None,
+    bypass_duplicate_check: bool = False,  # NEW: Allow override
 ) -> str:
     """
     Adds an event to the calendar.
 
     NEW BEHAVIOR:
-    1. Create the event as requested
-    2. AFTER creation, search for similar events in time window:
+    1. BEFORE creation, search for similar events in time window:
        - Timed events: ±2 hours
        - All-day events: same date
-    3. If similar events found (similarity >= threshold), include warning in response
-    4. LLM sees the warning and can decide to delete the event if it's a duplicate
+    2. If similar events found (similarity >= threshold) AND bypass_duplicate_check=False:
+       - Return error message with duplicate details
+       - Instruct LLM how to retry with bypass flag
+    3. If bypass_duplicate_check=True OR no duplicates found:
+       - Create the event as requested
     """
 ```
 
-**Response format with warning:**
+**Error response format (first attempt):**
 
 ```
-OK. Event 'Doctor appointment' added to the calendar.
-
-⚠️  WARNING: Found 2 similar event(s) at nearby times:
+Error: Cannot create event 'Doctor appointment' - found 2 similar event(s) at nearby times:
 
 1. 'Dr. Smith checkup' at Tomorrow 14:00 (similarity: 0.70)
    UID: abc-123
@@ -167,12 +168,18 @@ OK. Event 'Doctor appointment' added to the calendar.
 2. 'Medical appointment' at Tomorrow 14:15 (similarity: 0.94)
    UID: def-456
 
-Please verify these are different events. If 'Doctor appointment' is a duplicate,
-you should delete it using delete_calendar_event.
+If you believe this is NOT a duplicate, retry with bypass_duplicate_check=true.
 ```
 
-**This is a WARNING, not a hard block** - event is created, but assistant is strongly signaled to
-check.
+**Success response format (with bypass):**
+
+```
+OK. Event 'Doctor appointment' added to the calendar (duplicate check bypassed).
+```
+
+**This is a PRE-WARNING with bypass** - event creation blocked on first attempt, but LLM can
+override if it determines the event is not actually a duplicate. This prevents spurious
+notifications to shared calendar users while still allowing legitimate events with similar names.
 
 ### 4. Configuration
 
@@ -221,8 +228,9 @@ calendar:
   3. Each result includes a similarity score (0.0-1.0) showing how close the match is
   4. If an event exists at the same time with high similarity (>0.7), it's likely a duplicate
 
-  After creating an event, if the response includes a WARNING about similar events,
-  you MUST review those events and delete the newly created event if it's a duplicate.
+  If add_calendar_event returns an error about similar events, review the similar events
+  and decide if this is truly a duplicate. If it's NOT a duplicate (e.g., different doctors,
+  different purposes), retry with bypass_duplicate_check=true to create the event anyway.
 ```
 
 ## Implementation Plan
@@ -251,10 +259,10 @@ calendar:
 
 4. **Add duplicate detection**
 
-   - Create helper function `find_similar_events()`
-   - Call before event creation in `add_calendar_event_tool`
-   - Return error with conflict details
-   - Add `allow_similar` bypass parameter
+   - Create helper function `_check_for_duplicate_events()`
+   - Call BEFORE event creation in `add_calendar_event_tool`
+   - Return error message with conflict details if duplicates found
+   - Add `bypass_duplicate_check` parameter to allow override
 
 ### Phase 3: Testing & Documentation
 
@@ -262,8 +270,8 @@ calendar:
 
    - Test both similarity strategies
    - Test search with similarity scoring
-   - Test duplicate detection (should block)
-   - Test `allow_similar` override
+   - Test duplicate detection (should block first attempt)
+   - Test `bypass_duplicate_check=true` override (should succeed)
    - Use `FuzzySimilarityStrategy` for speed
 
 6. **Integration tests**
@@ -311,16 +319,16 @@ Based on experimental data:
    - LLM can make final judgment call
    - Better than missing 1.2% of duplicates with higher threshold
 
-2. **Event created before warning** - Warning shown AFTER creation
+2. **Event blocked on first attempt** - Error shown BEFORE creation
 
-   - Tradeoff: Allows event to be created, then LLM must delete if duplicate
-   - Benefit: Ensures LLM always KNOWS about potential duplicates
-   - Better UX than hard blocking and requiring retries
+   - Tradeoff: Requires LLM to retry with bypass flag if not a duplicate
+   - Benefit: Prevents spurious notifications to shared calendar users
+   - Better UX for shared calendars than creating then deleting
 
 3. **Extra latency** - 55ms per similarity comparison (embedding mode)
 
    - Typical duplicate check: 1-5 events in time window = 55-275ms overhead
-   - Runs AFTER event creation, doesn't block user response
+   - Runs BEFORE event creation, blocks creation until check completes
    - Acceptable for calendar operations (not high-frequency)
 
 4. **Memory footprint** - 87MB for all-MiniLM-L6-v2 model
