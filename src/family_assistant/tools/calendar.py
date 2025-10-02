@@ -228,10 +228,6 @@ async def _check_for_duplicate_events(
         # Compute similarity for each event
         similar_events = []
         for event in events_in_window:
-            # Skip the event we just created (by comparing summary exactly)
-            if event["summary"] == summary:
-                continue
-
             similarity = await similarity_strategy.compute_similarity(
                 summary, event["summary"]
             )

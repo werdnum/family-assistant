@@ -2427,5 +2427,119 @@ async def test_duplicate_detection_all_day_events(
     logger.info("Test duplicate detection all-day events PASSED.")
 
 
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_duplicate_detection_exact_same_title(
+    pg_vector_db_engine: AsyncEngine,
+    radicale_server: tuple[str, str, str, str],
+) -> None:
+    """
+    Test that duplicate detection catches events with exact same title.
+
+    Regression test for bug where events with identical summaries were incorrectly
+    skipped during duplicate detection, allowing duplicate creation.
+    """
+    logger.info("Starting test_duplicate_detection_exact_same_title...")
+
+    base_url, username, password, calendar_url = radicale_server
+
+    test_calendar_config = {
+        "caldav": {
+            "base_url": base_url,
+            "username": username,
+            "password": password,
+            "calendar_urls": [calendar_url],
+            "_use_naive_datetimes_for_search": True,
+        },
+        "duplicate_detection": {
+            "enabled": True,
+            "similarity_strategy": "fuzzy",
+            "similarity_threshold": 0.30,
+            "time_window_hours": 2,
+        },
+    }
+
+    async with DatabaseContext(pg_vector_db_engine) as db_context:
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_exact_duplicate",
+            user_name="testuser",
+            turn_id="test_turn",
+            db_context=db_context,
+            timezone_str="America/New_York",
+        )
+
+        # Create first event
+        tomorrow = date.today() + timedelta(days=1)
+        event1_start = datetime(
+            tomorrow.year, tomorrow.month, tomorrow.day, 14, 0, 0
+        ).replace(tzinfo=ZoneInfo("America/New_York"))
+        event1_end = event1_start + timedelta(hours=1)
+
+        event1_result = await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary="Team Meeting",  # Exact title
+            start_time=event1_start.isoformat(),
+            end_time=event1_end.isoformat(),
+        )
+
+        logger.info(f"Event 1 result:\n{event1_result}")
+        assert "OK. Event 'Team Meeting' added" in event1_result
+        assert "Error:" not in event1_result
+
+        # Wait for indexing
+        indexed = await wait_for_radicale_indexing(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            event_summary="Team Meeting",
+            timeout_seconds=10.0,
+        )
+        assert indexed, "Radicale failed to index first event"
+
+        # Try to create second event with EXACT SAME title at nearby time
+        # This should be blocked by duplicate detection
+        event2_start = event1_start + timedelta(minutes=30)  # Within 2-hour window
+        event2_end = event2_start + timedelta(hours=1)
+
+        event2_result = await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary="Team Meeting",  # EXACT same title
+            start_time=event2_start.isoformat(),
+            end_time=event2_end.isoformat(),
+        )
+
+        logger.info(f"Event 2 (exact duplicate) result:\n{event2_result}")
+
+        # Verify error is shown (event not created)
+        assert "Error: Cannot create event" in event2_result, (
+            "Exact duplicate should be blocked"
+        )
+        assert "Team Meeting" in event2_result, (
+            "Error should mention the duplicate event"
+        )
+        assert "similarity: 1.00" in event2_result, (
+            "Similarity should be 1.00 for exact match"
+        )
+        assert "bypass_duplicate_check=true" in event2_result
+
+        # Verify only one event exists in calendar
+        search_result = await search_calendar_events_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            search_text="Team Meeting",
+        )
+
+        # Count how many times "Team Meeting" appears in the results
+        # Should only appear once (for the first event)
+        meeting_count = search_result.count("Team Meeting")
+        assert meeting_count == 1, (
+            f"Expected exactly 1 'Team Meeting' event, found {meeting_count}"
+        )
+
+    logger.info("Test duplicate detection exact same title PASSED.")
+
+
 # TODO: Add tests for basic recurring events.
 # TODO: Add test for event created directly in CalDAV appears in application fetch.
