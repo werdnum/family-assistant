@@ -1887,15 +1887,6 @@ class ProcessingService:
                             },
                         )
 
-                # Add image attachments as image_url content parts for trigger_attachments
-                for attachment in trigger_attachments:
-                    if attachment.get("type") == "image" and attachment.get(
-                        "content_url"
-                    ):
-                        converted_trigger_parts.append({
-                            "type": "image_url",
-                            "image_url": {"url": attachment["content_url"]},
-                        })
             # Add current user trigger message
             llm_user_content: str | list[dict[str, Any]]
             if (

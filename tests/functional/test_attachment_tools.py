@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import io
 import json
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
+import aiofiles
 import pytest
+from PIL import Image
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -16,6 +20,7 @@ from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import AVAILABLE_FUNCTIONS, TOOLS_DEFINITION
 from family_assistant.tools.attachments import attach_to_response_tool
 from family_assistant.tools.communication import send_message_to_user_tool
+from family_assistant.tools.image_tools import highlight_image_tool
 from family_assistant.tools.types import ToolExecutionContext
 
 if TYPE_CHECKING:
@@ -346,3 +351,283 @@ class TestToolRegistration:
         assert "attachment_ids" in params["properties"]
         assert params["properties"]["attachment_ids"]["type"] == "array"
         assert "attachment_ids" in params["required"]
+
+
+def create_test_image(
+    width: int = 800, height: int = 600, color: str = "white"
+) -> bytes:
+    """Create a simple test image with specified dimensions and color.
+
+    Args:
+        width: Image width in pixels
+        height: Image height in pixels
+        color: Background color (PIL color name or hex)
+
+    Returns:
+        PNG image bytes
+    """
+    img = Image.new("RGB", (width, height), color)
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+class TestHighlightImageTool:
+    """Test the highlight_image tool functionality."""
+
+    async def test_highlight_image_success(
+        self,
+        db_engine: AsyncEngine,
+    ) -> None:
+        """Test successful image highlighting with bounding boxes."""
+        # Create test image
+        test_image_bytes = create_test_image(800, 600, "white")
+
+        async with DatabaseContext(db_engine) as db_context:
+            # Create attachment registry
+            attachment_registry = AttachmentRegistry(
+                storage_path="/tmp/test_attachments", db_engine=db_engine, config=None
+            )
+
+            # Register the test image
+            image_id = str(uuid.uuid4())
+            # AttachmentRegistry uses hash-prefixed directories
+            hash_prefix = image_id[:2]
+            storage_dir = Path("/tmp/test_attachments") / hash_prefix
+            storage_dir.mkdir(parents=True, exist_ok=True)
+            storage_path = str(storage_dir / f"{image_id}.png")
+            async with aiofiles.open(storage_path, "wb") as f:
+                await f.write(test_image_bytes)
+
+            await attachment_registry.register_attachment(
+                db_context=db_context,
+                attachment_id=image_id,
+                source_type="user",
+                source_id="test_user",
+                mime_type="image/png",
+                description="Test image",
+                size=len(test_image_bytes),
+                storage_path=storage_path,
+                conversation_id="test_conversation",
+            )
+
+            # Create execution context
+            exec_context = ToolExecutionContext(
+                conversation_id="test_conversation",
+                interface_type="web",
+                turn_id="turn_123",
+                user_name="test_user",
+                db_context=db_context,
+                chat_interface=None,
+                attachment_registry=attachment_registry,
+            )
+
+            # Get attachment metadata
+            attachment_metadata = await attachment_registry.get_attachment(
+                db_context, image_id
+            )
+            assert attachment_metadata is not None
+
+            # Create ScriptAttachment
+            script_attachment = ScriptAttachment(
+                metadata=attachment_metadata,
+                registry=attachment_registry,
+                db_context_getter=lambda: db_context,
+            )
+
+            # Define regions with bounding box format (normalized [0, 1000] coordinates)
+            # For an 800x600 image, these will be scaled to pixel coordinates
+            regions = [
+                {
+                    "box": {"x_min": 100, "y_min": 200, "x_max": 400, "y_max": 600},
+                    "label": "test_region_1",
+                    "color": "red",
+                },
+                {
+                    "box": {"x_min": 500, "y_min": 300, "x_max": 800, "y_max": 700},
+                    "label": "test_region_2",
+                    "color": "blue",
+                },
+            ]
+
+            # Execute tool
+            result = await highlight_image_tool(
+                exec_context=exec_context,
+                image_attachment_id=script_attachment,
+                regions=regions,
+            )
+
+            # Verify result
+            assert result.text is not None
+            assert "Successfully highlighted" in result.text
+            assert "2 regions" in result.text
+            assert "test_region_1" in result.text
+            assert "test_region_2" in result.text
+
+            # Verify attachment was created
+            assert result.attachment is not None
+            assert result.attachment.mime_type == "image/png"
+            assert result.attachment.content is not None
+            assert len(result.attachment.content) > 0
+
+            # Verify the highlighted image is different from the original
+            assert result.attachment.content != test_image_bytes
+
+            # Verify we can load the highlighted image
+            highlighted_img = Image.open(io.BytesIO(result.attachment.content))
+            assert highlighted_img.size == (800, 600)
+
+    async def test_highlight_image_invalid_attachment(
+        self,
+        db_engine: AsyncEngine,
+    ) -> None:
+        """Test highlight_image with non-image attachment."""
+        # Create a text file instead of an image
+        test_text = b"This is not an image"
+
+        async with DatabaseContext(db_engine) as db_context:
+            attachment_registry = AttachmentRegistry(
+                storage_path="/tmp/test_attachments", db_engine=db_engine, config=None
+            )
+
+            # Register a text file
+            file_id = str(uuid.uuid4())
+            # AttachmentRegistry uses hash-prefixed directories
+            hash_prefix = file_id[:2]
+            storage_dir = Path("/tmp/test_attachments") / hash_prefix
+            storage_dir.mkdir(parents=True, exist_ok=True)
+            storage_path = str(storage_dir / f"{file_id}.txt")
+            async with aiofiles.open(storage_path, "wb") as f:
+                await f.write(test_text)
+
+            await attachment_registry.register_attachment(
+                db_context=db_context,
+                attachment_id=file_id,
+                source_type="user",
+                source_id="test_user",
+                mime_type="text/plain",
+                description="Test text file",
+                size=len(test_text),
+                storage_path=storage_path,
+                conversation_id="test_conversation",
+            )
+
+            exec_context = ToolExecutionContext(
+                conversation_id="test_conversation",
+                interface_type="web",
+                turn_id="turn_123",
+                user_name="test_user",
+                db_context=db_context,
+                chat_interface=None,
+                attachment_registry=attachment_registry,
+            )
+
+            attachment_metadata = await attachment_registry.get_attachment(
+                db_context, file_id
+            )
+            assert attachment_metadata is not None
+
+            script_attachment = ScriptAttachment(
+                metadata=attachment_metadata,
+                registry=attachment_registry,
+                db_context_getter=lambda: db_context,
+            )
+
+            regions = [
+                {
+                    "box": {"x_min": 100, "y_min": 100, "x_max": 200, "y_max": 200},
+                    "label": "test",
+                },
+            ]
+
+            # Execute tool - should fail gracefully
+            result = await highlight_image_tool(
+                exec_context=exec_context,
+                image_attachment_id=script_attachment,
+                regions=regions,
+            )
+
+            # Verify error result
+            assert result.text is not None
+            assert "Error" in result.text
+            assert "not an image" in result.text
+            assert result.attachment is None
+
+    async def test_highlight_image_invalid_regions(
+        self,
+        db_engine: AsyncEngine,
+    ) -> None:
+        """Test highlight_image with invalid region data."""
+        test_image_bytes = create_test_image(800, 600, "white")
+
+        async with DatabaseContext(db_engine) as db_context:
+            attachment_registry = AttachmentRegistry(
+                storage_path="/tmp/test_attachments", db_engine=db_engine, config=None
+            )
+
+            image_id = str(uuid.uuid4())
+            # AttachmentRegistry uses hash-prefixed directories
+            hash_prefix = image_id[:2]
+            storage_dir = Path("/tmp/test_attachments") / hash_prefix
+            storage_dir.mkdir(parents=True, exist_ok=True)
+            storage_path = str(storage_dir / f"{image_id}.png")
+            async with aiofiles.open(storage_path, "wb") as f:
+                await f.write(test_image_bytes)
+
+            await attachment_registry.register_attachment(
+                db_context=db_context,
+                attachment_id=image_id,
+                source_type="user",
+                source_id="test_user",
+                mime_type="image/png",
+                description="Test image",
+                size=len(test_image_bytes),
+                storage_path=storage_path,
+                conversation_id="test_conversation",
+            )
+
+            exec_context = ToolExecutionContext(
+                conversation_id="test_conversation",
+                interface_type="web",
+                turn_id="turn_123",
+                user_name="test_user",
+                db_context=db_context,
+                chat_interface=None,
+                attachment_registry=attachment_registry,
+            )
+
+            attachment_metadata = await attachment_registry.get_attachment(
+                db_context, image_id
+            )
+            assert attachment_metadata is not None
+
+            script_attachment = ScriptAttachment(
+                metadata=attachment_metadata,
+                registry=attachment_registry,
+                db_context_getter=lambda: db_context,
+            )
+
+            # Mix of valid and invalid regions
+            regions = [
+                {
+                    "box": {"x_min": 100, "y_min": 100, "x_max": 200, "y_max": 200},
+                    "label": "valid_region",
+                },
+                {
+                    # Missing box entirely
+                    "label": "invalid_region",
+                },
+            ]
+
+            # Execute tool - should process valid region and skip invalid
+            result = await highlight_image_tool(
+                exec_context=exec_context,
+                image_attachment_id=script_attachment,
+                regions=regions,
+            )
+
+            # Should succeed with 1 region drawn
+            assert result.text is not None
+            assert "Successfully highlighted" in result.text
+            assert "1 regions" in result.text or "1 region" in result.text
+            assert result.attachment is not None

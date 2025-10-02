@@ -6,6 +6,7 @@ import base64
 import json
 import logging
 import mimetypes
+import os
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -24,6 +25,7 @@ from family_assistant.llm import (
     LLMStreamEvent,
     ToolCallFunction,
     ToolCallItem,
+    _format_messages_for_debug,
 )
 
 from ..base import (
@@ -416,8 +418,28 @@ class GoogleGenAIClient(BaseLLMClient):
     ) -> LLMOutput:
         """Generate response using Google GenAI."""
         try:
+            # Debug logging if enabled
+            DEBUG_LLM_MESSAGES = os.getenv("DEBUG_LLM_MESSAGES", "false").lower() in {
+                "true",
+                "1",
+                "yes",
+            }
+            if DEBUG_LLM_MESSAGES:
+                logger.info(
+                    f"=== LLM Request to {self.model_name} ===\n"
+                    f"{_format_messages_for_debug(messages, tools, tool_choice)}"
+                )
+
             # Convert messages to format expected by new API
             contents = self._convert_messages_to_genai_format(messages)
+
+            # Debug: Log post-processed messages if enabled
+            if DEBUG_LLM_MESSAGES:
+                processed_msgs = self._process_tool_messages(messages.copy())
+                logger.info(
+                    f"=== After _process_tool_messages ({len(processed_msgs)} messages) ===\n"
+                    f"{_format_messages_for_debug(processed_msgs, None, None)}"
+                )
 
             # Build generation config
             config_params = {
@@ -613,8 +635,28 @@ class GoogleGenAIClient(BaseLLMClient):
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses using Google GenAI."""
         try:
+            # Debug logging if enabled
+            DEBUG_LLM_MESSAGES = os.getenv("DEBUG_LLM_MESSAGES", "false").lower() in {
+                "true",
+                "1",
+                "yes",
+            }
+            if DEBUG_LLM_MESSAGES:
+                logger.info(
+                    f"=== LLM Streaming Request to {self.model_name} ===\n"
+                    f"{_format_messages_for_debug(messages, tools, tool_choice)}"
+                )
+
             # Convert messages to format expected by API
             contents = self._convert_messages_to_genai_format(messages)
+
+            # Debug: Log post-processed messages if enabled
+            if DEBUG_LLM_MESSAGES:
+                processed_msgs = self._process_tool_messages(messages.copy())
+                logger.info(
+                    f"=== After _process_tool_messages ({len(processed_msgs)} messages) ===\n"
+                    f"{_format_messages_for_debug(processed_msgs, None, None)}"
+                )
 
             # Build generation config
             config_params = {
