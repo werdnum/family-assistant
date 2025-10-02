@@ -1,7 +1,7 @@
 # Development container image with all dev tools
 # Extends the base image with interactive development tools
 
-ARG BASE_IMAGE=ghcr.io/werdnum/family-assistant:devcontainer-base-latest
+ARG BASE_IMAGE=family-assistant-dev-base:latest
 FROM ${BASE_IMAGE}
 
 # Switch to claude user for dev tool installations

@@ -1,5 +1,12 @@
 version: '3.8'
 services:
+  # Base image build service. This is a helper service to ensure the base image is built
+  # from the Dockerfile.base, making the build process hermetic and cross-platform.
+  base:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile.base
+    image: family-assistant-dev-base:latest
   # PostgreSQL database service
   postgres:
     image: pgvector/pgvector:0.8.0-pg17
@@ -25,10 +32,10 @@ services:
     build:
       context: ..
       dockerfile: .devcontainer/Dockerfile
-      cache_from:
-      - ghcr.io/werdnum/family-assistant:devcontainer
     restart: always
     depends_on:
+      base:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     working_dir: /workspace/${WORKTREE_NAME:-main}
@@ -66,9 +73,9 @@ services:
     build:
       context: ..
       dockerfile: .devcontainer/Dockerfile
-      cache_from:
-      - ghcr.io/werdnum/family-assistant:devcontainer
     depends_on:
+      base:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     working_dir: /workspace/${WORKTREE_NAME:-main}
