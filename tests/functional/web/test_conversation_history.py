@@ -11,15 +11,15 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.assistant import Assistant
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.storage.context import get_db_context
-from family_assistant.web.app_creator import app as fastapi_app
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 
 
 @pytest.mark.asyncio
 async def test_get_conversations_empty(web_only_assistant: Assistant) -> None:
     """Test getting conversations when none exist."""
-    # Create HTTP client using the configured fastapi app
-    transport = httpx.ASGITransport(app=fastapi_app)
+    # Create HTTP client using the assistant's owned fastapi app
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
@@ -58,7 +58,8 @@ async def test_get_conversations_with_data(
     # Create test conversations via API
     conv_ids = [f"test_conv_{i}" for i in range(3)]
 
-    transport = httpx.ASGITransport(app=fastapi_app)
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
@@ -105,7 +106,8 @@ async def test_get_conversations_pagination(
     ]
 
     # Create 5 test conversations via API
-    transport = httpx.ASGITransport(app=fastapi_app)
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
@@ -147,7 +149,8 @@ async def test_get_conversation_messages_empty(web_only_assistant: Assistant) ->
     """Test getting messages for a non-existent conversation."""
     conv_id = "non_existent_conv"
 
-    transport = httpx.ASGITransport(app=fastapi_app)
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
@@ -201,7 +204,8 @@ async def test_get_conversation_messages_with_data(
     ]
 
     # Create conversation via API
-    transport = httpx.ASGITransport(app=fastapi_app)
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
@@ -287,7 +291,8 @@ async def test_get_conversation_messages_cross_interface_retrieval(
         )
 
     # Get messages via API
-    transport = httpx.ASGITransport(app=fastapi_app)
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
@@ -358,7 +363,8 @@ async def test_get_conversations_interface_filter(
             content="Telegram assistant response",
         )
 
-    transport = httpx.ASGITransport(app=fastapi_app)
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
@@ -416,7 +422,8 @@ async def test_get_conversations_conversation_id_filter(
                 content=f"Test message {i}",
             )
 
-    transport = httpx.ASGITransport(app=fastapi_app)
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
@@ -484,7 +491,8 @@ async def test_get_conversations_date_filters(
             content="Today's message",
         )
 
-    transport = httpx.ASGITransport(app=fastapi_app)
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
@@ -523,7 +531,8 @@ async def test_get_conversations_invalid_date_formats(
     web_only_assistant: Assistant,
 ) -> None:
     """Test error handling for invalid date formats."""
-    transport = httpx.ASGITransport(app=fastapi_app)
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
@@ -587,7 +596,8 @@ async def test_get_conversations_combined_filters(
             content="Wrong date message",
         )
 
-    transport = httpx.ASGITransport(app=fastapi_app)
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
@@ -629,7 +639,8 @@ async def test_get_conversation_messages_pagination_default(
                 content=f"Message {i}",
             )
 
-    transport = httpx.ASGITransport(app=fastapi_app)
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
@@ -676,7 +687,8 @@ async def test_get_conversation_messages_pagination_before(
                 content=f"Message {i}",
             )
 
-    transport = httpx.ASGITransport(app=fastapi_app)
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
@@ -726,7 +738,8 @@ async def test_get_conversation_messages_pagination_after(
                 content=f"Message {i}",
             )
 
-    transport = httpx.ASGITransport(app=fastapi_app)
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
@@ -774,7 +787,8 @@ async def test_get_conversation_messages_pagination_limit_zero(
                 content=f"Message {i}",
             )
 
-    transport = httpx.ASGITransport(app=fastapi_app)
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
@@ -806,7 +820,8 @@ async def test_get_conversation_messages_invalid_timestamp(
     """Test error handling for invalid timestamp formats."""
     conv_id = "test_invalid_timestamps"
 
-    transport = httpx.ASGITransport(app=fastapi_app)
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
@@ -832,7 +847,8 @@ async def test_get_conversation_messages_empty_results(
     """Test pagination with no messages matching criteria."""
     conv_id = "test_empty_pagination"
 
-    transport = httpx.ASGITransport(app=fastapi_app)
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:

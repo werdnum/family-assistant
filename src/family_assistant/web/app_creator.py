@@ -168,19 +168,124 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Application shutting down...")
 
 
-# --- FastAPI App Initialization ---
-app = FastAPI(
-    title="Family Assistant Web Interface",
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
-    middleware=middleware,
-    lifespan=lifespan,
-)
+# --- FastAPI App Factory ---
+def create_app() -> FastAPI:
+    """Create a new FastAPI application instance.
 
-# --- Store shared objects on app.state ---
-app.state.templates = templates
-app.state.server_url = SERVER_URL
-app.state.docs_user_dir = docs_user_dir
+    This factory function creates a fresh FastAPI instance with all middleware,
+    routes, and configuration. Each instance has isolated state, preventing
+    concurrent modifications when multiple apps are created (e.g., in tests).
+
+    Returns:
+        FastAPI: A configured FastAPI application instance
+    """
+    new_app = FastAPI(
+        title="Family Assistant Web Interface",
+        docs_url="/api/docs",
+        redoc_url="/api/redoc",
+        middleware=middleware,
+        lifespan=lifespan,
+    )
+
+    # --- Store shared objects on app.state ---
+    new_app.state.templates = templates
+    new_app.state.server_url = SERVER_URL
+    new_app.state.docs_user_dir = docs_user_dir
+
+    # Initialize tool_definitions for development mode
+    # This will be populated by Assistant.setup_dependencies() in production
+    # For development, we load them directly here
+    if not hasattr(new_app.state, "tool_definitions"):
+        try:
+            from family_assistant.tools import TOOLS_DEFINITION  # noqa: PLC0415
+
+            new_app.state.tool_definitions = TOOLS_DEFINITION
+            logger.info(
+                f"Loaded {len(TOOLS_DEFINITION)} tool definitions for development mode"
+            )
+        except ImportError as e:
+            new_app.state.tool_definitions = []
+            logger.warning(f"Could not import tool definitions for development: {e}")
+
+    # --- Mount Static Files ---
+    if static_dir.is_dir():
+        new_app.mount("/static", StaticFiles(directory=static_dir), name="static")
+        logger.debug(f"Mounted static files from: {static_dir}")
+    else:
+        logger.error(
+            f"Static directory '{static_dir}' not found or not a directory. Static files will not be served."
+        )
+
+    # --- Include Routers ---
+    # Note: Auth router will be added after AuthService is initialized
+
+    logger.debug("Including vite_pages_router...")
+    new_app.include_router(vite_pages_router, tags=["Vite Pages"])
+
+    # Log registered UI routes for debugging CI issues
+    ui_routes = []
+    for route in vite_pages_router.routes:
+        if hasattr(route, "path") and hasattr(route, "methods"):
+            methods = getattr(route, "methods", set())
+            path = getattr(route, "path", "unknown")
+            method = list(methods)[0] if methods else "GET"
+            ui_routes.append(f"{method} {path}")
+    logger.debug(f"Registered UI routes from vite_pages_router: {ui_routes}")
+
+    # Check if any vite routes might conflict with auth routes
+    auth_paths = {"/login", "/logout", "/auth"}
+    # Extract paths from route strings and check for conflicts efficiently
+    ui_route_paths = set()
+    conflicting_paths = []
+    for route in ui_routes:
+        split_route = route.split()
+        if len(split_route) >= 2:
+            ui_route_paths.add(split_route[1])
+            if any(
+                split_route[1] == auth_path
+                or split_route[1].startswith(auth_path + "/")
+                for auth_path in auth_paths
+            ):
+                conflicting_paths.append(route)
+    if conflicting_paths:
+        logger.warning(
+            f"Potential route conflicts with auth paths: {conflicting_paths}"
+        )
+
+    new_app.include_router(webhooks_router, tags=["Webhooks"])
+    new_app.include_router(context_viewer_router, tags=["Context Viewer UI"])
+    new_app.include_router(health_router, tags=["Health Check"])
+
+    # General API endpoints (like /api/tools/execute, /api/documents/upload)
+    new_app.include_router(api_router, prefix="/api", tags=["General API"])
+
+    # API Token Management endpoints (like /api/me/tokens)
+    # This is nested under /api as well, so the full path would be /api/me/tokens
+    new_app.include_router(
+        api_documentation_router,
+        prefix="/api/documentation",
+        tags=["Documentation"],
+    )
+    new_app.include_router(
+        api_token_management_router,
+        prefix="/api/me/tokens",  # Suggesting a "me" scope for user-specific tokens
+        tags=["API Token Management"],
+    )
+
+    return new_app
+
+
+# --- FastAPI App Initialization (Module-Level Singleton) ---
+# This module-level app is kept for backward compatibility with:
+# - CLI usage: `uvicorn family_assistant.web.app_creator:app`
+# - Direct imports from existing code
+# New code should use create_app() to get isolated instances
+app = create_app()
+
+# Restore logging to INFO for module-level app initialization
+logger.info(f"Module-level app created and mounted static files from: {static_dir}")
+logger.info("Registered UI routes from vite_pages_router")
+logger.info("Routers included in module-level app")
 
 
 # --- Configure template helpers ---
@@ -280,110 +385,6 @@ class DevModeTemplates(Jinja2Templates):
 
 # Replace the templates instance with our custom class
 templates.__class__ = DevModeTemplates
-
-# Initialize tool_definitions for development mode
-# This will be populated by Assistant.setup_dependencies() in production
-# For development, we load them directly here
-if not hasattr(app.state, "tool_definitions"):
-    try:
-        from family_assistant.tools import TOOLS_DEFINITION
-
-        app.state.tool_definitions = TOOLS_DEFINITION
-        logger.info(
-            f"Loaded {len(TOOLS_DEFINITION)} tool definitions for development mode"
-        )
-    except ImportError as e:
-        app.state.tool_definitions = []
-        logger.warning(f"Could not import tool definitions for development: {e}")
-
-
-def configure_app_debug(debug: bool = True) -> None:
-    """Configure the FastAPI app debug mode. Useful for tests to get detailed error messages."""
-    app.debug = debug
-    logger.info(f"FastAPI debug mode set to: {debug}")
-
-
-# --- Mount Static Files ---
-if "static_dir" in locals() and static_dir.is_dir():
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
-    logger.info(f"Mounted static files from: {static_dir}")
-else:
-    logger.error(
-        f"Static directory '{static_dir if 'static_dir' in locals() else 'Not Defined'}' not found or not a directory. Static files will not be served."
-    )
-
-# --- Include Routers ---
-# Note: Auth router will be added after AuthService is initialized
-
-logger.info("Including vite_pages_router...")
-app.include_router(vite_pages_router, tags=["Vite Pages"])
-
-# Log registered UI routes for debugging CI issues
-ui_routes = []
-for route in vite_pages_router.routes:
-    if hasattr(route, "path") and hasattr(route, "methods"):
-        methods = getattr(route, "methods", set())
-        path = getattr(route, "path", "unknown")
-        method = list(methods)[0] if methods else "GET"
-        ui_routes.append(f"{method} {path}")
-logger.info(f"Registered UI routes from vite_pages_router: {ui_routes}")
-
-# Check if any vite routes might conflict with auth routes
-auth_paths = {"/login", "/logout", "/auth"}
-# Extract paths from route strings and check for conflicts efficiently
-ui_route_paths = set()
-conflicting_paths = []
-for route in ui_routes:
-    split_route = route.split()
-    if len(split_route) >= 2:
-        ui_route_paths.add(split_route[1])
-        if any(
-            split_route[1] == auth_path or split_route[1].startswith(auth_path + "/")
-            for auth_path in auth_paths
-        ):
-            conflicting_paths.append(route)
-if conflicting_paths:
-    logger.warning(f"Potential route conflicts with auth paths: {conflicting_paths}")
-
-# NOTE: The following routers have been removed as their Jinja2 templates
-# have been migrated to React components served via vite_pages_router:
-#   * documentation_router - docs now via React
-#   * api_docs_router - not needed
-#   * vector_search_router - replaced with React at /vector-search
-#   * documents_ui_router - replaced with React at /documents
-#   * notes_ui_router - replaced with React at /notes
-#   * tasks_ui_router - replaced with React at /tasks
-#   * message_history_router - replaced with React at /history
-#   * error_list_router - replaced with React at /errors
-# All these routes are now handled by vite_pages_router above
-
-app.include_router(webhooks_router, tags=["Webhooks"])
-app.include_router(context_viewer_router, tags=["Context Viewer UI"])
-app.include_router(health_router, tags=["Health Check"])
-
-# General API endpoints (like /api/tools/execute, /api/documents/upload)
-app.include_router(api_router, prefix="/api", tags=["General API"])
-
-# API Token Management endpoints (like /api/me/tokens)
-# This is nested under /api as well, so the full path would be /api/me/tokens
-app.include_router(
-    api_documentation_router,
-    prefix="/api/documentation",
-    tags=["Documentation"],
-)
-app.include_router(
-    api_token_management_router,
-    prefix="/api/me/tokens",  # Suggesting a "me" scope for user-specific tokens
-    tags=["API Token Management"],
-)
-
-# Removed ui_token_management_router - using React instead
-
-
-# --- Serve Vite-built HTML files in production ---
-# NOTE: This catch-all route MUST be registered AFTER auth routes
-# to avoid intercepting /login, /logout, /auth paths.
-# It's now registered in configure_app_auth() after auth routes are added.
 
 
 def configure_app_auth(
@@ -504,8 +505,8 @@ def configure_app_auth(
 # Export the helper functions and app
 __all__ = [
     "app",
+    "create_app",
     "create_template_context",
     "get_dev_mode_from_request",
-    "configure_app_debug",
     "configure_app_auth",
 ]

@@ -1,9 +1,10 @@
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import copy
 import logging
 import os
-import socket
 import sys
 import zoneinfo
 from asyncio import subprocess as asyncio_subprocess
@@ -12,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import uvicorn
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 # Import Embedding interface/clients
 from family_assistant import embeddings
@@ -38,7 +38,6 @@ from family_assistant.indexing.document_indexer import DocumentIndexer
 from family_assistant.indexing.email_indexer import EmailIndexer
 from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
-from family_assistant.llm import LLMInterface
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage import init_db
@@ -72,16 +71,21 @@ from family_assistant.tools import (
     MCPToolsProvider,
     _scan_user_docs,
 )
-from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.utils.logging_handler import setup_error_logging
 from family_assistant.utils.scraping import PlaywrightScraper
-from family_assistant.web.app_creator import app as fastapi_app
-from family_assistant.web.app_creator import configure_app_auth
+from family_assistant.web.app_creator import configure_app_auth, create_app
 
 from .telegram_bot import TelegramService
 
 if TYPE_CHECKING:
+    import socket
+
+    from fastapi import FastAPI
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+    from family_assistant.llm import LLMInterface
     from family_assistant.services.attachment_registry import AttachmentRegistry
+    from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +165,7 @@ class Assistant:
         self.database_engine: AsyncEngine | None = None
 
         # Initialize all instance attributes
+        self.fastapi_app: FastAPI | None = None
         self.shared_httpx_client: httpx.AsyncClient | None = None
         self.embedding_generator: EmbeddingGenerator | None = None
         self.processing_services_registry: dict[str, ProcessingService] = {}
@@ -282,8 +287,12 @@ class Assistant:
 
         logger.info(f"Using model: {self.config['model']}")
 
+        # Create FastAPI app instance
+        self.fastapi_app = create_app()
+        logger.info("Created FastAPI app instance")
+
         # Store config in FastAPI app state for access by routes
-        fastapi_app.state.config = self.config
+        self.fastapi_app.state.config = self.config
         logger.info("Stored configuration in FastAPI app state.")
 
         self.shared_httpx_client = httpx.AsyncClient()
@@ -349,7 +358,7 @@ class Assistant:
         logger.info(
             f"Using embedding generator: {type(self.embedding_generator).__name__} with model: {self.embedding_generator.model_name}"
         )
-        fastapi_app.state.embedding_generator = self.embedding_generator
+        self.fastapi_app.state.embedding_generator = self.embedding_generator
 
         # Create database engine
         # Use injected engine if provided, otherwise create from config
@@ -367,10 +376,10 @@ class Assistant:
                 await db_ctx.init_vector_db()
 
         # Store engine in FastAPI app state for web dependencies
-        fastapi_app.state.database_engine = self.database_engine
+        self.fastapi_app.state.database_engine = self.database_engine
 
         # Configure authentication with the database engine
-        configure_app_auth(fastapi_app, self.database_engine)
+        configure_app_auth(self.fastapi_app, self.database_engine)
         logger.info("Authentication configured with database engine")
 
         # Initialize AttachmentRegistry (consolidates file storage and database metadata)
@@ -395,7 +404,7 @@ class Assistant:
         )
 
         # Store in FastAPI app state for web access
-        fastapi_app.state.attachment_registry = self.attachment_registry
+        self.fastapi_app.state.attachment_registry = self.attachment_registry
         logger.info(
             f"AttachmentRegistry initialized with path: {attachment_storage_path}"
         )
@@ -493,12 +502,12 @@ class Assistant:
 
         # Initialize and store for UI/API access
         await self.root_tools_provider.get_tool_definitions()
-        fastapi_app.state.tools_provider = self.root_tools_provider
-        fastapi_app.state.tool_definitions = (
+        self.fastapi_app.state.tools_provider = self.root_tools_provider
+        self.fastapi_app.state.tool_definitions = (
             await self.root_tools_provider.get_tool_definitions()
         )
         logger.info(
-            f"Root ToolsProvider initialized with {len(fastapi_app.state.tool_definitions)} tools"
+            f"Root ToolsProvider initialized with {len(self.fastapi_app.state.tool_definitions)} tools"
         )
 
         for profile_conf in resolved_profiles:
@@ -840,7 +849,7 @@ class Assistant:
                 self.processing_services_registry
             )
 
-        fastapi_app.state.processing_services = self.processing_services_registry
+        self.fastapi_app.state.processing_services = self.processing_services_registry
 
         self.default_processing_service = self.processing_services_registry.get(
             default_service_profile_id
@@ -856,15 +865,15 @@ class Assistant:
                 default_service_profile_id
             ]
 
-        fastapi_app.state.processing_service = self.default_processing_service
-        fastapi_app.state.llm_client = self.default_processing_service.llm_client
+        self.fastapi_app.state.processing_service = self.default_processing_service
+        self.fastapi_app.state.llm_client = self.default_processing_service.llm_client
         # Note: tools_provider and tool_definitions are already set to root provider above
         logger.info(
             f"Default processing service set to profile ID: '{default_service_profile_id}'."
         )
 
         self.scraper_instance = PlaywrightScraper()
-        fastapi_app.state.scraper = self.scraper_instance
+        self.fastapi_app.state.scraper = self.scraper_instance
 
         pipeline_config = self.config.get("indexing_pipeline_config", {})
         if not pipeline_config.get("processors"):
@@ -902,13 +911,13 @@ class Assistant:
                 get_db_context_func=self._get_db_context_for_telegram,
                 # use_batching argument removed
             )
-            fastapi_app.state.telegram_service = self.telegram_service
+            self.fastapi_app.state.telegram_service = self.telegram_service
             logger.info(
                 "TelegramService instantiated and stored in FastAPI app state during setup_dependencies."
             )
         else:
             self.telegram_service = None
-            fastapi_app.state.telegram_service = None
+            self.fastapi_app.state.telegram_service = None
             logger.info("Telegram service disabled (telegram_enabled=False)")
 
         # Initialize event system if enabled
@@ -968,6 +977,7 @@ class Assistant:
         """Starts all long-running services and waits for shutdown."""
         if not self.default_processing_service or not self.embedding_generator:
             raise RuntimeError("Dependencies not set up before starting services.")
+        assert self.fastapi_app is not None, "FastAPI app not initialized"
 
         # Only start Telegram polling if enabled
         if self.telegram_enabled:
@@ -986,13 +996,13 @@ class Assistant:
         if self.server_socket is not None:
             # Use the pre-bound socket to avoid race conditions
             uvicorn_config = uvicorn.Config(
-                fastapi_app, fd=self.server_socket.fileno(), log_level="info"
+                self.fastapi_app, fd=self.server_socket.fileno(), log_level="info"
             )
             logger.info(f"Web server using pre-bound socket on port {server_port}")
         else:
             # Use normal host/port binding
             uvicorn_config = uvicorn.Config(
-                fastapi_app, host="0.0.0.0", port=server_port, log_level="info"
+                self.fastapi_app, host="0.0.0.0", port=server_port, log_level="info"
             )
             logger.info(f"Web server running on http://0.0.0.0:{server_port}")
 
@@ -1289,16 +1299,18 @@ class Assistant:
 
         # Uvicorn server task is awaited in start_services after shutdown_event.wait()
 
-        if fastapi_app.state.processing_services and isinstance(
-            fastapi_app.state.processing_services, dict
+        if (
+            self.fastapi_app
+            and self.fastapi_app.state.processing_services
+            and isinstance(self.fastapi_app.state.processing_services, dict)
         ):
             logger.info(
-                f"Closing tool providers for {len(fastapi_app.state.processing_services)} services..."
+                f"Closing tool providers for {len(self.fastapi_app.state.processing_services)} services..."
             )
             for (
                 profile_id,
                 service_instance,
-            ) in fastapi_app.state.processing_services.items():
+            ) in self.fastapi_app.state.processing_services.items():
                 if (
                     hasattr(service_instance, "tools_provider")
                     and service_instance.tools_provider
@@ -1329,10 +1341,14 @@ class Assistant:
             logging.getLogger().removeHandler(self.error_logging_handler)
             logger.info("Error logging handler closed.")
 
-        # Close database engine
-        if self.database_engine:
+        # Close database engine (only if we created it, not if it was injected)
+        if self.database_engine and not self._injected_database_engine:
             await self.database_engine.dispose()
             logger.info("Database engine disposed.")
+        elif self._injected_database_engine:
+            logger.info(
+                "Database engine was injected, not disposing (managed by caller)."
+            )
 
         self._is_shutdown_complete = True
         logger.info("Assistant stop_services finished.")
