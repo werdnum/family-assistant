@@ -129,6 +129,9 @@ Significant architectural issues requiring substantial refactoring:
 - Synchronous operations that should be async
 - Missing critical error handling patterns
 - Database queries in loops (N+1 problem)
+- Use of mutable global state outside of the application's main entry point
+- Instantiation of objects with non-trivial external dependencies deep in the call stack (violates
+  Dependency Injection)
 
 Examples:
 
