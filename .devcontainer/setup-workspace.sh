@@ -67,8 +67,11 @@ if [ "$(id -u)" = "0" ]; then
     RUNNING_AS_ROOT=true
 fi
 
+
+(flock -x 200
+
 # Handle migration to worktree structure
-if [ -d "/workspace/.git" ] && [ ! -d "/workspace/main" ]; then
+if [ -d "/workspace/.git" ] && [ -z $(ls "/workspace/main") ]; then
     echo "Migrating to worktree-enabled structure..."
 
     # Create main directory
@@ -85,9 +88,10 @@ fi
 WORKTREE_DIR="/workspace/${WORKTREE_NAME:-main}"
 mkdir -p "$WORKTREE_DIR"
 cd "$WORKTREE_DIR"
+echo "Moving to ${WORKTREE_DIR}"
 
 # Clone repository if CLAUDE_PROJECT_REPO is set and .git doesn't exist
-if [ -n "$CLAUDE_PROJECT_REPO" ] && [ ! -d ".git" ]; then
+if [ -n "$CLAUDE_PROJECT_REPO" ] && [ ! -d "${WORKTREE_DIR}/.git" ]; then
     echo "🔍 Git clone debug:"
     echo "   CLAUDE_PROJECT_REPO: '$CLAUDE_PROJECT_REPO'"
     echo "   CLAUDE_PROJECT_BRANCH: '${CLAUDE_PROJECT_BRANCH:-main}'"
@@ -140,6 +144,10 @@ elif [ "$ONESHOT_MODE" = "true" ]; then
     exit 1
 fi
 
+) 200>/workspace/setup.lock
+
+rm /workspace/setup.lock
+
 # Check if we're in a Python project
 if [ -f "pyproject.toml" ]; then
     echo "Python project detected. Setting up virtual environment..."
@@ -167,14 +175,8 @@ if [ -f "pyproject.toml" ]; then
     # Install dependencies using uv sync to respect lock file
     echo "Installing Python dependencies..."
     uv sync --extra dev
-    
-    # Ensure poethepoet is installed
-    echo "Installing poethepoet..."
-    uv pip install poethepoet
-    
-    # Ensure pytest-xdist is installed for parallel test execution
-    echo "Installing pytest-xdist..."
-    uv pip install pytest-xdist
+
+    uv pip install poethepoet pytest-xdist pre-commit
     
     # Install pre-commit hooks if available (skip if running as root or in CI)
     if [ -f ".pre-commit-config.yaml" ] && [ "$RUNNING_AS_ROOT" != "true" ] && [ "$IS_CI_CONTAINER" != "true" ]; then
