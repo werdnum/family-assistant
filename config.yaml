@@ -97,6 +97,7 @@ indexing_pipeline_config:
 # --- Calendar Configuration ---
 # Calendar configuration is shared across all profiles.
 # Populated from environment variables (CALDAV_*, ICAL_URLS).
+# Example calendar configuration:
 # calendar_config:
 #   caldav:
 #     username: "user"
@@ -104,6 +105,11 @@ indexing_pipeline_config:
 #     calendar_urls: ["url1"]
 #   ical:
 #     urls: ["url2"]
+#   duplicate_detection:
+#     enabled: true  # Enable duplicate event detection (default: true)
+#     similarity_strategy: "fuzzy"  # Strategy: "fuzzy" (fast, zero dependencies) or "embedding" (requires local-embeddings extra)
+#     similarity_threshold: 0.30  # Similarity threshold (0.0-1.0). Events above this are considered duplicates
+#     time_window_hours: 2  # Time window in hours to search for duplicates around the event time
 
 # --- Default Service Profile Configuration ---
 # Settings for the primary, default assistant behavior.
