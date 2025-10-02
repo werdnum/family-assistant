@@ -245,27 +245,26 @@ async def _check_for_duplicate_events(
         # Sort by similarity (highest first)
         similar_events.sort(key=lambda e: e.get("similarity", 0.0), reverse=True)
 
-        # Format warning message
-        warning_lines = [
-            f"⚠️  WARNING: Found {len(similar_events)} similar event(s) at nearby times:",
+        # Format error message with bypass instructions
+        error_lines = [
+            f"Error: Cannot create event '{summary}' - found {len(similar_events)} similar event(s) at nearby times:",
             "",
         ]
 
         for idx, event in enumerate(similar_events, 1):
-            warning_lines.append(
+            error_lines.append(
                 f"{idx}. '{event['summary']}' at {event['start']} (similarity: {event['similarity']:.2f})"
             )
-            warning_lines.append(f"   UID: {event['uid']}")
+            error_lines.append(f"   UID: {event['uid']}")
             if idx < len(similar_events):
-                warning_lines.append("")
+                error_lines.append("")
 
-        warning_lines.append("")
-        warning_lines.append(
-            f"Please verify these are different events. If '{summary}' is a duplicate,"
+        error_lines.append("")
+        error_lines.append(
+            "If you believe this is NOT a duplicate, retry with bypass_duplicate_check=true."
         )
-        warning_lines.append("you should delete it using delete_calendar_event.")
 
-        return "\n".join(warning_lines)
+        return "\n".join(error_lines)
 
     except Exception as e:
         logger.warning(f"Error checking for duplicate events: {e}", exc_info=True)
@@ -311,6 +310,12 @@ CALENDAR_TOOLS_DEFINITION = [
                         "type": "string",
                         "description": (
                             "Optional iCalendar RRULE string for recurring events. Examples: 'FREQ=WEEKLY;BYDAY=MO,WE,FR' for every Mon/Wed/Fri, 'FREQ=MONTHLY;BYMONTHDAY=15' for 15th of each month."
+                        ),
+                    },
+                    "bypass_duplicate_check": {
+                        "type": "boolean",
+                        "description": (
+                            "Set to true to bypass duplicate detection and create the event anyway. Use this if you've reviewed the similar events and determined this is NOT a duplicate (e.g., different doctors, different purposes). Default: false."
                         ),
                     },
                 },
@@ -423,11 +428,16 @@ async def add_calendar_event_tool(
     end_time: str,
     description: str | None = None,
     all_day: bool = False,
-    recurrence_rule: str | None = None,  # Added RRULE parameter
+    recurrence_rule: str | None = None,
+    bypass_duplicate_check: bool = False,
 ) -> str:
     """
     Adds an event to the first configured CalDAV calendar.
     Can create recurring events if an RRULE string is provided.
+
+    Args:
+        bypass_duplicate_check: If True, skip duplicate detection and create the event anyway.
+                                Use this if you've determined the event is not actually a duplicate.
     """
     logger.info(
         f"Executing add_calendar_event_tool: {summary}, RRULE: {recurrence_rule}"
@@ -564,14 +574,11 @@ async def add_calendar_event_tool(
                 return f"OK. Event '{summary}' added to the calendar."
 
         try:
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, save_event_sync)
-
-            # Check for duplicate events after creation (if duplicate detection is enabled)
+            # Check for duplicate events BEFORE creation (if duplicate detection is enabled and not bypassed)
             dup_detection = calendar_config.get("duplicate_detection", {})
-            if dup_detection.get("enabled", True):
+            if dup_detection.get("enabled", True) and not bypass_duplicate_check:
                 try:
-                    warning = await _check_for_duplicate_events(
+                    error_message = await _check_for_duplicate_events(
                         exec_context=exec_context,
                         calendar_config=calendar_config,
                         summary=summary,
@@ -579,15 +586,23 @@ async def add_calendar_event_tool(
                         end_time=end_time,
                         all_day=all_day,
                     )
-                    if warning:
-                        # Append warning to result
-                        result = f"{result}\n\n{warning}"
+                    if error_message:
+                        # Return error - do not create the event
+                        return error_message
                 except Exception as dup_check_err:
                     # Don't fail the whole operation if duplicate detection fails
                     logger.warning(
                         f"Failed to check for duplicate events: {dup_check_err}",
                         exc_info=True,
                     )
+
+            # Create the event (either no duplicates found, or bypass flag is set)
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(None, save_event_sync)
+
+            # If bypass was used, note it in the response
+            if bypass_duplicate_check:
+                result = f"{result} (duplicate check bypassed)"
 
             return result
         except (DAVError, ConnectionError, Exception) as sync_err:

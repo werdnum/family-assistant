@@ -2029,18 +2029,18 @@ async def test_similarity_search_score_sorting(
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
-async def test_duplicate_detection_warning_shown(
+async def test_duplicate_detection_error_shown(
     pg_vector_db_engine: AsyncEngine,
     radicale_server: tuple[str, str, str, str],
 ) -> None:
     """
-    Test that duplicate detection shows warning when creating similar events.
+    Test that duplicate detection blocks creation of similar events.
 
-    Verifies that after creating an event, if similar events exist at nearby times,
-    a warning is shown with similarity scores and UIDs so the LLM can decide
-    whether to delete the duplicate.
+    Verifies that BEFORE creating an event, if similar events exist at nearby times,
+    an error is returned with bypass instructions. Also tests that bypass flag allows
+    creation.
     """
-    logger.info("Starting test_duplicate_detection_warning_shown...")
+    logger.info("Starting test_duplicate_detection_error_shown...")
 
     base_url, username, password, calendar_url = radicale_server
 
@@ -2089,8 +2089,8 @@ async def test_duplicate_detection_warning_shown(
         )
 
         assert "OK. Event 'Doctor appointment' added" in event1_result
-        assert "WARNING" not in event1_result, (
-            "First event should not trigger duplicate warning"
+        assert "Error:" not in event1_result, (
+            "First event should not trigger duplicate error"
         )
 
         # RADICALE WORKAROUND: Wait for first event to become searchable
@@ -2105,6 +2105,7 @@ async def test_duplicate_detection_warning_shown(
         assert indexed, "First event should become searchable within timeout"
 
         # Create second event with similar name at nearby time (15 min later)
+        # This should be BLOCKED by duplicate detection
         event2_start = event1_start + timedelta(minutes=15)
         event2_end = event2_start + timedelta(hours=1)
 
@@ -2116,42 +2117,59 @@ async def test_duplicate_detection_warning_shown(
             end_time=event2_end.isoformat(),
         )
 
-        logger.info(f"Event 2 result:\n{event2_result}")
+        logger.info(f"Event 2 result (should be error):\n{event2_result}")
 
-        # Verify warning is shown
-        assert "OK. Event 'Doctor appt' added" in event2_result, (
-            "Event should be created successfully"
-        )
-        assert "⚠️  WARNING:" in event2_result, (
-            "Warning should be shown for similar event at nearby time"
+        # Verify error is shown (event not created)
+        assert "Error: Cannot create event" in event2_result, (
+            "Error should be shown for similar event at nearby time"
         )
         assert "similar event(s) at nearby times" in event2_result
         assert "Doctor appointment" in event2_result, (
-            "Warning should mention the similar event"
+            "Error should mention the similar event"
         )
-        assert "similarity:" in event2_result, "Warning should include similarity score"
-        assert "UID:" in event2_result, "Warning should include UID for deletion"
-        assert "delete it using delete_calendar_event" in event2_result, (
-            "Warning should tell LLM how to delete if duplicate"
+        assert "similarity:" in event2_result, "Error should include similarity score"
+        assert "UID:" in event2_result, "Error should include UID for reference"
+        assert "bypass_duplicate_check=true" in event2_result, (
+            "Error should tell LLM how to bypass if not a duplicate"
         )
 
-    logger.info("Test duplicate detection warning shown PASSED.")
+        # Now retry with bypass flag - should succeed
+        event2_bypass_result = await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary="Doctor appt",
+            start_time=event2_start.isoformat(),
+            end_time=event2_end.isoformat(),
+            bypass_duplicate_check=True,
+        )
+
+        logger.info(f"Event 2 with bypass result:\n{event2_bypass_result}")
+
+        # Verify success with bypass
+        assert "OK. Event 'Doctor appt' added" in event2_bypass_result, (
+            "Event should be created with bypass flag"
+        )
+        assert "duplicate check bypassed" in event2_bypass_result, (
+            "Response should indicate bypass was used"
+        )
+
+    logger.info("Test duplicate detection error shown PASSED.")
 
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
-async def test_duplicate_detection_no_warning_different_time(
+async def test_duplicate_detection_no_error_different_time(
     pg_vector_db_engine: AsyncEngine,
     radicale_server: tuple[str, str, str, str],
 ) -> None:
     """
-    Test that duplicate detection does NOT show warning for similar events
+    Test that duplicate detection does NOT block creation for similar events
     at different times (outside the time window).
 
     Verifies that the time window filtering works correctly - same-titled
-    events on different days should not trigger warnings.
+    events on different days should not be blocked.
     """
-    logger.info("Starting test_duplicate_detection_no_warning_different_time...")
+    logger.info("Starting test_duplicate_detection_no_error_different_time...")
 
     base_url, username, password, calendar_url = radicale_server
 
@@ -2215,13 +2233,13 @@ async def test_duplicate_detection_no_warning_different_time(
 
         logger.info(f"Event 2 result:\n{event2_result}")
 
-        # Verify NO warning is shown (events are on different days)
+        # Verify NO error is shown (events are on different days, outside time window)
         assert "OK. Event 'Weekly team meeting' added" in event2_result
-        assert "WARNING" not in event2_result, (
-            "No warning should be shown for events outside time window"
+        assert "Error:" not in event2_result, (
+            "No error should be shown for events outside time window"
         )
 
-    logger.info("Test duplicate detection no warning different time PASSED.")
+    logger.info("Test duplicate detection no error different time PASSED.")
 
 
 @pytest.mark.asyncio
@@ -2233,7 +2251,7 @@ async def test_duplicate_detection_disabled(
     """
     Test that duplicate detection can be disabled via configuration.
 
-    Verifies that when duplicate_detection.enabled=False, no warnings
+    Verifies that when duplicate_detection.enabled=False, no errors
     are shown even for similar events at nearby times.
     """
     logger.info("Starting test_duplicate_detection_disabled...")
@@ -2297,10 +2315,10 @@ async def test_duplicate_detection_disabled(
 
         logger.info(f"Event 2 result:\n{event2_result}")
 
-        # Verify NO warning is shown (duplicate detection disabled)
+        # Verify NO error is shown (duplicate detection disabled)
         assert "OK. Event 'Dr. Smith checkup' added" in event2_result
-        assert "WARNING" not in event2_result, (
-            "No warning should be shown when duplicate detection is disabled"
+        assert "Error:" not in event2_result, (
+            "No error should be shown when duplicate detection is disabled"
         )
 
     logger.info("Test duplicate detection disabled PASSED.")
@@ -2315,7 +2333,7 @@ async def test_duplicate_detection_all_day_events(
     """
     Test that duplicate detection works for all-day events.
 
-    Verifies that all-day events trigger warnings for similar events on
+    Verifies that all-day events are blocked for similar events on
     the same date, but not for events on different dates.
     """
     logger.info("Starting test_duplicate_detection_all_day_events...")
@@ -2374,13 +2392,14 @@ async def test_duplicate_detection_all_day_events(
 
         logger.info(f"Event 2 (same date) result:\n{event2_result}")
 
-        # Should show warning for same-date similar event
-        assert "OK. Event 'Birthday celebration' added" in event2_result
-        assert "⚠️  WARNING:" in event2_result, (
-            "Warning should be shown for similar all-day events on same date"
+        # Should show error for same-date similar event
+        assert "Error: Cannot create event" in event2_result, (
+            "Error should be shown for similar all-day events on same date"
         )
+        assert "Birthday party" in event2_result, "Error should mention similar event"
 
-        # Create third all-day event with similar name on DIFFERENT date
+        # Now create third all-day event with similar name on DIFFERENT date
+        # This should succeed (outside time window)
         next_week = date.today() + timedelta(days=8)
         next_week_day_after = next_week + timedelta(days=1)
 
@@ -2395,10 +2414,10 @@ async def test_duplicate_detection_all_day_events(
 
         logger.info(f"Event 3 (different date) result:\n{event3_result}")
 
-        # Should NOT show warning for different-date event
+        # Should NOT show error for different-date event
         assert "OK. Event 'Birthday party' added" in event3_result
-        assert "WARNING" not in event3_result, (
-            "No warning for all-day events on different dates"
+        assert "Error:" not in event3_result, (
+            "No error for all-day events on different dates"
         )
 
     logger.info("Test duplicate detection all-day events PASSED.")

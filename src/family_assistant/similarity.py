@@ -4,12 +4,17 @@ Provides pluggable strategies for computing similarity between event titles,
 used for duplicate detection and enhanced search functionality.
 """
 
+from __future__ import annotations
+
 import asyncio
 import difflib
 import logging
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +112,7 @@ class EmbeddingSimilarityStrategy:
         logger.info(
             f"Loading sentence-transformer model: {model_name} on device: {device}"
         )
-        self.model = SentenceTransformer(model_name, device=device)
+        self.model: SentenceTransformer = SentenceTransformer(model_name, device=device)
         logger.info(f"Model {model_name} loaded successfully")
 
     async def compute_similarity(self, title1: str, title2: str) -> float:
