@@ -53,6 +53,7 @@ services:
       - BRAVE_API_KEY=${BRAVE_API_KEY:-}
       - HOMEASSISTANT_API_KEY=${HOMEASSISTANT_API_KEY:-}
       - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY:-}
+      - DEBUG_LLM_MESSAGES=true
     volumes:
       # Mount workspace - you can change this to your desired host directory
       - ${WORKSPACE_DIR:-./workspace}:/workspace
@@ -95,6 +96,7 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT:-}
     volumes:
       # Mount workspace - same as backend container
       - ${WORKSPACE_DIR:-./workspace}:/workspace
