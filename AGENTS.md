@@ -217,9 +217,7 @@ overview of:
 - **No Mutable Global State**: Except in the very outer layer of the application.
 - **Repository Pattern**: Data access logic encapsulated in repository classes, accessed via
   DatabaseContext
-- **Dependency Injection**: Use dependency injection for creating any non-trivial object (i.e.
-  anything with external dependencies). We do not want to see things with nontrivial external
-  dependencies produced deep in the stack. Core services should accept dependencies as constructor
+- **Dependency Injection**: Non-trivial objects with external dependencies should be created using dependency injection. Core services should accept dependencies as constructor arguments rather than creating them internally.
   arguments.
 - **Protocol-based Interfaces**: Uses Python protocols for loose coupling (ChatInterface,
   LLMInterface, EmbeddingGenerator)
