@@ -6,7 +6,6 @@ import io
 import json
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
@@ -24,6 +23,8 @@ from family_assistant.tools.image_tools import highlight_image_tool
 from family_assistant.tools.types import ToolExecutionContext
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from sqlalchemy.ext.asyncio import AsyncEngine
 
 
@@ -378,6 +379,7 @@ class TestHighlightImageTool:
     async def test_highlight_image_success(
         self,
         db_engine: AsyncEngine,
+        tmp_path: Path,
     ) -> None:
         """Test successful image highlighting with bounding boxes."""
         # Create test image
@@ -386,14 +388,14 @@ class TestHighlightImageTool:
         async with DatabaseContext(db_engine) as db_context:
             # Create attachment registry
             attachment_registry = AttachmentRegistry(
-                storage_path="/tmp/test_attachments", db_engine=db_engine, config=None
+                storage_path=str(tmp_path), db_engine=db_engine, config=None
             )
 
             # Register the test image
             image_id = str(uuid.uuid4())
             # AttachmentRegistry uses hash-prefixed directories
             hash_prefix = image_id[:2]
-            storage_dir = Path("/tmp/test_attachments") / hash_prefix
+            storage_dir = tmp_path / hash_prefix
             storage_dir.mkdir(parents=True, exist_ok=True)
             storage_path = str(storage_dir / f"{image_id}.png")
             async with aiofiles.open(storage_path, "wb") as f:
@@ -480,6 +482,7 @@ class TestHighlightImageTool:
     async def test_highlight_image_invalid_attachment(
         self,
         db_engine: AsyncEngine,
+        tmp_path: Path,
     ) -> None:
         """Test highlight_image with non-image attachment."""
         # Create a text file instead of an image
@@ -487,14 +490,14 @@ class TestHighlightImageTool:
 
         async with DatabaseContext(db_engine) as db_context:
             attachment_registry = AttachmentRegistry(
-                storage_path="/tmp/test_attachments", db_engine=db_engine, config=None
+                storage_path=str(tmp_path), db_engine=db_engine, config=None
             )
 
             # Register a text file
             file_id = str(uuid.uuid4())
             # AttachmentRegistry uses hash-prefixed directories
             hash_prefix = file_id[:2]
-            storage_dir = Path("/tmp/test_attachments") / hash_prefix
+            storage_dir = tmp_path / hash_prefix
             storage_dir.mkdir(parents=True, exist_ok=True)
             storage_path = str(storage_dir / f"{file_id}.txt")
             async with aiofiles.open(storage_path, "wb") as f:
@@ -556,19 +559,20 @@ class TestHighlightImageTool:
     async def test_highlight_image_invalid_regions(
         self,
         db_engine: AsyncEngine,
+        tmp_path: Path,
     ) -> None:
         """Test highlight_image with invalid region data."""
         test_image_bytes = create_test_image(800, 600, "white")
 
         async with DatabaseContext(db_engine) as db_context:
             attachment_registry = AttachmentRegistry(
-                storage_path="/tmp/test_attachments", db_engine=db_engine, config=None
+                storage_path=str(tmp_path), db_engine=db_engine, config=None
             )
 
             image_id = str(uuid.uuid4())
             # AttachmentRegistry uses hash-prefixed directories
             hash_prefix = image_id[:2]
-            storage_dir = Path("/tmp/test_attachments") / hash_prefix
+            storage_dir = tmp_path / hash_prefix
             storage_dir.mkdir(parents=True, exist_ok=True)
             storage_path = str(storage_dir / f"{image_id}.png")
             async with aiofiles.open(storage_path, "wb") as f:

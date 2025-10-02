@@ -24,20 +24,21 @@ IMAGE_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "highlight_image",
-            "description": (
-                "Draw colored rectangles or circles to highlight regions on an image. "
-                "Useful for marking objects, areas of interest, or annotations. "
-                "Creates and displays a new image with the highlighted regions.\n\n"
-                "Bounding box coordinates are in normalized [0, 1000] format (Gemini object detection format). "
-                "For example, x_min=100 means 10% from the left edge, x_max=900 means 90% from the left edge.\n\n"
-                "Example region format:\n"
-                "{\n"
-                '  "box": {"x_min": 100, "y_min": 200, "x_max": 300, "y_max": 400},\n'
-                '  "label": "chicken",\n'
-                '  "color": "red"\n'
-                "}\n\n"
-                "Note: thickness is automatically scaled to 1% of image size if not specified."
-            ),
+            "description": """Draw colored rectangles or circles to highlight regions on an image. \
+Useful for marking objects, areas of interest, or annotations. \
+Creates and displays a new image with the highlighted regions.
+
+Bounding box coordinates are in normalized [0, 1000] format (Gemini object detection format). \
+For example, x_min=100 means 10% from the left edge, x_max=900 means 90% from the left edge.
+
+Example region format:
+{
+  "box": {"x_min": 100, "y_min": 200, "x_max": 300, "y_max": 400},
+  "label": "chicken",
+  "color": "red"
+}
+
+Note: thickness is automatically scaled to 1% of image size if not specified.""",
             "parameters": {
                 "type": "object",
                 "properties": {
