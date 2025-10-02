@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 import numpy as np
 
 if TYPE_CHECKING:
-    from sentence_transformers import (
-        SentenceTransformer,  # type: ignore[import-not-found]
+    from sentence_transformers import (  # pyright: ignore[reportMissingImports]
+        SentenceTransformer,
     )
 
 logger = logging.getLogger(__name__)
@@ -99,7 +99,7 @@ class EmbeddingSimilarityStrategy:
             # Import here rather than top-level because sentence-transformers is an optional
             # dependency (local-embeddings extra). This allows FuzzySimilarityStrategy to work
             # without requiring the extra to be installed.
-            from sentence_transformers import (  # noqa: PLC0415  # type: ignore[import-not-found]
+            from sentence_transformers import (  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
                 SentenceTransformer,
             )
         except ImportError as e:
