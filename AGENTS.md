@@ -214,9 +214,13 @@ overview of:
 
 ### Key Design Patterns
 
+- **No Mutable Global State**: Except in the very outer layer of the application.
 - **Repository Pattern**: Data access logic encapsulated in repository classes, accessed via
   DatabaseContext
-- **Dependency Injection**: Core services accept dependencies as constructor arguments
+- **Dependency Injection**: Use dependency injection for creating any non-trivial object (i.e.
+  anything with external dependencies). We do not want to see things with nontrivial external
+  dependencies produced deep in the stack. Core services should accept dependencies as constructor
+  arguments.
 - **Protocol-based Interfaces**: Uses Python protocols for loose coupling (ChatInterface,
   LLMInterface, EmbeddingGenerator)
 - **Async/Await**: Fully asynchronous architecture using asyncio
