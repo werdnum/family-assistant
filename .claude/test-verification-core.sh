@@ -5,7 +5,7 @@
 
 check_test_status() {
     local TRANSCRIPT_PATH="$1"
-    
+
     if [ -z "$TRANSCRIPT_PATH" ]; then
         echo "Error: No transcript_path provided" >&2
         return 1
@@ -15,6 +15,70 @@ check_test_status() {
         echo "Error: Transcript file not found: $TRANSCRIPT_PATH" >&2
         return 1
     fi
+
+    # Check if transcript was modified in the last 5 minutes (300 seconds)
+    local TRANSCRIPT_AGE=$(( $(date +%s) - $(stat -c %Y "$TRANSCRIPT_PATH" 2>/dev/null || stat -f %m "$TRANSCRIPT_PATH" 2>/dev/null) ))
+
+    if [ "$TRANSCRIPT_AGE" -gt 300 ]; then
+        # Transcript is stale (>5 minutes old), use fallback strategy
+        echo "DEBUG: Transcript is stale ($TRANSCRIPT_AGE seconds old), using fallback strategy" >&2
+
+        # Check if .report.json exists
+        if [ ! -f ".report.json" ]; then
+            echo "❌ No test report found (.report.json missing)" >&2
+            echo "You MUST run 'poe test' before committing" >&2
+            return 1
+        fi
+
+        # Get .report.json timestamp
+        local REPORT_TIME=$(stat -c %Y ".report.json" 2>/dev/null || stat -f %m ".report.json" 2>/dev/null)
+
+        # Find most recently modified/deleted/renamed uncommitted file (excluding docs, .claude, etc.)
+        # Use git status -z for null-terminated output to handle filenames with spaces
+        local MOST_RECENT_MODIFIED=$(git status --porcelain -z | tr '\0' '\n' | grep -E '^\s*[MADR]' | while IFS= read -r line; do
+            # Extract filename: strip status prefix (first 3 chars) and handle quoted names
+            local file="${line:3}"
+            # Remove quotes if present
+            file="${file#\"}"
+            file="${file%\"}"
+
+            # Skip excluded paths
+            if echo "$file" | grep -qE '(^(docs/|\.claude/|\.github/|deploy/|contrib/|scripts/review-changes\.(py|sh)|scripts/format-and-lint\.sh|\.pre-commit-config\.yaml|\.gitignore|\.dockerignore|scratch/|tmp/|README|LICENSE|CHANGELOG)|\.(md|txt)$)'; then
+                continue
+            fi
+
+            if [ -f "$file" ]; then
+                # File exists - use its modification time
+                local FILE_TIME=$(stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null)
+                echo "$FILE_TIME $file"
+            else
+                # File was deleted - use current time to force test re-run
+                echo "$(date +%s) $file (deleted)"
+            fi
+        done | sort -rn | head -1)
+
+        if [ -z "$MOST_RECENT_MODIFIED" ]; then
+            # No relevant uncommitted files found
+            return 0
+        fi
+
+        local MOST_RECENT_TIME=$(echo "$MOST_RECENT_MODIFIED" | awk '{print $1}')
+        local MOST_RECENT_FILE=$(echo "$MOST_RECENT_MODIFIED" | awk '{print $2}')
+
+        if [ "$MOST_RECENT_TIME" -gt "$REPORT_TIME" ]; then
+            local FILE_DATE=$(date -d @"$MOST_RECENT_TIME" 2>/dev/null || date -r "$MOST_RECENT_TIME" 2>/dev/null)
+            local REPORT_DATE=$(date -d @"$REPORT_TIME" 2>/dev/null || date -r "$REPORT_TIME" 2>/dev/null)
+            echo "❌ Tests have not been run since modifying $MOST_RECENT_FILE at $FILE_DATE" >&2
+            echo "Test report is from: $REPORT_DATE" >&2
+            echo "You MUST run 'poe test' before committing" >&2
+            return 1
+        fi
+
+        # Tests are recent enough
+        return 0
+    fi
+
+    echo "DEBUG: Using transcript path: $TRANSCRIPT_PATH" >&2
 
     # Find the last file modification (Edit, Write, MultiEdit) with timestamp
     # Exclude modifications to files that don't affect poe test results
