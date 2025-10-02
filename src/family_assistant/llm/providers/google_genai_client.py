@@ -53,6 +53,7 @@ class GoogleGenAIClient(BaseLLMClient):
         api_base: str | None = None,
         enable_url_context: bool = False,
         enable_google_search: bool = False,
+        debug_messages: bool | None = None,
         **kwargs: Any,  # noqa: ANN401 # Accepts arbitrary Google GenAI API parameters
     ) -> None:
         """
@@ -65,6 +66,7 @@ class GoogleGenAIClient(BaseLLMClient):
             api_base: Optional API base URL for custom endpoints.
             enable_url_context: Enable URL understanding (supports up to 20 URLs per request)
             enable_google_search: Enable Google Search grounding for real-time information
+            debug_messages: Enable detailed message logging. If None, reads from DEBUG_LLM_MESSAGES env var.
             **kwargs: Default parameters for generation
         """
         # Initialize the google-genai client
@@ -85,11 +87,27 @@ class GoogleGenAIClient(BaseLLMClient):
         self.enable_url_context = enable_url_context
         self.enable_google_search = enable_google_search
 
+        # Debug configuration - read from env var if not explicitly set
+        if debug_messages is None:
+            self._debug_messages = os.getenv("DEBUG_LLM_MESSAGES", "false").lower() in {
+                "true",
+                "1",
+                "yes",
+            }
+        else:
+            self._debug_messages = debug_messages
+
         logger.info(
             f"GoogleGenAIClient initialized for model: {model} with default kwargs: {kwargs}, "
             f"model-specific parameters: {model_parameters}, "
-            f"URL context: {enable_url_context}, Google Search: {enable_google_search}"
+            f"URL context: {enable_url_context}, Google Search: {enable_google_search}, "
+            f"debug_messages: {self._debug_messages}"
         )
+
+    @property
+    def should_debug_messages(self) -> bool:
+        """Whether to log detailed message debugging information."""
+        return self._debug_messages
 
     def _get_model_specific_params(self, model: str) -> dict[str, Any]:
         """Get parameters for a specific model based on pattern matching."""
@@ -419,12 +437,7 @@ class GoogleGenAIClient(BaseLLMClient):
         """Generate response using Google GenAI."""
         try:
             # Debug logging if enabled
-            DEBUG_LLM_MESSAGES = os.getenv("DEBUG_LLM_MESSAGES", "false").lower() in {
-                "true",
-                "1",
-                "yes",
-            }
-            if DEBUG_LLM_MESSAGES:
+            if self.should_debug_messages:
                 logger.info(
                     f"=== LLM Request to {self.model_name} ===\n"
                     f"{_format_messages_for_debug(messages, tools, tool_choice)}"
@@ -434,7 +447,7 @@ class GoogleGenAIClient(BaseLLMClient):
             contents = self._convert_messages_to_genai_format(messages)
 
             # Debug: Log post-processed messages if enabled
-            if DEBUG_LLM_MESSAGES:
+            if self.should_debug_messages:
                 processed_msgs = self._process_tool_messages(messages.copy())
                 logger.info(
                     f"=== After _process_tool_messages ({len(processed_msgs)} messages) ===\n"
@@ -636,12 +649,7 @@ class GoogleGenAIClient(BaseLLMClient):
         """Internal async generator for streaming responses using Google GenAI."""
         try:
             # Debug logging if enabled
-            DEBUG_LLM_MESSAGES = os.getenv("DEBUG_LLM_MESSAGES", "false").lower() in {
-                "true",
-                "1",
-                "yes",
-            }
-            if DEBUG_LLM_MESSAGES:
+            if self.should_debug_messages:
                 logger.info(
                     f"=== LLM Streaming Request to {self.model_name} ===\n"
                     f"{_format_messages_for_debug(messages, tools, tool_choice)}"
@@ -651,7 +659,7 @@ class GoogleGenAIClient(BaseLLMClient):
             contents = self._convert_messages_to_genai_format(messages)
 
             # Debug: Log post-processed messages if enabled
-            if DEBUG_LLM_MESSAGES:
+            if self.should_debug_messages:
                 processed_msgs = self._process_tool_messages(messages.copy())
                 logger.info(
                     f"=== After _process_tool_messages ({len(processed_msgs)} messages) ===\n"
