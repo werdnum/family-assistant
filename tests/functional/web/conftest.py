@@ -609,17 +609,13 @@ async def web_test_fixture(
     base_url = f"http://localhost:{api_port}"
 
     # Navigate to base URL for test readiness
+    # Wait for React to mount and the router to be initialized
     await page.goto(base_url)
     await page.wait_for_load_state("networkidle", timeout=15000)
 
-    # TODO: Replace this sleep with a more deterministic wait condition
-    # The sleep is a workaround for dynamic import race conditions in Vite.
-    # Ideally, we should wait for a specific signal that all lazy-loaded
-    # components are ready, but Vite doesn't provide such a mechanism.
-    # This is only used in test setup, not in actual tests, so the
-    # performance impact is minimal (adds 1s to fixture setup, not per test).
-    await asyncio.sleep(1)
-    print("Router and dynamic imports initialization complete")
+    # Wait for React to finish mounting the router
+    await page.wait_for_selector('[data-react-mounted="true"]', timeout=10000)
+    print("React router mounted and ready")
 
     fixture = WebTestFixture(
         assistant=web_only_assistant,
@@ -689,11 +685,13 @@ async def web_test_fixture_readonly(
     base_url = f"http://localhost:{api_port}"
 
     # Navigate to base URL for test readiness
+    # Wait for React to mount and the router to be initialized
     await page.goto(base_url)
     await page.wait_for_load_state("networkidle", timeout=15000)
 
-    await asyncio.sleep(1)
-    print("Router and dynamic imports initialization complete")
+    # Wait for React to finish mounting the router
+    await page.wait_for_selector('[data-react-mounted="true"]', timeout=10000)
+    print("React router mounted and ready")
 
     fixture = WebTestFixture(
         assistant=web_readonly_assistant,
