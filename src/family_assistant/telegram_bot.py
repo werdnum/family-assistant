@@ -21,6 +21,7 @@ from telegram import (
     ForceReply,  # Add ForceReply import
     InlineKeyboardButton,
     InlineKeyboardMarkup,  # Move this import here
+    InputMediaPhoto,  # For sending media groups
     Message,
     MessageOriginChannel,
     MessageOriginChat,
@@ -2053,6 +2054,9 @@ class TelegramChatInterface(ChatInterface):
         """
         Send attachments to a Telegram chat.
 
+        Groups consecutive image attachments into media groups when there are multiple.
+        Non-image attachments are sent individually as documents.
+
         Args:
             chat_id: The Telegram chat ID.
             attachment_ids: List of attachment IDs to send.
@@ -2074,9 +2078,10 @@ class TelegramChatInterface(ChatInterface):
             async with DatabaseContext(
                 self.attachment_registry.db_engine
             ) as db_context:
+                # First, fetch all attachment metadata and content
+                attachments_data = []
                 for attachment_id in attachment_ids:
                     try:
-                        # Get attachment metadata
                         metadata = await self.attachment_registry.get_attachment(
                             db_context, attachment_id
                         )
@@ -2084,7 +2089,6 @@ class TelegramChatInterface(ChatInterface):
                             logger.warning(f"Attachment {attachment_id} not found")
                             continue
 
-                        # Get attachment content
                         content = await self.attachment_registry.get_attachment_content(
                             db_context, attachment_id
                         )
@@ -2094,42 +2098,104 @@ class TelegramChatInterface(ChatInterface):
                             )
                             continue
 
-                        # Determine how to send based on content type
-                        content_type = metadata.mime_type or ""
-                        filename = metadata.description or f"attachment_{attachment_id}"
+                        attachments_data.append({
+                            "id": attachment_id,
+                            "metadata": metadata,
+                            "content": content,
+                        })
+                    except Exception as e:
+                        logger.error(
+                            f"Error fetching attachment {attachment_id}: {e}",
+                            exc_info=True,
+                        )
+                        continue
 
-                        # Send as photo for image types
-                        if content_type.startswith("image/"):
+                # Group consecutive images for media groups
+                i = 0
+                while i < len(attachments_data):
+                    attachment = attachments_data[i]
+                    content_type = attachment["metadata"].mime_type or ""
+
+                    if content_type.startswith("image/"):
+                        # Find all consecutive images starting from current position
+                        image_group = [attachment]
+                        j = i + 1
+                        while j < len(attachments_data):
+                            next_attachment = attachments_data[j]
+                            next_content_type = (
+                                next_attachment["metadata"].mime_type or ""
+                            )
+                            if next_content_type.startswith("image/"):
+                                image_group.append(next_attachment)
+                                j += 1
+                            else:
+                                break
+
+                        # Send as media group if multiple images, otherwise single photo
+                        if len(image_group) > 1:
+                            media_group = []
+                            for img_data in image_group:
+                                filename = (
+                                    img_data["metadata"].description
+                                    or f"attachment_{img_data['id']}"
+                                )
+                                media_group.append(
+                                    InputMediaPhoto(
+                                        media=io.BytesIO(img_data["content"]),
+                                        caption=filename
+                                        if img_data == image_group[0]
+                                        else None,
+                                    )
+                                )
+
+                            sent_messages = await self.application.bot.send_media_group(
+                                chat_id=chat_id,
+                                media=media_group,
+                                reply_to_message_id=reply_to_msg_id,
+                            )
+                            for sent_msg in sent_messages:
+                                message_ids.append(str(sent_msg.message_id))
+
+                            logger.info(
+                                f"Sent media group with {len(image_group)} images: "
+                                f"{[img['id'] for img in image_group]}"
+                            )
+                        else:
+                            # Single image - send as photo
+                            img_data = image_group[0]
+                            filename = (
+                                img_data["metadata"].description
+                                or f"attachment_{img_data['id']}"
+                            )
                             sent_msg = await self.application.bot.send_photo(
                                 chat_id=chat_id,
-                                photo=io.BytesIO(content),
+                                photo=io.BytesIO(img_data["content"]),
                                 caption=filename,
                                 reply_to_message_id=reply_to_msg_id,
                             )
                             message_ids.append(str(sent_msg.message_id))
                             logger.info(
-                                f"Sent image attachment {attachment_id} as message {sent_msg.message_id}"
+                                f"Sent image attachment {img_data['id']} as message {sent_msg.message_id}"
                             )
 
-                        # Send as document for other types
-                        else:
-                            sent_msg = await self.application.bot.send_document(
-                                chat_id=chat_id,
-                                document=io.BytesIO(content),
-                                filename=filename,
-                                reply_to_message_id=reply_to_msg_id,
-                            )
-                            message_ids.append(str(sent_msg.message_id))
-                            logger.info(
-                                f"Sent document attachment {attachment_id} as message {sent_msg.message_id}"
-                            )
-
-                    except Exception as e:
-                        logger.error(
-                            f"Error sending attachment {attachment_id}: {e}",
-                            exc_info=True,
+                        i = j  # Skip past all images we just processed
+                    else:
+                        # Send as document for non-image types
+                        filename = (
+                            attachment["metadata"].description
+                            or f"attachment_{attachment['id']}"
                         )
-                        continue
+                        sent_msg = await self.application.bot.send_document(
+                            chat_id=chat_id,
+                            document=io.BytesIO(attachment["content"]),
+                            filename=filename,
+                            reply_to_message_id=reply_to_msg_id,
+                        )
+                        message_ids.append(str(sent_msg.message_id))
+                        logger.info(
+                            f"Sent document attachment {attachment['id']} as message {sent_msg.message_id}"
+                        )
+                        i += 1
 
         except Exception as e:
             logger.error(f"Error in _send_attachments: {e}", exc_info=True)
