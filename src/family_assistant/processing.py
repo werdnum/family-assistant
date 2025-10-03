@@ -393,6 +393,7 @@ class ProcessingService:
             # Stream from LLM
             accumulated_content = []
             tool_calls_from_stream = []
+            done_provider_metadata = None  # Initialize before loop
 
             try:
                 async for event in self.llm_client.generate_response_stream(
@@ -417,6 +418,12 @@ class ProcessingService:
                     # Handle done event
                     elif event.type == "done":
                         final_reasoning_info = event.metadata
+                        # Extract provider_metadata from done event if present
+                        if event.metadata and "provider_metadata" in event.metadata:
+                            # Store for use if no tool calls extracted provider_metadata
+                            done_provider_metadata = event.metadata["provider_metadata"]
+                        else:
+                            done_provider_metadata = None
 
                     # Handle errors
                     elif event.type == "error":
@@ -432,8 +439,9 @@ class ProcessingService:
                 "".join(accumulated_content) if accumulated_content else None
             )
 
-            # Convert tool calls to serialized format
+            # Convert tool calls to serialized format and extract provider_metadata
             serialized_tool_calls = None
+            provider_metadata = None
             if tool_calls_from_stream:
                 serialized_tool_calls = []
                 for tool_call_item in tool_calls_from_stream:
@@ -447,12 +455,21 @@ class ProcessingService:
                     }
                     serialized_tool_calls.append(tool_call_dict)
 
+                # Extract provider_metadata from first tool call (all have the same metadata)
+                if tool_calls_from_stream[0].provider_metadata:
+                    provider_metadata = tool_calls_from_stream[0].provider_metadata
+
+            # Use provider_metadata from done event if not extracted from tool calls
+            if not provider_metadata and done_provider_metadata:
+                provider_metadata = done_provider_metadata
+
             # Create assistant message
             assistant_message_for_turn = {
                 "role": "assistant",
                 "content": final_content,
                 "tool_calls": serialized_tool_calls,
                 "reasoning_info": final_reasoning_info,
+                "provider_metadata": provider_metadata,
                 "tool_call_id": None,
                 "error_traceback": None,
             }
@@ -1077,6 +1094,10 @@ class ProcessingService:
                 # Check if tool_calls exists and is a non-empty list/dict
                 if tool_calls:
                     assistant_msg_for_llm["tool_calls"] = tool_calls
+                # Pass provider_metadata if present (e.g., thought signatures)
+                provider_metadata = msg.get("provider_metadata")
+                if provider_metadata:
+                    assistant_msg_for_llm["provider_metadata"] = provider_metadata
                 # Only add the message if it has content or tool calls
                 if content or tool_calls:
                     messages.append(assistant_msg_for_llm)

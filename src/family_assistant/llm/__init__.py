@@ -284,6 +284,9 @@ class LLMOutput:
     reasoning_info: dict[str, Any] | None = field(
         default=None
     )  # Store reasoning/usage data
+    provider_metadata: dict[str, Any] | None = field(
+        default=None
+    )  # Provider-specific metadata (e.g., thought signatures)
 
 
 @dataclass
