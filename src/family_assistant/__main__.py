@@ -80,7 +80,10 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
         "allowed_user_ids": [],
         "developer_chat_id": None,
         "model": "gemini/gemini-2.5-pro-preview-05-06",
-        "embedding_model": "gemini/gemini-embedding-exp-03-07",
+        # Migrated from gemini-embedding-exp-03-07 to stable gemini-embedding-001
+        # on 2025-10-03. Models are compatible - no re-embedding required.
+        # Ref: https://developers.googleblog.com/en/gemini-embedding-available-gemini-api/
+        "embedding_model": "gemini/gemini-embedding-001",
         "embedding_dimensions": 1536,
         "database_url": "sqlite+aiosqlite:///family_assistant.db",
         "litellm_debug": False,
