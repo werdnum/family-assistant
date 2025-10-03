@@ -408,7 +408,10 @@ async def _create_web_assistant(
 
     # Configure debug mode on the assistant's FastAPI instance (after setup)
     if assistant.fastapi_app:
-        assistant.fastapi_app.state.debug_mode = True
+        assistant.fastapi_app.debug = True  # FastAPI's built-in debug mode
+        assistant.fastapi_app.state.debug_mode = (
+            True  # Custom attribute used by chat_api.py
+        )
 
     # Set SERVER_URL env var
     os.environ["SERVER_URL"] = f"http://localhost:{api_port}"
