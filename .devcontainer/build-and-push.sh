@@ -29,10 +29,15 @@ fi
 
 echo "Building development container image with podman..."
 echo "Using Dockerfile: ${SCRIPT_DIR}/Dockerfile"
-echo "Build context: ${SCRIPT_DIR}"
+echo "Build context: ${SCRIPT_DIR}/.."
 
-# Explicitly use the development Dockerfile in .devcontainer
-podman build -t "${REGISTRY}/${IMAGE_NAME}:${TAG}" -t "${REGISTRY}/${IMAGE_NAME}:latest" -f Dockerfile .
+# First, build the base image locally. This ensures the dev container build
+# can find it and doesn't try to pull it from a remote registry.
+echo "Building base image (family-assistant-dev-base:latest)..."
+podman build -t family-assistant-dev-base:latest -f Dockerfile.base ..
+
+# Explicitly use the development Dockerfile in .devcontainer, with the parent directory as context
+podman build -t "${REGISTRY}/${IMAGE_NAME}:${TAG}" -t "${REGISTRY}/${IMAGE_NAME}:latest" -f Dockerfile ..
 
 echo "Pushing image to registry..."
 podman push "${REGISTRY}/${IMAGE_NAME}:${TAG}"

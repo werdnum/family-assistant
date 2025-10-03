@@ -1,72 +1,130 @@
-# CI-optimized version of the devcontainer with multi-stage builds
-# Pre-installs project dependencies for faster CI runs
+# Multi-stage build for the CI container.
+# Stage 1: Base image setup (from the old Dockerfile.base)
 
-ARG BASE_IMAGE=ghcr.io/werdnum/family-assistant:devcontainer-base-latest
+# Build stage for shpool
+FROM rust:latest AS shpool-builder
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash \
+    && cargo binstall -y shpool
 
-# Frontend build stage - runs independently for better parallelization
-FROM ${BASE_IMAGE} AS frontend-builder
+FROM ubuntu:24.04 AS base
 
-# Switch to claude user for frontend operations
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# System packages and dependencies
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y \
+        curl git wget gnupg ca-certificates lsb-release \
+        ripgrep fd-find micro unzip build-essential \
+        python3 python3-pip python3-venv \
+    && ln -s /usr/bin/fdfind /usr/bin/fd
+
+# PostgreSQL repository and client
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    wget -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /etc/apt/keyrings/postgres.gpg && \
+    sh -c 'echo "deb [signed-by=/etc/apt/keyrings/postgres.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list' && \
+    apt-get update && \
+    apt-get install -y \
+        jq \
+        postgresql-client-17 \
+        postgresql-17 \
+        postgresql-17-pgvector
+
+# Node.js
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs
+
+# Binary tools
+COPY --from=shpool-builder /usr/local/cargo/bin/shpool /usr/local/bin/shpool
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "amd64" ]; then \
+        AST_GREP_ARCH="x86_64"; \
+    elif [ "$ARCH" = "arm64" ]; then \
+        AST_GREP_ARCH="aarch64"; \
+    else \
+        echo "Unsupported architecture: $ARCH" && exit 1; \
+    fi && \
+    curl -sSL "https://github.com/ast-grep/ast-grep/releases/latest/download/app-${AST_GREP_ARCH}-unknown-linux-gnu.zip" \
+    -o /tmp/ast-grep.zip && \
+    unzip /tmp/ast-grep.zip -d /tmp/ && \
+    install -m 0755 /tmp/ast-grep /usr/local/bin/ast-grep && \
+    install -m 0755 /tmp/sg /usr/local/bin/sg && \
+    rm /tmp/ast-grep /tmp/sg /tmp/ast-grep.zip && \
+    YQ_VERSION="v4.47.1" && \
+    curl -sSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${ARCH}" -o /usr/local/bin/yq && \
+    chmod +x /usr/local/bin/yq
+
+# User setup
+RUN useradd -m -s /bin/bash -u 1001 claude && \
+    mkdir -p /home/claude/.cache/uv \
+             /home/claude/.npm-global \
+             /home/claude/.cache/deno \
+             /home/claude/.deno \
+             /home/claude/.cache/playwright-browsers \
+             /opt && \
+    chown -R claude:claude /home/claude /opt
+
+# Environment variables
+ENV NPM_CONFIG_PREFIX=/home/claude/.npm-global
+ENV PATH="/usr/local/bin:/home/claude/.npm-global/bin:/home/claude/.deno/bin:/home/claude/.local/bin:/usr/lib/postgresql/17/bin:$PATH"
+ENV PLAYWRIGHT_BROWSERS_PATH=/home/claude/.cache/playwright-browsers
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+# User-specific installations
+USER claude
+RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/home/claude/.deno sh
+RUN --mount=type=cache,target=/home/claude/.npm,sharing=locked,uid=1001,gid=1001 \
+    npm install -g playwright@1.55.0
+
+# System-level Playwright setup
+USER root
+RUN npx --yes playwright@1.55.0 install-deps chromium && \
+    npx --yes playwright@1.55.0 install chromium
+
+# Python venv with shared Playwright browsers
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    uv venv /venv && \
+    uv pip install -p /venv/bin/python --system "playwright==1.55.0" "markitdown[html]>=0.1.0" "jsonmerge>=1.9.0" && \
+    chown -R claude:claude /venv && \
+    chmod -R 755 /venv
+
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+# CI-specific stages follow
+
+# Frontend build stage
+FROM base AS frontend-builder
 USER claude
 WORKDIR /opt/frontend
-
-# Copy only package files first for better caching (from project root context)
 COPY --chown=claude:claude frontend/package*.json ./
-
-# Install frontend dependencies with cache mount
 RUN --mount=type=cache,target=/home/claude/.npm,sharing=locked,uid=1001,gid=1001 \
     npm ci --no-audit --no-fund
-
-# Copy frontend source (from project root context)
 COPY --chown=claude:claude frontend/ ./
-# Create the output directory structure that Vite expects
 RUN mkdir -p /opt/src/family_assistant/static && \
     npm run build && \
-    # Build outputs to ../src/family_assistant/static/dist relative to /opt/frontend
-    # Copy built assets to a clean output directory for the final stage
     mkdir -p /tmp/frontend-dist && \
     cp -r /opt/src/family_assistant/static/dist/. /tmp/frontend-dist/
 
-# Backend preparation stage - for Python dependencies if needed in future
-FROM ${BASE_IMAGE} AS backend-prep
-
+# Final stage - combines everything for CI
+FROM base AS final
 USER root
-# Create cache directory with proper permissions
 RUN mkdir -p /opt/uv-cache && chown claude:claude /opt/uv-cache
-
-# Pre-install any additional Python dependencies for CI if needed
-# Currently minimal since pyproject.toml is installed at runtime
-USER claude
-
-# Final stage - combines frontend and backend
-FROM ${BASE_IMAGE} AS final
-
-# Switch to root for initial setup
-USER root
-
-# Create cache directory with proper permissions
-RUN mkdir -p /opt/uv-cache && chown claude:claude /opt/uv-cache
-
-# Copy pre-built frontend assets from frontend stage
 COPY --from=frontend-builder --chown=claude:claude /tmp/frontend-dist /opt/frontend-dist/
-
-# Pre-build frontend node_modules for linting (separate from build artifacts)
-# Copy from project root context
 COPY --chown=claude:claude frontend/package*.json /opt/frontend/
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     cd /opt/frontend && \
     npm ci --no-audit --no-fund && \
     chown -R claude:claude /opt/frontend
 
-# The /opt/frontend directory now contains only node_modules for CI linting
-# The /opt/frontend-dist directory contains the built frontend assets
-
-# Set environment variables for CI mode
 ENV UV_CACHE_DIR=/opt/uv-cache
 ENV IS_CI_CONTAINER=true
-
-# Switch to claude user
 USER claude
 WORKDIR /workspace
-
-# No ENTRYPOINT - CI workflow will run setup commands directly
