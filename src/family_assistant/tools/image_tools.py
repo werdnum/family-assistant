@@ -196,75 +196,92 @@ async def highlight_image_tool(
                 # Calculate default thickness as ~1% of smaller dimension, minimum 2px
                 default_thickness = max(2, int(min(img_width, img_height) * 0.01))
 
-                # Draw each region
-                regions_drawn = []
+                # Validate all regions first - fail fast if any are invalid
                 for i, region in enumerate(regions):
                     try:
-                        # Extract bounding box (coordinates are in [0, 1000] normalized format from Gemini)
+                        # Validate required fields
                         box = region["box"]
-                        x_min_norm = box["x_min"]
-                        y_min_norm = box["y_min"]
-                        x_max_norm = box["x_max"]
-                        y_max_norm = box["y_max"]
+                        _ = box["x_min"]
+                        _ = box["y_min"]
+                        _ = box["x_max"]
+                        _ = box["y_max"]
 
-                        # Scale normalized [0, 1000] coordinates to actual pixel coordinates
-                        x_min = (x_min_norm / 1000.0) * img_width
-                        y_min = (y_min_norm / 1000.0) * img_height
-                        x_max = (x_max_norm / 1000.0) * img_width
-                        y_max = (y_max_norm / 1000.0) * img_height
-
-                        # Convert to x, y, width, height for logging
-                        x = x_min
-                        y = y_min
-                        width = x_max - x_min
-                        height = y_max - y_min
-
-                        # Get optional attributes
-                        label = region.get("label", "")
-                        color = COLOR_MAP.get(region.get("color", "red"), "#FF0000")
+                        # Validate shape if specified
                         shape = region.get("shape", "rectangle")
-                        thickness = region.get("thickness", default_thickness)
+                        if shape not in {"rectangle", "circle"}:
+                            return ToolResult(
+                                text=f"Error: Invalid shape '{shape}' in region {i}. Must be 'rectangle' or 'circle'.",
+                                attachment=None,
+                            )
+                    except KeyError as e:
+                        return ToolResult(
+                            text=f"Error: Invalid region {i}: missing required field {e}",
+                            attachment=None,
+                        )
+                    except (ValueError, TypeError) as e:
+                        return ToolResult(
+                            text=f"Error: Invalid region {i}: {e}",
+                            attachment=None,
+                        )
 
-                        if shape == "rectangle":
-                            # Draw rectangle outline using bounding box coordinates
-                            draw.rectangle(
-                                [x_min, y_min, x_max, y_max],
-                                outline=color,
-                                width=thickness,
-                            )
-                            label_str = f" ({label})" if label else ""
-                            regions_drawn.append(
-                                f"rectangle at ({x},{y}) {width}x{height}{label_str} in {region.get('color', 'red')}"
-                            )
+                # All regions validated - proceed with drawing
+                regions_drawn = []
+                for region in regions:
+                    # Extract bounding box (coordinates are in [0, 1000] normalized format from Gemini)
+                    box = region["box"]
+                    x_min_norm = box["x_min"]
+                    y_min_norm = box["y_min"]
+                    x_max_norm = box["x_max"]
+                    y_max_norm = box["y_max"]
 
-                        elif shape == "circle":
-                            # Draw circle outline using bounding box center
-                            center_x = (x_min + x_max) / 2
-                            center_y = (y_min + y_max) / 2
-                            radius = width / 2  # Use width as diameter
-                            draw.ellipse(
-                                [
-                                    center_x - radius,
-                                    center_y - radius,
-                                    center_x + radius,
-                                    center_y + radius,
-                                ],
-                                outline=color,
-                                width=thickness,
-                            )
-                            label_str = f" ({label})" if label else ""
-                            regions_drawn.append(
-                                f"circle at ({center_x},{center_y}) radius {radius}{label_str} in {region.get('color', 'red')}"
-                            )
+                    # Scale normalized [0, 1000] coordinates to actual pixel coordinates
+                    x_min = (x_min_norm / 1000.0) * img_width
+                    y_min = (y_min_norm / 1000.0) * img_height
+                    x_max = (x_max_norm / 1000.0) * img_width
+                    y_max = (y_max_norm / 1000.0) * img_height
 
-                        else:
-                            logger.warning(
-                                f"Unknown shape '{shape}' in region {i}, skipping"
-                            )
+                    # Convert to x, y, width, height for logging
+                    x = x_min
+                    y = y_min
+                    width = x_max - x_min
+                    height = y_max - y_min
 
-                    except (KeyError, ValueError, TypeError) as e:
-                        logger.warning(f"Invalid region {i}: {e}, skipping")
-                        continue
+                    # Get optional attributes
+                    label = region.get("label", "")
+                    color = COLOR_MAP.get(region.get("color", "red"), "#FF0000")
+                    shape = region.get("shape", "rectangle")
+                    thickness = region.get("thickness", default_thickness)
+
+                    if shape == "rectangle":
+                        # Draw rectangle outline using bounding box coordinates
+                        draw.rectangle(
+                            [x_min, y_min, x_max, y_max],
+                            outline=color,
+                            width=thickness,
+                        )
+                        label_str = f" ({label})" if label else ""
+                        regions_drawn.append(
+                            f"rectangle at ({x},{y}) {width}x{height}{label_str} in {region.get('color', 'red')}"
+                        )
+                    elif shape == "circle":
+                        # Draw circle outline using bounding box center
+                        center_x = (x_min + x_max) / 2
+                        center_y = (y_min + y_max) / 2
+                        radius = width / 2  # Use width as diameter
+                        draw.ellipse(
+                            [
+                                center_x - radius,
+                                center_y - radius,
+                                center_x + radius,
+                                center_y + radius,
+                            ],
+                            outline=color,
+                            width=thickness,
+                        )
+                        label_str = f" ({label})" if label else ""
+                        regions_drawn.append(
+                            f"circle at ({center_x},{center_y}) radius {radius}{label_str} in {region.get('color', 'red')}"
+                        )
 
                 # Save highlighted image to bytes
                 output_buffer = io.BytesIO()
