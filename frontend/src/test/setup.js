@@ -56,6 +56,15 @@ global.ResizeObserver = class ResizeObserver {
   }
 };
 
+// Mock URL.createObjectURL and URL.revokeObjectURL for file attachments
+global.URL.createObjectURL = (blob) => {
+  return `blob:${blob.type}/${Math.random().toString(36).substring(7)}`;
+};
+
+global.URL.revokeObjectURL = () => {
+  // Mock implementation - do nothing
+};
+
 // Mock scrollTo for @assistant-ui/react's scroll behavior
 if (typeof globalThis.Element !== 'undefined') {
   globalThis.Element.prototype.scrollTo =

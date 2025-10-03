@@ -140,13 +140,6 @@ export const useStreamingResponse = ({
 
                 // Handle tool result
                 if (payload.tool_call_id && payload.result) {
-                  // Log when tool results include attachments
-                  if (payload.attachments && payload.attachments.length > 0) {
-                    console.log(
-                      `[ATTACH-SSE] Tool result with ${payload.attachments.length} attachment(s) | toolCallId=${payload.tool_call_id}`
-                    );
-                  }
-
                   const toolCallIndex = toolCalls.findIndex((tc) => tc.id === payload.tool_call_id);
                   if (toolCallIndex !== -1) {
                     // Create a new tool call object to ensure React detects the change
@@ -198,10 +191,6 @@ export const useStreamingResponse = ({
                   payload.attachments &&
                   Array.isArray(payload.attachments)
                 ) {
-                  console.log(
-                    `[AUTO-ATTACH] Synthesizing tool call for ${payload.attachments.length} attachment(s)`
-                  );
-
                   const syntheticToolCall = {
                     id: `web_attach_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                     name: 'attach_to_response',

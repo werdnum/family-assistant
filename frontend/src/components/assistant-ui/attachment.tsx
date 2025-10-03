@@ -1,7 +1,7 @@
 'use client';
 
 import { PropsWithChildren, useEffect, useState, type FC } from 'react';
-import { CircleXIcon, FileIcon, PaperclipIcon } from 'lucide-react';
+import { CircleXIcon, FileIcon, PaperclipIcon, ClockIcon } from 'lucide-react';
 import {
   AttachmentPrimitive,
   ComposerPrimitive,
@@ -10,7 +10,7 @@ import {
   useComposerRuntime,
 } from '@assistant-ui/react';
 import { useShallow } from 'zustand/shallow';
-import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Dialog,
   DialogTitle,
@@ -150,51 +150,75 @@ const AttachmentUI: FC = () => {
   const hasError = status?.type === 'error';
   const errorMessage = status?.error;
 
+  // Check if attachment is currently uploading
+  const isLoading = status?.type === 'running' && !hasError;
+
   return (
-    <TooltipProvider>
-      <Tooltip>
-        <AttachmentPrimitive.Root className="relative mt-3" data-testid="attachment-preview">
-          {hasError ? (
-            // Show error state prominently
-            <div className="flex flex-col gap-1">
-              <div
-                className="flex h-12 w-40 items-center justify-center gap-2 rounded-lg border border-red-500 bg-red-50 p-1"
-                data-testid="attachment-error"
-              >
-                <AttachmentThumb />
-                <div className="flex-grow basis-0">
-                  <p className="text-muted-foreground line-clamp-1 text-ellipsis break-all text-xs font-bold">
-                    <AttachmentPrimitive.Name />
-                  </p>
-                  <p className="text-red-600 text-xs font-medium">Error</p>
-                </div>
-              </div>
-              <p className="text-red-600 text-xs px-1" data-testid="attachment-error-message">
-                {errorMessage}
-              </p>
-            </div>
-          ) : (
-            <AttachmentPreviewDialog>
-              <TooltipTrigger asChild>
-                <div className="flex h-12 w-40 items-center justify-center gap-2 rounded-lg border p-1">
+    <Tooltip>
+      <AttachmentPrimitive.Root className="relative mt-3" data-testid="attachment-preview">
+        {isLoading ? (
+          // Show loading state during upload - still clickable for preview
+          <AttachmentPreviewDialog>
+            <TooltipTrigger asChild>
+              <div className="flex flex-col gap-1">
+                <div
+                  className="flex h-12 w-40 items-center justify-center gap-2 rounded-lg border-2 border-blue-500 bg-blue-50 p-1 animate-pulse cursor-pointer hover:bg-blue-100 transition-colors"
+                  data-testid="attachment-preview attachment-loading"
+                >
                   <AttachmentThumb />
                   <div className="flex-grow basis-0">
                     <p className="text-muted-foreground line-clamp-1 text-ellipsis break-all text-xs font-bold">
                       <AttachmentPrimitive.Name />
                     </p>
-                    <p className="text-muted-foreground text-xs">{typeLabel}</p>
+                    <div className="flex items-center gap-1">
+                      <ClockIcon size={12} className="animate-spin text-blue-600" />
+                      <p className="text-blue-600 text-xs font-medium">Uploading...</p>
+                    </div>
                   </div>
                 </div>
-              </TooltipTrigger>
-            </AttachmentPreviewDialog>
-          )}
-          {canRemove && <AttachmentRemove />}
-        </AttachmentPrimitive.Root>
-        <TooltipContent side="top">
-          {hasError ? errorMessage : <AttachmentPrimitive.Name />}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+              </div>
+            </TooltipTrigger>
+          </AttachmentPreviewDialog>
+        ) : hasError ? (
+          // Show error state prominently
+          <div className="flex flex-col gap-1">
+            <div
+              className="flex h-12 w-40 items-center justify-center gap-2 rounded-lg border border-red-500 bg-red-50 p-1"
+              data-testid="attachment-error"
+            >
+              <AttachmentThumb />
+              <div className="flex-grow basis-0">
+                <p className="text-muted-foreground line-clamp-1 text-ellipsis break-all text-xs font-bold">
+                  <AttachmentPrimitive.Name />
+                </p>
+                <p className="text-red-600 text-xs font-medium">Error</p>
+              </div>
+            </div>
+            <p className="text-red-600 text-xs px-1" data-testid="attachment-error-message">
+              {errorMessage}
+            </p>
+          </div>
+        ) : (
+          <AttachmentPreviewDialog>
+            <TooltipTrigger asChild>
+              <div className="flex h-12 w-40 items-center justify-center gap-2 rounded-lg border p-1">
+                <AttachmentThumb />
+                <div className="flex-grow basis-0">
+                  <p className="text-muted-foreground line-clamp-1 text-ellipsis break-all text-xs font-bold">
+                    <AttachmentPrimitive.Name />
+                  </p>
+                  <p className="text-muted-foreground text-xs">{typeLabel}</p>
+                </div>
+              </div>
+            </TooltipTrigger>
+          </AttachmentPreviewDialog>
+        )}
+        {canRemove && <AttachmentRemove />}
+      </AttachmentPrimitive.Root>
+      <TooltipContent side="top">
+        {isLoading ? 'Uploading file...' : hasError ? errorMessage : <AttachmentPrimitive.Name />}
+      </TooltipContent>
+    </Tooltip>
   );
 };
 
@@ -270,6 +294,7 @@ export const ComposerAddAttachment: FC = () => {
         className="my-2.5 size-8 p-2 transition-opacity ease-in"
         tooltip="Add Attachment"
         variant="ghost"
+        type="button"
         data-testid="add-attachment-button"
         onClick={() => {
           const fileInput = document.getElementById('composer-file-input') as HTMLInputElement;
