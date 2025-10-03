@@ -105,6 +105,7 @@ class ToolAttachment:
     content: bytes | None = None
     file_path: str | None = None
     description: str = ""
+    attachment_id: str | None = None  # Populated by infrastructure after storage
 
     def get_content_as_base64(self) -> str | None:
         """Get content as base64 string for embedding in messages"""
