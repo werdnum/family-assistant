@@ -305,6 +305,22 @@ class GoogleGenAIClient(BaseLLMClient):
                                 }
                             })
 
+                # Reconstruct thought signatures if present in provider_metadata
+                provider_metadata = msg.get("provider_metadata")
+                if provider_metadata and provider_metadata.get("provider") == "google":
+                    thought_signatures = provider_metadata.get("thought_signatures", [])
+                    for sig_data in thought_signatures:
+                        part_index = sig_data.get("part_index")
+                        signature_b64 = sig_data.get("signature")
+                        if (
+                            part_index is not None
+                            and signature_b64
+                            and part_index < len(parts)
+                        ):
+                            # Decode base64 signature and attach to part
+                            signature_bytes = base64.b64decode(signature_b64)
+                            parts[part_index]["thought"] = signature_bytes
+
                 if parts:
                     contents.append({"role": "model", "parts": parts})
             elif role == "tool":
@@ -500,7 +516,7 @@ class GoogleGenAIClient(BaseLLMClient):
                     if parts and hasattr(parts[0], "text"):
                         content = parts[0].text
 
-            # Extract tool calls from response
+            # Extract tool calls and thought signatures from response
             tool_calls = None
             if hasattr(response, "candidates") and response.candidates:
                 candidate = response.candidates[0]
@@ -511,7 +527,25 @@ class GoogleGenAIClient(BaseLLMClient):
                     and candidate.content.parts
                 ):
                     found_tool_calls = []
-                    for part in candidate.content.parts:
+                    thought_signatures = []
+
+                    for part_index, part in enumerate(candidate.content.parts):
+                        # Extract thought signature if present
+                        if hasattr(part, "thought") and part.thought:
+                            # Convert to bytes if needed and base64 encode for storage
+                            thought_bytes = (
+                                part.thought
+                                if isinstance(part.thought, bytes)
+                                else str(part.thought).encode("utf-8")
+                            )
+                            signature_b64 = base64.b64encode(thought_bytes).decode(
+                                "ascii"
+                            )
+                            thought_signatures.append({
+                                "part_index": part_index,
+                                "signature": signature_b64,
+                            })
+
                         if hasattr(part, "function_call") and part.function_call:
                             # Convert Google function call to our format
                             func_call = part.function_call
@@ -520,18 +554,31 @@ class GoogleGenAIClient(BaseLLMClient):
                                     "Received a tool call without a name: %s", func_call
                                 )
                                 continue
-                            tool_call = ToolCallItem(
-                                id=f"call_{uuid.uuid4().hex[:24]}",  # Generate ID
+                            # Tool call will be created below with provider_metadata
+                            found_tool_calls.append((part_index, func_call))
+
+                    # Build provider_metadata if we have signatures
+                    provider_metadata = None
+                    if thought_signatures:
+                        provider_metadata = {
+                            "provider": "google",
+                            "thought_signatures": thought_signatures,
+                        }
+
+                    # Create ToolCallItem objects with provider_metadata
+                    if found_tool_calls:
+                        tool_calls = [
+                            ToolCallItem(
+                                id=f"call_{uuid.uuid4().hex[:24]}",
                                 type="function",
                                 function=ToolCallFunction(
                                     name=func_call.name,
                                     arguments=json.dumps(func_call.args),
                                 ),
+                                provider_metadata=provider_metadata,
                             )
-                            found_tool_calls.append(tool_call)
-                    # Only set tool_calls if we found any
-                    if found_tool_calls:
-                        tool_calls = found_tool_calls
+                            for _, func_call in found_tool_calls
+                        ]
 
             # Extract usage information if available
             reasoning_info = None
@@ -547,6 +594,7 @@ class GoogleGenAIClient(BaseLLMClient):
                 content=content,
                 tool_calls=tool_calls,
                 reasoning_info=reasoning_info,
+                provider_metadata=provider_metadata,
             )
 
         except Exception as e:
@@ -699,8 +747,10 @@ class GoogleGenAIClient(BaseLLMClient):
                 config=generation_config,
             )
 
-            # Track tool calls being accumulated
+            # Track tool calls and thought signatures being accumulated
             accumulated_tool_calls = []
+            thought_signatures = []
+            part_index = 0
 
             # Process stream chunks
             async for chunk in stream_response:  # type: ignore[misc]
@@ -718,6 +768,22 @@ class GoogleGenAIClient(BaseLLMClient):
                             and candidate.content.parts is not None  # Fix None check
                         ):
                             for part in candidate.content.parts:
+                                # Extract thought signature if present
+                                if hasattr(part, "thought") and part.thought:
+                                    # Convert to bytes if needed and base64 encode
+                                    thought_bytes = (
+                                        part.thought
+                                        if isinstance(part.thought, bytes)
+                                        else str(part.thought).encode("utf-8")
+                                    )
+                                    signature_b64 = base64.b64encode(
+                                        thought_bytes
+                                    ).decode("ascii")
+                                    thought_signatures.append({
+                                        "part_index": part_index,
+                                        "signature": signature_b64,
+                                    })
+
                                 # Handle text parts
                                 if hasattr(part, "text") and part.text:
                                     yield LLMStreamEvent(
@@ -734,28 +800,43 @@ class GoogleGenAIClient(BaseLLMClient):
                                         # Generate a unique ID for the tool call
                                         tool_call_id = f"call_{uuid.uuid4().hex[:24]}"
 
-                                        tool_call = ToolCallItem(
-                                            id=tool_call_id,
-                                            type="function",
-                                            function=ToolCallFunction(
-                                                name=func_call.name,
-                                                arguments=json.dumps(func_call.args),
-                                            ),
-                                        )
+                                        # Store func_call for later - will add provider_metadata when emitting
                                         accumulated_tool_calls.append((
-                                            tool_call,
                                             tool_call_id,
+                                            func_call,
                                         ))
 
-            # Emit accumulated tool calls
-            for tool_call, tool_call_id in accumulated_tool_calls:
+                                part_index += 1
+
+            # Build provider_metadata if we have signatures
+            provider_metadata = None
+            if thought_signatures:
+                provider_metadata = {
+                    "provider": "google",
+                    "thought_signatures": thought_signatures,
+                }
+
+            # Emit accumulated tool calls with provider_metadata
+            for tool_call_id, func_call in accumulated_tool_calls:
+                tool_call = ToolCallItem(
+                    id=tool_call_id,
+                    type="function",
+                    function=ToolCallFunction(
+                        name=func_call.name,
+                        arguments=json.dumps(func_call.args),
+                    ),
+                    provider_metadata=provider_metadata,
+                )
                 yield LLMStreamEvent(
                     type="tool_call", tool_call=tool_call, tool_call_id=tool_call_id
                 )
 
             # Signal completion
             # Note: Usage metadata might not be available in streaming mode
-            yield LLMStreamEvent(type="done", metadata={})
+            done_metadata = {}
+            if provider_metadata:
+                done_metadata["provider_metadata"] = provider_metadata
+            yield LLMStreamEvent(type="done", metadata=done_metadata)
 
         except Exception as e:
             # Handle errors the same way as non-streaming
