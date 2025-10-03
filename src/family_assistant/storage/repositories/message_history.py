@@ -45,6 +45,8 @@ class MessageHistoryRepository(BaseRepository):
         attachments: list[dict[str, Any]] | None = None,  # Attachment metadata
         tool_name: str | None = None,  # Added: Function/tool name for tool messages
         name: str | None = None,  # OpenAI API compatibility (mapped to tool_name)
+        provider_metadata: dict[str, Any]
+        | None = None,  # Added: Provider-specific metadata for round-trip
     ) -> dict[str, Any] | None:  # Changed to return Optional[Dict]
         """
         Stores a message in the history table.
@@ -68,6 +70,7 @@ class MessageHistoryRepository(BaseRepository):
             name: Function/tool name (alias for tool_name, for OpenAI API compatibility).
                   If both 'name' and 'tool_name' are provided, 'tool_name' takes precedence.
                   If only 'name' is provided, it will be mapped to 'tool_name' for storage.
+            provider_metadata: Provider-specific metadata for round-trip (e.g., thought signatures)
 
         Returns:
             The stored message data including generated internal_id, or None on error
@@ -101,6 +104,7 @@ class MessageHistoryRepository(BaseRepository):
             "processing_profile_id": processing_profile_id,
             "attachments": attachments,
             "tool_name": tool_name,
+            "provider_metadata": provider_metadata,
         }
 
         # Remove None values except for fields that explicitly allow None
@@ -121,6 +125,7 @@ class MessageHistoryRepository(BaseRepository):
                 "processing_profile_id",
                 "attachments",
                 "tool_name",
+                "provider_metadata",
             }
         }
 
@@ -513,6 +518,15 @@ class MessageHistoryRepository(BaseRepository):
                     f"Failed to parse attachments JSON for message {msg.get('internal_id')}"
                 )
                 msg["attachments"] = None
+
+        if isinstance(msg.get("provider_metadata"), str):
+            try:
+                msg["provider_metadata"] = json.loads(msg["provider_metadata"])
+            except json.JSONDecodeError:
+                self._logger.warning(
+                    f"Failed to parse provider_metadata JSON for message {msg.get('internal_id')}"
+                )
+                msg["provider_metadata"] = None
 
         return msg
 

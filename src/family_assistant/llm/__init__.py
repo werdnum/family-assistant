@@ -270,6 +270,9 @@ class ToolCallItem:
     id: str
     type: str  # Usually "function"
     function: ToolCallFunction
+    provider_metadata: dict[str, Any] | None = (
+        None  # Provider-specific metadata (e.g., thought signatures)
+    )
 
 
 @dataclass
