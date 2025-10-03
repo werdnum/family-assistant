@@ -3,8 +3,6 @@
 
 # Auto-pull latest changes
 if [ -d "/workspace/main/.git" ]; then
-    cd /workspace
-    
     # Save current commit to restore if needed
     ORIG_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "")
     
