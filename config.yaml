@@ -123,7 +123,7 @@ default_profile_settings:
 
     # Default values, can be overridden by environment variables.
     timezone: "Australia/Sydney"
-    max_history_messages: 3
+    max_history_messages: 10
     history_max_age_hours: 2
     # Web-specific history settings for better conversation context
     # web_max_history_messages: 100  # Uncomment to override default of 100
