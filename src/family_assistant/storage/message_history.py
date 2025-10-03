@@ -80,6 +80,9 @@ message_history_table = Table(
     Column(
         "tool_name", String(255), nullable=True, index=True
     ),  # Function/tool name for tool messages (OpenAI API compatibility)
+    Column(
+        "provider_metadata", JSON().with_variant(JSONB, "postgresql"), nullable=True
+    ),  # Provider-specific metadata for round-trip (e.g., thought signatures)
 )
 
 
