@@ -611,27 +611,106 @@ class TestHighlightImageTool:
                 db_context_getter=lambda: db_context,
             )
 
-            # Mix of valid and invalid regions
+            # Region with missing required field (box)
             regions = [
                 {
                     "box": {"x_min": 100, "y_min": 100, "x_max": 200, "y_max": 200},
                     "label": "valid_region",
                 },
                 {
-                    # Missing box entirely
+                    # Missing box entirely - should trigger validation error
                     "label": "invalid_region",
                 },
             ]
 
-            # Execute tool - should process valid region and skip invalid
+            # Execute tool - should fail fast on invalid region
             result = await highlight_image_tool(
                 exec_context=exec_context,
                 image_attachment_id=script_attachment,
                 regions=regions,
             )
 
-            # Should succeed with 1 region drawn
+            # Should return error for invalid region
             assert result.text is not None
-            assert "Successfully highlighted" in result.text
-            assert "1 regions" in result.text or "1 region" in result.text
-            assert result.attachment is not None
+            assert result.text.startswith("Error:")
+            assert "Invalid region 1" in result.text
+            assert "missing required field" in result.text
+            assert result.attachment is None
+
+    async def test_highlight_image_invalid_shape(
+        self,
+        db_engine: AsyncEngine,
+        tmp_path: Path,
+    ) -> None:
+        """Test highlight_image with invalid shape."""
+        test_image_bytes = create_test_image(800, 600, "white")
+
+        async with DatabaseContext(db_engine) as db_context:
+            attachment_registry = AttachmentRegistry(
+                storage_path=str(tmp_path), db_engine=db_engine, config=None
+            )
+
+            image_id = str(uuid.uuid4())
+            # AttachmentRegistry uses hash-prefixed directories
+            hash_prefix = image_id[:2]
+            storage_dir = tmp_path / hash_prefix
+            storage_dir.mkdir(parents=True, exist_ok=True)
+            storage_path = str(storage_dir / f"{image_id}.png")
+            async with aiofiles.open(storage_path, "wb") as f:
+                await f.write(test_image_bytes)
+
+            await attachment_registry.register_attachment(
+                db_context=db_context,
+                attachment_id=image_id,
+                source_type="user",
+                source_id="test_user",
+                mime_type="image/png",
+                description="Test image",
+                size=len(test_image_bytes),
+                storage_path=storage_path,
+                conversation_id="test_conversation",
+            )
+
+            exec_context = ToolExecutionContext(
+                conversation_id="test_conversation",
+                interface_type="web",
+                turn_id="turn_123",
+                user_name="test_user",
+                db_context=db_context,
+                chat_interface=None,
+                attachment_registry=attachment_registry,
+            )
+
+            attachment_metadata = await attachment_registry.get_attachment(
+                db_context, image_id
+            )
+            assert attachment_metadata is not None
+
+            script_attachment = ScriptAttachment(
+                metadata=attachment_metadata,
+                registry=attachment_registry,
+                db_context_getter=lambda: db_context,
+            )
+
+            # Region with invalid shape
+            regions = [
+                {
+                    "box": {"x_min": 100, "y_min": 100, "x_max": 200, "y_max": 200},
+                    "label": "test",
+                    "shape": "triangle",  # Invalid shape
+                },
+            ]
+
+            # Execute tool - should fail fast on invalid shape
+            result = await highlight_image_tool(
+                exec_context=exec_context,
+                image_attachment_id=script_attachment,
+                regions=regions,
+            )
+
+            # Should return error for invalid shape
+            assert result.text is not None
+            assert result.text.startswith("Error:")
+            assert "Invalid shape 'triangle'" in result.text
+            assert "Must be 'rectangle' or 'circle'" in result.text
+            assert result.attachment is None
