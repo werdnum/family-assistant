@@ -60,9 +60,14 @@ class BaseLLMClient:
 
         Override in subclasses to handle provider-specific formats.
         """
+        content = (
+            f"[System: File from previous tool response - {attachment.description}]"
+        )
+        if attachment.attachment_id:
+            content += f"\n[Attachment ID: {attachment.attachment_id}]"
         return {
             "role": "user",
-            "content": f"[System: File from previous tool response - {attachment.description}]",
+            "content": content,
         }
 
     def _process_tool_messages(
@@ -75,7 +80,7 @@ class BaseLLMClient:
         for original_msg in messages:
             msg = original_msg.copy()  # Create copy to avoid side effects
             if msg.get("role") == "tool" and msg.get("_attachment"):
-                # Store attachment for injection
+                # Store attachment for injection (it already has attachment_id populated)
                 pending_attachment = msg.pop("_attachment")
                 msg["content"] = (
                     msg.get("content", "") + "\n[File content in following message]"

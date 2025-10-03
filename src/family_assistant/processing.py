@@ -810,6 +810,15 @@ class ProcessingService:
                                 # Set auto_attachment_id for automatic queuing
                                 auto_attachment_id = registered_metadata.attachment_id
 
+                                # Populate the attachment_id in the ToolAttachment object
+                                # This automatically updates llm_message["_attachment"] since objects are passed by reference
+                                result.attachment.attachment_id = auto_attachment_id
+
+                                # Inject attachment ID into LLM message so it can reference it in subsequent calls
+                                llm_message["content"] += (
+                                    f"\n[Attachment ID: {auto_attachment_id}]"
+                                )
+
                                 logger.info(
                                     f"Stored and registered tool attachment: {registered_metadata.attachment_id}"
                                 )

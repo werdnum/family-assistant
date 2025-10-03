@@ -381,6 +381,13 @@ class TestProcessingServiceMultimodal:
         assert call_args[1]["content_type"] == "image/jpeg"
         assert call_args[1]["tool_name"] == "mock_camera_snapshot"
 
+        # Verify that the attachment ID is injected into the LLM message content
+        llm_message = result.llm_message
+        assert "[Attachment ID: auto_attachment_123]" in llm_message["content"]
+
+        # Verify that the ToolAttachment object has the attachment_id populated
+        assert llm_message["_attachment"].attachment_id == "auto_attachment_123"
+
     async def test_no_auto_attachment_for_string_results(
         self, processing_service: ProcessingService, mock_db_context: Mock
     ) -> None:

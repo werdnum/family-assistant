@@ -161,22 +161,28 @@ async def process_attachment_arguments(
                 else:
                     processed_values.append(item)
             processed_args[key] = processed_values
-        elif (
-            is_attachment_parameter(key, value)
-            and isinstance(value, str)
-            and is_attachment_id(value)
-        ):
-            # Single attachment ID
-            logger.debug(f"Processing single attachment ID {value} for parameter {key}")
-            attachment = await fetch_attachment_object(value, context)
-            if attachment is not None:
-                processed_args[key] = attachment
+        elif is_attachment_parameter(key, value) and isinstance(value, str):
+            # Attachment parameter with string value
+            if is_attachment_id(value):
+                # Valid UUID - fetch the attachment
                 logger.debug(
-                    f"Replaced attachment ID {value} with attachment object for parameter {key}"
+                    f"Processing single attachment ID {value} for parameter {key}"
                 )
+                attachment = await fetch_attachment_object(value, context)
+                if attachment is not None:
+                    processed_args[key] = attachment
+                    logger.debug(
+                        f"Replaced attachment ID {value} with attachment object for parameter {key}"
+                    )
+                else:
+                    raise ValueError(
+                        f"Attachment '{value}' not found or access denied for parameter '{key}'"
+                    )
             else:
+                # Not a valid UUID
                 raise ValueError(
-                    f"Attachment '{value}' not found or access denied for parameter '{key}'"
+                    f"Parameter '{key}' requires a valid attachment UUID, got: {value!r}. "
+                    f"Attachment IDs are shown in tool result messages as '[Attachment ID: ...]'."
                 )
         else:
             # Regular parameter, keep as-is
