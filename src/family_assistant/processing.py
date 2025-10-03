@@ -419,11 +419,11 @@ class ProcessingService:
                     elif event.type == "done":
                         final_reasoning_info = event.metadata
                         # Extract provider_metadata from done event if present
-                        if event.metadata and "provider_metadata" in event.metadata:
-                            # Store for use if no tool calls extracted provider_metadata
-                            done_provider_metadata = event.metadata["provider_metadata"]
-                        else:
-                            done_provider_metadata = None
+                        done_provider_metadata = (
+                            event.metadata.get("provider_metadata")
+                            if event.metadata
+                            else None
+                        )
 
                     # Handle errors
                     elif event.type == "error":
