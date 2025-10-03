@@ -35,12 +35,15 @@ class BasePage:
         await self.wait_for_load()
         return response
 
-    async def wait_for_load(self, wait_for_network: bool = False) -> None:
+    async def wait_for_load(self, wait_for_network: bool = True) -> None:
         """Wait for the page to load.
 
         Args:
-            wait_for_network: If True, waits for network idle (slower but more thorough).
-                            If False, only waits for DOM content loaded (faster).
+            wait_for_network: If True, waits for network idle to ensure dynamic imports are loaded.
+                            If False, only waits for DOM content loaded (may miss lazy-loaded components).
+
+        Note: Default is True because React uses lazy loading for routes. Waiting for networkidle
+        ensures that lazy-loaded components are fetched and executed before tests interact with them.
         """
         if wait_for_network:
             await self.page.wait_for_load_state("networkidle")
