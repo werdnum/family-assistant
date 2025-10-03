@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { Menu } from 'lucide-react';
 import { Thread } from './Thread';
 import ConversationSidebar from './ConversationSidebar';
@@ -259,13 +260,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     // This prevents race conditions where the ref gets cleared before setState callback executes
     const targetMessageId = streamingMessageIdRef.current;
 
-    // Check for attach_to_response specifically
-    const attachToolCalls = toolCalls?.filter((tc) => tc.name === 'attach_to_response') || [];
-    if (attachToolCalls.length > 0) {
-      console.log(
-        `[ATTACH-STATE] Found attach_to_response | count=${attachToolCalls.length} | hasAttachments=${attachToolCalls.some((tc) => tc.attachments)} | ts=${Date.now()}`
-      );
-    }
+    // Check for attach_to_response specifically (removed debug logging)
 
     if (toolCalls && toolCalls.length > 0 && targetMessageId) {
       setMessages((prev) => {
@@ -402,9 +397,6 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
             // Collect attachments from tool messages for synthesis
             if (msg.attachments && Array.isArray(msg.attachments) && msg.attachments.length > 0) {
-              console.log(
-                `[AUTO-ATTACH-HISTORY] Found ${msg.attachments.length} attachment(s) in tool message ${msg.internal_id} for call ${msg.tool_call_id}`
-              );
               toolAttachments.set(msg.tool_call_id, msg.attachments);
             }
           }
@@ -472,9 +464,6 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               msg.tool_calls.forEach((toolCall: any) => {
                 const attachments = toolAttachments.get(toolCall.id);
                 if (attachments && attachments.length > 0) {
-                  console.log(
-                    `[AUTO-ATTACH-HISTORY] Tool call ${toolCall.id} has ${attachments.length} attachment(s)`
-                  );
                   allToolAttachments.push(...attachments);
                   attachments.forEach((att: any) => {
                     if (att.attachment_id) {
@@ -488,9 +477,6 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             // Also check for attachments in the assistant message's metadata
             // These are attachments queued by tools like attach_to_response
             if (msg.metadata?.attachments && Array.isArray(msg.metadata.attachments)) {
-              console.log(
-                `[AUTO-ATTACH-HISTORY] Found ${msg.metadata.attachments.length} attachment(s) in message metadata`
-              );
               // Add attachments from metadata to the collection
               allToolAttachments.push(...msg.metadata.attachments);
               msg.metadata.attachments.forEach((att: any) => {
@@ -501,10 +487,6 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             }
 
             if (allToolAttachments.length > 0) {
-              console.log(
-                `[AUTO-ATTACH-HISTORY] Synthesizing attach_to_response for msg ${msg.internal_id} with ${allToolAttachments.length} tool attachment(s)`
-              );
-
               content.push({
                 type: 'tool-call',
                 toolCallId: `history_attach_tool_${msg.internal_id}`,
@@ -731,96 +713,98 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   });
 
   return (
-    <div className="flex h-screen flex-col bg-background">
-      {/* Header */}
-      <div className="sticky top-0 z-50 flex items-center gap-4 border-b bg-background/95 p-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-          aria-label="Toggle sidebar"
-        >
-          <Menu className="h-4 w-4" />
-        </Button>
-        <h2 className="text-xl font-semibold">Chat</h2>
+    <TooltipProvider>
+      <div className="flex h-screen flex-col bg-background">
+        {/* Header */}
+        <div className="sticky top-0 z-50 flex items-center gap-4 border-b bg-background/95 p-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            aria-label="Toggle sidebar"
+          >
+            <Menu className="h-4 w-4" />
+          </Button>
+          <h2 className="text-xl font-semibold">Chat</h2>
 
-        {/* Profile Selector */}
-        <div className="flex items-center">
-          <ProfileSelector
-            selectedProfileId={currentProfileId}
-            onProfileChange={handleProfileChange}
-            disabled={isLoading}
-          />
+          {/* Profile Selector */}
+          <div className="flex items-center">
+            <ProfileSelector
+              selectedProfileId={currentProfileId}
+              onProfileChange={handleProfileChange}
+              disabled={isLoading}
+            />
+          </div>
+
+          {/* Main Navigation Menu */}
+          <div className="ml-auto">
+            <NavigationSheet currentPage="chat">
+              <Button variant="outline" size="sm">
+                <Menu className="h-4 w-4" />
+                <span className="sr-only">Open main menu</span>
+              </Button>
+            </NavigationSheet>
+          </div>
         </div>
 
-        {/* Main Navigation Menu */}
-        <div className="ml-auto">
-          <NavigationSheet currentPage="chat">
-            <Button variant="outline" size="sm">
-              <Menu className="h-4 w-4" />
-              <span className="sr-only">Open main menu</span>
-            </Button>
-          </NavigationSheet>
-        </div>
-      </div>
-
-      {/* Body */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar - Desktop */}
-        {!isMobile && (
-          <ConversationSidebar
-            conversations={conversations}
-            conversationsLoading={conversationsLoading}
-            currentConversationId={conversationId}
-            onConversationSelect={handleConversationSelect}
-            onNewChat={handleNewChat}
-            isOpen={sidebarOpen}
-            onRefresh={fetchConversations}
-            isMobile={isMobile}
-          />
-        )}
-
-        {/* Sidebar - Mobile Sheet (Portal-based overlay) */}
-        <Sheet open={sidebarOpen && isMobile} onOpenChange={setSidebarOpen}>
-          <SheetContent side="left" className="w-80 p-0">
+        {/* Body */}
+        <div className="flex flex-1 overflow-hidden">
+          {/* Sidebar - Desktop */}
+          {!isMobile && (
             <ConversationSidebar
               conversations={conversations}
               conversationsLoading={conversationsLoading}
               currentConversationId={conversationId}
               onConversationSelect={handleConversationSelect}
               onNewChat={handleNewChat}
-              isOpen={true}
+              isOpen={sidebarOpen}
               onRefresh={fetchConversations}
               isMobile={isMobile}
             />
-          </SheetContent>
-        </Sheet>
+          )}
 
-        {/* Main content */}
-        <div className="flex min-w-0 flex-1 flex-col">
-          <main className="flex flex-1 flex-col min-h-0">
-            <AssistantRuntimeProvider runtime={runtime}>
-              <ToolConfirmationProvider value={{ pendingConfirmations, handleConfirmation }}>
-                <div className="flex flex-1 flex-col min-h-0">
-                  <div className="border-b bg-muted/50 p-6 flex-shrink-0">
-                    <h2 className="text-xl font-semibold">Family Assistant Chat</h2>
-                    {conversationId && (
-                      <div className="mt-1 text-xs text-muted-foreground font-mono">
-                        Conversation: {conversationId.substring(0, 20)}...
-                      </div>
-                    )}
+          {/* Sidebar - Mobile Sheet (Portal-based overlay) */}
+          <Sheet open={sidebarOpen && isMobile} onOpenChange={setSidebarOpen}>
+            <SheetContent side="left" className="w-80 p-0">
+              <ConversationSidebar
+                conversations={conversations}
+                conversationsLoading={conversationsLoading}
+                currentConversationId={conversationId}
+                onConversationSelect={handleConversationSelect}
+                onNewChat={handleNewChat}
+                isOpen={true}
+                onRefresh={fetchConversations}
+                isMobile={isMobile}
+              />
+            </SheetContent>
+          </Sheet>
+
+          {/* Main content */}
+          <div className="flex min-w-0 flex-1 flex-col">
+            <main className="flex flex-1 flex-col min-h-0">
+              <AssistantRuntimeProvider runtime={runtime}>
+                <ToolConfirmationProvider value={{ pendingConfirmations, handleConfirmation }}>
+                  <div className="flex flex-1 flex-col min-h-0">
+                    <div className="border-b bg-muted/50 p-6 flex-shrink-0">
+                      <h2 className="text-xl font-semibold">Family Assistant Chat</h2>
+                      {conversationId && (
+                        <div className="mt-1 text-xs text-muted-foreground font-mono">
+                          Conversation: {conversationId.substring(0, 20)}...
+                        </div>
+                      )}
+                    </div>
+                    <Thread />
                   </div>
-                  <Thread />
-                </div>
-              </ToolConfirmationProvider>
-            </AssistantRuntimeProvider>
-          </main>
-          <footer className="hidden md:block border-t p-4 text-center text-sm text-muted-foreground bg-background">
-            <p>&copy; {new Date().getFullYear()} Family Assistant</p>
-          </footer>
+                </ToolConfirmationProvider>
+              </AssistantRuntimeProvider>
+            </main>
+            <footer className="hidden md:block border-t p-4 text-center text-sm text-muted-foreground bg-background">
+              <p>&copy; {new Date().getFullYear()} Family Assistant</p>
+            </footer>
+          </div>
         </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 };
 

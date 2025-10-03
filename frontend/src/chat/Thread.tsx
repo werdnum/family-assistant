@@ -6,6 +6,7 @@ import {
   MessagePrimitive,
   ThreadPrimitive,
   useMessage,
+  useComposer,
 } from '@assistant-ui/react';
 import {
   ArrowDownIcon,
@@ -16,6 +17,7 @@ import {
   SendHorizontalIcon,
   UserIcon,
   BotIcon,
+  Loader2Icon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -246,17 +248,29 @@ const Composer: React.FC = () => {
 };
 
 const ComposerAction: React.FC = () => {
+  // Check if any attachments are currently uploading
+  const hasUploadingAttachments = useComposer((state) => {
+    const attachments = state.attachments || [];
+    return attachments.some((att) => att.status?.type === 'running');
+  });
+
   return (
     <>
       <ThreadPrimitive.If running={false}>
         <ComposerPrimitive.Send asChild>
           <TooltipIconButton
-            tooltip="Send message"
-            variant="primary"
+            tooltip={hasUploadingAttachments ? 'Uploading attachments...' : 'Send message'}
+            variant="default"
+            side="top"
             className="h-12 w-12 shrink-0 rounded-xl"
             data-testid="send-button"
+            disabled={hasUploadingAttachments}
           >
-            <SendHorizontalIcon size={18} />
+            {hasUploadingAttachments ? (
+              <Loader2Icon size={18} className="animate-spin" />
+            ) : (
+              <SendHorizontalIcon size={18} />
+            )}
           </TooltipIconButton>
         </ComposerPrimitive.Send>
       </ThreadPrimitive.If>
@@ -264,7 +278,8 @@ const ComposerAction: React.FC = () => {
         <ComposerPrimitive.Cancel asChild>
           <TooltipIconButton
             tooltip="Stop generating"
-            variant="primary"
+            variant="default"
+            side="top"
             className="h-12 w-12 shrink-0 rounded-xl"
           >
             <div className="w-3 h-3 bg-current rounded-sm" />
