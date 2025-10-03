@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import insert, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import functions as func
 
@@ -321,9 +321,16 @@ class MessageHistoryRepository(BaseRepository):
             processing_profile_id: Filter by processing profile
 
         Returns:
-            List of messages in the thread
+            List of messages in the thread, including the root message
         """
-        conditions = [message_history_table.c.thread_root_id == thread_root_id]
+        # Include both the root message itself (where internal_id = thread_root_id)
+        # and all child messages (where thread_root_id = thread_root_id)
+        conditions = [
+            or_(
+                message_history_table.c.internal_id == thread_root_id,
+                message_history_table.c.thread_root_id == thread_root_id,
+            )
+        ]
 
         if processing_profile_id:
             conditions.append(
