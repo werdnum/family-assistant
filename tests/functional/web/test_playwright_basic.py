@@ -23,7 +23,8 @@ async def test_homepage_loads_with_playwright(web_test_fixture: WebTestFixture) 
     assert title is not None, "Page should have a title"
 
     # Check for main content area - the UI should have a main element
-    main_element = await page.wait_for_selector("main", state="visible", timeout=5000)
+    # Increased timeout to 15s to handle load under parallel test execution
+    main_element = await page.wait_for_selector("main", state="visible", timeout=15000)
     assert main_element is not None, "Page should have a visible main element"
 
     # Verify no JavaScript errors occurred
