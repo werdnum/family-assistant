@@ -74,7 +74,16 @@ check_test_status() {
             return 1
         fi
 
-        # Tests are recent enough
+        # Check if there are any failed tests in the report
+        local FAILED_COUNT=$(jq '.summary.failed // 0' .report.json 2>/dev/null)
+        if [ "$FAILED_COUNT" -gt 0 ]; then
+            echo "❌ Test report shows $FAILED_COUNT failed test(s)" >&2
+            echo "You MUST fix all failing tests before committing" >&2
+            echo "The acceptable number of test failures is zero." >&2
+            return 1
+        fi
+
+        # Tests are recent enough and all passing
         return 0
     fi
 
