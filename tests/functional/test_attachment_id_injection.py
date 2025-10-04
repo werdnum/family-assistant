@@ -201,12 +201,7 @@ async def test_attachment_id_injected_and_referenceable(
                             "image_attachment_id": captured_attachment_id,
                             "regions": [
                                 {
-                                    "box": {
-                                        "x_min": 100,
-                                        "y_min": 100,
-                                        "x_max": 200,
-                                        "y_max": 200,
-                                    },
+                                    "box": [100, 100, 200, 200],
                                     "label": "eagle statue",
                                     "color": "red",
                                 }
