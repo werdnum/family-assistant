@@ -179,8 +179,6 @@ async def test_navigation_links_work(
     if not link_data:
         pytest.fail("No internal navigation links found")
 
-    print(f"Testing {len(link_data)} navigation links")
-
     # Test each link in isolation with a fresh page
     failures = []
     for link_info in link_data:
