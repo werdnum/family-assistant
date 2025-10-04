@@ -27,4 +27,8 @@ note_item_format: "- {title}: {content}"
 # Format for showing excluded notes (notes with include_in_prompt=False).
 # Use {excluded_titles} for the comma-separated list of note titles.
 excluded_notes_format: "Other available notes (not included above): {excluded_titles}"
+# --- Conversation Attachments Formatting ---
+# Format for the context block when conversation attachments are present.
+# Use {attachments_list} where the bulleted list of attachments goes.
+thread_attachments_context_header: "Recent Attachments in Conversation:\n{attachments_list}"
 

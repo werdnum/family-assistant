@@ -9,7 +9,15 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.tools import (
+    CompositeToolsProvider,
+    LocalToolsProvider,
+    MCPToolsProvider,
+)
+from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 
 @pytest.mark.asyncio
@@ -238,3 +246,156 @@ async def test_empty_thread_returns_empty_list(db_engine: AsyncEngine) -> None:
         )
 
         assert messages == []
+
+
+@pytest.mark.asyncio
+async def test_attachment_context_extraction(db_engine: AsyncEngine) -> None:
+    """
+    Test that attachment context is correctly extracted from conversation.
+
+    The _extract_conversation_attachments_context method should:
+    1. Query recent attachments from the conversation
+    2. Format the attachment context with time-based age
+    3. Provide the context for the LLM
+    """
+    async with DatabaseContext(engine=db_engine) as db:
+        # Create attachment registry
+        attachment_registry = AttachmentRegistry(
+            storage_path="/tmp/test_attachments", db_engine=db_engine
+        )
+
+        # Store test attachments
+        attachment_1_data = b"\x89PNG\r\n\x1a\n"  # Minimal PNG header
+        attachment_2_data = b"PDF content here"
+
+        attachment_1 = await attachment_registry.store_and_register_tool_attachment(
+            file_content=attachment_1_data,
+            filename="bird_statue.png",
+            content_type="image/png",
+            tool_name="get_camera_snapshot",
+            description="bird_statue.png",
+            conversation_id="test_chat_789",
+        )
+
+        attachment_2 = await attachment_registry.store_and_register_tool_attachment(
+            file_content=attachment_2_data,
+            filename="document.pdf",
+            content_type="application/pdf",
+            tool_name="attach_to_response",
+            description="document.pdf",
+            conversation_id="test_chat_789",
+        )
+
+        attachment_id_1 = attachment_1.attachment_id
+        attachment_id_2 = attachment_2.attachment_id
+
+        # Create thread messages with attachment IDs
+        root_msg = await db.message_history.add(
+            interface_type="telegram",
+            conversation_id="test_chat_789",
+            interface_message_id="300",
+            turn_id=None,
+            thread_root_id=None,
+            role="user",
+            content="Can you highlight the eagle?",
+            timestamp=datetime.now(timezone.utc),
+            tool_call_id=None,
+            tool_calls=None,
+            reasoning_info=None,
+            error_traceback=None,
+            processing_profile_id="default_assistant",
+            attachments=None,
+            tool_name=None,
+            provider_metadata=None,
+        )
+
+        assert root_msg is not None, "Failed to create root message"
+        root_internal_id = root_msg["internal_id"]
+
+        # Tool message with attachment ID
+        await db.message_history.add(
+            interface_type="telegram",
+            conversation_id="test_chat_789",
+            interface_message_id=None,
+            turn_id="turn_1",
+            thread_root_id=root_internal_id,
+            role="tool",
+            content=f"Retrieved snapshot\n[Attachment ID: {attachment_id_1}]",
+            timestamp=datetime.now(timezone.utc),
+            tool_call_id="call_456",
+            tool_calls=None,
+            reasoning_info=None,
+            error_traceback=None,
+            processing_profile_id="default_assistant",
+            attachments=None,
+            tool_name="get_camera_snapshot",
+            provider_metadata=None,
+        )
+
+        # Another message with different attachment
+        await db.message_history.add(
+            interface_type="telegram",
+            conversation_id="test_chat_789",
+            interface_message_id=None,
+            turn_id="turn_2",
+            thread_root_id=root_internal_id,
+            role="assistant",
+            content=f"Here's the document\n[Attachment ID: {attachment_id_2}]",
+            timestamp=datetime.now(timezone.utc),
+            tool_call_id=None,
+            tool_calls=None,
+            reasoning_info=None,
+            error_traceback=None,
+            processing_profile_id="default_assistant",
+            attachments=None,
+            tool_name=None,
+            provider_metadata=None,
+        )
+
+        # Create a minimal ProcessingService to test the helper method
+        service_config = ProcessingServiceConfig(
+            prompts={
+                "thread_attachments_context_header": "Recent Attachments in Conversation:\n{attachments_list}"
+            },
+            timezone_str="UTC",
+            max_history_messages=10,
+            history_max_age_hours=2,
+            tools_config={},
+            delegation_security_level="blocked",
+            id="test_profile",
+        )
+
+        # Create real dependencies instead of mocks
+        llm_client = RuleBasedMockLLMClient(rules=[], default_response=None)
+        local_provider = LocalToolsProvider(definitions=[], implementations={})
+        mcp_provider = MCPToolsProvider(mcp_server_configs={})
+        tools_provider = CompositeToolsProvider(
+            providers=[local_provider, mcp_provider]
+        )
+
+        processing_service = ProcessingService(
+            llm_client=llm_client,
+            tools_provider=tools_provider,
+            service_config=service_config,
+            context_providers=[],
+            server_url="http://localhost:8000",
+            app_config={},
+            attachment_registry=attachment_registry,
+        )
+
+        # Extract attachment context from conversation
+        context = await processing_service._extract_conversation_attachments_context(
+            db, conversation_id="test_chat_789", max_age_hours=2
+        )
+
+        # Verify context is formatted correctly
+        assert context, "Expected non-empty attachment context"
+        assert "Recent Attachments in Conversation:" in context
+        assert attachment_id_1 in context
+        assert attachment_id_2 in context
+        assert "bird_statue.png" in context
+        assert "document.pdf" in context
+        assert "image/png" in context
+        assert "application/pdf" in context
+        # Check time-based age formatting (should show "minutes ago" or "hours ago")
+        assert "ago" in context.lower()
