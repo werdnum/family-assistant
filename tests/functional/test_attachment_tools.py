@@ -439,14 +439,15 @@ class TestHighlightImageTool:
 
             # Define regions with bounding box format (normalized [0, 1000] coordinates)
             # For an 800x600 image, these will be scaled to pixel coordinates
+            # Bounding box format is: y_min, x_min, y_max, x_max
             regions = [
                 {
-                    "box": {"x_min": 100, "y_min": 200, "x_max": 400, "y_max": 600},
+                    "box": [200, 100, 600, 400],
                     "label": "test_region_1",
                     "color": "red",
                 },
                 {
-                    "box": {"x_min": 500, "y_min": 300, "x_max": 800, "y_max": 700},
+                    "box": [300, 500, 700, 800],
                     "label": "test_region_2",
                     "color": "blue",
                 },
@@ -538,7 +539,7 @@ class TestHighlightImageTool:
 
             regions = [
                 {
-                    "box": {"x_min": 100, "y_min": 100, "x_max": 200, "y_max": 200},
+                    "box": [100, 100, 200, 200],
                     "label": "test",
                 },
             ]
@@ -614,7 +615,7 @@ class TestHighlightImageTool:
             # Region with missing required field (box)
             regions = [
                 {
-                    "box": {"x_min": 100, "y_min": 100, "x_max": 200, "y_max": 200},
+                    "box": [100, 100, 200, 200],
                     "label": "valid_region",
                 },
                 {
@@ -695,7 +696,7 @@ class TestHighlightImageTool:
             # Region with invalid shape
             regions = [
                 {
-                    "box": {"x_min": 100, "y_min": 100, "x_max": 200, "y_max": 200},
+                    "box": [100, 100, 200, 200],
                     "label": "test",
                     "shape": "triangle",  # Invalid shape
                 },
