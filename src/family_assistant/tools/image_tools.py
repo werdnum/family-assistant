@@ -29,11 +29,11 @@ Useful for marking objects, areas of interest, or annotations. \
 Creates and displays a new image with the highlighted regions.
 
 Bounding box coordinates are in normalized [0, 1000] format (Gemini object detection format). \
-For example, x_min=100 means 10% from the left edge, x_max=900 means 90% from the left edge.
+Format is [y_min, x_min, y_max, x_max] where coordinates are normalized to 0-1000.
 
 Example region format:
 {
-  "box": {"x_min": 100, "y_min": 200, "x_max": 300, "y_max": 400},
+  "box": [200, 100, 400, 300],
   "label": "chicken",
   "color": "red"
 }
@@ -53,27 +53,11 @@ Note: thickness is automatically scaled to 1% of image size if not specified."""
                             "type": "object",
                             "properties": {
                                 "box": {
-                                    "type": "object",
-                                    "description": "Bounding box coordinates in normalized [0, 1000] format (Gemini object detection format)",
-                                    "properties": {
-                                        "x_min": {
-                                            "type": "number",
-                                            "description": "Left edge x-coordinate (0-1000, where 0=left edge, 1000=right edge)",
-                                        },
-                                        "y_min": {
-                                            "type": "number",
-                                            "description": "Top edge y-coordinate (0-1000, where 0=top edge, 1000=bottom edge)",
-                                        },
-                                        "x_max": {
-                                            "type": "number",
-                                            "description": "Right edge x-coordinate (0-1000, where 0=left edge, 1000=right edge)",
-                                        },
-                                        "y_max": {
-                                            "type": "number",
-                                            "description": "Bottom edge y-coordinate (0-1000, where 0=top edge, 1000=bottom edge)",
-                                        },
-                                    },
-                                    "required": ["x_min", "y_min", "x_max", "y_max"],
+                                    "type": "array",
+                                    "description": "Bounding box in Gemini format: [y_min, x_min, y_max, x_max] normalized to [0, 1000]",
+                                    "items": {"type": "number"},
+                                    "minItems": 4,
+                                    "maxItems": 4,
                                 },
                                 "label": {
                                     "type": "string",
@@ -204,10 +188,11 @@ async def highlight_image_tool(
                     try:
                         # Validate required fields
                         box = region["box"]
-                        _ = box["x_min"]
-                        _ = box["y_min"]
-                        _ = box["x_max"]
-                        _ = box["y_max"]
+                        if not isinstance(box, list) or len(box) != 4:
+                            return ToolResult(
+                                text=f"Error: Invalid region {i}: box must be a list of 4 numbers [y_min, x_min, y_max, x_max]",
+                                attachment=None,
+                            )
 
                         # Validate shape if specified
                         shape = region.get("shape", "rectangle")
@@ -230,12 +215,9 @@ async def highlight_image_tool(
                 # All regions validated - proceed with drawing
                 regions_drawn = []
                 for region in regions:
-                    # Extract bounding box (coordinates are in [0, 1000] normalized format from Gemini)
+                    # Extract bounding box (Gemini format: [y_min, x_min, y_max, x_max] normalized to [0, 1000])
                     box = region["box"]
-                    x_min_norm = box["x_min"]
-                    y_min_norm = box["y_min"]
-                    x_max_norm = box["x_max"]
-                    y_max_norm = box["y_max"]
+                    y_min_norm, x_min_norm, y_max_norm, x_max_norm = box
 
                     # Scale normalized [0, 1000] coordinates to actual pixel coordinates
                     x_min = (x_min_norm / 1000.0) * img_width
