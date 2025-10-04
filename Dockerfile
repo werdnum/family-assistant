@@ -121,15 +121,18 @@ RUN playwright install chromium && \
 
 USER root
 
-# Copy only pyproject.toml first to leverage Docker layer caching for dependencies
-COPY --chown=appuser:appuser pyproject.toml ./
+# Copy dependency definition files
+COPY --chown=appuser:appuser pyproject.toml uv.lock* ./
+
+# Install Python dependencies
+USER appuser
+RUN uv sync --extra local-embeddings
 
 # --- Frontend Build Stage ---
 # Copy frontend package files first for layer caching
 COPY --chown=appuser:appuser frontend/package*.json ./frontend/
 
 # Install frontend dependencies as appuser
-USER appuser
 RUN --mount=type=cache,target=/home/appuser/.npm,uid=1001,gid=1001,sharing=locked \
     cd frontend && npm ci
 
@@ -145,21 +148,14 @@ USER root
 
 # --- Copy Application Code ---
 # Copy the source code into the image with proper ownership
-COPY --chown=appuser:appuser src/ /app/src/
-COPY --chown=appuser:appuser docs/ /app/docs/
-
-# Copy configuration files, templates, and static assets to the WORKDIR
-# These need to be accessible relative to the WORKDIR at runtime when running the app
-COPY --chown=appuser:appuser logging.conf alembic.ini config.yaml prompts.yaml mcp_config.json ./
-COPY --chown=appuser:appuser alembic /app/alembic/
-COPY --chown=appuser:appuser contrib /app/contrib
+COPY --chown=appuser:appuser . .
 
 # --- Install the Package ---
-# Install the package using uv from pyproject.toml. This ensures that the package
-# is installed with all its source code.
-# Include local-embeddings extra for production embedding similarity support
+# Install the package in editable mode. This is useful for development, but for production
+# a standard installation is often preferred. Since this is a single image for both,
+# this is a reasonable compromise.
 USER appuser
-RUN uv pip install '.[local-embeddings]'
+RUN uv pip install -e .
 
 # --- Runtime Configuration ---
 # Expose the port the web server listens on
