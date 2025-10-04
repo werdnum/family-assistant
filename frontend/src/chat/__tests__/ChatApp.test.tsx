@@ -30,10 +30,10 @@ describe('ChatApp', () => {
   it('renders the chat interface', async () => {
     await renderChatApp({ waitForReady: true });
 
-    // Verify basic UI elements are present
-    expect(screen.getByText('Chat')).toBeInTheDocument();
-    expect(screen.getByText('Assistant')).toBeInTheDocument();
-    expect(screen.getByText('Conversations')).toBeInTheDocument();
+    // Verify basic UI elements are present - use findByText to wait for async loading
+    expect(await screen.findByText('Chat')).toBeInTheDocument();
+    expect(await screen.findByText('Assistant')).toBeInTheDocument();
+    expect(await screen.findByText('Conversations')).toBeInTheDocument();
   });
 
   it('sends and receives messages', async () => {
