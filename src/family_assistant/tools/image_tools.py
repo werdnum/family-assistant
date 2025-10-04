@@ -180,6 +180,9 @@ async def highlight_image_tool(
         # Load image with PIL
         try:
             with Image.open(io.BytesIO(original_content)) as original_img:
+                # Save format before any conversion (e.g., "JPEG", "PNG")
+                original_format = original_img.format or "PNG"
+
                 # Convert to RGB if necessary for drawing
                 if original_img.mode != "RGB":
                     img = original_img.convert("RGB")
@@ -283,9 +286,16 @@ async def highlight_image_tool(
                             f"circle at ({center_x},{center_y}) radius {radius}{label_str} in {region.get('color', 'red')}"
                         )
 
-                # Save highlighted image to bytes
+                # Save highlighted image to bytes preserving original format
                 output_buffer = io.BytesIO()
-                highlighted_img.save(output_buffer, format="PNG")
+                if original_format == "JPEG":
+                    # Use JPEG with good quality and optimization for photos
+                    highlighted_img.save(
+                        output_buffer, format="JPEG", quality=85, optimize=True
+                    )
+                else:
+                    # Preserve other formats (PNG, etc.)
+                    highlighted_img.save(output_buffer, format=original_format)
                 highlighted_content = output_buffer.getvalue()
 
         except Exception as e:
