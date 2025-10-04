@@ -151,24 +151,38 @@ User: (replies) Can you highlight the eagle?
 Bot: [uses image from thread history to highlight the eagle]
 ```
 
+## Attachment Context Provider (Implemented)
+
+The system now dynamically extracts and includes attachment context from conversations:
+
+```
+Recent Attachments in Conversation:
+- [uuid-1] image.jpg (image/jpeg) - 5 minutes ago
+- [uuid-2] document.pdf (application/pdf) - 2 hours ago
+```
+
+**Implementation Details:**
+
+- `_extract_conversation_attachments_context()` queries the `attachment_metadata` table directly by
+  `conversation_id` using the storage layer method `get_recent_attachments_for_conversation()`
+- Uses time-based filtering (configurable `max_age_hours`, defaults to `history_max_age_hours`)
+- Fetches attachment metadata from the AttachmentRegistry
+- Formats context with time-based age strings ("X hours/minutes ago") using template from
+  `prompts.yaml`
+- Injected into system prompt alongside other context providers
+- Only appears when replying in a thread (Telegram) and attachments exist in the conversation
+
+**Benefits:**
+
+- Makes attachment availability explicit to the LLM
+- Reduces hallucination of invalid attachment IDs
+- Provides clear context about what files are available
+
+**Test Coverage:**
+
+- `tests/functional/telegram/test_thread_history.py::test_attachment_context_extraction`
+
 ## Future Enhancements
-
-### Attachment Context Provider (Planned)
-
-Instead of a static reminder in the system prompt, implement a context provider that dynamically
-includes recent attachment metadata:
-
-```
-Recent Attachments in Thread:
-- [uuid-1] image.jpg (image/jpeg) - from 2 messages ago
-- [uuid-2] document.pdf (application/pdf) - from 1 message ago
-```
-
-This would:
-
-- Make attachment availability explicit to the LLM
-- Reduce hallucination of invalid attachment IDs
-- Provide clear context about what files are available
 
 ### Message Concatenation Investigation
 
