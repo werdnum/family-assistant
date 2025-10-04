@@ -7,6 +7,7 @@ import socket
 import subprocess
 import tempfile
 import time
+import uuid
 from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -292,7 +293,11 @@ async def _create_web_assistant(
     print(f"\n=== Starting {log_prefix}API server on port {api_port} ===")
 
     # Create minimal test configuration
-    storage_suffix = f"_{scope_label.lower()}" if scope_label else ""
+    # Generate unique storage paths to avoid conflicts during parallel test execution
+    test_id = uuid.uuid4().hex[:8]
+    storage_suffix = (
+        f"_{scope_label.lower()}_{test_id}" if scope_label else f"_{test_id}"
+    )
     test_config: dict[str, Any] = {
         "telegram_enabled": False,
         "telegram_token": None,
