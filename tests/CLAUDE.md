@@ -4,11 +4,15 @@ This file provides guidance for working with tests in this project.
 
 ## Testing Principles
 
-- **IMPORTANT**: Write your tests as "end-to-end" as you can.
+- **Testing Philosophy: Prefer Real/Fake Dependencies Over Mocks**
 
-  - Use mock objects as little as possible. Use real databases (fixtures available in
-    tests/conftest.py and tests/functional/telegram/conftest.py) and only mock external dependencies
-    with no good fake implementations.
+  - **Write tests as "end-to-end" as possible.** The most valuable tests are those that resemble how the application is used in production.
+  - **Use real dependencies** like the test database (`test_db_engine` fixture) whenever you can. This provides the highest confidence.
+  - **Use fake dependencies** for services that are complex or slow to run in tests. A "fake" is a high-fidelity test implementation that mimics the real service's API and behavior.
+  - **Use mocks sparingly.** Mocks should be a last resort, primarily for:
+    - Isolating a single unit of code in a pure unit test.
+    - Simulating external third-party services that are difficult to control or fake (e.g., Telegram, Home Assistant).
+  - **Why?** Real and fake dependencies make tests more robust and realistic. Mocks can be brittle, often breaking when the underlying implementation changes, and can hide real integration bugs.
 
 - **Each test tests one independent behaviour** of the system under test. Arrange, Act, Assert.
   NEVER Arrange, Act, Assert, Act, Assert.

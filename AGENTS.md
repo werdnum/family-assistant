@@ -218,7 +218,7 @@ overview of:
 - **Repository Pattern**: Data access logic encapsulated in repository classes, accessed via
   DatabaseContext
 - **Dependency Injection**: Non-trivial objects with external dependencies should be created using dependency injection. Core services should accept dependencies as constructor arguments rather than creating them internally.
-  arguments.
+- **Testing with Real/Fake Dependencies**: Prefer using real or fake dependencies over mocks in tests, especially functional tests. Mocks should only be used for external services where fakes are not practical (e.g., Telegram). This ensures tests are more realistic and less brittle.
 - **Protocol-based Interfaces**: Uses Python protocols for loose coupling (ChatInterface,
   LLMInterface, EmbeddingGenerator)
 - **Async/Await**: Fully asynchronous architecture using asyncio
