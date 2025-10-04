@@ -145,61 +145,101 @@ async def test_ui_endpoint_accessibility_playwright(
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-@pytest.mark.parametrize("link_index", [0, 1, 2])
 async def test_navigation_links_work(
     web_test_fixture: WebTestFixture,
     console_error_checker: ConsoleErrorCollector,
-    link_index: int,
 ) -> None:
-    """Test that navigation links in the UI actually work.
+    """Test that all navigation links in the UI work correctly.
 
-    Parameterized to test each link independently for better isolation.
+    This is a smoke test that discovers all nav links dynamically and tests each one
+    in isolation to avoid stale element references and ensure proper testing.
     """
-    page = web_test_fixture.page
+    browser = web_test_fixture.page.context.browser
+    assert browser is not None, "Browser not available"
     base_url = web_test_fixture.base_url
+
+    # Discover all navigation links using the existing page
+    page = web_test_fixture.page
     base_page = BasePage(page, base_url)
 
-    # Start at notes page (which has navigation)
     await base_page.navigate_to("/notes")
     await base_page.wait_for_load()
-
-    # Wait for the React app navigation bar to load - navigation links are directly visible
     await page.wait_for_selector("nav a", timeout=10000)
-
-    # Wait for the page to finish network requests (notes might still be loading but nav should work)
     await page.wait_for_load_state("networkidle", timeout=5000)
 
-    # Get count of navigation links to check if this index exists
-    nav_link_count = await page.locator("nav a").count()
-    if link_index >= nav_link_count:
-        pytest.skip(
-            f"Link index {link_index} doesn't exist (only {nav_link_count} links)"
+    # Collect all navigation links (data only, not element references)
+    nav_links = await page.locator("nav a").all()
+    link_data = []
+    for link in nav_links:
+        href = await link.get_attribute("href")
+        text = await link.text_content()
+        if href and not href.startswith("http"):
+            link_data.append({"href": href, "text": text or href})
+
+    if not link_data:
+        pytest.fail("No internal navigation links found")
+
+    print(f"Testing {len(link_data)} navigation links")
+
+    # Test each link in isolation with a fresh page
+    failures = []
+    for link_info in link_data:
+        test_page = await browser.new_page()
+        try:
+            # Set up console error checking for this page
+            page_error_checker = ConsoleErrorCollector(test_page)
+
+            test_base_page = BasePage(test_page, base_url)
+
+            # Navigate to notes page
+            await test_base_page.navigate_to("/notes")
+            await test_base_page.wait_for_load()
+            await test_page.wait_for_selector("nav a", timeout=10000)
+
+            # Find and click the specific link by href
+            target_link = test_page.locator(f'nav a[href="{link_info["href"]}"]')
+            await target_link.click()
+
+            # Wait for navigation based on destination
+            if link_info["href"] == "/chat":
+                await test_page.wait_for_selector(
+                    '[data-react-mounted="true"]', timeout=10000
+                )
+                await test_page.wait_for_selector(
+                    "main .flex.flex-1.flex-col", timeout=5000
+                )
+            else:
+                await test_page.wait_for_load_state("networkidle", timeout=10000)
+
+            # Verify navigation succeeded
+            current_url = test_page.url
+            if base_url not in current_url:
+                failures.append(
+                    f"Navigation failed for link '{link_info['text']}' "
+                    f"({link_info['href']}): URL is {current_url}"
+                )
+
+            # Check for console errors on the destination page
+            if page_error_checker.errors:
+                failures.append(
+                    f"Console errors on '{link_info['text']}' ({link_info['href']}): "
+                    + ", ".join(page_error_checker.errors)
+                )
+        except Exception as e:
+            failures.append(
+                f"Link '{link_info['text']}' ({link_info['href']}) failed: {e}"
+            )
+        finally:
+            await test_page.close()
+
+    # Report all failures together
+    if failures:
+        pytest.fail(
+            f"Navigation test failed for {len(failures)}/{len(link_data)} links:\n"
+            + "\n".join(f"  - {f}" for f in failures)
         )
 
-    # Get the link at this index
-    link = page.locator("nav a").nth(link_index)
-    href = await link.get_attribute("href")
-
-    if not href or href.startswith("http"):
-        pytest.skip(f"Link {link_index} is external or has no href")
-
-    # Click the link
-    await link.click()
-
-    # For chat page, wait for the React app to fully load
-    if href == "/chat":
-        # Wait for chat interface to be ready
-        await page.wait_for_selector('[data-react-mounted="true"]', timeout=10000)
-        # Wait for chat UI elements to be interactive
-        await page.wait_for_selector("main .flex.flex-1.flex-col", timeout=5000)
-    else:
-        await page.wait_for_load_state("networkidle", timeout=10000)
-
-    # Verify we navigated somewhere
-    current_url = page.url
-    assert base_url in current_url, f"Navigation failed for link: {href}"
-
-    # Assert no console errors
+    # Check console errors from original page
     console_error_checker.assert_no_errors()
 
 
