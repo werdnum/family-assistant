@@ -295,9 +295,8 @@ async def _create_web_assistant(
     # Create minimal test configuration
     # Generate unique storage paths to avoid conflicts during parallel test execution
     test_id = uuid.uuid4().hex[:8]
-    storage_suffix = (
-        f"_{scope_label.lower()}_{test_id}" if scope_label else f"_{test_id}"
-    )
+    scope_prefix = f"_{scope_label.lower()}" if scope_label else ""
+    storage_suffix = f"{scope_prefix}_{test_id}"
     test_config: dict[str, Any] = {
         "telegram_enabled": False,
         "telegram_token": None,
