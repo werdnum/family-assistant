@@ -350,6 +350,10 @@ class TestProfileSwitchingUI:
         profile_selector = page.locator('button[role="combobox"]').first
         await expect(profile_selector).to_have_attribute("role", "combobox")
 
+        # Wait for element to be fully interactive before testing keyboard accessibility
+        await expect(profile_selector).to_be_visible()
+        await expect(profile_selector).to_be_enabled()
+
         # Should be keyboard accessible
         await profile_selector.focus()
         await expect(profile_selector).to_be_focused()
