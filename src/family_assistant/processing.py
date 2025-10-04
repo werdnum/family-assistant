@@ -1065,6 +1065,80 @@ class ProcessingService:
 
         return converted_parts
 
+    async def _extract_conversation_attachments_context(
+        self, db_context: DatabaseContext, conversation_id: str, max_age_hours: int
+    ) -> str:
+        """
+        Extracts recent attachment information from the conversation and formats it for LLM context.
+
+        Args:
+            db_context: Database context for attachment queries.
+            conversation_id: Conversation identifier to query attachments for.
+            max_age_hours: Maximum age of attachments to include (in hours).
+
+        Returns:
+            Formatted string with attachment context, or empty string if no attachments found.
+        """
+        if not self.attachment_registry:
+            return ""
+
+        try:
+            # Query recent attachments using storage layer method
+            cutoff_time = self.clock.now() - timedelta(hours=max_age_hours)
+
+            attachments = (
+                await self.attachment_registry.get_recent_attachments_for_conversation(
+                    db_context=db_context,
+                    conversation_id=conversation_id,
+                    max_age=cutoff_time,
+                )
+            )
+
+            if not attachments:
+                return ""
+
+            # Format attachment context
+            attachment_items = []
+            now = self.clock.now()
+
+            for attachment in attachments:
+                attachment_id = attachment.attachment_id
+                filename = attachment.description or "unknown"
+                content_type = attachment.mime_type or "unknown"
+                created_at = attachment.created_at
+
+                # Ensure created_at is timezone-aware (SQLite may return naive datetimes)
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+
+                # Calculate age
+                age = now - created_at
+                if age.total_seconds() < 3600:  # Less than 1 hour
+                    minutes = int(age.total_seconds() / 60)
+                    age_str = f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+                else:
+                    hours = int(age.total_seconds() / 3600)
+                    age_str = f"{hours} hour{'s' if hours != 1 else ''} ago"
+
+                attachment_items.append(
+                    f"- [{attachment_id}] {filename} ({content_type}) - {age_str}"
+                )
+
+            # Use prompt template
+            items_str = "\n".join(attachment_items)
+            header_template = self.prompts.get(
+                "thread_attachments_context_header",
+                "Recent Attachments in Conversation:\n{attachments_list}",
+            )
+
+            return header_template.format(attachments_list=items_str)
+
+        except Exception as e:
+            logger.error(
+                f"Error extracting conversation attachments context: {e}", exc_info=True
+            )
+            return ""
+
     async def _format_history_for_llm(
         self, history_messages: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
@@ -1393,6 +1467,7 @@ class ProcessingService:
             )
 
             # Handle reply thread context
+            thread_attachments_context = ""
             if replied_to_interface_id and thread_root_id_for_turn:
                 try:
                     logger.info(
@@ -1422,6 +1497,17 @@ class ProcessingService:
                     logger.info(
                         f"Using {len(initial_messages_for_llm)} messages from full thread history for LLM context."
                     )
+
+                    # Extract attachment context from conversation
+                    thread_attachments_context = (
+                        await self._extract_conversation_attachments_context(
+                            db_context, conversation_id, self.history_max_age_hours
+                        )
+                    )
+                    if thread_attachments_context:
+                        logger.debug(
+                            "Extracted attachment context from thread messages for LLM."
+                        )
                 except Exception as thread_fetch_err:
                     logger.error(
                         f"Error fetching full thread history: {thread_fetch_err}",
@@ -1471,6 +1557,13 @@ class ProcessingService:
             aggregated_other_context_str = (
                 await self._aggregate_context_from_providers()
             )
+
+            # Add thread attachments context if available
+            if thread_attachments_context:
+                if aggregated_other_context_str:
+                    aggregated_other_context_str += "\n\n" + thread_attachments_context
+                else:
+                    aggregated_other_context_str = thread_attachments_context
 
             # Prepare arguments for system prompt formatting
             format_args = {

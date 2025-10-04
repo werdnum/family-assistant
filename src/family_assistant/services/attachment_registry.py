@@ -296,6 +296,33 @@ class AttachmentRegistry:
         rows = await db_context.fetch_all(query)
         return [AttachmentMetadata.from_row(row) for row in rows]
 
+    async def get_recent_attachments_for_conversation(
+        self,
+        db_context: DatabaseContext,
+        conversation_id: str,
+        max_age: datetime,
+    ) -> list[AttachmentMetadata]:
+        """
+        Get recent attachments for a conversation within a time window.
+
+        Args:
+            db_context: Database context
+            conversation_id: Conversation identifier
+            max_age: Cutoff time - only attachments created after this time are returned
+
+        Returns:
+            List of AttachmentMetadata objects ordered by creation time (newest first)
+        """
+        query = (
+            select(attachment_metadata_table)
+            .where(attachment_metadata_table.c.conversation_id == conversation_id)
+            .where(attachment_metadata_table.c.created_at >= max_age)
+            .order_by(attachment_metadata_table.c.created_at.desc())
+        )
+
+        rows = await db_context.fetch_all(query)
+        return [AttachmentMetadata.from_row(row) for row in rows]
+
     async def register_user_attachment(
         self,
         db_context: DatabaseContext,
