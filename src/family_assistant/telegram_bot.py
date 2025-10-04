@@ -58,6 +58,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Telegram API limits
+TELEGRAM_PHOTO_SIZE_LIMIT = 10 * 1024 * 1024  # 10MB
 
 # Import telegram errors for specific checking
 
@@ -2045,6 +2047,98 @@ class TelegramChatInterface(ChatInterface):
             )
             return None
 
+    def _resize_image_if_needed(
+        self, content: bytes, attachment_id: str
+    ) -> tuple[bytes, str | None]:
+        """
+        Resize image if it exceeds Telegram's photo size limit.
+
+        Uses PIL to intelligently resize large images to fit within Telegram's 10MB photo limit
+        while preserving aspect ratio and quality. Targets ~20 megapixels which typically
+        results in ~8MB JPEG files with good quality.
+
+        Args:
+            content: Original image content as bytes
+            attachment_id: ID of the attachment for logging
+
+        Returns:
+            Tuple of (processed_content, size_note):
+            - processed_content: Resized image bytes if needed, or original if small enough
+            - size_note: Caption text with link to full resolution if resized, None otherwise
+        """
+        # If image is already small enough, return as-is
+        if len(content) <= TELEGRAM_PHOTO_SIZE_LIMIT:
+            return content, None
+
+        logger.info(
+            f"Image {attachment_id} is {len(content) / (1024 * 1024):.1f}MB, "
+            f"resizing to fit {TELEGRAM_PHOTO_SIZE_LIMIT / (1024 * 1024):.0f}MB limit"
+        )
+
+        try:
+            from PIL import Image  # noqa: PLC0415
+
+            # Target 20 megapixels (~4000x5000 depending on aspect ratio)
+            # This typically produces ~8MB JPEG files with quality=85
+            TARGET_MEGAPIXELS = 20
+
+            # Load image and get dimensions
+            with Image.open(io.BytesIO(content)) as img:
+                original_width, original_height = img.size
+                original_megapixels = (original_width * original_height) / 1_000_000
+
+                # Calculate resize dimensions
+                if original_megapixels <= TARGET_MEGAPIXELS:
+                    # Image resolution is fine, but file is large (maybe PNG)
+                    # Just re-encode as JPEG
+                    scale_factor = 1.0
+                else:
+                    # Scale down to target megapixels
+                    scale_factor = (TARGET_MEGAPIXELS / original_megapixels) ** 0.5
+
+                new_width = int(original_width * scale_factor)
+                new_height = int(original_height * scale_factor)
+
+                # Convert to RGB if needed
+                img_rgb = img.convert("RGB") if img.mode != "RGB" else img
+
+                # Resize if needed
+                if scale_factor < 1.0:
+                    resized_img = img_rgb.resize(
+                        (new_width, new_height), Image.Resampling.LANCZOS
+                    )
+                else:
+                    resized_img = img_rgb
+
+                # Save as JPEG with quality=85
+                output_buffer = io.BytesIO()
+                resized_img.save(
+                    output_buffer, format="JPEG", quality=85, optimize=True
+                )
+                resized_content = output_buffer.getvalue()
+
+                # Verify result is actually smaller
+                if len(resized_content) > TELEGRAM_PHOTO_SIZE_LIMIT:
+                    logger.error(
+                        f"Resized image {attachment_id} is still {len(resized_content) / (1024 * 1024):.1f}MB, "
+                        f"exceeds {TELEGRAM_PHOTO_SIZE_LIMIT / (1024 * 1024):.0f}MB limit"
+                    )
+                    return content, None
+
+                logger.info(
+                    f"Resized image {attachment_id} from {len(content) / (1024 * 1024):.1f}MB "
+                    f"to {len(resized_content) / (1024 * 1024):.1f}MB "
+                    f"({original_width}x{original_height} -> {new_width}x{new_height})"
+                )
+
+                # Generate caption with link to full resolution
+                size_note = f"[Full resolution: /attachment {attachment_id}]"
+                return resized_content, size_note
+
+        except Exception as e:
+            logger.error(f"Failed to resize image {attachment_id}: {e}", exc_info=True)
+            return content, None
+
     async def _send_attachments(
         self,
         chat_id: int,
@@ -2133,50 +2227,137 @@ class TelegramChatInterface(ChatInterface):
 
                         # Send as media group if multiple images, otherwise single photo
                         if len(image_group) > 1:
+                            # Process all images in the group
+                            # Note: We load all images into memory here. For large groups,
+                            # this could be optimized to stream, but media groups are
+                            # typically small (2-4 images).
                             media_group = []
+                            resize_notes = []
+                            oversized_attachments = []
+
                             for img_data in image_group:
+                                processed_content, size_note = (
+                                    self._resize_image_if_needed(
+                                        img_data["content"],
+                                        img_data["id"],
+                                    )
+                                )
+
+                                # Collect resize notes
+                                if size_note:
+                                    resize_notes.append(size_note)
+
+                                # If still too large after resize, skip and send as document separately
+                                if len(processed_content) > TELEGRAM_PHOTO_SIZE_LIMIT:
+                                    oversized_attachments.append(img_data)
+                                    continue
+
+                                media_group.append(
+                                    InputMediaPhoto(media=io.BytesIO(processed_content))
+                                )
+
+                            # Build caption: filename first, then any resize notes
+                            caption_parts = []
+                            # Use first image's filename/description
+                            first_filename = (
+                                image_group[0]["metadata"].description
+                                or f"attachment_{image_group[0]['id']}"
+                            )
+                            caption_parts.append(first_filename)
+
+                            # Add resize notes if any
+                            if resize_notes:
+                                caption_parts.extend(resize_notes)
+
+                            # Truncate caption if needed (Telegram limit is 1024 chars)
+                            caption = "\n".join(caption_parts)[:1024]
+
+                            # Send media group if we have any images that fit
+                            if media_group:
+                                sent_messages = (
+                                    await self.application.bot.send_media_group(
+                                        chat_id=chat_id,
+                                        media=media_group,
+                                        reply_to_message_id=reply_to_msg_id,
+                                        caption=caption,
+                                    )
+                                )
+                                for sent_msg in sent_messages:
+                                    message_ids.append(str(sent_msg.message_id))
+
+                                logger.info(
+                                    f"Sent media group with {len(media_group)} images: "
+                                    f"{[img['id'] for img in image_group if img not in oversized_attachments]}"
+                                )
+
+                            # Send oversized images as documents separately
+                            for img_data in oversized_attachments:
                                 filename = (
                                     img_data["metadata"].description
                                     or f"attachment_{img_data['id']}"
                                 )
-                                media_group.append(
-                                    InputMediaPhoto(
-                                        media=io.BytesIO(img_data["content"]),
-                                        caption=filename
-                                        if img_data == image_group[0]
-                                        else None,
-                                    )
+                                sent_msg = await self.application.bot.send_document(
+                                    chat_id=chat_id,
+                                    document=io.BytesIO(img_data["content"]),
+                                    filename=filename,
+                                    caption=f"Image too large to send as photo (>10MB)\n[View: /attachment {img_data['id']}]",
+                                    reply_to_message_id=reply_to_msg_id,
+                                )
+                                message_ids.append(str(sent_msg.message_id))
+                                logger.warning(
+                                    f"Sent oversized image {img_data['id']} as document"
                                 )
 
-                            sent_messages = await self.application.bot.send_media_group(
-                                chat_id=chat_id,
-                                media=media_group,
-                                reply_to_message_id=reply_to_msg_id,
-                            )
-                            for sent_msg in sent_messages:
-                                message_ids.append(str(sent_msg.message_id))
-
-                            logger.info(
-                                f"Sent media group with {len(image_group)} images: "
-                                f"{[img['id'] for img in image_group]}"
-                            )
                         else:
                             # Single image - send as photo
                             img_data = image_group[0]
+                            processed_content, size_note = self._resize_image_if_needed(
+                                img_data["content"], img_data["id"]
+                            )
+
+                            # Build caption: filename first, then any resize note
+                            caption_parts = []
                             filename = (
                                 img_data["metadata"].description
                                 or f"attachment_{img_data['id']}"
                             )
-                            sent_msg = await self.application.bot.send_photo(
-                                chat_id=chat_id,
-                                photo=io.BytesIO(img_data["content"]),
-                                caption=filename,
-                                reply_to_message_id=reply_to_msg_id,
-                            )
-                            message_ids.append(str(sent_msg.message_id))
-                            logger.info(
-                                f"Sent image attachment {img_data['id']} as message {sent_msg.message_id}"
-                            )
+                            caption_parts.append(filename)
+
+                            # Add resize note if any
+                            if size_note:
+                                caption_parts.append(size_note)
+
+                            # Truncate caption if needed (Telegram limit is 1024 chars)
+                            caption = "\n".join(caption_parts)[:1024]
+
+                            # If still too large, send as document
+                            if len(processed_content) > TELEGRAM_PHOTO_SIZE_LIMIT:
+                                filename = (
+                                    img_data["metadata"].description
+                                    or f"attachment_{img_data['id']}"
+                                )
+                                sent_msg = await self.application.bot.send_document(
+                                    chat_id=chat_id,
+                                    document=io.BytesIO(img_data["content"]),
+                                    filename=filename,
+                                    caption=f"Image too large to send as photo (>10MB)\n[View: /attachment {img_data['id']}]",
+                                    reply_to_message_id=reply_to_msg_id,
+                                )
+                                message_ids.append(str(sent_msg.message_id))
+                                logger.warning(
+                                    f"Sent oversized image {img_data['id']} as document"
+                                )
+                            else:
+                                sent_msg = await self.application.bot.send_photo(
+                                    chat_id=chat_id,
+                                    photo=io.BytesIO(processed_content),
+                                    caption=caption,
+                                    reply_to_message_id=reply_to_msg_id,
+                                )
+                                message_ids.append(str(sent_msg.message_id))
+                                logger.info(
+                                    f"Sent image attachment {img_data['id']} as message {sent_msg.message_id}"
+                                )
 
                         i = j  # Skip past all images we just processed
                     else:
