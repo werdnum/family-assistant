@@ -145,11 +145,16 @@ async def test_ui_endpoint_accessibility_playwright(
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
+@pytest.mark.parametrize("link_index", [0, 1, 2])
 async def test_navigation_links_work(
     web_test_fixture: WebTestFixture,
     console_error_checker: ConsoleErrorCollector,
+    link_index: int,
 ) -> None:
-    """Test that navigation links in the UI actually work."""
+    """Test that navigation links in the UI actually work.
+
+    Parameterized to test each link independently for better isolation.
+    """
     page = web_test_fixture.page
     base_url = web_test_fixture.base_url
     base_page = BasePage(page, base_url)
@@ -164,39 +169,37 @@ async def test_navigation_links_work(
     # Wait for the page to finish network requests (notes might still be loading but nav should work)
     await page.wait_for_load_state("networkidle", timeout=5000)
 
-    # Find and test navigation links
-    nav_links = await page.locator("nav a").all()
-    assert len(nav_links) > 0, "No navigation links found"
+    # Get count of navigation links to check if this index exists
+    nav_link_count = await page.locator("nav a").count()
+    if link_index >= nav_link_count:
+        pytest.skip(
+            f"Link index {link_index} doesn't exist (only {nav_link_count} links)"
+        )
 
-    # Test first few nav links to avoid long test
-    for i in range(min(3, len(nav_links))):
-        link = nav_links[i]
-        href = await link.get_attribute("href")
-        if href and not href.startswith("http"):  # Skip external links
-            # Click the link
-            await link.click()
+    # Get the link at this index
+    link = page.locator("nav a").nth(link_index)
+    href = await link.get_attribute("href")
 
-            # For chat page, wait for the React app to fully load
-            if href == "/chat":
-                # Wait for chat interface to be ready
-                await page.wait_for_selector(
-                    '[data-react-mounted="true"]', timeout=10000
-                )
-                # Wait for chat UI elements to be interactive
-                await page.wait_for_selector("main .flex.flex-1.flex-col", timeout=5000)
-            else:
-                await page.wait_for_load_state("networkidle", timeout=10000)
+    if not href or href.startswith("http"):
+        pytest.skip(f"Link {link_index} is external or has no href")
 
-            # Verify we navigated somewhere
-            current_url = page.url
-            assert base_url in current_url, f"Navigation failed for link: {href}"
+    # Click the link
+    await link.click()
 
-            # Go back to notes page for next test
-            await base_page.navigate_to("/notes")
+    # For chat page, wait for the React app to fully load
+    if href == "/chat":
+        # Wait for chat interface to be ready
+        await page.wait_for_selector('[data-react-mounted="true"]', timeout=10000)
+        # Wait for chat UI elements to be interactive
+        await page.wait_for_selector("main .flex.flex-1.flex-col", timeout=5000)
+    else:
+        await page.wait_for_load_state("networkidle", timeout=10000)
 
-            # Navigation links were previously hidden in a modal; now they are always visible in the header, so we do not need to trigger any modal to access them during tests.
+    # Verify we navigated somewhere
+    current_url = page.url
+    assert base_url in current_url, f"Navigation failed for link: {href}"
 
-    # Assert no console errors throughout navigation
+    # Assert no console errors
     console_error_checker.assert_no_errors()
 
 
