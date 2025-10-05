@@ -68,7 +68,7 @@ class ToolExecutionResult:
     stream_event: "LLMStreamEvent"
     llm_message: dict[str, Any]
     history_message: dict[str, Any]
-    auto_attachment_ids: list[str] | None = None  # Changed to plural list
+    auto_attachment_ids: list[str] | None = None  # list of attachment IDs
 
 
 # --- Configuration for ProcessingService ---
