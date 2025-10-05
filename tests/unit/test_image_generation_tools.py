@@ -140,11 +140,11 @@ class TestImageGenerationTools:
 
         assert isinstance(result, ToolResult)
         assert "Generated image for: a beautiful landscape" in result.text
-        assert result.attachment is not None
-        assert isinstance(result.attachment, ToolAttachment)
-        assert result.attachment.mime_type == "image/png"
-        assert result.attachment.content is not None
-        assert len(result.attachment.content) > 0
+        assert result.attachments and len(result.attachments) > 0
+        assert isinstance(result.attachments[0], ToolAttachment)
+        assert result.attachments[0].mime_type == "image/png"
+        assert result.attachments[0].content is not None
+        assert len(result.attachments[0].content) > 0
 
     @pytest.mark.asyncio
     async def test_generate_image_tool_photorealistic(
@@ -156,8 +156,8 @@ class TestImageGenerationTools:
         )
 
         assert isinstance(result, ToolResult)
-        assert result.attachment is not None
-        assert "Generated image: a city skyline" in result.attachment.description
+        assert result.attachments and len(result.attachments) > 0
+        assert "Generated image: a city skyline" in result.attachments[0].description
 
     @pytest.mark.asyncio
     async def test_generate_image_tool_artistic(self, mock_exec_context: Mock) -> None:
@@ -167,7 +167,7 @@ class TestImageGenerationTools:
         )
 
         assert isinstance(result, ToolResult)
-        assert result.attachment is not None
+        assert result.attachments and len(result.attachments) > 0
 
     @pytest.mark.asyncio
     async def test_generate_image_tool_long_prompt(
@@ -181,10 +181,10 @@ class TestImageGenerationTools:
         )
 
         assert isinstance(result, ToolResult)
-        assert result.attachment is not None
+        assert result.attachments and len(result.attachments) > 0
         # Description should be truncated with ellipsis
         assert (
-            len(result.attachment.description) <= 70
+            len(result.attachments[0].description) <= 70
         )  # "Generated image: " + truncated prompt + "..."
 
     @pytest.mark.asyncio
@@ -200,10 +200,10 @@ class TestImageGenerationTools:
 
         assert isinstance(result, ToolResult)
         assert "Transformed image: make it brighter" in result.text
-        assert result.attachment is not None
-        assert isinstance(result.attachment, ToolAttachment)
-        assert result.attachment.mime_type == "image/png"
-        assert result.attachment.content is not None
+        assert result.attachments and len(result.attachments) > 0
+        assert isinstance(result.attachments[0], ToolAttachment)
+        assert result.attachments[0].mime_type == "image/png"
+        assert result.attachments[0].content is not None
 
         # Verify attachment was accessed
         mock_script_attachment.get_content_async.assert_called_once()
@@ -220,9 +220,10 @@ class TestImageGenerationTools:
         )
 
         assert isinstance(result, ToolResult)
-        assert result.attachment is not None
+        assert result.attachments and len(result.attachments) > 0
         assert (
-            "Transformed: convert to black and white" in result.attachment.description
+            "Transformed: convert to black and white"
+            in result.attachments[0].description
         )
 
     @pytest.mark.asyncio
@@ -237,7 +238,7 @@ class TestImageGenerationTools:
         )
 
         assert isinstance(result, ToolResult)
-        assert result.attachment is not None
+        assert result.attachments and len(result.attachments) > 0
 
     @pytest.mark.asyncio
     async def test_transform_image_tool_add_object(
@@ -251,7 +252,7 @@ class TestImageGenerationTools:
         )
 
         assert isinstance(result, ToolResult)
-        assert result.attachment is not None
+        assert result.attachments and len(result.attachments) > 0
 
     @pytest.mark.asyncio
     async def test_transform_image_tool_style_change(
@@ -265,7 +266,7 @@ class TestImageGenerationTools:
         )
 
         assert isinstance(result, ToolResult)
-        assert result.attachment is not None
+        assert result.attachments and len(result.attachments) > 0
 
     @pytest.mark.asyncio
     async def test_transform_image_tool_no_content(
@@ -282,7 +283,7 @@ class TestImageGenerationTools:
 
         assert isinstance(result, ToolResult)
         assert "Could not access the image content" in result.text
-        assert result.attachment is None
+        assert not result.attachments or len(result.attachments) == 0
 
     @pytest.mark.asyncio
     async def test_transform_image_tool_long_instruction(
@@ -298,10 +299,10 @@ class TestImageGenerationTools:
         )
 
         assert isinstance(result, ToolResult)
-        assert result.attachment is not None
+        assert result.attachments and len(result.attachments) > 0
         # Description should be truncated
         assert (
-            len(result.attachment.description) <= 70
+            len(result.attachments[0].description) <= 70
         )  # "Transformed: " + truncated instruction + "..."
 
     @pytest.mark.asyncio
@@ -320,7 +321,7 @@ class TestImageGenerationTools:
 
         assert isinstance(result, ToolResult)
         assert "Error generating image: Test error" in result.text
-        assert result.attachment is None
+        assert not result.attachments or len(result.attachments) == 0
 
     @pytest.mark.asyncio
     async def test_transform_image_tool_error_handling(
@@ -338,7 +339,7 @@ class TestImageGenerationTools:
 
         assert isinstance(result, ToolResult)
         assert "Error transforming image: Attachment error" in result.text
-        assert result.attachment is None
+        assert not result.attachments or len(result.attachments) == 0
 
     @pytest.mark.asyncio
     async def test_transform_image_tool_backend_error_handling(
@@ -361,4 +362,4 @@ class TestImageGenerationTools:
 
         assert isinstance(result, ToolResult)
         assert "Error transforming image: Backend error" in result.text
-        assert result.attachment is None
+        assert not result.attachments or len(result.attachments) == 0

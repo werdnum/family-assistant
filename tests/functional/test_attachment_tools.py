@@ -468,16 +468,16 @@ class TestHighlightImageTool:
             assert "test_region_2" in result.text
 
             # Verify attachment was created
-            assert result.attachment is not None
-            assert result.attachment.mime_type == "image/png"
-            assert result.attachment.content is not None
-            assert len(result.attachment.content) > 0
+            assert result.attachments and len(result.attachments) > 0
+            assert result.attachments[0].mime_type == "image/png"
+            assert result.attachments[0].content is not None
+            assert len(result.attachments[0].content) > 0
 
             # Verify the highlighted image is different from the original
-            assert result.attachment.content != test_image_bytes
+            assert result.attachments[0].content != test_image_bytes
 
             # Verify we can load the highlighted image
-            highlighted_img = Image.open(io.BytesIO(result.attachment.content))
+            highlighted_img = Image.open(io.BytesIO(result.attachments[0].content))
             assert highlighted_img.size == (800, 600)
 
     async def test_highlight_image_invalid_attachment(
@@ -555,7 +555,7 @@ class TestHighlightImageTool:
             assert result.text is not None
             assert "Error" in result.text
             assert "not an image" in result.text
-            assert result.attachment is None
+            assert not result.attachments or len(result.attachments) == 0
 
     async def test_highlight_image_invalid_regions(
         self,
@@ -636,7 +636,7 @@ class TestHighlightImageTool:
             assert result.text.startswith("Error:")
             assert "Invalid region 1" in result.text
             assert "missing required field" in result.text
-            assert result.attachment is None
+            assert not result.attachments or len(result.attachments) == 0
 
     async def test_highlight_image_invalid_shape(
         self,
@@ -714,4 +714,4 @@ class TestHighlightImageTool:
             assert result.text.startswith("Error:")
             assert "Invalid shape 'triangle'" in result.text
             assert "Must be 'rectangle' or 'circle'" in result.text
-            assert result.attachment is None
+            assert not result.attachments or len(result.attachments) == 0

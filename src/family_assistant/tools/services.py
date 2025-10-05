@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from family_assistant.telegram_bot import telegramify_markdown
+from family_assistant.tools.types import ToolAttachment, ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
@@ -85,7 +86,7 @@ async def delegate_to_service_tool(
     user_request: str,
     confirm_delegation: bool = False,
     attachment_ids: list[str] | None = None,
-) -> str:
+) -> ToolResult:
     """
     Delegates a user request to another specialized assistant profile (service).
 
@@ -97,7 +98,7 @@ async def delegate_to_service_tool(
         attachment_ids: Optional list of attachment UUIDs to include with the request
 
     Returns:
-        String response from the target service or error message
+        ToolResult with response text from the target service and any attachments it generated
     """
     logger.info(
         f"Executing delegate_to_service_tool: target='{target_service_id}', request='{user_request[:50]}...', confirm={confirm_delegation}"
@@ -110,7 +111,10 @@ async def delegate_to_service_tool(
         logger.error(
             "Processing services registry not available in the current execution context."
         )
-        return "Error: Service registry is not available to delegate the task."
+        return ToolResult(
+            text="Error: Service registry is not available to delegate the task.",
+            attachments=None,
+        )
 
     registry = exec_context.processing_service.processing_services_registry
     target_service = registry.get(target_service_id)
@@ -119,7 +123,10 @@ async def delegate_to_service_tool(
         logger.error(
             f"Target service profile ID '{target_service_id}' not found in the registry."
         )
-        return f"Error: Target service profile '{target_service_id}' not found."
+        return ToolResult(
+            text=f"Error: Target service profile '{target_service_id}' not found.",
+            attachments=None,
+        )
 
     # Check target service's delegation security level
     target_security_level = getattr(
@@ -130,7 +137,10 @@ async def delegate_to_service_tool(
         logger.warning(
             f"Delegation to service '{target_service_id}' is blocked by its security policy."
         )
-        return f"Error: Delegation to service profile '{target_service_id}' is not allowed."
+        return ToolResult(
+            text=f"Error: Delegation to service profile '{target_service_id}' is not allowed.",
+            attachments=None,
+        )
 
     # Determine if confirmation is needed based on target's policy and tool's argument
     needs_confirmation_due_to_policy = target_security_level == "confirm"
@@ -141,7 +151,10 @@ async def delegate_to_service_tool(
             logger.error(
                 f"Confirmation required for delegating to '{target_service_id}' (policy: {target_security_level}, arg: {confirm_delegation}), but no confirmation callback is available. Aborting delegation."
             )
-            return f"Error: Confirmation required to delegate to '{target_service_id}', but no confirmation mechanism is available."
+            return ToolResult(
+                text=f"Error: Confirmation required to delegate to '{target_service_id}', but no confirmation mechanism is available.",
+                attachments=None,
+            )
         else:
             # Attempt to get a description from the target service's config
             if (
@@ -192,18 +205,27 @@ async def delegate_to_service_tool(
                     logger.info(
                         f"User cancelled delegation to service '{target_service_id}'."
                     )
-                    return f"OK. Delegation to service '{target_service_id}' cancelled by user."
+                    return ToolResult(
+                        text=f"OK. Delegation to service '{target_service_id}' cancelled by user.",
+                        attachments=None,
+                    )
             except asyncio.TimeoutError:
                 logger.warning(
                     f"Confirmation for delegating to '{target_service_id}' timed out."
                 )
-                return f"Error: Confirmation timed out for delegating to '{target_service_id}'."
+                return ToolResult(
+                    text=f"Error: Confirmation timed out for delegating to '{target_service_id}'.",
+                    attachments=None,
+                )
             except Exception as e:
                 logger.error(
                     f"Error during confirmation for delegating to '{target_service_id}': {e}",
                     exc_info=True,
                 )
-                return f"Error during confirmation for delegating to '{target_service_id}': {e}"
+                return ToolResult(
+                    text=f"Error during confirmation for delegating to '{target_service_id}': {e}",
+                    attachments=None,
+                )
 
     # Process attachments if provided
     content_parts = [{"type": "text", "text": user_request}]
@@ -237,7 +259,10 @@ async def delegate_to_service_tool(
                         logger.warning(
                             f"Delegation security violation: Attachment {attachment_id} from conversation {attachment.conversation_id} not accessible from conversation {exec_context.conversation_id}"
                         )
-                        return f"Error: Cannot delegate with attachment {attachment_id} - it belongs to a different conversation. For security, cross-conversation attachment access is not allowed."
+                        return ToolResult(
+                            text=f"Error: Cannot delegate with attachment {attachment_id} - it belongs to a different conversation. For security, cross-conversation attachment access is not allowed.",
+                            attachments=None,
+                        )
 
                     # Add attachment content part
                     content_parts.append({
@@ -270,29 +295,53 @@ async def delegate_to_service_tool(
         _final_assistant_message_id = result.assistant_message_internal_id  # Ignored
         _final_reasoning_info = result.reasoning_info  # Ignored
         error_traceback = result.error_traceback
-        _response_attachment_ids = (
-            result.attachment_ids
-        )  # Not used in delegation response
+        response_attachment_ids = result.attachment_ids or []
 
         if error_traceback:
             logger.error(
                 f"Delegated service '{target_service_id}' returned an error: {error_traceback}"
             )
-            return f"Error from '{target_service_id}' service: An error occurred during processing."
+            return ToolResult(
+                text=f"Error from '{target_service_id}' service: An error occurred during processing.",
+                attachments=None,
+            )
         if final_text_reply is None:
             logger.info(
                 f"Delegated service '{target_service_id}' returned no textual reply."
             )
-            return f"Service '{target_service_id}' processed the request but provided no textual response."
+            return ToolResult(
+                text=f"Service '{target_service_id}' processed the request but provided no textual response.",
+                attachments=None,
+            )
 
         logger.info(
             f"Received reply from delegated service '{target_service_id}': '{final_text_reply[:100]}...'"
         )
-        return final_text_reply
+
+        # Create attachment references for any attachments from the delegated service
+        delegated_attachments = None
+        if response_attachment_ids:
+            delegated_attachments = [
+                ToolAttachment(
+                    mime_type="application/octet-stream",  # Unknown type for references
+                    content=None,  # Reference only, no content
+                    attachment_id=att_id,
+                    description=f"Attachment from delegated service '{target_service_id}'",
+                )
+                for att_id in response_attachment_ids
+            ]
+            logger.info(
+                f"Propagating {len(response_attachment_ids)} attachment(s) from delegated service"
+            )
+
+        return ToolResult(text=final_text_reply, attachments=delegated_attachments)
 
     except Exception as e:
         logger.error(
             f"Failed to delegate request to service '{target_service_id}': {e}",
             exc_info=True,
         )
-        return f"Error: Failed to delegate task to service '{target_service_id}'. Details: {e}"
+        return ToolResult(
+            text=f"Error: Failed to delegate task to service '{target_service_id}'. Details: {e}",
+            attachments=None,
+        )

@@ -413,7 +413,7 @@ class LocalToolsProvider:
             if isinstance(result, ToolResult):
                 # Return ToolResult as-is to preserve multimodal content
                 logger.info(
-                    f"Local tool '{name}' returned ToolResult with attachment: {result.attachment is not None}"
+                    f"Local tool '{name}' returned ToolResult with attachments: {result.attachments is not None and len(result.attachments) > 0 if result.attachments else False}"
                 )
                 return result
             elif result is None:  # Handle None case explicitly

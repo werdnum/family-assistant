@@ -149,9 +149,9 @@ class TestDocumentRetrieval:
 
             # Should return ToolResult with attachment for PDF
             assert isinstance(content_result, ToolResult)
-            assert content_result.attachment is not None
+            assert content_result.attachments and len(content_result.attachments) > 0
 
-            attachment = content_result.attachment
+            attachment = content_result.attachments[0]
             assert isinstance(attachment, ToolAttachment)
             assert attachment.mime_type == "application/pdf"
             assert attachment.content == sample_pdf_content
@@ -216,9 +216,9 @@ class TestDocumentRetrieval:
 
             # Should return ToolResult with attachment for image
             assert isinstance(content_result, ToolResult)
-            assert content_result.attachment is not None
+            assert content_result.attachments and len(content_result.attachments) > 0
 
-            attachment = content_result.attachment
+            attachment = content_result.attachments[0]
             assert isinstance(attachment, ToolAttachment)
             assert attachment.mime_type == "image/png"
             assert attachment.content == sample_image_content

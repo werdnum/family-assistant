@@ -147,7 +147,7 @@ async def highlight_image_tool(
             )
             return ToolResult(
                 text=f"Error: Attachment is not an image (type: {image_attachment_id.get_mime_type()})",
-                attachment=None,
+                attachments=None,
             )
 
         # Get original image content from the ScriptAttachment
@@ -158,7 +158,7 @@ async def highlight_image_tool(
                 f"Could not retrieve content for attachment {image_attachment_id}"
             )
             return ToolResult(
-                text="Error: Could not retrieve image content", attachment=None
+                text="Error: Could not retrieve image content", attachments=None
             )
 
         # Load image with PIL
@@ -191,7 +191,7 @@ async def highlight_image_tool(
                         if not isinstance(box, list) or len(box) != 4:
                             return ToolResult(
                                 text=f"Error: Invalid region {i}: box must be a list of 4 numbers [y_min, x_min, y_max, x_max]",
-                                attachment=None,
+                                attachments=None,
                             )
 
                         # Validate shape if specified
@@ -199,17 +199,16 @@ async def highlight_image_tool(
                         if shape not in {"rectangle", "circle"}:
                             return ToolResult(
                                 text=f"Error: Invalid shape '{shape}' in region {i}. Must be 'rectangle' or 'circle'.",
-                                attachment=None,
+                                attachments=None,
                             )
                     except KeyError as e:
                         return ToolResult(
                             text=f"Error: Invalid region {i}: missing required field {e}",
-                            attachment=None,
+                            attachments=None,
                         )
                     except (ValueError, TypeError) as e:
                         return ToolResult(
-                            text=f"Error: Invalid region {i}: {e}",
-                            attachment=None,
+                            text=f"Error: Invalid region {i}: {e}", attachments=None
                         )
 
                 # All regions validated - proceed with drawing
@@ -283,7 +282,7 @@ async def highlight_image_tool(
         except Exception as e:
             logger.error(f"Error processing image with PIL: {e}")
             return ToolResult(
-                text=f"Error: Failed to process image: {str(e)}", attachment=None
+                text=f"Error: Failed to process image: {str(e)}", attachments=None
             )
 
         # Determine new filename
@@ -309,12 +308,12 @@ async def highlight_image_tool(
 
         logger.info(f"Created highlighted image: {new_filename}")
 
-        return ToolResult(text=success_message, attachment=highlighted_attachment)
+        return ToolResult(text=success_message, attachments=[highlighted_attachment])
 
     except Exception as e:
         logger.error(
             f"Error highlighting image {image_attachment_id}: {e}", exc_info=True
         )
         return ToolResult(
-            text=f"Error: Failed to highlight image: {str(e)}", attachment=None
+            text=f"Error: Failed to highlight image: {str(e)}", attachments=None
         )

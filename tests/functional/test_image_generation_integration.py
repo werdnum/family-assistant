@@ -59,11 +59,11 @@ async def test_generate_image_with_real_api() -> None:
     # Verify result
     assert isinstance(result, ToolResult)
     assert "Generated image for:" in result.text
-    assert result.attachment is not None
-    assert isinstance(result.attachment, ToolAttachment)
-    assert result.attachment.mime_type == "image/png"
-    assert result.attachment.content is not None
-    assert len(result.attachment.content) > 1000  # Should be a real image
+    assert result.attachments and len(result.attachments) > 0
+    assert isinstance(result.attachments[0], ToolAttachment)
+    assert result.attachments[0].mime_type == "image/png"
+    assert result.attachments[0].content is not None
+    assert len(result.attachments[0].content) > 1000  # Should be a real image
 
 
 @pytest.mark.asyncio
@@ -84,10 +84,10 @@ async def test_generate_image_mock_mode() -> None:
     # Verify result
     assert isinstance(result, ToolResult)
     assert "Generated image for:" in result.text
-    assert result.attachment is not None
-    assert result.attachment.mime_type == "image/png"
-    assert result.attachment.content is not None
-    assert len(result.attachment.content) > 1000
+    assert result.attachments and len(result.attachments) > 0
+    assert result.attachments[0].mime_type == "image/png"
+    assert result.attachments[0].content is not None
+    assert len(result.attachments[0].content) > 1000
 
 
 @pytest.mark.asyncio
@@ -107,7 +107,7 @@ async def test_generate_image_no_api_key() -> None:
     # Verify result (should work in mock mode)
     assert isinstance(result, ToolResult)
     assert "Generated image for:" in result.text
-    assert result.attachment is not None
+    assert result.attachments and len(result.attachments) > 0
 
 
 @pytest.mark.asyncio
@@ -139,10 +139,10 @@ async def test_transform_image_mock_mode() -> None:
     # Verify result
     assert isinstance(result, ToolResult)
     assert "Transformed image:" in result.text
-    assert result.attachment is not None
-    assert result.attachment.mime_type == "image/png"
-    assert result.attachment.content is not None
-    assert len(result.attachment.content) > 1000
+    assert result.attachments and len(result.attachments) > 0
+    assert result.attachments[0].mime_type == "image/png"
+    assert result.attachments[0].content is not None
+    assert len(result.attachments[0].content) > 1000
 
     # Verify attachment was accessed
     mock_attachment.get_content_async.assert_called_once()
@@ -168,9 +168,9 @@ async def test_various_styles() -> None:
 
             # Verify each result
             assert isinstance(result, ToolResult)
-            assert result.attachment is not None
-            assert result.attachment.content is not None
-            assert len(result.attachment.content) > 1000
+            assert result.attachments and len(result.attachments) > 0
+            assert result.attachments[0].content is not None
+            assert len(result.attachments[0].content) > 1000
             assert prompt in result.text
 
 
@@ -187,14 +187,14 @@ async def test_error_handling() -> None:
 
     # Should still work
     assert isinstance(result, ToolResult)
-    assert result.attachment is not None
+    assert result.attachments and len(result.attachments) > 0
 
     # Test with empty prompt (edge case)
     result = await generate_image_tool(mock_context, prompt="", style="auto")  # type: ignore[arg-type]
 
     # Should still work
     assert isinstance(result, ToolResult)
-    assert result.attachment is not None
+    assert result.attachments and len(result.attachments) > 0
 
 
 if __name__ == "__main__":

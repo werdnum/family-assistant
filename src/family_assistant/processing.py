@@ -68,7 +68,7 @@ class ToolExecutionResult:
     stream_event: "LLMStreamEvent"
     llm_message: dict[str, Any]
     history_message: dict[str, Any]
-    auto_attachment_id: str | None = None
+    auto_attachment_ids: list[str] | None = None  # Changed to plural list
 
 
 # --- Configuration for ProcessingService ---
@@ -553,17 +553,15 @@ class ProcessingService:
                     event = result.stream_event
                     llm_message = result.llm_message
                     history_message = result.history_message
-                    auto_attachment_id = result.auto_attachment_id
+                    auto_attachment_ids = result.auto_attachment_ids or []
 
                     # Auto-queue tool result attachments
-                    if (
-                        auto_attachment_id
-                        and auto_attachment_id not in pending_attachment_ids
-                    ):
-                        pending_attachment_ids.append(auto_attachment_id)
-                        logger.info(
-                            f"Auto-queued tool attachment {auto_attachment_id} for display"
-                        )
+                    for auto_attachment_id in auto_attachment_ids:
+                        if auto_attachment_id not in pending_attachment_ids:
+                            pending_attachment_ids.append(auto_attachment_id)
+                            logger.info(
+                                f"Auto-queued tool attachment {auto_attachment_id} for display"
+                            )
 
                     # Check if this is an attach_to_response tool call
                     tool_name = history_message.get("tool_name")
@@ -691,7 +689,7 @@ class ProcessingService:
                 ),
                 llm_message=llm_message,
                 history_message=history_message,
-                auto_attachment_id=None,  # No attachment for error cases
+                auto_attachment_ids=None,  # No attachments for error cases
             )
 
         # Parse arguments
@@ -725,7 +723,7 @@ class ProcessingService:
                 ),
                 llm_message=llm_message,
                 history_message=history_message,
-                auto_attachment_id=None,  # No attachment for error cases
+                auto_attachment_ids=None,  # No attachments for error cases
             )
 
         # Execute tool
@@ -759,40 +757,39 @@ class ProcessingService:
 
             # Handle both string and ToolResult
             if isinstance(result, ToolResult):
-                llm_message = result.to_llm_message(call_id, function_name)
                 content_for_stream = result.text
-                auto_attachment_id = None  # Track attachment ID for auto-queuing
+                auto_attachment_ids: list[
+                    str
+                ] = []  # Track attachment IDs for auto-queuing
 
                 # Extract attachment metadata for streaming
                 stream_metadata = None
-                attachment_data = None
-                if result.attachment:
-                    attachment_data = {
-                        "type": "tool_result",
-                        "mime_type": result.attachment.mime_type,
-                        "description": result.attachment.description,
-                    }
+                attachments_data = []
+                if result.attachments:
+                    for attachment in result.attachments:
+                        attachment_data = {
+                            "type": "tool_result",
+                            "mime_type": attachment.mime_type,
+                            "description": attachment.description,
+                        }
 
-                    # Store attachment and generate URL if attachment service is available
-                    if (
-                        self.attachment_registry
-                        and result.attachment
-                        and result.attachment.content
-                    ):
-                        try:
-                            # Store the attachment content with proper file extension
-                            file_extension = self._get_file_extension_from_mime_type(
-                                result.attachment.mime_type
-                            )
-                            # Store and register the attachment using AttachmentRegistry
-                            if self.attachment_registry is not None:
-                                # Store and register the attachment in one operation
+                        # Determine if this is a new attachment (has content) or a reference (has ID but no content)
+                        if attachment.content and self.attachment_registry:
+                            # New attachment with content - store it
+                            try:
+                                # Store the attachment content with proper file extension
+                                file_extension = (
+                                    self._get_file_extension_from_mime_type(
+                                        attachment.mime_type
+                                    )
+                                )
+                                # Store and register the attachment using AttachmentRegistry
                                 registered_metadata = await self.attachment_registry.store_and_register_tool_attachment(
-                                    file_content=result.attachment.content,
+                                    file_content=attachment.content,
                                     filename=f"tool_result_{uuid.uuid4()}{file_extension}",
-                                    content_type=result.attachment.mime_type,
+                                    content_type=attachment.mime_type,
                                     tool_name=function_name,
-                                    description=result.attachment.description
+                                    description=attachment.description
                                     or f"Output from {function_name}",
                                     conversation_id=conversation_id,
                                     metadata={
@@ -807,37 +804,57 @@ class ProcessingService:
                                 attachment_data["attachment_id"] = (
                                     registered_metadata.attachment_id
                                 )
-                                # Set auto_attachment_id for automatic queuing
-                                auto_attachment_id = registered_metadata.attachment_id
+                                # Queue this newly stored attachment
+                                auto_attachment_ids.append(
+                                    registered_metadata.attachment_id
+                                )
 
                                 # Populate the attachment_id in the ToolAttachment object
-                                # This automatically updates llm_message["_attachment"] since objects are passed by reference
-                                result.attachment.attachment_id = auto_attachment_id
-
-                                # Inject attachment ID into LLM message so it can reference it in subsequent calls
-                                llm_message["content"] += (
-                                    f"\n[Attachment ID: {auto_attachment_id}]"
+                                attachment.attachment_id = (
+                                    registered_metadata.attachment_id
                                 )
 
                                 logger.info(
                                     f"Stored and registered tool attachment: {registered_metadata.attachment_id}"
                                 )
-                        except Exception as e:
-                            logger.error(f"Failed to store tool result attachment: {e}")
-                            # Continue without URL if storage fails
+                            except Exception as e:
+                                logger.error(
+                                    f"Failed to store tool result attachment: {e}"
+                                )
+                                # Continue without URL if storage fails
+                        elif attachment.attachment_id:
+                            # Reference to existing attachment - just queue it
+                            attachment_data["attachment_id"] = attachment.attachment_id
+                            # Note: content_url might not be available for references, that's OK
+                            auto_attachment_ids.append(attachment.attachment_id)
+                            logger.info(
+                                f"Queuing existing attachment reference: {attachment.attachment_id}"
+                            )
 
-                    stream_metadata = {"attachments": [attachment_data]}
+                        attachments_data.append(attachment_data)
 
-                # Create history_message AFTER storing attachment so it includes attachment_id
+                    stream_metadata = {"attachments": attachments_data}
+
+                # Create LLM message AFTER storing attachments (if any) so attachment_ids are populated
+                llm_message = result.to_llm_message(call_id, function_name)
+
+                # Inject attachment IDs into LLM message content so LLM can reference them in subsequent calls
+                if auto_attachment_ids:
+                    attachment_id_list = ", ".join(auto_attachment_ids)
+                    llm_message["content"] += (
+                        f"\n[Attachment ID(s): {attachment_id_list}]"
+                    )
+
+                # Create history_message from llm_message
                 history_message = llm_message.copy()
                 history_message.pop("_attachment", None)
                 history_message["tool_name"] = function_name
-                if attachment_data:
-                    history_message["attachments"] = [attachment_data]
+                if attachments_data:
+                    history_message["attachments"] = attachments_data
             else:
                 # Backward compatible string handling
                 content_for_stream = str(result)
-                auto_attachment_id = None  # String results don't generate attachments
+                auto_attachment_ids = []  # String results don't generate attachments
                 llm_message = {
                     "role": "tool",
                     "tool_call_id": call_id,
@@ -912,7 +929,9 @@ class ProcessingService:
                 ),
                 llm_message=llm_message,
                 history_message=history_message,
-                auto_attachment_id=auto_attachment_id,
+                auto_attachment_ids=auto_attachment_ids
+                if auto_attachment_ids
+                else None,
             )
 
         except ToolNotFoundError:
@@ -941,7 +960,7 @@ class ProcessingService:
                     "name": function_name,
                     "content": error_content,
                 },
-                auto_attachment_id=None,  # No attachment for error cases
+                auto_attachment_ids=None,  # No attachments for error cases
             )
 
         except Exception as e:
@@ -970,7 +989,7 @@ class ProcessingService:
                     "name": function_name,
                     "content": error_content,
                 },
-                auto_attachment_id=None,  # No attachment for error cases
+                auto_attachment_ids=None,  # No attachments for error cases
             )
 
     async def _convert_attachment_urls_to_data_uris(

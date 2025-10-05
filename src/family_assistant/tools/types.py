@@ -119,7 +119,9 @@ class ToolResult:
     """Enhanced tool result supporting multimodal content"""
 
     text: str  # Primary text response
-    attachment: ToolAttachment | None = None
+    attachments: list[ToolAttachment] | None = (
+        None  # List of attachments (can be references or new content)
+    )
 
     def to_string(self) -> str:
         """Convert to string for backward compatibility"""
@@ -140,15 +142,20 @@ class ToolResult:
         }
 
         # Add attachment metadata for provider to handle
-        if self.attachment:
-            message["_attachment"] = self.attachment
-            # Store in history metadata
+        if self.attachments:
+            # For now, provider handling expects single _attachment
+            # Use first attachment for provider compatibility
+            # TODO: Update providers to handle multiple attachments
+            message["_attachment"] = self.attachments[0]
+            # Store all attachments in history metadata
             message["attachments"] = [
                 {
                     "type": "tool_result",
-                    "mime_type": self.attachment.mime_type,
-                    "description": self.attachment.description,
+                    "mime_type": att.mime_type,
+                    "description": att.description,
+                    "attachment_id": att.attachment_id,  # Include ID for references
                 }
+                for att in self.attachments
             ]
 
         return message
