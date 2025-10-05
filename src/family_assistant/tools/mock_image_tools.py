@@ -123,7 +123,7 @@ async def mock_camera_snapshot_tool(
 
     logger.info(f"Created mock camera snapshot: {len(mock_image_data)} bytes")
 
-    return ToolResult(text=success_message, attachment=camera_attachment)
+    return ToolResult(text=success_message, attachments=[camera_attachment])
 
 
 async def annotate_image_tool(
@@ -163,7 +163,7 @@ async def annotate_image_tool(
             )
             return ToolResult(
                 text=f"Error: Attachment is not an image (type: {image_attachment_id.get_mime_type()})",
-                attachment=None,
+                attachments=None,
             )
 
         # Get original image content from the ScriptAttachment object
@@ -172,7 +172,7 @@ async def annotate_image_tool(
         if not original_content:
             logger.error(f"Could not retrieve content for attachment {attachment_id}")
             return ToolResult(
-                text="Error: Could not retrieve image content", attachment=None
+                text="Error: Could not retrieve image content", attachments=None
             )
 
         # Create mock annotated content
@@ -206,12 +206,12 @@ async def annotate_image_tool(
 
         logger.info(f"Created mock annotated image: {new_filename}")
 
-        return ToolResult(text=success_message, attachment=annotated_attachment)
+        return ToolResult(text=success_message, attachments=[annotated_attachment])
 
     except Exception as e:
         logger.error(
             f"Error mock-annotating image {image_attachment_id}: {e}", exc_info=True
         )
         return ToolResult(
-            text=f"Error: Failed to annotate image: {str(e)}", attachment=None
+            text=f"Error: Failed to annotate image: {str(e)}", attachments=None
         )

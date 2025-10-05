@@ -71,19 +71,24 @@ class TestToolResult:
         result = ToolResult(text="Operation completed successfully")
 
         assert result.text == "Operation completed successfully"
-        assert result.attachment is None
+        assert result.attachments is None
 
     def test_tool_result_with_attachment(self) -> None:
         """Test creating a ToolResult with attachment"""
         attachment = ToolAttachment(
-            mime_type="image/jpeg", content=b"fake jpeg data", description="Test image"
+            mime_type="image/jpeg",
+            content=b"fake jpeg data",
+            description="Test image",
         )
-        result = ToolResult(text="Image processed successfully", attachment=attachment)
+        result = ToolResult(
+            text="Image processed successfully", attachments=[attachment]
+        )
 
         assert result.text == "Image processed successfully"
-        assert result.attachment == attachment
-        assert result.attachment is not None
-        assert result.attachment.mime_type == "image/jpeg"
+        assert result.attachments == [attachment]
+        assert result.attachments is not None
+        assert len(result.attachments) > 0
+        assert result.attachments[0].mime_type == "image/jpeg"
 
     def test_to_string_without_attachment(self) -> None:
         """Test to_string method without attachment"""
@@ -96,7 +101,7 @@ class TestToolResult:
         attachment = ToolAttachment(
             mime_type="application/pdf", content=b"fake pdf data"
         )
-        result = ToolResult(text="Document retrieved", attachment=attachment)
+        result = ToolResult(text="Document retrieved", attachments=[attachment])
 
         # Should return just the text (message injection handled by providers)
         assert result.to_string() == "Document retrieved"
@@ -119,17 +124,18 @@ class TestToolResultIntegration:
 
         result = ToolResult(
             text="Chart generated successfully showing Q3 sales trends",
-            attachment=attachment,
+            attachments=[attachment],
         )
 
         assert result.text == "Chart generated successfully showing Q3 sales trends"
-        assert result.attachment is not None
-        assert result.attachment.mime_type == "image/png"
-        assert result.attachment.content is not None
-        assert result.attachment.content.startswith(png_header)
+        assert result.attachments is not None
+        assert len(result.attachments) > 0
+        assert result.attachments[0].mime_type == "image/png"
+        assert result.attachments[0].content is not None
+        assert result.attachments[0].content.startswith(png_header)
 
         # Test base64 encoding works
-        b64_content = result.attachment.get_content_as_base64()
+        b64_content = result.attachments[0].get_content_as_base64()
         assert b64_content is not None
         assert base64.b64decode(b64_content) == fake_png_data
 
@@ -142,14 +148,15 @@ class TestToolResultIntegration:
         )
 
         result = ToolResult(
-            text="Retrieved financial report for Q3 2024", attachment=attachment
+            text="Retrieved financial report for Q3 2024", attachments=[attachment]
         )
 
         assert result.text == "Retrieved financial report for Q3 2024"
-        assert result.attachment is not None
-        assert result.attachment.mime_type == "application/pdf"
-        assert result.attachment.file_path == "/tmp/document_123.pdf"
-        assert result.attachment.content is None  # No content, just file path
+        assert result.attachments is not None
+        assert len(result.attachments) > 0
+        assert result.attachments[0].mime_type == "application/pdf"
+        assert result.attachments[0].file_path == "/tmp/document_123.pdf"
+        assert result.attachments[0].content is None  # No content, just file path
 
     def test_large_attachment_handling(self) -> None:
         """Test handling of larger attachments"""
@@ -162,13 +169,14 @@ class TestToolResultIntegration:
             description="Large binary file",
         )
 
-        result = ToolResult(text="Large file processed", attachment=attachment)
+        result = ToolResult(text="Large file processed", attachments=[attachment])
 
-        assert result.attachment is not None
-        assert result.attachment.content is not None
-        assert len(result.attachment.content) == 1024 * 1024
+        assert result.attachments is not None
+        assert len(result.attachments) > 0
+        assert result.attachments[0].content is not None
+        assert len(result.attachments[0].content) == 1024 * 1024
 
         # Test base64 encoding still works (but would be large)
-        b64_content = result.attachment.get_content_as_base64()
+        b64_content = result.attachments[0].get_content_as_base64()
         assert b64_content is not None
         assert len(b64_content) > len(large_data)  # Base64 is larger than original

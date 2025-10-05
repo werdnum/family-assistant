@@ -424,7 +424,7 @@ async def get_full_document_content_tool(
                     # Return ToolResult with both text and file
                     return ToolResult(
                         text=text_content or f"Original document: {original_filename}",
-                        attachment=attachment,
+                        attachments=[attachment],
                     )
             except Exception as file_err:
                 logger.error(

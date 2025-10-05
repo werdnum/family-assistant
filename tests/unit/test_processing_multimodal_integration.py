@@ -132,7 +132,7 @@ class TestProcessingServiceMultimodal:
             description="Generated sunset image",
         )
         tool_result = ToolResult(
-            text="Successfully generated sunset image", attachment=attachment
+            text="Successfully generated sunset image", attachments=[attachment]
         )
 
         # Mock tools provider to return ToolResult
@@ -329,7 +329,7 @@ class TestProcessingServiceMultimodal:
             content=b"fake jpeg data",
             description="Test camera image",
         )
-        tool_result = ToolResult(text="Captured camera image", attachment=attachment)
+        tool_result = ToolResult(text="Captured camera image", attachments=[attachment])
 
         # Mock the attachment registry
         mock_attachment_registry = Mock()
@@ -368,7 +368,7 @@ class TestProcessingServiceMultimodal:
         )
 
         # Verify that the attachment ID is returned for auto-queuing
-        assert result.auto_attachment_id == "auto_attachment_123"
+        assert result.auto_attachment_ids == ["auto_attachment_123"]
 
         # Verify attachment was stored and registered
         mock_attachment_registry.store_and_register_tool_attachment.assert_called_once()
@@ -383,7 +383,7 @@ class TestProcessingServiceMultimodal:
 
         # Verify that the attachment ID is injected into the LLM message content
         llm_message = result.llm_message
-        assert "[Attachment ID: auto_attachment_123]" in llm_message["content"]
+        assert "[Attachment ID(s): auto_attachment_123]" in llm_message["content"]
 
         # Verify that the ToolAttachment object has the attachment_id populated
         assert llm_message["_attachment"].attachment_id == "auto_attachment_123"
@@ -416,7 +416,7 @@ class TestProcessingServiceMultimodal:
         )
 
         # Verify no attachment ID is returned
-        assert result.auto_attachment_id is None
+        assert not result.auto_attachment_ids or len(result.auto_attachment_ids) == 0
 
     async def test_no_auto_attachment_without_attachment_registry(
         self, processing_service: ProcessingService, mock_db_context: Mock
@@ -434,7 +434,7 @@ class TestProcessingServiceMultimodal:
             content=b"fake png data",
             description="Test image",
         )
-        tool_result = ToolResult(text="Generated image", attachment=attachment)
+        tool_result = ToolResult(text="Generated image", attachments=[attachment])
 
         # No attachment registry configured
         processing_service.attachment_registry = None
@@ -457,7 +457,7 @@ class TestProcessingServiceMultimodal:
         )
 
         # Should not have auto-attachment ID without attachment registry
-        assert result.auto_attachment_id is None
+        assert not result.auto_attachment_ids or len(result.auto_attachment_ids) == 0
 
     async def test_attach_to_response_overrides_auto_attachments(
         self, processing_service: ProcessingService, mock_db_context: Mock
@@ -485,7 +485,7 @@ class TestProcessingServiceMultimodal:
             content=b"fake png data",
             description="Generated sunset image",
         )
-        image_result = ToolResult(text="Generated image", attachment=attachment)
+        image_result = ToolResult(text="Generated image", attachments=[attachment])
 
         # Mock attachment storage - fix for consolidated AttachmentRegistry
         mock_attachment_registry.store_and_register_tool_attachment = AsyncMock(
@@ -530,7 +530,7 @@ class TestProcessingServiceMultimodal:
         )
 
         # Verify auto-attachment ID is captured
-        assert first_result.auto_attachment_id == "generated_image_123"
+        assert first_result.auto_attachment_ids == ["generated_image_123"]
 
         # Second: attach_to_response tool call
         attach_tool_call = Mock()
@@ -552,7 +552,10 @@ class TestProcessingServiceMultimodal:
         )
 
         # attach_to_response doesn't generate auto-attachments
-        assert second_result.auto_attachment_id is None
+        assert (
+            not second_result.auto_attachment_ids
+            or len(second_result.auto_attachment_ids) == 0
+        )
         # But it should return the JSON response for the processing loop to handle
         assert second_result.stream_event.tool_result is not None
         assert "attachments_queued" in second_result.stream_event.tool_result
@@ -628,8 +631,14 @@ class TestProcessingServiceMultimodal:
         assert "second_attachment_b" in second_result.stream_event.tool_result
 
         # Neither generates auto-attachments (attach_to_response is explicit control)
-        assert first_result.auto_attachment_id is None
-        assert second_result.auto_attachment_id is None
+        assert (
+            not first_result.auto_attachment_ids
+            or len(first_result.auto_attachment_ids) == 0
+        )
+        assert (
+            not second_result.auto_attachment_ids
+            or len(second_result.auto_attachment_ids) == 0
+        )
 
     async def test_new_attachments_after_attach_to_response(
         self, processing_service: ProcessingService, mock_db_context: Mock
@@ -679,7 +688,7 @@ class TestProcessingServiceMultimodal:
                     content=b"new image data",
                     description="New generated image",
                 )
-                return ToolResult(text="Generated new image", attachment=attachment)
+                return ToolResult(text="Generated new image", attachments=[attachment])
             return "Unknown tool"
 
         mock_tools_provider.execute_tool.side_effect = mock_execute_tool
@@ -720,11 +729,14 @@ class TestProcessingServiceMultimodal:
         )
 
         # Attach call should not generate auto-attachment
-        assert attach_result.auto_attachment_id is None
+        assert (
+            not attach_result.auto_attachment_ids
+            or len(attach_result.auto_attachment_ids) == 0
+        )
 
         # But new tool should still auto-queue its attachment
         # (Each tool execution is independent)
-        assert new_tool_result.auto_attachment_id == "new_attachment_after_explicit"
+        assert new_tool_result.auto_attachment_ids == ["new_attachment_after_explicit"]
 
         # The processing loop will handle the logic of:
         # - Auto-queue from new tool
