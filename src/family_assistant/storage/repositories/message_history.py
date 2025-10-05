@@ -151,6 +151,18 @@ class MessageHistoryRepository(BaseRepository):
                 f"interface={interface_type}, internal_id={internal_id}"
             )
 
+            # Notify listeners after transaction commits (if notifier available)
+            if hasattr(self._db, "message_notifier"):
+                notifier = getattr(self._db, "message_notifier", None)
+                if notifier:
+                    conv_id = conversation_id
+                    iface_type = interface_type
+
+                    def notify_listeners() -> None:
+                        notifier.notify(conv_id, iface_type)
+
+                    self._db.on_commit(notify_listeners)
+
             # Return the complete message data
             return {**values, "internal_id": internal_id}
 
@@ -485,6 +497,45 @@ class MessageHistoryRepository(BaseRepository):
 
         row = await self._db.fetch_one(stmt)
         return row["count"] if row else 0
+
+    async def get_messages_after(
+        self,
+        conversation_id: str,
+        after: datetime,
+        interface_type: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """
+        Get messages created after a specific timestamp.
+
+        Used for incremental sync in SSE and catch-up scenarios.
+
+        Args:
+            conversation_id: The conversation identifier
+            after: Get messages created after this timestamp
+            interface_type: Optional filter by interface type
+            limit: Maximum number of messages to return (default 100)
+
+        Returns:
+            List of messages in chronological order (oldest first)
+        """
+        conditions = [
+            message_history_table.c.conversation_id == conversation_id,
+            message_history_table.c.timestamp > after,
+        ]
+
+        if interface_type:
+            conditions.append(message_history_table.c.interface_type == interface_type)
+
+        stmt = (
+            select(message_history_table)
+            .where(*conditions)
+            .order_by(message_history_table.c.timestamp.asc())
+            .limit(limit)
+        )
+
+        rows = await self._db.fetch_all(stmt)
+        return [self._process_message_row(row) for row in rows]
 
     def _process_message_row(self, row: dict[str, Any]) -> dict[str, Any]:
         """
