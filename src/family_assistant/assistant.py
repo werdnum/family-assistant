@@ -74,6 +74,7 @@ from family_assistant.tools import (
 from family_assistant.utils.logging_handler import setup_error_logging
 from family_assistant.utils.scraping import PlaywrightScraper
 from family_assistant.web.app_creator import configure_app_auth, create_app
+from family_assistant.web.message_notifier import MessageNotifier
 
 from .telegram_bot import TelegramService
 
@@ -294,6 +295,11 @@ class Assistant:
         # Store config in FastAPI app state for access by routes
         self.fastapi_app.state.config = self.config
         logger.info("Stored configuration in FastAPI app state.")
+
+        # Create MessageNotifier for live message updates
+        message_notifier = MessageNotifier()
+        self.fastapi_app.state.message_notifier = message_notifier
+        logger.info("MessageNotifier created and stored in FastAPI app state")
 
         self.shared_httpx_client = httpx.AsyncClient()
         logger.info("Shared httpx.AsyncClient created.")
