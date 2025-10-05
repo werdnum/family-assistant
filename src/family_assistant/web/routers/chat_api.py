@@ -1103,6 +1103,124 @@ async def confirm_tool_execution(
     )
 
 
+@chat_api_router.get("/v1/chat/events")
+async def live_message_events(
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    conversation_id: str,
+    interface_type: str = "web",
+    after: str | None = None,
+) -> StreamingResponse:
+    """
+    Server-Sent Events endpoint for live message updates.
+
+    Provides real-time notifications when new messages arrive in a conversation.
+    Uses a hybrid approach: instant delivery via notification queue with
+    periodic polling fallback for resilience.
+
+    Args:
+        current_user: Authenticated user (from dependency)
+        conversation_id: The conversation to monitor
+        interface_type: Interface type filter (default: "web")
+        after: Optional ISO timestamp to get only messages after this time
+
+    Returns:
+        SSE stream with message update events
+    """
+    # Parse initial timestamp for catch-up scenario
+    after_dt = None
+    if after:
+        try:
+            after_dt = datetime.fromisoformat(after.replace("Z", "+00:00"))
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid timestamp format. Use ISO format (e.g., 2024-01-15T10:30:00Z): {e}",
+            ) from e
+
+    # Get MessageNotifier from app state
+    message_notifier = getattr(request.app.state, "message_notifier", None)
+    if not message_notifier:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Live updates not configured",
+        )
+
+    async def query_new_messages(
+        last_check_time: datetime,
+    ) -> tuple[list[dict], datetime]:
+        """
+        Helper to query for new messages.
+
+        Returns:
+            Tuple of (messages list, updated last_check timestamp)
+        """
+        async with get_db_context(request.app.state.database_engine) as db_context:
+            messages = await db_context.message_history.get_messages_after(
+                conversation_id=conversation_id,
+                after=last_check_time,
+                interface_type=interface_type,
+            )
+        return messages, messages[-1]["timestamp"] if messages else last_check_time
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        """Generate SSE formatted events for message updates."""
+        # Register as a listener
+        queue = await message_notifier.register(conversation_id, interface_type)
+
+        try:
+            # Send initial heartbeat
+            yield f"event: connected\ndata: {json.dumps({'conversation_id': conversation_id})}\n\n"
+
+            # Initialize last_check timestamp BEFORE any queries to avoid race condition
+            last_check = after_dt if after_dt else datetime.now(timezone.utc)
+
+            # If after timestamp provided, send catch-up messages immediately
+            if after_dt:
+                messages, last_check = await query_new_messages(after_dt)
+                for msg in messages:
+                    yield f"event: message\ndata: {json.dumps({'internal_id': msg['internal_id'], 'timestamp': msg['timestamp'].isoformat(), 'new_messages': True})}\n\n"
+
+            # Main event loop - hybrid approach
+            while True:
+                try:
+                    # Wait for notification with 5 second timeout
+                    await asyncio.wait_for(queue.get(), timeout=5.0)
+
+                    # Notification received - query for new messages
+                    messages, last_check = await query_new_messages(last_check)
+                    for msg in messages:
+                        yield f"event: message\ndata: {json.dumps({'internal_id': msg['internal_id'], 'timestamp': msg['timestamp'].isoformat(), 'new_messages': True})}\n\n"
+
+                except asyncio.TimeoutError:
+                    # Timeout - send heartbeat and poll for messages
+                    yield f"event: heartbeat\ndata: {json.dumps({'timestamp': datetime.now(timezone.utc).isoformat()})}\n\n"
+
+                    # Polling fallback - check for any messages since last check
+                    messages, last_check = await query_new_messages(last_check)
+                    for msg in messages:
+                        yield f"event: message\ndata: {json.dumps({'internal_id': msg['internal_id'], 'timestamp': msg['timestamp'].isoformat(), 'new_messages': True})}\n\n"
+
+                except Exception as e:
+                    logger.error(f"Error in SSE event loop: {e}", exc_info=True)
+                    yield f"event: error\ndata: {json.dumps({'error': 'An error occurred'})}\n\n"
+                    break
+
+        finally:
+            # Unregister listener on disconnect
+            await message_notifier.unregister(conversation_id, interface_type, queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @chat_api_router.get("/v1/profiles")
 async def get_available_profiles(
     request: Request,
