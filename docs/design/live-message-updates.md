@@ -390,6 +390,61 @@ Acceptable tradeoff: instant for active, 5s for background.
 3. **Connection metrics?** Track count/latency/depth for debugging?
 4. **Feature flag?** `web.live_updates_enabled` for A/B testing?
 
+## Implementation Checklist
+
+### Phase 1: Backend Foundation
+
+- [ ] Create `src/family_assistant/web/message_notifier.py`
+  - [ ] MessageNotifier class with register/unregister/notify
+  - [ ] Unit tests for MessageNotifier
+- [ ] Modify `src/family_assistant/storage/repositories/message_history.py`
+  - [ ] Add `get_messages_after()` method
+  - [ ] Add notification hook in `add_message()`
+  - [ ] Test `get_messages_after()` query
+  - [ ] Test notification fires after commit
+- [ ] Modify `src/family_assistant/assistant.py`
+  - [ ] Instantiate MessageNotifier
+  - [ ] Pass to web app via `app.state.message_notifier`
+- [ ] Run tests and commit
+
+### Phase 2: SSE Endpoint
+
+- [ ] Modify `src/family_assistant/web/routers/chat_api.py`
+  - [ ] Add `GET /v1/chat/events` endpoint
+  - [ ] Add authentication/authorization checks
+  - [ ] Enhance messages endpoint with `after` parameter
+- [ ] Create `tests/functional/web/test_chat_sse.py`
+  - [ ] Test SSE connection lifecycle
+  - [ ] Test multiple listeners
+  - [ ] Test message delivery via tickle
+  - [ ] Test heartbeat
+  - [ ] Test reconnection with `after`
+- [ ] Run tests and commit
+
+### Phase 3: Frontend Integration
+
+- [ ] Create `frontend/src/chat/useConversationSync.js`
+  - [ ] Initial message load
+  - [ ] SSE connection management
+  - [ ] Visibility change catch-up
+  - [ ] Message deduplication
+- [ ] Modify `frontend/src/chat/ChatApp.tsx`
+  - [ ] Integrate useConversationSync
+  - [ ] Merge streaming + SSE messages
+- [ ] Modify `frontend/src/test/mocks/handlers.ts`
+  - [ ] Add SSE mock handlers
+- [ ] Run frontend tests and commit
+
+### Phase 4: Integration Testing
+
+- [ ] Create `tests/functional/web/test_chat_live_updates.py`
+  - [ ] Test send → navigate → return
+  - [ ] Test background tab receives message
+  - [ ] Test multi-tab sync
+  - [ ] Test offline reconnection
+- [ ] Verify all existing Playwright tests pass
+- [ ] Run full test suite and commit
+
 ## References
 
 - Issue #137: https://github.com/werdnum/family-assistant/issues/137
