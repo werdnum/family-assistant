@@ -7,6 +7,7 @@ import { Menu } from 'lucide-react';
 import { Thread } from './Thread';
 import ConversationSidebar from './ConversationSidebar';
 import { useStreamingResponse } from './useStreamingResponse';
+import { useLiveMessageUpdates } from './useLiveMessageUpdates';
 import { LOADING_MARKER } from './constants';
 import { generateUUID } from '../utils/uuid';
 import { defaultAttachmentAdapter } from './attachmentAdapter';
@@ -365,6 +366,21 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       handleNewChat();
     }
   }, []);
+
+  // Create a stable callback ref for SSE message updates
+  const handleLiveMessageUpdate = useCallback(() => {
+    if (conversationId) {
+      loadConversationMessages(conversationId);
+    }
+  }, [conversationId]);
+
+  // Set up live message updates via SSE
+  useLiveMessageUpdates({
+    conversationId,
+    interfaceType: 'web',
+    enabled: true,
+    onMessageReceived: handleLiveMessageUpdate,
+  });
 
   // Load messages for a conversation
   const loadConversationMessages = async (convId: string) => {
