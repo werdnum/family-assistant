@@ -496,7 +496,7 @@ async def test_tool_message_with_image_attachment(
             "role": "tool",
             "tool_call_id": "call_123",
             "content": "Generated a simple red pixel image",
-            "_attachment": attachment,
+            "_attachments": [attachment],
         },
         {"role": "user", "content": "What do you see in the image?"},
     ]
@@ -568,7 +568,7 @@ async def test_tool_message_with_pdf_attachment(
             "role": "tool",
             "tool_call_id": "call_456",
             "content": "Found a PDF document about software management practices",
-            "_attachment": attachment,
+            "_attachments": [attachment],
         },
         {
             "role": "user",

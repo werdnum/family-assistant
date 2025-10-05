@@ -320,18 +320,54 @@ async def delegate_to_service_tool(
 
         # Create attachment references for any attachments from the delegated service
         delegated_attachments = None
-        if response_attachment_ids:
-            delegated_attachments = [
-                ToolAttachment(
-                    mime_type="application/octet-stream",  # Unknown type for references
-                    content=None,  # Reference only, no content
-                    attachment_id=att_id,
-                    description=f"Attachment from delegated service '{target_service_id}'",
-                )
-                for att_id in response_attachment_ids
-            ]
+        if response_attachment_ids and exec_context.attachment_registry:
+            delegated_attachments = []
+            for att_id in response_attachment_ids:
+                try:
+                    # Fetch attachment metadata to get the correct MIME type
+                    att_metadata = (
+                        await exec_context.attachment_registry.get_attachment(
+                            exec_context.db_context, att_id
+                        )
+                    )
+                    if att_metadata:
+                        delegated_attachments.append(
+                            ToolAttachment(
+                                mime_type=att_metadata.mime_type,
+                                content=None,  # Reference only, no content
+                                attachment_id=att_id,
+                                description=att_metadata.description
+                                or f"Attachment from delegated service '{target_service_id}'",
+                            )
+                        )
+                    else:
+                        logger.warning(
+                            f"Could not fetch metadata for attachment {att_id}, using fallback"
+                        )
+                        delegated_attachments.append(
+                            ToolAttachment(
+                                mime_type="application/octet-stream",  # Fallback for missing metadata
+                                content=None,
+                                attachment_id=att_id,
+                                description=f"Attachment from delegated service '{target_service_id}'",
+                            )
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"Error fetching attachment metadata for {att_id}: {e}",
+                        exc_info=True,
+                    )
+                    # Still include the attachment with fallback type
+                    delegated_attachments.append(
+                        ToolAttachment(
+                            mime_type="application/octet-stream",
+                            content=None,
+                            attachment_id=att_id,
+                            description=f"Attachment from delegated service '{target_service_id}'",
+                        )
+                    )
             logger.info(
-                f"Propagating {len(response_attachment_ids)} attachment(s) from delegated service"
+                f"Propagating {len(delegated_attachments)} attachment(s) from delegated service"
             )
 
         return ToolResult(text=final_text_reply, attachments=delegated_attachments)

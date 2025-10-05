@@ -143,10 +143,8 @@ class ToolResult:
 
         # Add attachment metadata for provider to handle
         if self.attachments:
-            # For now, provider handling expects single _attachment
-            # Use first attachment for provider compatibility
-            # TODO: Update providers to handle multiple attachments
-            message["_attachment"] = self.attachments[0]
+            # Pass all attachments to provider for proper multimodal handling
+            message["_attachments"] = self.attachments
             # Store all attachments in history metadata
             message["attachments"] = [
                 {
@@ -170,7 +168,7 @@ class ToolResult:
         history_message = llm_message.copy()
 
         # Remove raw attachment data but keep metadata
-        history_message.pop("_attachment", None)
+        history_message.pop("_attachments", None)
         history_message["tool_name"] = function_name  # Store tool name for database
 
         return history_message

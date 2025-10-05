@@ -59,7 +59,7 @@ class TestBaseLLMClient:
                 "role": "tool",
                 "tool_call_id": "123",
                 "content": "Image processed",
-                "_attachment": attachment,
+                "_attachments": [attachment],
             },
         ]
 
@@ -71,12 +71,12 @@ class TestBaseLLMClient:
         # First message unchanged
         assert result[0] == {"role": "user", "content": "Process this image"}
 
-        # Tool message modified (no _attachment, content updated)
+        # Tool message modified (no _attachments, content updated)
         assert result[1]["role"] == "tool"
         assert result[1]["tool_call_id"] == "123"
         assert "Image processed" in result[1]["content"]
         assert "[File content in following message]" in result[1]["content"]
-        assert "_attachment" not in result[1]
+        assert "_attachments" not in result[1]
 
         # Injected user message
         assert result[2]["role"] == "user"
@@ -92,7 +92,7 @@ class TestBaseLLMClient:
                 "role": "tool",
                 "tool_call_id": "123",
                 "content": "Original content",
-                "_attachment": attachment,
+                "_attachments": [attachment],
             }
         ]
 
@@ -102,12 +102,12 @@ class TestBaseLLMClient:
         result = client._process_tool_messages(original_messages)
 
         # Original message should be unchanged
-        assert "_attachment" in original_tool_msg
+        assert "_attachments" in original_tool_msg
         assert original_tool_msg["content"] == "Original content"
 
         # Result should be different
         assert len(result) == 2  # Tool + injected user message
-        assert "_attachment" not in result[0]
+        assert "_attachments" not in result[0]
 
 
 class TestGoogleGenAIClient:
@@ -352,7 +352,7 @@ class TestLiteLLMClient:
                 "role": "tool",
                 "tool_call_id": "call_123",
                 "content": "Generated an image",
-                "_attachment": attachment,
+                "_attachments": [attachment],
             }
         ]
 
@@ -386,7 +386,7 @@ class TestLiteLLMClient:
                 "role": "tool",
                 "tool_call_id": "call_456",
                 "content": "Retrieved a PDF document",
-                "_attachment": attachment,
+                "_attachments": [attachment],
             }
         ]
 
@@ -420,7 +420,7 @@ class TestLiteLLMClient:
                 "role": "tool",
                 "tool_call_id": "call_789",
                 "content": "Created a ZIP file",
-                "_attachment": attachment,
+                "_attachments": [attachment],
             }
         ]
 
@@ -447,7 +447,7 @@ class TestLiteLLMClient:
                 "role": "tool",
                 "tool_call_id": "call_999",
                 "content": "Found an external document",
-                "_attachment": attachment,
+                "_attachments": [attachment],
             }
         ]
 
@@ -478,7 +478,7 @@ class TestLiteLLMClient:
                 "role": "tool",
                 "tool_call_id": "call_000",
                 "content": "Generated an image",
-                "_attachment": attachment,
+                "_attachments": [attachment],
             }
         ]
 
