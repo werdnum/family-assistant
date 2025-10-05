@@ -158,6 +158,19 @@ Examples:
 - Copy-pasted code blocks with minor variations
 - Mixed responsibility in a single class
 
+### SHORTCUT
+
+**Exit Code Impact: 1 (warning)**
+
+Code that defers work to an indeterminate "later" or takes a shortcut that compromises code quality for a short-term gain. This is for work that is incomplete not in the sense of a feature being partially built, but in the sense of a small piece of a task being deliberately left unfinished.
+
+Examples:
+
+-   A migration to support multiple items finds another area that needs to be updated, but the code is
+    updated to just take the first item from a list for now.
+-   A linter warning is disabled without a good reason, simply to make the linter pass.
+-   A TODO comment is added for something that should be handled in the current change.
+
 ### BEST_PRACTICE
 
 **Exit Code Impact: 1 (warning)**
