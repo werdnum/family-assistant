@@ -174,13 +174,15 @@ async def test_attachment_id_injected_and_referenceable(
         if not tool_message:
             return False
 
-        # Check that the content contains the attachment ID marker
+        # Check that the content contains the attachment ID marker (plural form)
         content = tool_message.get("content", "")
-        if "[Attachment ID:" not in content:
+        if "[Attachment ID(s):" not in content:
             return False
 
-        # Extract the attachment ID using regex
-        match = re.search(r"\[Attachment ID: ([a-f0-9-]+)\]", content)
+        # Extract the attachment ID using regex (handles both singular and multiple IDs)
+        match = re.search(
+            r"\[Attachment ID\(s\): ([a-f0-9-]+(?:, [a-f0-9-]+)*)\]", content
+        )
         if not match:
             return False
 

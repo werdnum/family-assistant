@@ -146,7 +146,9 @@ async def generate_image_tool(
             description=f"Generated image: {prompt[:50]}{'...' if len(prompt) > 50 else ''}",
         )
 
-        return ToolResult(text=f"Generated image for: {prompt}", attachment=attachment)
+        return ToolResult(
+            text=f"Generated image for: {prompt}", attachments=[attachment]
+        )
 
     except Exception as e:
         logger.error(f"Error generating image: {e}", exc_info=True)
@@ -195,7 +197,7 @@ async def transform_image_tool(
         )
 
         return ToolResult(
-            text=f"Transformed image: {instruction}", attachment=attachment
+            text=f"Transformed image: {instruction}", attachments=[attachment]
         )
 
     except Exception as e:

@@ -109,11 +109,11 @@ class TestAttachmentWorkflows:
             if isinstance(camera_result, ToolResult):
                 # It's a ToolResult
                 assert "snapshot" in camera_result.text.lower()
-                assert camera_result.attachment is not None
-                assert camera_result.attachment.mime_type.startswith("image/")
-                assert camera_result.attachment.content is not None
-                camera_content = camera_result.attachment.content
-                camera_mime = camera_result.attachment.mime_type
+                assert camera_result.attachments and len(camera_result.attachments) > 0
+                assert camera_result.attachments[0].mime_type.startswith("image/")
+                assert camera_result.attachments[0].content is not None
+                camera_content = camera_result.attachments[0].content
+                camera_mime = camera_result.attachments[0].mime_type
             else:
                 # Fallback if mock tool returns string (should not happen)
                 camera_content = b"fake_camera_image_data"
@@ -155,11 +155,13 @@ class TestAttachmentWorkflows:
             if isinstance(annotate_result, ToolResult):
                 # It's a ToolResult
                 assert "annotated" in annotate_result.text.lower()
-                assert annotate_result.attachment is not None
-                assert annotate_result.attachment.mime_type.startswith("image/")
-                assert annotate_result.attachment.content is not None
-                annotated_content = annotate_result.attachment.content
-                annotated_mime = annotate_result.attachment.mime_type
+                assert (
+                    annotate_result.attachments and len(annotate_result.attachments) > 0
+                )
+                assert annotate_result.attachments[0].mime_type.startswith("image/")
+                assert annotate_result.attachments[0].content is not None
+                annotated_content = annotate_result.attachments[0].content
+                annotated_mime = annotate_result.attachments[0].mime_type
             else:
                 # It's a string result, create mock annotated attachment
                 annotated_content = camera_content + b"_annotated"
@@ -286,12 +288,12 @@ class TestAttachmentWorkflows:
                 f"Expected ToolResult, got {type(process_result)}"
             )
             assert "annotated" in process_result.text.lower()
-            assert process_result.attachment is not None
-            assert process_result.attachment.mime_type.startswith("image/")
-            assert process_result.attachment.content is not None
+            assert process_result.attachments and len(process_result.attachments) > 0
+            assert process_result.attachments[0].mime_type.startswith("image/")
+            assert process_result.attachments[0].content is not None
 
-            processed_content = process_result.attachment.content
-            processed_mime = process_result.attachment.mime_type
+            processed_content = process_result.attachments[0].content
+            processed_mime = process_result.attachments[0].mime_type
 
             # Store the processed attachment
             processed_data = await attachment_registry._store_file_only(

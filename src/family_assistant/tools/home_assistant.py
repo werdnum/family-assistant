@@ -252,11 +252,13 @@ async def get_camera_snapshot_tool(
         # Return image as attachment
         return ToolResult(
             text=f"Retrieved snapshot from camera '{camera_entity_id}'",
-            attachment=ToolAttachment(
-                mime_type=mime_type,
-                content=image_content,
-                description=f"Camera snapshot from {camera_entity_id}",
-            ),
+            attachments=[
+                ToolAttachment(
+                    mime_type=mime_type,
+                    content=image_content,
+                    description=f"Camera snapshot from {camera_entity_id}",
+                )
+            ],
         )
 
     except Exception as e:
