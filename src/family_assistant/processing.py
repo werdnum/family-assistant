@@ -847,7 +847,7 @@ class ProcessingService:
 
                 # Create history_message from llm_message
                 history_message = llm_message.copy()
-                history_message.pop("_attachment", None)
+                history_message.pop("_attachments", None)
                 history_message["tool_name"] = function_name
                 if attachments_data:
                     history_message["attachments"] = attachments_data

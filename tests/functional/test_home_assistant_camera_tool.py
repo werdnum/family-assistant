@@ -194,12 +194,13 @@ async def test_get_camera_snapshot_success(
             return False
 
         # CRITICAL: Check that the LLM receives the actual image attachment data
-        # The tool message should have an _attachment with the image content
-        attachment = last_message.get("_attachment")
-        if not attachment:
+        # The tool message should have _attachments with the image content
+        attachments = last_message.get("_attachments")
+        if not attachments or len(attachments) == 0:
             return False
 
-        # Verify the attachment has the expected structure and image data
+        # Verify the first attachment has the expected structure and image data
+        attachment = attachments[0]
         return (
             attachment.mime_type == "image/jpeg"
             and attachment.content

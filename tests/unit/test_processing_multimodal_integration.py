@@ -104,7 +104,7 @@ class TestProcessingServiceMultimodal:
         assert tool_message["tool_call_id"] == "test_call_123"
         assert tool_message["content"] == "Simple string result"
         assert tool_message["error_traceback"] is None
-        assert "_attachment" not in tool_message
+        assert "_attachments" not in tool_message
 
         # Check history message
         assert history_message["role"] == "tool"
@@ -159,13 +159,13 @@ class TestProcessingServiceMultimodal:
         assert event.tool_call_id == "test_call_456"
         assert event.tool_result == "Successfully generated sunset image"
 
-        # Check tool message (should have _attachment for provider processing)
+        # Check tool message (should have _attachments for provider processing)
         assert tool_message["role"] == "tool"
         assert tool_message["tool_call_id"] == "test_call_456"
         assert tool_message["content"] == "Successfully generated sunset image"
         assert tool_message["error_traceback"] is None
-        assert "_attachment" in tool_message
-        assert tool_message["_attachment"] == attachment
+        assert "_attachments" in tool_message
+        assert tool_message["_attachments"] == [attachment]
 
         # Should also have attachments metadata for history
         assert "attachments" in tool_message
@@ -175,11 +175,11 @@ class TestProcessingServiceMultimodal:
         assert attachment_meta["mime_type"] == "image/png"
         assert attachment_meta["description"] == "Generated sunset image"
 
-        # Check history message (should NOT have _attachment but should have metadata)
+        # Check history message (should NOT have _attachments but should have metadata)
         assert history_message["role"] == "tool"
         assert history_message["tool_call_id"] == "test_call_456"
         assert history_message["content"] == "Successfully generated sunset image"
-        assert "_attachment" not in history_message  # Raw data removed
+        assert "_attachments" not in history_message  # Raw data removed
         assert "attachments" in history_message  # Metadata preserved
 
     @pytest.mark.asyncio
@@ -218,7 +218,7 @@ class TestProcessingServiceMultimodal:
         # Should behave similar to string result when no attachment
         assert event.tool_result == "Text processed successfully"
         assert tool_message["content"] == "Text processed successfully"
-        assert "_attachment" not in tool_message
+        assert "_attachments" not in tool_message
         assert "attachments" not in tool_message
         assert history_message["content"] == "Text processed successfully"
 
@@ -386,7 +386,7 @@ class TestProcessingServiceMultimodal:
         assert "[Attachment ID(s): auto_attachment_123]" in llm_message["content"]
 
         # Verify that the ToolAttachment object has the attachment_id populated
-        assert llm_message["_attachment"].attachment_id == "auto_attachment_123"
+        assert llm_message["_attachments"][0].attachment_id == "auto_attachment_123"
 
     async def test_no_auto_attachment_for_string_results(
         self, processing_service: ProcessingService, mock_db_context: Mock

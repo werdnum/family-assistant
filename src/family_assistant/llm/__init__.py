@@ -75,24 +75,34 @@ class BaseLLMClient:
     ) -> list[dict[str, Any]]:
         """Process messages, handling tool attachments"""
         processed = []
-        pending_attachment = None
+        pending_attachments: list[ToolAttachment] = []
 
         for original_msg in messages:
             msg = original_msg.copy()  # Create copy to avoid side effects
-            if msg.get("role") == "tool" and msg.get("_attachment"):
-                # Store attachment for injection (it already has attachment_id populated)
-                pending_attachment = msg.pop("_attachment")
-                msg["content"] = (
-                    msg.get("content", "") + "\n[File content in following message]"
-                )
+            if msg.get("role") == "tool" and msg.get("_attachments"):
+                # Store attachments for injection (they already have attachment_id populated)
+                pending_attachments = msg.pop("_attachments")
+                if pending_attachments:
+                    # Use singular form for single attachment, plural for multiple
+                    if len(pending_attachments) == 1:
+                        msg["content"] = (
+                            msg.get("content", "")
+                            + "\n[File content in following message]"
+                        )
+                    else:
+                        msg["content"] = (
+                            msg.get("content", "")
+                            + f"\n[{len(pending_attachments)} file(s) content in following message(s)]"
+                        )
 
             processed.append(msg)
 
-            # Inject attachment after tool message if needed
-            if pending_attachment and not self._supports_multimodal_tools():
-                injection_msg = self._create_attachment_injection(pending_attachment)
-                processed.append(injection_msg)
-                pending_attachment = None
+            # Inject attachments after tool message if needed
+            if pending_attachments and not self._supports_multimodal_tools():
+                for attachment in pending_attachments:
+                    injection_msg = self._create_attachment_injection(attachment)
+                    processed.append(injection_msg)
+                pending_attachments = []
 
         return processed
 
@@ -230,16 +240,22 @@ def _format_messages_for_debug(
             name = msg.get("name", "unknown")
             tool_info = f"({name}, id={tool_call_id})"
 
-        # Check for _attachment field
+        # Check for _attachments field
         attachment_info = ""
-        if "_attachment" in msg:
-            attachment = msg["_attachment"]
-            if hasattr(attachment, "mime_type"):
-                att_type = attachment.mime_type
-                att_size = len(attachment.content) if attachment.content else 0
-                attachment_info = f" [_attachment: {att_type}, {att_size} bytes]"
-            else:
-                attachment_info = f" [_attachment: {type(attachment).__name__}]"
+        if "_attachments" in msg:
+            attachments = msg["_attachments"]
+            if attachments:
+                att_count = len(attachments)
+                if hasattr(attachments[0], "mime_type"):
+                    att_types = [att.mime_type for att in attachments]
+                    att_sizes = [
+                        len(att.content) if att.content else 0 for att in attachments
+                    ]
+                    attachment_info = f" [_attachments: {att_count} files - {', '.join(f'{t} ({s}b)' for t, s in zip(att_types, att_sizes, strict=True))}]"
+                else:
+                    attachment_info = (
+                        f" [_attachments: {att_count} {type(attachments[0]).__name__}]"
+                    )
 
         # Build the line
         line = f'  [{i}] {role}{tool_info}: "{content_str}"{tool_calls_str}{attachment_info}'
@@ -471,56 +487,61 @@ class LiteLLMClient(BaseLLMClient):
         # Claude supports multimodal natively
         processed = []
         for msg in messages:
-            if msg.get("role") == "tool" and msg.get("_attachment"):
-                attachment = msg.pop("_attachment")
+            if msg.get("role") == "tool" and msg.get("_attachments"):
+                attachments = msg.pop("_attachments")
                 # Convert to Claude's format
                 content = [
                     {"type": "text", "text": msg.get("content", "")},
                 ]
-                injection_msg = None
-                if attachment.content and attachment.mime_type.startswith("image/"):
-                    # Use helper method for base64 encoding
-                    b64_data = attachment.get_content_as_base64()
-                    if b64_data:
-                        content.append({
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": attachment.mime_type,
-                                "data": b64_data,
-                            },
-                        })
-                elif attachment.content and attachment.mime_type == "application/pdf":
-                    # Claude supports PDFs via document format
-                    b64_data = attachment.get_content_as_base64()
-                    if b64_data:
-                        content.append({
-                            "type": "document",
-                            "source": {
-                                "type": "base64",
-                                "media_type": attachment.mime_type,
-                                "data": b64_data,
-                            },
-                        })
-                elif attachment.content or attachment.file_path:
-                    # Unsupported attachment type or file-path-only attachment - log warning and fall back to base class behavior
-                    if attachment.content:
-                        logger.warning(
-                            f"Unsupported attachment type {attachment.mime_type} for Claude model, falling back to text description"
+                injection_msgs = []
+                for attachment in attachments:
+                    if attachment.content and attachment.mime_type.startswith("image/"):
+                        # Use helper method for base64 encoding
+                        b64_data = attachment.get_content_as_base64()
+                        if b64_data:
+                            content.append({
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": attachment.mime_type,
+                                    "data": b64_data,
+                                },
+                            })
+                    elif (
+                        attachment.content and attachment.mime_type == "application/pdf"
+                    ):
+                        # Claude supports PDFs via document format
+                        b64_data = attachment.get_content_as_base64()
+                        if b64_data:
+                            content.append({
+                                "type": "document",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": attachment.mime_type,
+                                    "data": b64_data,
+                                },
+                            })
+                    elif attachment.content or attachment.file_path:
+                        # Unsupported attachment type or file-path-only attachment - log warning and fall back to base class behavior
+                        if attachment.content:
+                            logger.warning(
+                                f"Unsupported attachment type {attachment.mime_type} for Claude model, falling back to text description"
+                            )
+                        else:
+                            logger.warning(
+                                f"File-path-only attachment {attachment.file_path} for Claude model, falling back to text description"
+                            )
+                        # Update the text content to indicate file content follows in next message
+                        content[0]["text"] += "\n[File content in following message]"
+                        # Fall back to base class injection method
+                        injection_msgs.append(
+                            self._create_attachment_injection(attachment)
                         )
-                    else:
-                        logger.warning(
-                            f"File-path-only attachment {attachment.file_path} for Claude model, falling back to text description"
-                        )
-                    # Update the text content to indicate file content follows in next message
-                    content[0]["text"] += "\n[File content in following message]"
-                    # Fall back to base class injection method
-                    injection_msg = self._create_attachment_injection(attachment)
                 msg["content"] = content
                 processed.append(msg)
-                # Add injection message after the tool message if needed
-                if injection_msg:
-                    processed.append(injection_msg)
+                # Add injection messages after the tool message if needed
+                if injection_msgs:
+                    processed.extend(injection_msgs)
             else:
                 processed.append(msg)
         return processed
