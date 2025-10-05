@@ -36,6 +36,7 @@ if TYPE_CHECKING:
         TasksRepository,
         VectorRepository,
     )
+    from family_assistant.web.message_notifier import MessageNotifier
 
 
 # Use absolute package path
@@ -59,6 +60,7 @@ class DatabaseContext:
         engine: AsyncEngine | None = None,
         max_retries: int = 3,
         base_delay: float = 0.5,
+        message_notifier: "MessageNotifier | None" = None,
     ) -> None:
         """
         Initialize the database context.
@@ -68,12 +70,14 @@ class DatabaseContext:
                    storage.base will be used. This enables dependency injection for testing.
             max_retries: Maximum number of retries for database operations.
             base_delay: Base delay in seconds for exponential backoff.
+            message_notifier: Optional MessageNotifier instance for live message updates.
         """
         if engine is None:
             raise ValueError("DatabaseContext requires an engine to be provided")
         self.engine = engine
         self.max_retries = max_retries
         self.base_delay = base_delay
+        self.message_notifier = message_notifier
         self.conn: AsyncConnection | None = None
         self._transaction_cm: AbstractAsyncContextManager[AsyncConnection] | None = None
 
@@ -351,7 +355,10 @@ class DatabaseContext:
 # via __aenter__/__aexit__. Callers should instantiate DatabaseContext directly.
 # Keeping it for now but marking as potentially deprecated or for removal.
 def get_db_context(
-    engine: AsyncEngine, max_retries: int = 3, base_delay: float = 0.5
+    engine: AsyncEngine,
+    max_retries: int = 3,
+    base_delay: float = 0.5,
+    message_notifier: "MessageNotifier | None" = None,
 ) -> DatabaseContext:
     """
     Creates an instance of DatabaseContext.
@@ -363,6 +370,7 @@ def get_db_context(
         engine: Required SQLAlchemy AsyncEngine for dependency injection.
         max_retries: Maximum number of retries for database operations.
         base_delay: Base delay in seconds for exponential backoff.
+        message_notifier: Optional MessageNotifier instance for live message updates.
 
     Returns:
         A DatabaseContext instance.
@@ -374,4 +382,4 @@ def get_db_context(
             result = await db.fetch_all(...)
         ```
     """
-    return DatabaseContext(engine, max_retries, base_delay)
+    return DatabaseContext(engine, max_retries, base_delay, message_notifier)
