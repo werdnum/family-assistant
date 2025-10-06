@@ -162,7 +162,7 @@ Examples:
 
 **Exit Code Impact: 1 (warning)**
 
-Code that defers work to an indeterminate "later" or takes a shortcut that compromises code quality for a short-term gain. This is for work that is incomplete not in the sense of a feature being partially built, but in the sense of a small piece of a task being deliberately left unfinished.
+This applies when a small part of a task is deliberately left unfinished, as opposed to a larger feature that is still under development.
 
 Examples:
 
