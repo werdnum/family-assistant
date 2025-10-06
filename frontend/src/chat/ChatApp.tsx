@@ -15,6 +15,8 @@ import { ChatAppProps, Message, MessageContent, Conversation } from './types';
 import NavigationSheet from '../shared/NavigationSheet';
 import { ToolConfirmationProvider } from './ToolConfirmationContext';
 import ProfileSelector from './ProfileSelector';
+import { useNotifications } from './useNotifications';
+import { NotificationSettings } from './NotificationSettings';
 
 // Helper function to parse tool arguments
 const parseToolArguments = (args: unknown): Record<string, unknown> => {
@@ -41,6 +43,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const [currentProfileId, setCurrentProfileId] = useState<string>(() => {
     // Load saved profile from localStorage, fallback to prop
     return localStorage.getItem('selectedProfileId') || profileId;
+  });
+  const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(() => {
+    // Load notification preference from localStorage
+    const saved = localStorage.getItem('notificationsEnabled');
+    return saved === 'true';
   });
   const streamingMessageIdRef = useRef<string | null>(null);
   const toolCallMessageIdRef = useRef<string | null>(null);
@@ -319,55 +326,6 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     onToolConfirmationResult: handleConfirmationResult,
   });
 
-  // Cleanup effect to abort fetch requests on unmount
-  useEffect(() => {
-    return () => {
-      // Cancel any pending fetch requests when component unmounts
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-      if (messagesAbortControllerRef.current) {
-        messagesAbortControllerRef.current.abort();
-      }
-    };
-  }, []);
-
-  // Handle window resize
-  useEffect(() => {
-    const handleResize = () => {
-      const newIsMobile = window.innerWidth <= 768;
-      setIsMobile(newIsMobile);
-
-      // Close sidebar when switching to mobile to prevent layout issues
-      if (newIsMobile) {
-        setSidebarOpen(false);
-      }
-    };
-
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  // Initialize conversation ID from URL or localStorage
-  useEffect(() => {
-    fetchConversations();
-
-    const urlParams = new URLSearchParams(window.location.search);
-    const urlConversationId = urlParams.get('conversation_id');
-    const lastConversationId = localStorage.getItem('lastConversationId');
-
-    if (urlConversationId) {
-      setConversationId(urlConversationId);
-      loadConversationMessages(urlConversationId);
-    } else if (lastConversationId) {
-      setConversationId(lastConversationId);
-      loadConversationMessages(lastConversationId);
-      window.history.replaceState({}, '', `/chat?conversation_id=${lastConversationId}`);
-    } else {
-      handleNewChat();
-    }
-  }, []);
-
   // Load messages for a conversation
   const loadConversationMessages = useCallback(async (convId: string) => {
     try {
@@ -581,12 +539,146 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     }
   }, []);
 
-  // Create a stable callback ref for SSE message updates
-  const handleLiveMessageUpdate = useCallback(() => {
-    if (conversationId) {
-      loadConversationMessages(conversationId);
+  // Handle conversation selection (defined early for use in notification callback)
+  const handleConversationSelect = useCallback(
+    (convId: string) => {
+      // Cancel any active streaming before switching conversations
+      cancelStream();
+
+      setConversationId(convId);
+      localStorage.setItem('lastConversationId', convId);
+      window.history.pushState({}, '', `/chat?conversation_id=${convId}`);
+      loadConversationMessages(convId);
+
+      if (window.innerWidth <= 768) {
+        setSidebarOpen(false);
+      }
+    },
+    [cancelStream, loadConversationMessages]
+  );
+
+  // Handle notification clicks - navigate to the conversation
+  const handleNotificationClick = useCallback(
+    (notifConversationId: string) => {
+      if (notifConversationId !== conversationId) {
+        handleConversationSelect(notifConversationId);
+      }
+    },
+    [conversationId, handleConversationSelect]
+  );
+
+  // Initialize notifications (before handleLiveMessageUpdate which uses showNotification)
+  const {
+    isSupported: notificationsSupported,
+    permission: notificationPermission,
+    requestPermission: requestNotificationPermission,
+    showNotification,
+  } = useNotifications({
+    enabled: notificationsEnabled,
+    conversationId,
+    onNotificationClick: handleNotificationClick,
+  });
+
+  // Handle notification preference changes
+  const handleNotificationEnabledChange = useCallback((enabled: boolean) => {
+    setNotificationsEnabled(enabled);
+    localStorage.setItem('notificationsEnabled', String(enabled));
+  }, []);
+
+  // Cleanup effect to abort fetch requests on unmount
+  useEffect(() => {
+    return () => {
+      // Cancel any pending fetch requests when component unmounts
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      if (messagesAbortControllerRef.current) {
+        messagesAbortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
+  // Handle window resize
+  useEffect(() => {
+    const handleResize = () => {
+      const newIsMobile = window.innerWidth <= 768;
+      setIsMobile(newIsMobile);
+
+      // Close sidebar when switching to mobile to prevent layout issues
+      if (newIsMobile) {
+        setSidebarOpen(false);
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Initialize conversation ID from URL or localStorage
+  useEffect(() => {
+    fetchConversations();
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlConversationId = urlParams.get('conversation_id');
+    const lastConversationId = localStorage.getItem('lastConversationId');
+
+    if (urlConversationId) {
+      setConversationId(urlConversationId);
+      loadConversationMessages(urlConversationId);
+    } else if (lastConversationId) {
+      setConversationId(lastConversationId);
+      loadConversationMessages(lastConversationId);
+      window.history.replaceState({}, '', `/chat?conversation_id=${lastConversationId}`);
+    } else {
+      handleNewChat();
     }
-  }, [conversationId, loadConversationMessages]);
+  }, []);
+
+  // Create a stable callback ref for SSE message updates
+  const handleLiveMessageUpdate = useCallback(
+    (update: {
+      internal_id: string;
+      timestamp: string;
+      new_messages: boolean;
+      role?: string;
+      content?: string;
+      conversation_id?: string;
+    }) => {
+      // Show notification if it's an assistant message
+      if (
+        update.role === 'assistant' &&
+        update.content &&
+        update.conversation_id &&
+        update.internal_id
+      ) {
+        // Dedupe: Don't show notification if we're currently streaming
+        // (this message is likely from the active streaming session)
+        const isCurrentlyStreaming = isStreaming && update.conversation_id === conversationId;
+
+        if (!isCurrentlyStreaming) {
+          // Extract preview from content (first 100 chars)
+          let preview = update.content;
+          if (preview.length > 100) {
+            preview = preview.substring(0, 97) + '...';
+          }
+
+          // Show notification
+          showNotification({
+            conversationId: update.conversation_id,
+            messageId: update.internal_id,
+            preview,
+            timestamp: update.timestamp,
+          });
+        }
+      }
+
+      // Reload messages for the updated conversation
+      if (update.conversation_id === conversationId) {
+        loadConversationMessages(conversationId);
+      }
+    },
+    [conversationId, loadConversationMessages, showNotification, isStreaming]
+  );
 
   // Set up live message updates via SSE
   useLiveMessageUpdates({
@@ -595,21 +687,6 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     enabled: true,
     onMessageReceived: handleLiveMessageUpdate,
   });
-
-  // Handle conversation selection
-  const handleConversationSelect = (convId: string) => {
-    // Cancel any active streaming before switching conversations
-    cancelStream();
-
-    setConversationId(convId);
-    localStorage.setItem('lastConversationId', convId);
-    window.history.pushState({}, '', `/chat?conversation_id=${convId}`);
-    loadConversationMessages(convId);
-
-    if (window.innerWidth <= 768) {
-      setSidebarOpen(false);
-    }
-  };
 
   // Handle new chat creation
   const handleNewChat = useCallback(() => {
@@ -767,8 +844,17 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             />
           </div>
 
-          {/* Main Navigation Menu */}
-          <div className="ml-auto">
+          {/* Notification Settings */}
+          <div className="flex items-center gap-2 ml-auto">
+            <NotificationSettings
+              enabled={notificationsEnabled}
+              onEnabledChange={handleNotificationEnabledChange}
+              permission={notificationPermission}
+              onRequestPermission={requestNotificationPermission}
+              isSupported={notificationsSupported}
+            />
+
+            {/* Main Navigation Menu */}
             <NavigationSheet currentPage="chat">
               <Button variant="outline" size="sm">
                 <Menu className="h-4 w-4" />
