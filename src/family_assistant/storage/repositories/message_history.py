@@ -303,6 +303,30 @@ class MessageHistoryRepository(BaseRepository):
         row = await self._db.fetch_one(stmt)
         return self._process_message_row(row) if row else None
 
+    async def get_interface_type_for_conversation(
+        self, conversation_id: str
+    ) -> str | None:
+        """
+        Get the interface_type for a conversation by checking message history.
+
+        This is used to detect which interface (telegram, web, etc.) a conversation
+        belongs to, enabling cross-interface message routing.
+
+        Args:
+            conversation_id: The conversation identifier
+
+        Returns:
+            The interface_type string (e.g., "telegram", "web") or None if not found
+        """
+        stmt = (
+            select(message_history_table.c.interface_type)
+            .where(message_history_table.c.conversation_id == conversation_id)
+            .limit(1)
+        )
+
+        row = await self._db.fetch_one(stmt)
+        return row["interface_type"] if row else None
+
     async def get_by_turn_id(self, turn_id: str) -> list[dict[str, Any]]:
         """
         Retrieves all messages for a specific turn.

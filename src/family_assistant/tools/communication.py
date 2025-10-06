@@ -59,7 +59,7 @@ COMMUNICATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "function": {
             "name": "send_message_to_user",
             "description": (
-                "Sends a textual message to another known user on Telegram. You MUST use their Chat ID as the target, which is provided in the 'Known users' section of the system prompt. "
+                "Sends a textual message to another known user. You MUST use their Chat ID as the target, which is provided in the 'Known users' section of the system prompt. "
                 "Optionally, you can include attachments with the message.\n\n"
                 "Returns: A string indicating the result. "
                 "On success, returns 'Message sent successfully to user with Chat ID [chat_id].'. "
@@ -71,8 +71,8 @@ COMMUNICATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "target_chat_id": {
-                        "type": "integer",
-                        "description": "The unique Telegram Chat ID of the user to send the message to. This ID must be one of the known users provided in the system context.",
+                        "type": "string",
+                        "description": "The conversation ID of the recipient. For Telegram conversations, this is the numeric Chat ID. For web conversations, this is a UUID. The ID must be from a known conversation provided in the system context.",
                     },
                     "message_content": {
                         "type": "string",
@@ -195,16 +195,19 @@ async def get_message_history_tool(
 
 async def send_message_to_user_tool(
     exec_context: ToolExecutionContext,
-    target_chat_id: int,
+    target_chat_id: str,
     message_content: str,
     attachment_ids: list[str] | None = None,
 ) -> str:
     """
-    Sends a message to another known user via Telegram.
+    Sends a message to another user via their chat interface.
+
+    This tool works across different interfaces (Telegram, Web, etc.) by detecting
+    the interface type from message history and routing to the appropriate ChatInterface.
 
     Args:
         exec_context: The execution context.
-        target_chat_id: The Telegram Chat ID of the recipient.
+        target_chat_id: The conversation ID of the recipient (Chat ID for Telegram, UUID for Web).
         message_content: The text of the message to send.
         attachment_ids: Optional list of attachment UUIDs to send with the message.
 
@@ -212,24 +215,55 @@ async def send_message_to_user_tool(
         A string indicating success or failure.
     """
 
+    # Convert target_chat_id to string for consistent database queries
+    # (JSON deserialization may pass integers for Telegram chat IDs)
+    target_chat_id = str(target_chat_id)
+
     logger.info(
         f"Executing send_message_to_user_tool to chat_id {target_chat_id} with content: '{message_content[:50]}...' and {len(attachment_ids) if attachment_ids else 0} attachment(s)"
     )
-    chat_interface = exec_context.chat_interface
     db_context = exec_context.db_context
     # The turn_id from the exec_context is the ID of the turn that *requested* this tool call.
     # This is useful for linking the sent message back to the originating interaction.
     requesting_turn_id = exec_context.turn_id
 
-    if not chat_interface:
-        logger.error(
-            "ChatInterface not available in ToolExecutionContext for send_message_to_user_tool."
+    # Detect the interface type for the target conversation
+    target_interface_type = (
+        await db_context.message_history.get_interface_type_for_conversation(
+            target_chat_id
         )
-        return "Error: Chat interface not available."
+    )
+
+    # If no history exists for this conversation, fall back to current interface type
+    # This allows sending first messages to new conversations
+    if not target_interface_type:
+        target_interface_type = exec_context.interface_type
+        logger.info(
+            f"No history found for conversation {target_chat_id}, "
+            f"assuming interface_type={target_interface_type} (current interface)"
+        )
+
+    # Get the appropriate ChatInterface for this interface type
+    # Try chat_interfaces dict first (new way), fall back to single chat_interface (old way)
+    if exec_context.chat_interfaces:
+        chat_interface = exec_context.chat_interfaces.get(target_interface_type)
+        if not chat_interface:
+            logger.error(
+                f"No ChatInterface available for interface type {target_interface_type}"
+            )
+            return f"Error: Chat interface not available for {target_interface_type}."
+    else:
+        # Fallback to single chat_interface for backward compatibility
+        chat_interface = exec_context.chat_interface
+        if not chat_interface:
+            logger.error(
+                "ChatInterface not available in ToolExecutionContext for send_message_to_user_tool."
+            )
+            return "Error: Chat interface not available."
 
     # Validate that the user is not trying to send a message to themselves
     current_conversation_id = exec_context.conversation_id
-    if str(target_chat_id) == current_conversation_id:
+    if target_chat_id == current_conversation_id:
         logger.warning(
             f"Attempt to send message to self: target_chat_id={target_chat_id}, current_conversation_id={current_conversation_id}"
         )
@@ -322,40 +356,42 @@ async def send_message_to_user_tool(
         )
 
         # Record the sent message in history for the target user's chat
-        try:
-            await db_context.message_history.add(
-                interface_type="telegram",  # Assuming Telegram interface for now
-                conversation_id=str(
-                    target_chat_id
-                ),  # History is for the target user's conversation
-                interface_message_id=sent_message_id_str,
-                turn_id=requesting_turn_id,  # Link to the turn that initiated this action
-                thread_root_id=None,  # This message likely starts a new interaction or is standalone in the target chat
-                timestamp=datetime.now(timezone.utc),
-                role="assistant",  # The bot is the one sending this message to the target user
-                content=message_content,
-                tool_calls=None,
-                tool_call_id=None,
-                reasoning_info={
-                    "source_turn_id": requesting_turn_id,
-                    "tool_name": "send_message_to_user",
-                },  # Optional: add reasoning
-                error_traceback=None,
-                processing_profile_id=getattr(
-                    exec_context, "processing_profile_id", None
-                ),
-            )
-            logger.info(
-                f"Message sent to chat_id {target_chat_id} was recorded in history."
-            )
-            return f"Message sent successfully to user with Chat ID {target_chat_id}{attachment_msg}."
-        except Exception as db_err:
-            logger.error(
-                f"Message sent to chat_id {target_chat_id}, but failed to record in history: {db_err}",
-                exc_info=True,
-            )
-            # Still return success for sending, but note the history failure.
-            return f"Message sent to user with Chat ID {target_chat_id}{attachment_msg}, but failed to record in history."
+        # Note: WebChatInterface already saves to history (to trigger SSE notifications),
+        # but TelegramChatInterface does not, so we only save for non-web interfaces
+        if target_interface_type != "web":
+            try:
+                await db_context.message_history.add(
+                    interface_type=target_interface_type,  # Use detected interface type
+                    conversation_id=target_chat_id,  # History is for the target user's conversation
+                    interface_message_id=sent_message_id_str,
+                    turn_id=requesting_turn_id,  # Link to the turn that initiated this action
+                    thread_root_id=None,  # This message likely starts a new interaction or is standalone in the target chat
+                    timestamp=datetime.now(timezone.utc),
+                    role="assistant",  # The bot is the one sending this message to the target user
+                    content=message_content,
+                    tool_calls=None,
+                    tool_call_id=None,
+                    reasoning_info={
+                        "source_turn_id": requesting_turn_id,
+                        "tool_name": "send_message_to_user",
+                    },  # Optional: add reasoning
+                    error_traceback=None,
+                    processing_profile_id=getattr(
+                        exec_context, "processing_profile_id", None
+                    ),
+                )
+                logger.info(
+                    f"Message sent to chat_id {target_chat_id} was recorded in history."
+                )
+            except Exception as db_err:
+                logger.error(
+                    f"Message sent to chat_id {target_chat_id}, but failed to record in history: {db_err}",
+                    exc_info=True,
+                )
+                # Still return success for sending, but note the history failure.
+                return f"Message sent to user with Chat ID {target_chat_id}{attachment_msg}, but failed to record in history."
+
+        return f"Message sent successfully to user with Chat ID {target_chat_id}{attachment_msg}."
 
     except Exception as e:
         logger.error(

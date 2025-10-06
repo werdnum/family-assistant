@@ -11,6 +11,7 @@ from family_assistant.tools import ToolsProvider
 
 if TYPE_CHECKING:
     from family_assistant.processing import ProcessingService  # Import for type hinting
+    from family_assistant.web.web_chat_interface import WebChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -240,3 +241,15 @@ async def get_attachment_registry(request: Request) -> AttachmentRegistry:
             detail="AttachmentRegistry not configured or available.",
         )
     return registry
+
+
+async def get_web_chat_interface(request: Request) -> "WebChatInterface":
+    """Retrieves the WebChatInterface instance from app state."""
+    web_chat_interface = getattr(request.app.state, "web_chat_interface", None)
+    if not web_chat_interface:
+        logger.error("WebChatInterface not found in app state.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="WebChatInterface not configured or available.",
+        )
+    return web_chat_interface

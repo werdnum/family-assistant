@@ -40,6 +40,7 @@ from family_assistant.tools import (
 )
 from family_assistant.web.app_creator import app as actual_app
 from family_assistant.web.models import ChatMessageResponse  # Updated import
+from family_assistant.web.web_chat_interface import WebChatInterface
 from tests.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
 
 logger = logging.getLogger(__name__)
@@ -206,6 +207,9 @@ async def app_fixture(
     }
     app.state.llm_client = mock_llm_client  # For other parts that might use it
     app.state.debug_mode = False  # Explicitly set for tests
+
+    # Initialize WebChatInterface for web API tests
+    app.state.web_chat_interface = WebChatInterface(db_engine)
 
     # Ensure database is initialized for this app instance
     async with get_db_context(engine=db_engine) as temp_db_ctx:

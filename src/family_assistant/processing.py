@@ -264,6 +264,7 @@ class ProcessingService:
         user_name: str,  # Added user_name
         turn_id: str,  # Added turn_id
         chat_interface: ChatInterface | None,  # Added chat_interface
+        chat_interfaces: dict[str, ChatInterface] | None = None,
         # Callback signature updated to match ToolExecutionContext's expectation
         request_confirmation_callback: (
             Callable[
@@ -309,6 +310,7 @@ class ProcessingService:
             user_name=user_name,
             turn_id=turn_id,
             chat_interface=chat_interface,
+            chat_interfaces=chat_interfaces,
             request_confirmation_callback=request_confirmation_callback,
         ):
             # Collect messages that should be saved
@@ -336,6 +338,7 @@ class ProcessingService:
         user_name: str,
         turn_id: str,
         chat_interface: ChatInterface | None,
+        chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
                 [str, str, str | None, str, str, dict[str, Any], float],
@@ -574,6 +577,7 @@ class ProcessingService:
                         turn_id=turn_id,
                         db_context=db_context,
                         chat_interface=chat_interface,
+                        chat_interfaces=chat_interfaces,
                         request_confirmation_callback=request_confirmation_callback,
                     )
                 )
@@ -671,11 +675,12 @@ class ProcessingService:
         turn_id: str,
         db_context: DatabaseContext,
         chat_interface: ChatInterface | None,
+        chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: Callable[
             [str, str, str | None, str, str, dict[str, Any], float],
             Awaitable[bool],
         ]
-        | None,
+        | None = None,
     ) -> ToolExecutionResult:
         """Execute a single tool call and return the result.
 
@@ -762,6 +767,15 @@ class ProcessingService:
 
         # Execute tool
         logger.info(f"Executing tool '{function_name}' with args: {arguments}")
+
+        # Build chat_interfaces dict for cross-interface messaging
+        # Use the provided chat_interfaces (containing all registered interfaces) if available,
+        # otherwise fall back to just the current interface for backward compatibility
+        chat_interfaces_dict = chat_interfaces
+        if chat_interfaces_dict is None and chat_interface:
+            # Fallback: if no registry provided, create dict with just current interface
+            chat_interfaces_dict = {interface_type: chat_interface}
+
         tool_execution_context = ToolExecutionContext(
             interface_type=interface_type,
             conversation_id=conversation_id,
@@ -769,6 +783,7 @@ class ProcessingService:
             turn_id=turn_id,
             db_context=db_context,
             chat_interface=chat_interface,
+            chat_interfaces=chat_interfaces_dict,
             timezone_str=self.timezone_str,
             processing_profile_id=self.service_config.id,
             request_confirmation_callback=request_confirmation_callback,
@@ -1355,6 +1370,7 @@ class ProcessingService:
         user_name: str,
         replied_to_interface_id: str | None = None,
         chat_interface: ChatInterface | None = None,
+        chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
                 [str, str, str | None, str, str, dict[str, Any], float],
@@ -1813,6 +1829,7 @@ class ProcessingService:
         user_name: str,
         replied_to_interface_id: str | None = None,
         chat_interface: ChatInterface | None = None,
+        chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
                 [str, str, str | None, str, str, dict[str, Any], float],
@@ -2084,6 +2101,7 @@ class ProcessingService:
                 user_name=user_name,
                 turn_id=turn_id,
                 chat_interface=chat_interface,
+                chat_interfaces=chat_interfaces,
                 request_confirmation_callback=request_confirmation_callback,
             ):
                 # Yield the event to the caller
