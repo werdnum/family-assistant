@@ -155,7 +155,6 @@ async def test_search_notes_flow(web_test_fixture: WebTestFixture) -> None:
 
     # Search for our test notes using the unique test ID
     await notes_page.search_notes(test_id)
-    await page.wait_for_timeout(500)
 
     # Should show only our test notes
     filtered_count = await notes_page.get_note_count()
@@ -167,7 +166,6 @@ async def test_search_notes_flow(web_test_fixture: WebTestFixture) -> None:
 
     # Search for "TestGrocery" - should show only grocery note
     await notes_page.search_notes("TestGrocery")
-    await page.wait_for_timeout(500)
 
     filtered_count = await notes_page.get_note_count()
     assert (
@@ -177,7 +175,6 @@ async def test_search_notes_flow(web_test_fixture: WebTestFixture) -> None:
 
     # Search for "TestMeeting" - should show only meeting note
     await notes_page.search_notes("TestMeeting")
-    await page.wait_for_timeout(500)
 
     filtered_count = await notes_page.get_note_count()
     assert filtered_count >= 1  # At least our meeting note
@@ -185,14 +182,12 @@ async def test_search_notes_flow(web_test_fixture: WebTestFixture) -> None:
 
     # Search for something that definitely doesn't exist
     await notes_page.search_notes(f"NonexistentNote{test_id}")
-    await page.wait_for_timeout(500)
 
     filtered_count = await notes_page.get_note_count()
     assert filtered_count == 0
 
     # Clear search - should show all notes again
     await notes_page.search_notes("")
-    await page.wait_for_timeout(500)
 
     final_count = await notes_page.get_note_count()
     assert final_count >= len(test_notes)
