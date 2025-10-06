@@ -61,17 +61,22 @@ async def test_token_create_form_interaction(
     if await create_button.count() > 0:
         await create_button.first.click()
 
-        # Wait for form or modal to appear
-        await page.wait_for_timeout(1000)
-
-        # Check for form elements
+        # Wait for form or modal to appear by waiting for any form element to be visible
+        # Use a generous timeout to handle varying system load
         name_input = page.locator("input[name='name'], input[placeholder*='name' i]")
         submit_button = page.locator(
             "button[type='submit'], button:has-text('Create Token')"
         )
         cancel_button = page.locator("button:has-text('Cancel')")
 
-        # Form elements should be present
+        # Wait for at least one form element to appear
+        await page.wait_for_selector(
+            "input[name='name'], input[placeholder*='name' i], button[type='submit'], button:has-text('Create Token'), button:has-text('Cancel')",
+            state="visible",
+            timeout=10000,
+        )
+
+        # Check for form elements
         has_name = await name_input.count() > 0
         has_submit = await submit_button.count() > 0
         has_cancel = await cancel_button.count() > 0
@@ -96,8 +101,10 @@ async def test_token_list_display(
     await page.goto(f"{server_url}/settings/tokens")
     await page.wait_for_selector("h1:has-text('API Token')", timeout=10000)
 
-    # Wait for any API calls to complete
-    await page.wait_for_timeout(2000)
+    # Wait for the "Your Tokens" section to appear, which indicates content has loaded
+    await page.wait_for_selector(
+        "h2:has-text('Your Tokens')", state="visible", timeout=10000
+    )
 
     # Check for token items or empty state
     token_cards = (

@@ -168,6 +168,12 @@ class NotesPage(BasePage):
                     await delete_buttons[0].click()
                     # Wait for the network request to complete and UI to update
                     await self.wait_for_load(wait_for_network=True)
+                    # Explicitly wait for the deleted note to disappear from the DOM
+                    await self.page.wait_for_selector(
+                        f"tbody tr td:first-child:has-text('{title}')",
+                        state="detached",
+                        timeout=10000,
+                    )
                     break
 
     async def search_notes(self, query: str) -> None:
@@ -182,7 +188,21 @@ class NotesPage(BasePage):
             await search_input.fill(query)
             # Trigger search by pressing Enter or waiting for debounce
             await self.page.keyboard.press("Enter")
-            await self.wait_for_load()
+            await self.wait_for_load(wait_for_network=True)
+            # Wait for the table to be visible and stable after search
+            # This ensures React has finished re-rendering the filtered results
+            try:
+                await self.page.wait_for_selector(
+                    "tbody tr", state="visible", timeout=5000
+                )
+            except Exception:
+                # If no rows are visible, the search might have returned no results
+                # Check if the empty state message is present
+                await self.page.wait_for_selector(
+                    "td:has-text('No notes found'), td:has-text('No results')",
+                    state="visible",
+                    timeout=2000,
+                )
 
     async def get_note_count(self) -> int:
         """Get the count of notes displayed on the page.
