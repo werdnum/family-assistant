@@ -238,9 +238,9 @@ async def send_message_to_user_tool(
     # This allows sending first messages to new conversations
     if not target_interface_type:
         target_interface_type = exec_context.interface_type
-        logger.info(
-            f"No history found for conversation {target_chat_id}, "
-            f"assuming interface_type={target_interface_type} (current interface)"
+        logger.warning(
+            f"No message history found for conversation {target_chat_id}. "
+            f"Defaulting to current interface type: {target_interface_type}."
         )
 
     # Get the appropriate ChatInterface for this interface type
