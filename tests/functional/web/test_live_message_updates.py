@@ -43,6 +43,13 @@ async def test_message_appears_in_second_context(
         # Navigate page1 to chat first
         await navigate_to_chat(page1, base_url)
 
+        # Wait for conversation to be created and URL to be updated
+        # ChatApp creates a new conversation on mount if none exists
+        await page1.wait_for_function(
+            "() => window.location.href.includes('conversation_id=')",
+            timeout=5000,
+        )
+
         # Get the conversation ID from page1's URL
         page1_url = page1.url
         match = re.search(r"conversation_id=([^&]+)", page1_url)
@@ -94,6 +101,13 @@ async def test_bidirectional_live_updates(
     try:
         # Navigate page1 to chat first
         await navigate_to_chat(page1, base_url)
+
+        # Wait for conversation to be created and URL to be updated
+        # ChatApp creates a new conversation on mount if none exists
+        await page1.wait_for_function(
+            "() => window.location.href.includes('conversation_id=')",
+            timeout=5000,
+        )
 
         # Get the conversation ID from page1's URL
         page1_url = page1.url
