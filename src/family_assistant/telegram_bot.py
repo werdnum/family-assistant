@@ -53,6 +53,8 @@ from family_assistant.storage.message_history import (
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
 
+    from fastapi import FastAPI
+
     from family_assistant.processing import ProcessingService
     from family_assistant.services.attachment_registry import AttachmentRegistry
 
@@ -296,6 +298,18 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             chunk_overlap=50,  # Small overlap to maintain context across messages
             separators=("\n\n", "\n", ". ", " ", ""),
         )
+
+    def _get_chat_interfaces(self) -> dict[str, ChatInterface] | None:
+        """Get chat_interfaces registry from FastAPI app state for cross-interface messaging.
+
+        Returns:
+            Dictionary mapping interface types to ChatInterface instances, or None if unavailable
+        """
+        if self.telegram_service.fastapi_app:
+            return getattr(
+                self.telegram_service.fastapi_app.state, "chat_interfaces", None
+            )
+        return None
 
     async def _send_message_chunks(
         self,
@@ -737,6 +751,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         return result
 
                     # Use the wrapper function as the callback
+                    # Get chat_interfaces registry for cross-interface messaging
+                    chat_interfaces = self._get_chat_interfaces()
+
                     # Call the refactored handle_chat_interaction method
                     result = await selected_processing_service.handle_chat_interaction(
                         db_context=db_context,
@@ -747,6 +764,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         user_name=user_name,
                         replied_to_interface_id=replied_to_interface_id,
                         chat_interface=self.telegram_service.chat_interface,
+                        chat_interfaces=chat_interfaces,
                         request_confirmation_callback=confirmation_callback_wrapper,
                         trigger_attachments=trigger_attachments,
                     )
@@ -1193,6 +1211,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         timeout=timeout_cb,
                     )
 
+                # Get chat_interfaces registry for cross-interface messaging
+                chat_interfaces = self._get_chat_interfaces()
+
                 async with self._typing_notifications(context, chat_id):
                     result = await targeted_processing_service.handle_chat_interaction(
                         db_context=db_ctx,
@@ -1205,6 +1226,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         else "Unknown User",
                         replied_to_interface_id=reply_to_interface_id_str,
                         chat_interface=self.telegram_service.chat_interface,
+                        chat_interfaces=chat_interfaces,
                         request_confirmation_callback=confirmation_callback_wrapper,
                         trigger_attachments=None,  # TODO: Update slash command photo handling to use AttachmentRegistry
                     )
@@ -1673,6 +1695,7 @@ class TelegramService:
         get_db_context_func: Callable[
             ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
         ],
+        fastapi_app: FastAPI | None = None,  # FastAPI app for accessing app.state
     ) -> None:
         """
         Initializes the Telegram Service.
@@ -1704,6 +1727,9 @@ class TelegramService:
             processing_services_registry  # Store registry
         )
         self.app_config = app_config  # Store app_config
+        self.fastapi_app = (
+            fastapi_app  # Store FastAPI app for accessing chat_interfaces
+        )
 
         # Store the Default ProcessingService instance in bot_data for access in handlers
         # This is for the default service used by the batcher.

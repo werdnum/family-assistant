@@ -79,6 +79,9 @@ class ToolExecutionContext:
     ]  # NO DEFAULT - must specify explicitly
     # Optional fields with defaults (for backward compatibility and convenience)
     chat_interface: Optional["ChatInterface"] = None  # Replaced application
+    chat_interfaces: dict[str, "ChatInterface"] | None = (
+        None  # Dict of interface_type -> ChatInterface for cross-interface messaging
+    )
     timezone_str: str = "UTC"  # Timezone string for localization
     processing_profile_id: str | None = (
         None  # Processing profile associated with the request

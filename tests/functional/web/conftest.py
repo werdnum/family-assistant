@@ -47,6 +47,7 @@ from family_assistant.tools import (
     MCPToolsProvider,
     ToolsProvider,
 )
+from family_assistant.web.web_chat_interface import WebChatInterface
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
@@ -1101,6 +1102,9 @@ async def app_fixture(
 
     # Use the dependency-injected attachment registry
     app.state.attachment_registry = attachment_registry_fixture
+
+    # Initialize WebChatInterface for web API tests
+    app.state.web_chat_interface = WebChatInterface(db_engine)
 
     # Ensure database is initialized for this app instance
     async with get_db_context(engine=db_engine) as temp_db_ctx:

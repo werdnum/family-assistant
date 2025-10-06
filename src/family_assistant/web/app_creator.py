@@ -155,12 +155,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if hasattr(app.state, "database_engine"):
         app.state.auth_service = AuthService(app.state.database_engine)
         logger.info("AuthService initialized with database engine")
+
+        # Initialize WebChatInterface for web UI message delivery
+        from family_assistant.web.web_chat_interface import (  # noqa: PLC0415
+            WebChatInterface,
+        )
+
+        app.state.web_chat_interface = WebChatInterface(app.state.database_engine)
+        # Register web chat interface in the registry
+        if not hasattr(app.state, "chat_interfaces"):
+            app.state.chat_interfaces = {}
+        app.state.chat_interfaces["web"] = app.state.web_chat_interface
+        logger.info("WebChatInterface initialized with database engine")
     else:
         # For development or when database is not yet initialized
         app.state.auth_service = AuthService()
         logger.warning(
             "AuthService initialized without database engine - API token auth will not work"
         )
+        app.state.web_chat_interface = None
 
     yield
 

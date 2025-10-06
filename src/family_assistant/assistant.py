@@ -304,6 +304,10 @@ class Assistant:
         # Store shutdown event for SSE and other async endpoints
         self.fastapi_app.state.shutdown_event = self.shutdown_event
 
+        # Initialize chat_interfaces registry for cross-interface messaging
+        self.fastapi_app.state.chat_interfaces = {}
+        logger.info("Chat interfaces registry initialized")
+
         self.shared_httpx_client = httpx.AsyncClient()
         logger.info("Shared httpx.AsyncClient created.")
 
@@ -918,9 +922,14 @@ class Assistant:
                 app_config=self.config,
                 attachment_registry=self.attachment_registry,
                 get_db_context_func=self._get_db_context_for_telegram,
+                fastapi_app=self.fastapi_app,  # Pass FastAPI app for chat_interfaces access
                 # use_batching argument removed
             )
             self.fastapi_app.state.telegram_service = self.telegram_service
+            # Register telegram chat interface in the registry
+            self.fastapi_app.state.chat_interfaces["telegram"] = (
+                self.telegram_service.chat_interface
+            )
             logger.info(
                 "TelegramService instantiated and stored in FastAPI app state during setup_dependencies."
             )
