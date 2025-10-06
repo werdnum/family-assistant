@@ -21,6 +21,7 @@ from family_assistant.web.dependencies import (
     get_current_user,
     get_db,
     get_processing_service,
+    get_web_chat_interface,
 )
 from family_assistant.web.models import ChatMessageResponse, ChatPromptRequest
 
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
         AttachmentMetadata,
         AttachmentRegistry,
     )
+    from family_assistant.web.web_chat_interface import WebChatInterface
 
 
 logger = logging.getLogger(__name__)
@@ -330,6 +332,7 @@ async def api_chat_send_message(
         ProcessingService, Depends(get_processing_service)
     ],  # Renamed for clarity
     db_context: Annotated[DatabaseContext, Depends(get_db)],
+    web_chat_interface: Annotated["WebChatInterface", Depends(get_web_chat_interface)],
 ) -> ChatMessageResponse:
     """
     Receives a user prompt via API, processes it using the specified or default
@@ -407,6 +410,9 @@ async def api_chat_send_message(
         str(uuid.uuid4())  # This is for the *response model only*
     )
 
+    # Get chat_interfaces registry from app state for cross-interface messaging
+    chat_interfaces = getattr(request.app.state, "chat_interfaces", None)
+
     result = await selected_processing_service.handle_chat_interaction(
         db_context=db_context,
         interface_type=interface_type,  # Use the interface_type from request or default "api"
@@ -415,7 +421,8 @@ async def api_chat_send_message(
         trigger_interface_message_id=None,  # API prompts don't have a prior interface ID
         user_name=user_name_for_api,
         replied_to_interface_id=None,  # payload.replied_to_message_id is not available on ChatPromptRequest
-        chat_interface=None,  # API doesn't use interactive chat elements for confirmation (yet)
+        chat_interface=web_chat_interface,  # Use WebChatInterface for message delivery
+        chat_interfaces=chat_interfaces,  # Pass all registered chat interfaces
         request_confirmation_callback=None,  # No confirmation callback for API (yet)
         trigger_attachments=trigger_attachments,  # Pass attachment metadata
     )
@@ -697,6 +704,7 @@ async def api_chat_send_message_stream(
         ProcessingService, Depends(get_processing_service)
     ],
     db_context: Annotated[DatabaseContext, Depends(get_db)],
+    web_chat_interface: Annotated["WebChatInterface", Depends(get_web_chat_interface)],
 ) -> StreamingResponse:
     """
     Stream chat responses using Server-Sent Events format.
@@ -838,6 +846,9 @@ async def api_chat_send_message_stream(
                     return False
 
             # Create task to process the interaction stream
+            # Get chat_interfaces registry from app state for cross-interface messaging
+            chat_interfaces = getattr(request.app.state, "chat_interfaces", None)
+
             async def process_stream() -> None:
                 try:
                     async for (
@@ -850,7 +861,8 @@ async def api_chat_send_message_stream(
                         trigger_interface_message_id=None,
                         user_name=user_name_for_api,
                         replied_to_interface_id=None,
-                        chat_interface=None,
+                        chat_interface=web_chat_interface,  # Use WebChatInterface for message delivery
+                        chat_interfaces=chat_interfaces,  # Pass all registered chat interfaces
                         request_confirmation_callback=web_confirmation_callback,
                         trigger_attachments=attachment_metadata,  # Pass attachment metadata
                     ):

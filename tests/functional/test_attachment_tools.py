@@ -268,7 +268,7 @@ class TestSendMessageToUserWithAttachments:
 
             result = await send_message_to_user_tool(
                 exec_context=exec_context,
-                target_chat_id=456789,
+                target_chat_id="456789",
                 message_content="Here's your document",
                 attachment_ids=[mock_attachment_metadata.id],
             )
@@ -311,7 +311,7 @@ class TestSendMessageToUserWithAttachments:
 
             result = await send_message_to_user_tool(
                 exec_context=exec_context,
-                target_chat_id=456789,
+                target_chat_id="456789",
                 message_content="Just a message",
             )
 
