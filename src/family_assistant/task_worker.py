@@ -569,6 +569,17 @@ class TaskWorker:
                     uuid.uuid4()
                 ),  # Generate a new turn_id for this task execution
                 db_context=db_context,
+                # Infrastructure fields (required - no defaults)
+                processing_service=self.processing_service,
+                clock=self.clock,
+                home_assistant_client=self.processing_service.home_assistant_client
+                if self.processing_service
+                else None,
+                event_sources=self.event_sources,
+                attachment_registry=self.processing_service.attachment_registry
+                if self.processing_service
+                else None,
+                # Optional fields (with defaults)
                 chat_interface=self.chat_interface,
                 timezone_str=self.timezone_str,
                 processing_profile_id=(
@@ -577,12 +588,8 @@ class TaskWorker:
                     else None
                 ),
                 update_activity_callback=self._update_last_activity,  # Pass activity callback
-                processing_service=self.processing_service,
                 embedding_generator=self.embedding_generator,
-                clock=self.clock,  # Pass the clock instance
                 indexing_source=self.indexing_source,  # Pass the indexing source
-                event_sources=self.event_sources,  # Pass event sources directly
-                attachment_registry=self.processing_service.attachment_registry,  # Pass attachment registry
             )
             # --- Execute Handler with Context ---
             logger.debug(

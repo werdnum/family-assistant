@@ -264,6 +264,10 @@ class TestCreateAttachmentAPI:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
                 attachment_registry=attachment_registry,
             )
 
@@ -284,6 +288,10 @@ class TestCreateAttachmentAPI:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
                 attachment_registry=None,  # No attachment registry
             )
 
@@ -309,6 +317,10 @@ class TestStarlarkIntegration:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
                 attachment_registry=None,  # No attachment registry
             )
 
@@ -342,6 +354,10 @@ print("Hello world")
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
                 attachment_registry=attachment_registry,
             )
 
@@ -402,6 +418,10 @@ result
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
                 attachment_registry=attachment_registry,
             )
 
@@ -436,6 +456,10 @@ result == None
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
                 attachment_registry=attachment_registry,
             )
 

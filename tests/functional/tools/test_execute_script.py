@@ -25,6 +25,10 @@ async def test_execute_script_without_tools_provider(db_engine: AsyncEngine) -> 
             user_name="test",
             turn_id=None,
             db_context=db,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
             processing_service=None,
         )
 
@@ -55,6 +59,10 @@ async def test_execute_script_with_empty_tools_provider(db_engine: AsyncEngine) 
             user_name="test",
             turn_id=None,
             db_context=db,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
             processing_service=mock_service,
         )
 
@@ -109,6 +117,10 @@ async def test_execute_script_with_tools(db_engine: AsyncEngine) -> None:
             user_name="test",
             turn_id=None,
             db_context=db,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
             processing_service=mock_service,
         )
 
@@ -142,6 +154,10 @@ async def test_execute_script_syntax_error(db_engine: AsyncEngine) -> None:
             user_name="test",
             turn_id=None,
             db_context=db,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
             processing_service=None,
         )
 
@@ -161,6 +177,10 @@ async def test_execute_script_with_globals(db_engine: AsyncEngine) -> None:
             user_name="test",
             turn_id=None,
             db_context=db,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
             processing_service=None,
         )
 
@@ -183,6 +203,10 @@ async def test_execute_script_with_wake_llm(db_engine: AsyncEngine) -> None:
             user_name="test",
             turn_id=None,
             db_context=db,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
             processing_service=None,
         )
 

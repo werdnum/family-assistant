@@ -26,6 +26,12 @@ class ToolExecutionContext:
     """
     Context passed to tool execution functions.
 
+    IMPORTANT: Infrastructure fields (processing_service, clock, home_assistant_client,
+    event_sources, attachment_registry) have NO defaults to prevent accidental omission.
+    You MUST explicitly specify them (even if None) when creating a context.
+    This ensures all production sites stay in sync and the type checker catches bugs
+    when new infrastructure is added or existing fields are forgotten.
+
     Attributes:
         interface_type: Identifier for the communication interface (e.g., 'telegram', 'web').
         conversation_id: Unique ID for the conversation (e.g., Telegram chat ID string, web session UUID).
@@ -41,23 +47,42 @@ class ToolExecutionContext:
             -> Awaitable[bool]
         update_activity_callback: Optional callback to update task worker activity timestamp.
             Used by long-running tasks to prevent worker from being marked as stuck.
-        processing_service: Optional service for core processing logic.
+        processing_service: Service for core processing logic (REQUIRED - no default).
         embedding_generator: Optional generator for creating text embeddings.
-        clock: Optional clock instance for managing time.
+        clock: Clock instance for managing time (REQUIRED - no default).
         indexing_source: Optional indexing event source for emitting document indexing events.
-        event_sources: Optional map of event source ID to source instance for validation.
+        event_sources: Map of event source ID to source instance (REQUIRED - no default).
         tools_provider: Optional tools provider for direct access (used by execute_script from API).
+        home_assistant_client: Home Assistant client wrapper (REQUIRED - no default).
+        attachment_registry: Attachment registry for file operations (REQUIRED - no default).
     """
 
+    # Core required fields (no defaults)
     interface_type: str  # e.g., 'telegram', 'web', 'email'
     conversation_id: str  # e.g., Telegram chat ID string, web session UUID
     user_name: str  # Name of the user initiating the request
     turn_id: str | None  # The ID of the current processing turn
     db_context: "DatabaseContext"
+    # Infrastructure fields - REQUIRED (no defaults) to catch bugs via type checker
+    processing_service: Optional[
+        "ProcessingService"
+    ]  # NO DEFAULT - must specify explicitly
+    clock: Optional["Clock"]  # NO DEFAULT - must specify explicitly
+    home_assistant_client: Optional[
+        "HomeAssistantClientWrapper"
+    ]  # NO DEFAULT - must specify explicitly
+    event_sources: (
+        dict[str, "EventSource"] | None
+    )  # NO DEFAULT - must specify explicitly
+    attachment_registry: Optional[
+        "AttachmentRegistry"
+    ]  # NO DEFAULT - must specify explicitly
+    # Optional fields with defaults (for backward compatibility and convenience)
     chat_interface: Optional["ChatInterface"] = None  # Replaced application
     timezone_str: str = "UTC"  # Timezone string for localization
-    # Processing profile associated with the request
-    processing_profile_id: str | None = None
+    processing_profile_id: str | None = (
+        None  # Processing profile associated with the request
+    )
     request_confirmation_callback: (
         Callable[
             [
@@ -76,24 +101,12 @@ class ToolExecutionContext:
     update_activity_callback: Callable[[], None] | None = (
         None  # Optional callback to update task worker activity timestamp
     )
-    # Add processing_service back, make it optional
-    processing_service: Optional["ProcessingService"] = None
     embedding_generator: Optional["EmbeddingGenerator"] = (
         None  # Add embedding_generator
     )
-    clock: Optional["Clock"] = None  # Add clock
     indexing_source: Optional["IndexingSource"] = None  # Add indexing_source
-    home_assistant_client: Optional["HomeAssistantClientWrapper"] = (
-        None  # Add home_assistant_client
-    )
-    event_sources: dict[str, "EventSource"] | None = (
-        None  # Map of event source ID to source instance
-    )
     tools_provider: Optional["ToolsProvider"] = (
         None  # Add tools_provider for API access
-    )
-    attachment_registry: Optional["AttachmentRegistry"] = (
-        None  # Add attachment_registry for dependency injection
     )
 
 

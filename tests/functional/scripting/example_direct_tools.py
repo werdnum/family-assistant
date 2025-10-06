@@ -119,6 +119,11 @@ async def main() -> None:
             user_name="Demo User",
             turn_id="demo-turn-1",
             db_context=db,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         # Create engine

@@ -46,6 +46,11 @@ class TestLocalToolsProvider:
             timezone_str="UTC",
             turn_id=None,
             db_context=mock_db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         result = await provider.execute_tool("tool_returns_dict", {}, context)
@@ -95,6 +100,11 @@ class TestLocalToolsProvider:
             timezone_str="UTC",
             turn_id=None,
             db_context=mock_db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         result = await provider.execute_tool("tool_returns_list", {}, context)
@@ -152,6 +162,11 @@ class TestLocalToolsProvider:
             timezone_str="UTC",
             turn_id=None,
             db_context=mock_db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         result = await provider.execute_tool("tool_returns_complex", {}, context)
@@ -207,6 +222,11 @@ class TestLocalToolsProvider:
             timezone_str="UTC",
             turn_id=None,
             db_context=mock_db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         result = await provider.execute_tool("tool_returns_none", {}, context)
@@ -246,6 +266,11 @@ class TestLocalToolsProvider:
             timezone_str="UTC",
             turn_id=None,
             db_context=mock_db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         result = await provider.execute_tool("tool_returns_string", {}, context)
@@ -283,6 +308,11 @@ class TestLocalToolsProvider:
             timezone_str="UTC",
             turn_id=None,
             db_context=mock_db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         result = await provider.execute_tool("tool_returns_number", {}, context)
@@ -334,6 +364,10 @@ class TestLocalToolsProvider:
             timezone_str="UTC",
             turn_id=None,
             db_context=mock_db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
             attachment_registry=None,  # No attachment registry
         )
 
