@@ -30,6 +30,11 @@ async def test_create_event_listener_basic(db_engine: AsyncEngine) -> None:
             user_name="test_user",
             turn_id="test_turn",
             db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         # Act
@@ -66,6 +71,11 @@ async def test_create_event_listener_with_action_config(
             user_name="test_user",
             turn_id="test_turn",
             db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         # Act
@@ -105,6 +115,11 @@ async def test_create_event_listener_duplicate_name_error(
             user_name="test_user",
             turn_id="test_turn",
             db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         # Create first listener
@@ -123,6 +138,11 @@ async def test_create_event_listener_duplicate_name_error(
             user_name="test_user",
             turn_id="test_turn",
             db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         # Act - try to create with same name
@@ -156,6 +176,11 @@ async def test_create_event_listener_invalid_source(
             user_name="test_user",
             turn_id="test_turn",
             db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         # Act
@@ -183,6 +208,11 @@ async def test_list_event_listeners_empty(db_engine: AsyncEngine) -> None:
             user_name="test_user",
             turn_id="test_turn",
             db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         # Act
@@ -206,6 +236,11 @@ async def test_list_event_listeners_with_filters(db_engine: AsyncEngine) -> None
             user_name="test_user",
             turn_id="test_turn",
             db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         # Create several listeners
@@ -283,6 +318,11 @@ async def test_toggle_event_listener(db_engine: AsyncEngine) -> None:
             user_name="test_user",
             turn_id="test_turn",
             db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         # Create a listener
@@ -331,6 +371,11 @@ async def test_toggle_event_listener_not_found(db_engine: AsyncEngine) -> None:
             user_name="test_user",
             turn_id="test_turn",
             db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         # Act
@@ -355,6 +400,11 @@ async def test_delete_event_listener(db_engine: AsyncEngine) -> None:
             user_name="test_user",
             turn_id="test_turn",
             db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         # Create a listener
@@ -395,6 +445,11 @@ async def test_delete_event_listener_not_found(db_engine: AsyncEngine) -> None:
             user_name="test_user",
             turn_id="test_turn",
             db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         # Act
@@ -420,6 +475,11 @@ async def test_conversation_isolation(db_engine: AsyncEngine) -> None:
             user_name="test_user",
             turn_id="test_turn",
             db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         result1 = await create_event_listener_tool(
@@ -437,6 +497,11 @@ async def test_conversation_isolation(db_engine: AsyncEngine) -> None:
             user_name="test_user",
             turn_id="test_turn",
             db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         await create_event_listener_tool(
@@ -487,6 +552,11 @@ async def test_listener_execution_tracking(db_engine: AsyncEngine) -> None:
             user_name="test_user",
             turn_id="test_turn",
             db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         # Create a listener

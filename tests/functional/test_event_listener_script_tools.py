@@ -43,6 +43,11 @@ async def mock_exec_context(
             user_name="test_user",
             turn_id="test_turn",
             db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
             tools_provider=mock_tools_provider,
         )
 

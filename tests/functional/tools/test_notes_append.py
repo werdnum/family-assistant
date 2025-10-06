@@ -18,6 +18,11 @@ async def test_add_or_update_note_append(db_engine: AsyncEngine) -> None:
             user_name="test_user",
             turn_id="test_turn",
             db_context=db,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         # Create initial note
@@ -91,6 +96,11 @@ async def test_append_multiple_times(db_engine: AsyncEngine) -> None:
             user_name="test_user",
             turn_id="test_turn",
             db_context=db,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         # Create initial note
@@ -132,6 +142,11 @@ async def test_add_or_update_note_append_postgres(
             user_name="test_user",
             turn_id="test_turn",
             db_context=db,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         # Create initial note

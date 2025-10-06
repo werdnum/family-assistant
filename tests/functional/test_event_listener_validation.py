@@ -61,6 +61,11 @@ class TestEventListenerValidationFunctional:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_ctx,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
             )
 
             # Set event sources for validation
@@ -104,6 +109,11 @@ class TestEventListenerValidationFunctional:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_ctx,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
             )
 
             # Set event sources for validation
@@ -147,6 +157,11 @@ class TestEventListenerValidationFunctional:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_ctx,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
             )
 
             # Set event sources for validation
@@ -183,6 +198,11 @@ class TestEventListenerValidationFunctional:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_ctx,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
             )
 
             # Set event sources for validation
@@ -225,6 +245,11 @@ class TestEventListenerValidationFunctional:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_ctx,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
             )
 
             # Set event sources for validation
@@ -275,6 +300,11 @@ class TestEventListenerValidationFunctional:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_ctx,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
             )
 
             # Set event sources for validation
@@ -326,6 +356,11 @@ class TestEventListenerValidationFunctional:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_ctx,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
             )
 
             # Set event sources for validation

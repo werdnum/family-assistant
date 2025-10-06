@@ -94,6 +94,10 @@ class TestAttachmentWorkflows:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
                 attachment_registry=attachment_registry,
             )
 
@@ -250,6 +254,10 @@ class TestAttachmentWorkflows:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
                 attachment_registry=attachment_registry,
             )
 
@@ -332,6 +340,10 @@ class TestAttachmentWorkflows:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
                 attachment_registry=attachment_registry,
                 chat_interface=mock_chat_interface,
             )
