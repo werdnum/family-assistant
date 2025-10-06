@@ -239,6 +239,11 @@ async def test_indexing_pipeline_e2e(
                 user_name="IndexingTestUser",  # Added
                 turn_id=str(uuid.uuid4()),  # ADDED turn_id
                 db_context=db_context_for_pipeline,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
                 chat_interface=MagicMock(),  # Provide a mock ChatInterface
                 embedding_generator=mock_pipeline_embedding_generator,
             )
@@ -456,6 +461,11 @@ async def test_indexing_pipeline_pdf_processing(
                 user_name="PDFIndexingTestUser",  # Added
                 turn_id=str(uuid.uuid4()),  # ADDED turn_id
                 db_context=db_context_for_pipeline,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
                 chat_interface=MagicMock(),  # Provide a mock ChatInterface
                 embedding_generator=mock_pipeline_embedding_generator,
             )

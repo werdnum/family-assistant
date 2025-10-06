@@ -80,6 +80,11 @@ async def test_create_script_listener_via_tool_and_execute(
             user_name="test_user",
             turn_id="test_turn",
             db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
             tools_provider=tools_provider,
         )
 
@@ -248,6 +253,11 @@ async def test_script_listener_with_complex_conditions(
             user_name="test_user",
             turn_id="test_turn",
             db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
             tools_provider=tools_provider,
         )
 

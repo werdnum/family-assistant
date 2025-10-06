@@ -48,6 +48,10 @@ class TestGetAttachmentInfoTool:
                     turn_id="turn_123",
                     user_name="test_user",
                     db_context=db_context,
+                    processing_service=None,
+                    clock=None,
+                    home_assistant_client=None,
+                    event_sources=None,
                     attachment_registry=attachment_registry,
                 )
 
@@ -89,6 +93,10 @@ class TestGetAttachmentInfoTool:
                     turn_id="turn_123",
                     user_name="test_user",
                     db_context=db_context,
+                    processing_service=None,
+                    clock=None,
+                    home_assistant_client=None,
+                    event_sources=None,
                     attachment_registry=attachment_registry,
                 )
 
@@ -134,6 +142,10 @@ class TestGetAttachmentInfoTool:
                     turn_id="turn_123",
                     user_name="test_user",
                     db_context=db_context,
+                    processing_service=None,
+                    clock=None,
+                    home_assistant_client=None,
+                    event_sources=None,
                     attachment_registry=attachment_registry,
                 )
 
@@ -157,6 +169,10 @@ class TestGetAttachmentInfoTool:
                 turn_id="turn_123",
                 user_name="test_user",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
                 attachment_registry=None,  # No attachment registry
             )
 
@@ -200,6 +216,10 @@ class TestGetAttachmentInfoTool:
                     turn_id="turn_123",
                     user_name="test_user",
                     db_context=db_context,
+                    processing_service=None,
+                    clock=None,
+                    home_assistant_client=None,
+                    event_sources=None,
                     attachment_registry=attachment_registry,
                 )
 

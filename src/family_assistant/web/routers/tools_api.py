@@ -43,7 +43,7 @@ async def execute_tool_api(
         f"Received execution request for tool: {tool_name} with args: {payload.arguments}"
     )
 
-    # --- Retrieve necessary config from app state ---
+    # --- Retrieve necessary config and services from app state ---
     app_config = getattr(
         request.app.state, "config", {}
     )  # Assuming config is stored in state
@@ -54,13 +54,17 @@ async def execute_tool_api(
     else:
         timezone_str = app_config.get("timezone", "UTC")
 
+    # Get infrastructure dependencies from app state
+    processing_service = getattr(request.app.state, "processing_service", None)
+    clock = getattr(request.app.state, "clock", None)
+    event_sources = getattr(request.app.state, "event_sources", None)
+    attachment_registry = getattr(request.app.state, "attachment_registry", None)
+    root_tools_provider = getattr(request.app.state, "tools_provider", None)
+
     # --- Create Execution Context ---
     # We need some context, minimum placeholders for now
     # Generate a unique ID for this specific API call context
     # This isn't a persistent conversation like Telegram
-
-    # Get the root tools provider from app state for execute_script tool
-    root_tools_provider = getattr(request.app.state, "tools_provider", None)
 
     execution_context = ToolExecutionContext(
         interface_type="api",  # Identify interface
@@ -68,10 +72,18 @@ async def execute_tool_api(
         user_name="APIUser",  # Added
         turn_id=str(uuid.uuid4()),
         db_context=db_context,
+        # Infrastructure fields (required - no defaults)
+        processing_service=processing_service,
+        clock=clock,
+        home_assistant_client=processing_service.home_assistant_client
+        if processing_service
+        else None,
+        event_sources=event_sources,
+        attachment_registry=attachment_registry,
+        # Optional fields (with defaults)
         chat_interface=None,  # No direct chat interface for API calls
         timezone_str=timezone_str,  # Pass fetched timezone string
         request_confirmation_callback=None,  # No confirmation from API for now
-        processing_service=None,  # API endpoint doesn't have access to this
         tools_provider=root_tools_provider,  # Pass root tools provider for execute_script
     )
 

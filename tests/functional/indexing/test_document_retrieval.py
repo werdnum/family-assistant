@@ -94,6 +94,11 @@ class TestDocumentRetrieval:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
             )
 
             # Ingest PDF document
@@ -175,6 +180,11 @@ class TestDocumentRetrieval:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
             )
 
             # Ingest image document
@@ -241,6 +251,11 @@ class TestDocumentRetrieval:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
             )
 
             # Ingest text-only document (no file)
@@ -312,6 +327,11 @@ class TestDocumentRetrieval:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
             )
 
             # Ingest PDF document
@@ -376,6 +396,11 @@ class TestDocumentRetrieval:
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
             )
 
             # Create large dummy file content (over 20MB)

@@ -102,6 +102,10 @@ class TestAttachToResponseTool:
                 turn_id="turn_123",
                 user_name="test_user",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
                 chat_interface=None,
                 attachment_registry=attachment_registry,
             )
@@ -156,6 +160,10 @@ class TestAttachToResponseTool:
                 turn_id="turn_123",
                 user_name="test_user",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
                 chat_interface=None,
                 attachment_registry=attachment_registry,
             )
@@ -186,6 +194,10 @@ class TestAttachToResponseTool:
                 turn_id="turn_123",
                 user_name="test_user",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
                 chat_interface=None,
                 attachment_registry=None,  # No attachment registry
             )
@@ -246,6 +258,10 @@ class TestSendMessageToUserWithAttachments:
                 turn_id="turn_123",
                 user_name="test_user",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
                 chat_interface=mock_chat_interface,
                 attachment_registry=attachment_registry,
             )
@@ -285,6 +301,10 @@ class TestSendMessageToUserWithAttachments:
                 turn_id="turn_123",
                 user_name="test_user",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
                 chat_interface=mock_chat_interface,
                 attachment_registry=None,
             )
@@ -420,6 +440,10 @@ class TestHighlightImageTool:
                 turn_id="turn_123",
                 user_name="test_user",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
                 chat_interface=None,
                 attachment_registry=attachment_registry,
             )
@@ -522,6 +546,10 @@ class TestHighlightImageTool:
                 turn_id="turn_123",
                 user_name="test_user",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
                 chat_interface=None,
                 attachment_registry=attachment_registry,
             )
@@ -597,6 +625,10 @@ class TestHighlightImageTool:
                 turn_id="turn_123",
                 user_name="test_user",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
                 chat_interface=None,
                 attachment_registry=attachment_registry,
             )
@@ -678,6 +710,10 @@ class TestHighlightImageTool:
                 turn_id="turn_123",
                 user_name="test_user",
                 db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
                 chat_interface=None,
                 attachment_registry=attachment_registry,
             )

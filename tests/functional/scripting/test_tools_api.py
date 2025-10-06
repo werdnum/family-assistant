@@ -139,6 +139,11 @@ async def test_tools_api_list(db_engine: AsyncEngine) -> None:
             user_name="Test User",
             turn_id="turn-1",
             db_context=db,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         # Create engine
@@ -170,6 +175,11 @@ async def test_tools_api_get(db_engine: AsyncEngine) -> None:
             user_name="Test User",
             turn_id="turn-1",
             db_context=db,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         engine = StarlarkEngine(tools_provider=tools_provider)
@@ -205,6 +215,11 @@ async def test_tools_api_execute(db_engine: AsyncEngine) -> None:
             user_name="Test User",
             turn_id="turn-1",
             db_context=db,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         engine = StarlarkEngine(tools_provider=tools_provider)
@@ -240,6 +255,11 @@ async def test_tools_api_execute_json(db_engine: AsyncEngine) -> None:
             user_name="Test User",
             turn_id="turn-1",
             db_context=db,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         engine = StarlarkEngine(tools_provider=tools_provider)
@@ -296,6 +316,11 @@ async def test_tools_api_invalid_tool(db_engine: AsyncEngine) -> None:
             user_name="Test User",
             turn_id="turn-1",
             db_context=db,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
         )
 
         engine = StarlarkEngine(tools_provider=tools_provider)

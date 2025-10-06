@@ -368,6 +368,11 @@ async def test_search_documents_tool(pg_vector_db_engine: AsyncEngine) -> None:
             user_name="VectorStorageTestUser",  # Added
             turn_id=str(uuid.uuid4()),  # ADDED turn_id
             db_context=exec_db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
             chat_interface=None,  # Add chat_interface (None for this tool context)
             embedding_generator=mock_generator,
         )
@@ -508,6 +513,11 @@ async def test_get_full_document_content_with_raw_content(
                 user_name="test_user",
                 turn_id="test_turn",
                 db_context=db,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
                 timezone_str="UTC",
             )
 
