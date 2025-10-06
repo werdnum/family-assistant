@@ -117,7 +117,7 @@ TASK_POLLING_INTERVAL = 5  # Seconds to wait between polling for tasks
 TASK_HANDLER_TIMEOUT = 300  # Seconds to wait for task handler execution (5 minutes)
 
 # --- Events for coordination (can remain module-level) ---
-shutdown_event = asyncio.Event()
+# Note: shutdown_event removed - each TaskWorker instance now has its own
 new_task_event = asyncio.Event()  # Event to notify worker of immediate tasks
 
 # --- Task Handler Functions (remain module-level for now) ---
@@ -448,11 +448,12 @@ class TaskWorker:
         """Initializes the TaskWorker with its dependencies."""
         self.processing_service = processing_service
         self.chat_interface = chat_interface
-        # Use provided shutdown_event_instance or default to global shutdown_event
+        # Use provided shutdown_event_instance or create a new instance-specific event
+        # Don't use the module-level shutdown_event as it persists across test runs
         self.shutdown_event = (
             shutdown_event_instance
             if shutdown_event_instance is not None
-            else shutdown_event
+            else asyncio.Event()
         )
         self.calendar_config = calendar_config
         self.timezone_str = timezone_str
