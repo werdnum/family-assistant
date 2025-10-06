@@ -1,9 +1,9 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 
 export interface LiveMessageUpdate {
-  conversation_id: string;
-  message_id: string;
+  internal_id: string;
   timestamp: string;
+  new_messages: boolean;
 }
 
 export interface UseLiveMessageUpdatesOptions {
@@ -23,7 +23,7 @@ export function useLiveMessageUpdates({
   onMessageReceived,
 }: UseLiveMessageUpdatesOptions) {
   const eventSourceRef = useRef<EventSource | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const callbackRef = useRef(onMessageReceived);
   const [reconnectTrigger, setReconnectTrigger] = useState(0);
 
