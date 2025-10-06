@@ -6,6 +6,9 @@ import uuid
 import httpx
 import pytest
 from playwright.async_api import expect
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from tests.helpers import wait_for_tasks_to_complete
 
 from .conftest import WebTestFixture
 
@@ -69,6 +72,7 @@ async def test_react_documents_page_loads(web_test_fixture: WebTestFixture) -> N
 @pytest.mark.asyncio
 async def test_create_document_via_api_and_view_in_react_ui(
     web_test_fixture: WebTestFixture,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test creating a document via API and viewing it in the React UI."""
     page = web_test_fixture.page
@@ -89,6 +93,13 @@ async def test_create_document_via_api_and_view_in_react_ui(
         )
         assert response.status_code in {200, 202}, (
             f"Failed to create document: {response.text}"
+        )
+
+        # Wait for background document processing task to complete
+        await wait_for_tasks_to_complete(
+            db_engine,
+            task_types={"process_uploaded_document"},
+            timeout_seconds=20.0,
         )
 
         # Get the actual document ID from the database
@@ -145,6 +156,7 @@ async def test_create_document_via_api_and_view_in_react_ui(
 @pytest.mark.asyncio
 async def test_multiple_documents_display_in_react_ui(
     web_test_fixture: WebTestFixture,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test that multiple documents are displayed correctly in the React UI."""
     page = web_test_fixture.page
@@ -171,6 +183,13 @@ async def test_multiple_documents_display_in_react_ui(
             )
             assert response.status_code in {200, 202}
             doc_ids.append(doc_id)
+
+    # Wait for all background document processing tasks to complete
+    await wait_for_tasks_to_complete(
+        db_engine,
+        task_types={"process_uploaded_document"},
+        timeout_seconds=20.0,
+    )
 
     # Navigate to the React documents page
     await page.goto(f"{web_test_fixture.base_url}/documents")
@@ -206,7 +225,10 @@ async def test_multiple_documents_display_in_react_ui(
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_document_search_in_react_ui(web_test_fixture: WebTestFixture) -> None:
+async def test_document_search_in_react_ui(
+    web_test_fixture: WebTestFixture,
+    db_engine: AsyncEngine,
+) -> None:
     """Test searching for documents in the React UI."""
     page = web_test_fixture.page
 
@@ -229,6 +251,13 @@ async def test_document_search_in_react_ui(web_test_fixture: WebTestFixture) -> 
                     "metadata": json.dumps({}),
                 },
             )
+
+    # Wait for all background document processing tasks to complete
+    await wait_for_tasks_to_complete(
+        db_engine,
+        task_types={"process_uploaded_document"},
+        timeout_seconds=20.0,
+    )
 
     # Navigate to the React documents page
     await page.goto(f"{web_test_fixture.base_url}/documents")
@@ -276,6 +305,7 @@ async def test_document_search_in_react_ui(web_test_fixture: WebTestFixture) -> 
 @pytest.mark.asyncio
 async def test_document_detail_navigation_in_react_ui(
     web_test_fixture: WebTestFixture,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test navigating to document details and back in the React UI."""
     page = web_test_fixture.page
@@ -296,6 +326,13 @@ async def test_document_detail_navigation_in_react_ui(
         )
         assert response.status_code in {200, 202}, (
             f"Failed to create document: {response.text}"
+        )
+
+        # Wait for background document processing task to complete
+        await wait_for_tasks_to_complete(
+            db_engine,
+            task_types={"process_uploaded_document"},
+            timeout_seconds=20.0,
         )
 
         # Get the actual document ID from the database
