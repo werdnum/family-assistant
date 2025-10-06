@@ -4,6 +4,9 @@ export interface LiveMessageUpdate {
   internal_id: string;
   timestamp: string;
   new_messages: boolean;
+  role?: string;
+  content?: string;
+  conversation_id?: string;
 }
 
 export interface UseLiveMessageUpdatesOptions {
