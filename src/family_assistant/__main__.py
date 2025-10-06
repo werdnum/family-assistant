@@ -266,18 +266,9 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
     )
 
     # Secrets (should ONLY come from env)
-    config_data["telegram_token"] = os.getenv(
-        "TELEGRAM_BOT_TOKEN", config_data["telegram_token"]
-    )
-    # Handle TELEGRAM_ENABLED environment variable
-    telegram_enabled_env = os.getenv("TELEGRAM_ENABLED")
-    if telegram_enabled_env is not None:
-        config_data["telegram_enabled"] = telegram_enabled_env.lower() in {
-            "true",
-            "1",
-            "yes",
-            "on",
-        }
+    telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", config_data["telegram_token"])
+    config_data["telegram_token"] = telegram_bot_token
+    config_data["telegram_enabled"] = bool(telegram_bot_token)
     # Allow API keys to be None if not set in env, they are validated later
     config_data["openrouter_api_key"] = os.getenv(
         "OPENROUTER_API_KEY", config_data.get("openrouter_api_key")
