@@ -367,23 +367,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     }
   }, []);
 
-  // Create a stable callback ref for SSE message updates
-  const handleLiveMessageUpdate = useCallback(() => {
-    if (conversationId) {
-      loadConversationMessages(conversationId);
-    }
-  }, [conversationId]);
-
-  // Set up live message updates via SSE
-  useLiveMessageUpdates({
-    conversationId,
-    interfaceType: 'web',
-    enabled: true,
-    onMessageReceived: handleLiveMessageUpdate,
-  });
-
   // Load messages for a conversation
-  const loadConversationMessages = async (convId: string) => {
+  const loadConversationMessages = useCallback(async (convId: string) => {
     try {
       // Cancel previous messages request if it exists
       if (messagesAbortControllerRef.current) {
@@ -593,7 +578,22 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
+
+  // Create a stable callback ref for SSE message updates
+  const handleLiveMessageUpdate = useCallback(() => {
+    if (conversationId) {
+      loadConversationMessages(conversationId);
+    }
+  }, [conversationId, loadConversationMessages]);
+
+  // Set up live message updates via SSE
+  useLiveMessageUpdates({
+    conversationId,
+    interfaceType: 'web',
+    enabled: true,
+    onMessageReceived: handleLiveMessageUpdate,
+  });
 
   // Handle conversation selection
   const handleConversationSelect = (convId: string) => {
