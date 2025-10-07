@@ -4,7 +4,7 @@ This document catalogs all remaining `wait_for_timeout` calls in Playwright test
 replaced with condition-based waits. Each entry explains **why** the wait exists and **what
 problem** makes it difficult to replace.
 
-**Status as of 2025-10-07**: 36 remaining fixed waits (down from 70+)
+**Status as of 2025-10-07**: 24 remaining fixed waits (down from 70+ → 36 → 24)
 
 ## Priority Classification
 
@@ -138,13 +138,9 @@ ______________________________________________________________________
 
 **P1 - Documentation Loading (2000ms)** - Line 112
 
-- **Why**: Documentation is fetched via API and rendered with markdown parsing
-- **Problem**: Multiple async operations - API call, markdown rendering, syntax highlighting
-- **What breaks without it**: Assertions about documentation content fail because content not
-  rendered yet
-- **Suggested fix**: Wait for specific documentation elements to appear (e.g., code blocks,
-  headings)
-- **Status**: ⚠️ **NEEDS INVESTIGATION** - should check what specific elements we're waiting for
+- **Status**: ✅ **FIXED** - Replaced with `wait_for_selector` for navigation elements
+- **Fix applied**: Wait for "button:has-text('Documentation'), [class\*='sidebar'],
+  [class\*='docNavItem']" to appear
 
 ### `tests/functional/web/test_event_listeners_ui.py`
 
@@ -161,14 +157,8 @@ ______________________________________________________________________
 
 **P1 - API Error Handling (3000ms)** - Line 470
 
-- **Why**: After navigating to events page with broken API, wait for error handling to complete
-- **Problem**: React error boundary needs to catch error, display error UI - this takes time
-- **What breaks without it**: Test checks for error handling before error has been caught/displayed
-- **Suggested fix**: Wait for error message element or events container to appear
-- **Challenge**: Previous attempt failed due to invalid Playwright selector syntax (`text=Loading`
-  doesn't work in `querySelector`)
-- **Note**: Need to use proper selector like `page.locator("text=Loading")` or check for specific
-  CSS class
+- **Status**: ✅ **FIXED** - Replaced with `wait_for_load_state("networkidle")`
+- **Fix applied**: Wait for network activity to settle after page navigation
 
 ### `tests/functional/web/test_history_ui.py`
 
@@ -196,96 +186,62 @@ ______________________________________________________________________
 
 **P0 CRITICAL - Responsive Layout (3000ms)** - Line 309
 
-- **Why**: After `set_viewport_size()`, browser needs to: recalculate layout, apply media queries,
-  trigger CSS transitions
-- **Problem**: Tailwind responsive classes use media queries, CSS animations may be involved
-- **What breaks without it**: Desktop nav still visible or mobile button not shown - test assertions
-  fail
-- **Suggested fix**: Wait for desktop nav `display: none` AND mobile button visible
-- **Challenge**: Tailwind class `.md:hidden` is hard to select - selector escaping issues in
-  JavaScript
-  - Previous attempt: `.md\\\\:hidden` (double escaped) failed
-  - Also tried: `.md\\:hidden` (single escaped) failed
-  - The colon in CSS classes needs proper escaping in querySelector
-- **Root cause**: Playwright `wait_for_function` passes JavaScript string that calls
-  `querySelector`, so escaping is tricky
-- **Alternative approach**: Check element visibility directly rather than CSS classes:
-  ```javascript
-  const nav = document.querySelector("nav[data-orientation='horizontal']");
-  return getComputedStyle(nav).display === 'none';
-  ```
+- **Status**: ✅ **FIXED** - Replaced with `wait_for_function` checking computed styles
+- **Fix applied**: Check `desktopNav.parentElement` computed style for `display === 'none'` and use
+  `get_by_role("button", name="Open navigation menu")` for mobile button
 
 ### `tests/functional/web/test_playwright_basic.py`
 
 **P2 - Basic Test (500ms)** - Line 38
 
-- **Why**: Basic smoke test waiting for page to be fully loaded
-- **Problem**: Even with `wait_for_load_state`, JavaScript bundles might still be loading/executing
-- **What breaks without it**: Subsequent interactions may fail if React hasn't hydrated
-- **Suggested fix**: Wait for specific interactive element to be ready (e.g., clickable button)
-- **Status**: ⚠️ **NEEDS INVESTIGATION** - should identify specific element to wait for
+- **Status**: ✅ **FIXED** - Replaced with `wait_for_function` for page interactivity
+- **Fix applied**: Wait for `document.body`, `main` element, and
+  `document.readyState === 'complete'`
 
 ### `tests/functional/web/test_react_documents_ui.py`
 
 **P1 - Document Upload (2000ms)** - Line 147
 
-- **Why**: After uploading document, backend processes it (parses, creates embeddings, saves to DB)
-- **Problem**: Multiple async backend operations before document appears in UI
-- **What breaks without it**: Document not yet in the documents table
-- **Suggested fix**: Wait for document to appear in table by title or ID
-- **Status**: ⚠️ **NEEDS INVESTIGATION** - should wait for specific document element
+- **Status**: ✅ **FIXED** - Removed redundant wait
+- **Fix applied**: The test already had `expect().to_be_visible()` which provides condition-based
+  waiting
 
 **P2 - Document Filtering (500ms)** - Line 290
 
-- **Why**: After changing filter dropdown, React re-renders filtered results
-- **Problem**: State update + re-render takes time, especially with many documents
-- **What breaks without it**: Table still shows old filtered results
-- **Suggested fix**: Wait for table to update (check row count or specific filtered document
-  appears)
+- **Status**: ✅ **FIXED** - Replaced with `expect().to_be_visible()` for filtered documents
+- **Fix applied**: Wait for specific filtered documents to appear: "Python Tutorial" and "Python
+  Reference"
 
 ### `tests/functional/web/test_react_vector_search_ui.py`
 
 **P1 - Vector Search Results (3000ms)** - Line 109
 
-- **Why**: Vector search requires: (1) embeddings generation, (2) similarity search, (3) result
-  rendering
-- **Problem**: Embedding generation is async and slow - happens in background task queue
-- **What breaks without it**: Search results not available yet - test checks empty state
-- **Suggested fix**: Wait for results container OR "No results found" message
-- **Challenge**: Previous attempt used invalid selector syntax (comma-separated selectors don't work
-  in `wait_for_selector`)
-- **Correct approach**: Use Playwright locator: `page.locator("text=Results, text=No results")`
+- **Status**: ✅ **FIXED** (in earlier commit) - Replaced with
+  `expect(search_button).to_be_enabled()`
+- **Fix applied**: Wait for search button to be re-enabled after async search completes
 
 **P2 - Advanced Options Expansion (500ms)** - Line 129
 
-- **Why**: HTML `<details>` element expansion involves CSS animation
-- **Problem**: Clicking summary toggles `open` attribute, but content slides down with animation
-- **What breaks without it**: Clicking options inside details while animating might miss
-- **Suggested fix**: Wait for `details[open]` attribute to be present
-- **Note**: This is actually a good candidate for condition-based wait
+- **Status**: ✅ **FIXED** - Removed unnecessary wait
+- **Fix applied**: Wait was not needed because subsequent interaction is with elements outside the
+  advanced options section
 
 **P1 - Vector Search with Filters (2000ms)** - Line 188
 
-- **Why**: Same as line 109 - vector search with filtering
-- **Problem**: Same async embedding + search operations
-- **Suggested fix**: Same as line 109
+- **Status**: ✅ **FIXED** - Replaced with `expect(search_button).to_be_enabled()`
+- **Fix applied**: Same pattern as line 109 - wait for button to be re-enabled
 
 **P2 - Empty Query Handling (1000ms)** - Line 216
 
-- **Why**: Testing that empty query shows error or no-op
-- **Problem**: UI needs to validate and show error message
-- **What breaks without it**: Error message not displayed yet
-- **Suggested fix**: Wait for error message element or validation state
+- **Status**: ✅ **FIXED** - Replaced with `expect(error_alert).to_be_visible()`
+- **Fix applied**: Wait for error alert with text "Error: Please enter a search query" to appear
 
 ### `tests/functional/web/test_settings_ui.py`
 
 **P2 - Settings State Updates (500ms x2)** - Lines 149, 162
 
-- **Why**: After changing settings, backend API call updates settings, returns, UI re-renders
-- **Problem**: Settings persistence is async - API call + database write + UI update
-- **What breaks without it**: Reading settings returns old values
-- **Suggested fix**: Wait for success message or settings value to change in UI
-- **Status**: ⚠️ **NEEDS INVESTIGATION** - should check what setting changes are being waited for
+- **Status**: ✅ **FIXED** - Replaced with `heading.wait_for(state="visible")`
+- **Fix applied**: Wait for heading element to be visible and stable after viewport changes
 
 ### `tests/functional/web/test_tool_call_grouping.py`
 
@@ -310,55 +266,50 @@ ______________________________________________________________________
 
 **P2 - Tool Execution (1000ms)** - Line 228
 
-- **Why**: Tool execution result needs to be rendered
-- **Problem**: Tool runs, returns result, UI updates
-- **What breaks without it**: Tool result not displayed yet
-- **Suggested fix**: Wait for tool result element to appear
-- **Status**: ⚠️ **NEEDS INVESTIGATION** - should wait for specific result element
+- **Status**: ✅ **FIXED** - Replaced with `wait_for_load_state("networkidle")`
+- **Fix applied**: Wait for network activity to settle, ensuring all async operations (including
+  console errors) are captured
 
 ### `tests/functional/web/test_ui_endpoints_playwright.py`
 
 **P2 - UI Endpoint Test (1000ms)** - Line 320
 
-- **Why**: After interacting with UI endpoint, wait for response/update
-- **Problem**: API call + UI update cycle
-- **What breaks without it**: UI hasn't updated with endpoint response
-- **Suggested fix**: Wait for specific response element or state change
-- **Status**: ⚠️ **NEEDS INVESTIGATION** - should identify what endpoint is being tested
+- **Status**: ✅ **FIXED** - Replaced with `wait_for_load_state("networkidle")`
+- **Fix applied**: Wait for network activity to settle after search button click, ensuring API call
+  completes
 
 ______________________________________________________________________
 
 ## Summary Statistics
 
-| Priority               | Count  | Total Wait Time (ms) | Status             |
-| ---------------------- | ------ | -------------------- | ------------------ |
-| P0 Critical            | 1      | 3,000                | 🔴 Blocking tests  |
-| P1 High (>1000ms)      | 12     | 26,000               | 🟡 Should fix soon |
-| P2 Medium (500-1000ms) | 17     | 10,100               | 🟢 Can fix later   |
-| P3 Low (\<500ms)       | 6      | 1,100                | ✅ Keep (polling)  |
-| **Total**              | **36** | **40,200ms (40.2s)** |                    |
+| Priority               | Count (Before → After) | Total Wait Time (ms)    | Status                |
+| ---------------------- | ---------------------- | ----------------------- | --------------------- |
+| P0 Critical            | 1 → 0                  | 3,000 → 0               | ✅ All fixed          |
+| P1 High (>1000ms)      | 12 → 8                 | 26,000 → 17,000         | 🟡 More to fix        |
+| P2 Medium (500-1000ms) | 17 → 10                | 10,100 → 5,100          | 🟢 Mostly addressable |
+| P3 Low (\<500ms)       | 6 → 6                  | 1,100 → 1,100           | ✅ Keep (polling)     |
+| **Total**              | **36 → 24**            | **40,200ms → 23,200ms** | **42% reduction**     |
 
 ### Breakdown by Action Needed
 
-| Action                       | Count | Notes                                                                    |
-| ---------------------------- | ----- | ------------------------------------------------------------------------ |
-| ✅ **KEEP** (polling delays) | 6     | Lines 598, 632, 759, 232, 246, 259 - appropriate polling intervals       |
-| 🔴 **FIX URGENT**            | 1     | Line 309 - test_page_layout.py responsive test FAILING                   |
-| 🟡 **FIX HIGH PRIORITY**     | 12    | Lines with >1s waits - slow down test suite significantly                |
-| 🟢 **FIX EVENTUALLY**        | 17    | Lines with 500-1000ms waits - less critical but still improvable         |
-| ⚠️ **NEEDS INVESTIGATION**   | 7     | Lines 112, 149, 162, 228, 320, 147, 38 - unclear what's being waited for |
+| Action                       | Count | Notes                                                              |
+| ---------------------------- | ----- | ------------------------------------------------------------------ |
+| ✅ **KEEP** (polling delays) | 6     | Lines 598, 632, 759, 232, 246, 259 - appropriate polling intervals |
+| ✅ **FIXED THIS SESSION**    | 12    | Lines 112, 147, 149, 162, 188, 216, 228, 290, 309, 320, 38, 470    |
+| 🟡 **STILL NEEDS FIXING**    | 18    | Remaining waits in page objects and test files                     |
 
-### Estimated Time Savings
+### Time Savings Achieved
 
-If all non-polling waits are replaced with condition-based waits:
+After this session's fixes:
 
-- **Current total wait time**: 40.2 seconds
-- **Polling delays to keep**: 1.1 seconds
-- **Potential savings**: ~39 seconds per full test run
+- **Previous total wait time**: 40.2 seconds (excluding polling)
+- **Current total wait time**: 23.2 seconds (excluding polling)
+- **Time saved**: 17.0 seconds per full test run (42% reduction)
 - **Multiplied by**: ~10 test runs per development session
-- **Daily time saved**: ~6.5 minutes per developer
+- **Daily time saved**: ~2.8 minutes per developer
 
-**Note**: These are minimum waits - actual time may be higher under load, making the problem worse.
+**Note**: Condition-based waits also complete faster in the common case, so actual savings are
+higher.
 
 ## Common Patterns for Replacement
 
@@ -461,12 +412,12 @@ while condition:
 
 ## Next Steps
 
-1. Address P0 critical issue (test_page_layout.py:309)
-2. Replace P1 high priority waits (>1s)
-3. Investigate "Unknown" contexts to determine proper conditions
-4. Consider keeping P3 polling delays (they're appropriate)
-5. Update this catalog as fixes are implemented
+1. ✅ ~~Address P0 critical issue (test_page_layout.py:309)~~ - FIXED
+2. ✅ ~~Fix all "NEEDS INVESTIGATION" issues~~ - FIXED
+3. Replace remaining P1 high priority waits (>1s) - 8 remaining
+4. Replace remaining P2 medium priority waits (500-1000ms) - 10 remaining
+5. Consider keeping P3 polling delays (they're appropriate) - already kept
 
 ______________________________________________________________________
 
-*Last updated: 2025-10-07* *Tests passing: All except test_navigation_responsive_behavior*
+*Last updated: 2025-10-07* *Tests passing: All tests passing (613s)*
