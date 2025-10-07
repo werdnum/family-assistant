@@ -360,6 +360,7 @@ class ProcessingService:
         pending_attachment_ids: list[
             str
         ] = []  # Track attachment IDs from attach_to_response calls
+        original_system_content: str | None = None  # Store original system prompt
 
         # Get tool definitions
         all_tool_definitions = await self.tools_provider.get_tool_definitions()
@@ -386,24 +387,48 @@ class ProcessingService:
 
         # Tool call loop
         while current_iteration <= max_iterations:
+            is_final_iteration = current_iteration == max_iterations
+
             logger.debug(
-                f"Starting streaming LLM interaction loop iteration {current_iteration}/{max_iterations}"
+                "Starting streaming LLM interaction loop iteration %d/%d%s",
+                current_iteration,
+                max_iterations,
+                " (FINAL - will force response without tools)"
+                if is_final_iteration
+                else "",
             )
+
+            # Add iteration context to system prompt
+            if messages and messages[0].get("role") == "system":
+                # Store original system content on first iteration
+                if original_system_content is None:
+                    original_system_content = str(messages[0].get("content", ""))
+
+                # Add iteration status to system prompt
+                iteration_suffix = (
+                    f"\n\n[Processing iteration {current_iteration}/{max_iterations}]"
+                )
+                if is_final_iteration:
+                    iteration_suffix += "\nIMPORTANT: This is the final iteration. You MUST provide your final response now without requesting additional tools."
+
+                messages[0]["content"] = original_system_content + iteration_suffix
 
             # Stream from LLM
             accumulated_content = []
             tool_calls_from_stream = []
             done_provider_metadata = None  # Initialize before loop
 
+            # On final iteration, don't offer any tools to ensure we get a response
+            tools_to_offer = None if is_final_iteration else tools_for_llm
+            tool_choice_mode = (
+                "none" if is_final_iteration or not tools_to_offer else "auto"
+            )
+
             try:
                 async for event in self.llm_client.generate_response_stream(
                     messages=messages,
-                    tools=tools_for_llm if current_iteration < max_iterations else None,
-                    tool_choice=(
-                        "auto"
-                        if tools_for_llm and current_iteration < max_iterations
-                        else "none"
-                    ),
+                    tools=tools_to_offer,
+                    tool_choice=tool_choice_mode,
                 ):
                     # Yield content events as they come
                     if event.type == "content" and event.content:
@@ -523,6 +548,15 @@ class ProcessingService:
             if not serialized_tool_calls:
                 logger.info(
                     "LLM streaming response received with no further tool calls."
+                )
+                break
+
+            # Force break on final iteration to ensure we get a response
+            # This prevents infinite loops if LLM somehow returns tool calls on the last iteration
+            if is_final_iteration:
+                logger.warning(
+                    f"Final iteration ({max_iterations}) reached but LLM returned tool calls. "
+                    "Forcing break to ensure response is returned. Tool calls will be ignored."
                 )
                 break
 
