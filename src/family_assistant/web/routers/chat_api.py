@@ -1181,6 +1181,18 @@ async def live_message_events(
             )
         return messages, messages[-1]["timestamp"] if messages else last_check_time
 
+    def _create_sse_message(msg: dict) -> str:
+        """Create a formatted SSE message string."""
+        data = {
+            "internal_id": msg["internal_id"],
+            "timestamp": msg["timestamp"].isoformat(),
+            "new_messages": True,
+            "role": msg.get("role"),
+            "content": msg.get("content"),
+            "conversation_id": msg.get("conversation_id"),
+        }
+        return f"event: message\ndata: {json.dumps(data)}\n\n"
+
     async def event_generator() -> AsyncGenerator[str, None]:
         """Generate SSE formatted events for message updates."""
         # Register as a listener
@@ -1200,7 +1212,7 @@ async def live_message_events(
             if after_dt:
                 messages, last_check = await query_new_messages(after_dt)
                 for msg in messages:
-                    yield f"event: message\ndata: {json.dumps({'internal_id': msg['internal_id'], 'timestamp': msg['timestamp'].isoformat(), 'new_messages': True, 'role': msg.get('role'), 'content': msg.get('content'), 'conversation_id': msg.get('conversation_id')})}\n\n"
+                    yield _create_sse_message(msg)
 
             # Main event loop - hybrid approach
             queue_task = None
@@ -1239,7 +1251,7 @@ async def live_message_events(
                         # Notification received - query for new messages
                         messages, last_check = await query_new_messages(last_check)
                         for msg in messages:
-                            yield f"event: message\ndata: {json.dumps({'internal_id': msg['internal_id'], 'timestamp': msg['timestamp'].isoformat(), 'new_messages': True, 'role': msg.get('role'), 'content': msg.get('content'), 'conversation_id': msg.get('conversation_id')})}\n\n"
+                            yield _create_sse_message(msg)
                     else:
                         # Timeout - send heartbeat and poll for messages
                         yield f"event: heartbeat\ndata: {json.dumps({'timestamp': datetime.now(timezone.utc).isoformat()})}\n\n"
@@ -1247,7 +1259,7 @@ async def live_message_events(
                         # Polling fallback - check for any messages since last check
                         messages, last_check = await query_new_messages(last_check)
                         for msg in messages:
-                            yield f"event: message\ndata: {json.dumps({'internal_id': msg['internal_id'], 'timestamp': msg['timestamp'].isoformat(), 'new_messages': True, 'role': msg.get('role'), 'content': msg.get('content'), 'conversation_id': msg.get('conversation_id')})}\n\n"
+                            yield _create_sse_message(msg)
 
             except Exception as e:
                 logger.error(f"Error in SSE event loop: {e}", exc_info=True)

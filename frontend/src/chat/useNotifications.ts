@@ -24,7 +24,7 @@ class NotificationCoordinator {
   private onLeaderChange: (isLeader: boolean) => void;
 
   constructor(onLeaderChange: (isLeader: boolean) => void) {
-    this.myId = `tab_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    this.myId = `tab_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
     this.onLeaderChange = onLeaderChange;
 
     // Check if BroadcastChannel is supported
