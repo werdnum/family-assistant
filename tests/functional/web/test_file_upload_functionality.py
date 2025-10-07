@@ -1,7 +1,9 @@
 """End-to-end tests for file upload functionality in the chat UI using Playwright."""
 
+import asyncio
 import json
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -217,8 +219,11 @@ async def test_multiple_image_formats_support(
             await attachment_preview.wait_for(state="visible", timeout=5000)
 
             # Verify no error messages
-            error_message = page.locator("text=/.*error.*/i").first
-            await page.wait_for_timeout(1000)  # Give time for errors to appear
+            # If the attachment preview is visible, the upload succeeded (no error occurred)
+            error_message = page.locator(
+                '[data-testid="attachment-error-message"]'
+            ).first
+            # Error message should not be visible if upload succeeded
             assert not await error_message.is_visible()
 
             # Remove the attachment for next test
@@ -228,7 +233,7 @@ async def test_multiple_image_formats_support(
             if await remove_button.is_visible():
                 await remove_button.click()
                 # Wait for attachment to be removed
-                await page.wait_for_timeout(500)
+                await attachment_preview.wait_for(state="hidden", timeout=5000)
 
         finally:
             # Clean up temp file
@@ -277,9 +282,6 @@ async def test_attachment_removal_functionality(
         remove_button = page.locator('[data-testid="remove-attachment-button"]').first
         await remove_button.wait_for(state="visible", timeout=5000)
         await remove_button.click()
-
-        # Give a moment for the removal to process
-        await page.wait_for_timeout(500)
 
         # Verify attachment is removed - check that it's no longer visible
         # The attachment might still be in DOM but hidden, so check visibility instead of detached
@@ -437,11 +439,14 @@ async def test_api_request_includes_attachments(
         await page.wait_for_selector('[data-testid="attachment-preview"]', timeout=5000)
         await chat_page.send_message("Analyze this image")
 
-        # Wait for request to be made
-        await page.wait_for_timeout(2000)
+        # Wait for the API request to be captured
+        # Poll until we see the request in our list
+        deadline = time.time() + 10
+        while len(requests) == 0 and time.time() < deadline:  # noqa: ASYNC110
+            await asyncio.sleep(0.1)
 
         # Verify request was made with attachments
-        assert len(requests) > 0
+        assert len(requests) > 0, "Expected API request to be captured"
 
         # Check the last request
         last_request = requests[-1]

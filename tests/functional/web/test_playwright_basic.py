@@ -12,6 +12,13 @@ async def test_homepage_loads_with_playwright(web_test_fixture: WebTestFixture) 
     page = web_test_fixture.page
     base_url = web_test_fixture.base_url
 
+    # Register console error handler BEFORE navigation to catch all errors
+    console_errors = []
+    page.on(
+        "console",
+        lambda msg: console_errors.append(msg) if msg.type == "error" else None,
+    )
+
     # Navigate to homepage
     await page.goto(base_url)
 
@@ -27,15 +34,12 @@ async def test_homepage_loads_with_playwright(web_test_fixture: WebTestFixture) 
     main_element = await page.wait_for_selector("main", state="visible", timeout=15000)
     assert main_element is not None, "Page should have a visible main element"
 
-    # Verify no JavaScript errors occurred
-    console_errors = []
-    page.on(
-        "console",
-        lambda msg: console_errors.append(msg) if msg.type == "error" else None,
+    # Wait for React to hydrate by checking for interactive elements
+    # The body should have interactive content once React has mounted
+    await page.wait_for_function(
+        "() => document.body && document.querySelector('main') && document.readyState === 'complete'",
+        timeout=15000,
     )
-
-    # Give a moment for any errors to be logged
-    await page.wait_for_timeout(500)
 
     assert len(console_errors) == 0, (
         f"Page should not have console errors, but found: {[err.text for err in console_errors]}"

@@ -146,10 +146,10 @@ async def test_token_responsive_design(
 
     # Test mobile viewport
     await page.set_viewport_size({"width": 375, "height": 667})
-    await page.wait_for_timeout(500)
 
-    # Check that main elements are still visible
+    # Wait for layout to stabilize by waiting for the heading to be visible and stable
     heading = page.locator("h1:has-text('API Token')")
+    await heading.wait_for(state="visible", timeout=5000)
     assert await heading.is_visible()
 
     # Create button should still be accessible
@@ -159,9 +159,9 @@ async def test_token_responsive_design(
 
     # Test desktop viewport
     await page.set_viewport_size({"width": 1200, "height": 800})
-    await page.wait_for_timeout(500)
 
-    # Check elements are still visible
+    # Wait for layout to stabilize by waiting for the heading to be visible and stable
+    await heading.wait_for(state="visible", timeout=5000)
     assert await heading.is_visible()
     if await create_button.count() > 0:
         assert await create_button.is_visible()

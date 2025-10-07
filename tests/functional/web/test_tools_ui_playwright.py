@@ -224,8 +224,8 @@ async def test_no_javascript_errors(web_test_fixture_readonly: WebTestFixture) -
         timeout=15000,
     )
 
-    # Give time for any errors to be logged
-    await page.wait_for_timeout(1000)
+    # Wait for network to be idle to ensure all async operations complete
+    await page.wait_for_load_state("networkidle", timeout=5000)
 
     # Filter out non-critical errors (like 404s for sourcemaps in dev mode)
     critical_errors = [

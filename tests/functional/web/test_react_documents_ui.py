@@ -142,13 +142,8 @@ async def test_create_document_via_api_and_view_in_react_ui(
     # Should navigate to document detail page
     await expect(page).to_have_url(f"{web_test_fixture.base_url}/documents/{doc_id}")
 
-    # Wait a moment for the document details to load
-    # The document content may take a moment to be processed
-    await page.wait_for_timeout(2000)
-
-    # Check that document content is displayed
-    # Note: The content might be in the content_parts or in embeddings
-    # For now, check that we're on the detail page with the title
+    # Wait for the document title to be visible on the detail page
+    # This ensures the document details have loaded
     await expect(page.locator(f"text={TEST_DOC_TITLE}")).to_be_visible(timeout=10000)
 
 
@@ -286,12 +281,9 @@ async def test_document_search_in_react_ui(
         # Type search query
         await search_input.fill("Python")
 
-        # Wait for filtered results
-        await page.wait_for_timeout(500)  # Brief wait for filtering
-
-        # Check that Python documents are visible
-        await expect(page.locator("text=Python Tutorial")).to_be_visible()
-        await expect(page.locator("text=Python Reference")).to_be_visible()
+        # Wait for filtered results - check that Python documents appear
+        await expect(page.locator("text=Python Tutorial")).to_be_visible(timeout=5000)
+        await expect(page.locator("text=Python Reference")).to_be_visible(timeout=5000)
 
         # JavaScript Guide should be hidden or not present
         js_guide = page.locator("text=JavaScript Guide")

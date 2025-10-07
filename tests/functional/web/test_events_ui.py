@@ -1,5 +1,7 @@
 """Playwright-based functional tests for Events React UI."""
 
+import asyncio
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -125,10 +127,7 @@ async def test_events_detail_page_loads(
     test_event_id = "test_event_123"
     await page.goto(f"{server_url}/events/{test_event_id}")
 
-    # Wait for page to load (will show error state)
-    await page.wait_for_timeout(3000)
-
-    # Should show back button regardless of event state
+    # Wait for page to load by waiting for back button to appear
     back_button = page.locator("button:has-text('Back to Events')")
     await back_button.wait_for(timeout=5000)
     assert await back_button.is_visible()
@@ -275,7 +274,6 @@ async def test_events_filters_url_state_persistence_after_reload(
     # Navigate to events page
     await page.goto(f"{server_url}/events")
     await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
-    await page.wait_for_timeout(1000)
 
     # Create page object and apply filters
     events_page = EventsPage(page, server_url)
@@ -283,8 +281,14 @@ async def test_events_filters_url_state_persistence_after_reload(
     await events_page.set_source_filter("indexing")
     await events_page.set_hours_filter("48")
 
-    # Wait for URL to update
-    await page.wait_for_timeout(1000)
+    # Wait for URL to update by checking the URL contains the filters
+    await page.wait_for_function(
+        """() => {
+            const url = window.location.href;
+            return url.includes('source_id=indexing') && url.includes('hours=48');
+        }""",
+        timeout=10000,
+    )
 
     # Check that URL reflects filter state
     current_url = page.url
@@ -320,12 +324,18 @@ async def test_events_list_display_structure(
     await page.goto(f"{server_url}/events")
     await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
 
-    # Wait for API response (might show empty state or events)
-    await page.wait_for_timeout(2000)
-
-    # Check for either events or empty state
+    # Wait for either events container or empty state to appear
     events_container = page.locator("[class*='eventsContainer'], .eventsContainer")
     empty_state = page.locator("[class*='emptyState'], .emptyState")
+    await page.wait_for_function(
+        """() => {
+            const eventsContainer = document.querySelector('[class*="eventsContainer"]');
+            const emptyState = document.querySelector('[class*="emptyState"]');
+            return (eventsContainer && window.getComputedStyle(eventsContainer).display !== 'none') ||
+                   (emptyState && window.getComputedStyle(emptyState).display !== 'none');
+        }""",
+        timeout=10000,
+    )
 
     # Either events are displayed or empty state is shown
     has_events = (
@@ -369,8 +379,16 @@ async def test_events_pagination_interface(
     await page.goto(f"{server_url}/events")
     await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
 
-    # Wait for API response
-    await page.wait_for_timeout(2000)
+    # Wait for page content to load - either pagination or events container should appear
+    await page.wait_for_function(
+        """() => {
+            const pagination = document.querySelector('[class*="pagination"]');
+            const eventsContainer = document.querySelector('[class*="eventsContainer"]');
+            const emptyState = document.querySelector('[class*="emptyState"]');
+            return pagination || eventsContainer || emptyState;
+        }""",
+        timeout=10000,
+    )
 
     # Check if pagination controls are present
     pagination = page.locator("[class*='pagination'], .pagination")
@@ -401,19 +419,23 @@ async def test_events_responsive_design(
 
     # Test mobile viewport
     await page.set_viewport_size({"width": 375, "height": 667})
-    await page.wait_for_timeout(500)
 
-    # Check that main elements are still visible
+    # Wait for layout to stabilize by checking elements are visible
     heading = page.locator("h1:has-text('Events')")
+    await heading.wait_for(state="visible", timeout=5000)
     assert await heading.is_visible()
 
     # Filters should still be accessible
     filters_section = page.locator("details summary:has-text('Filters')")
+    await filters_section.wait_for(state="visible", timeout=5000)
     assert await filters_section.is_visible()
 
     # Test tablet viewport
     await page.set_viewport_size({"width": 768, "height": 1024})
-    await page.wait_for_timeout(500)
+
+    # Wait for layout to stabilize
+    await heading.wait_for(state="visible", timeout=5000)
+    await filters_section.wait_for(state="visible", timeout=5000)
 
     # Check elements are still visible
     assert await heading.is_visible()
@@ -421,7 +443,10 @@ async def test_events_responsive_design(
 
     # Test desktop viewport
     await page.set_viewport_size({"width": 1200, "height": 800})
-    await page.wait_for_timeout(500)
+
+    # Wait for layout to stabilize
+    await heading.wait_for(state="visible", timeout=5000)
+    await filters_section.wait_for(state="visible", timeout=5000)
 
     # Check elements are still visible
     assert await heading.is_visible()
@@ -441,8 +466,8 @@ async def test_events_api_error_handling(
     await page.goto(f"{server_url}/events")
     await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
 
-    # Wait for API calls to complete (successful or failed)
-    await page.wait_for_timeout(3000)
+    # Wait for the page to finish loading (network idle indicates API calls complete)
+    await page.wait_for_load_state("networkidle", timeout=10000)
 
     # The page should handle API responses gracefully
     # Either show events, empty state, or error message
@@ -470,10 +495,7 @@ async def test_events_detail_view_structure(
     # Navigate directly to an event detail (will handle non-existent gracefully)
     await page.goto(f"{server_url}/events/test_event_id")
 
-    # Wait for page response
-    await page.wait_for_timeout(3000)
-
-    # Check that the page structure is correct regardless of whether event exists
+    # Wait for page to load by waiting for back button
     back_button = page.locator("button:has-text('Back to Events')")
     await back_button.wait_for(timeout=5000)
     assert await back_button.is_visible()
@@ -530,10 +552,7 @@ async def test_events_with_actual_data(
     await page.goto(f"{server_url}/events")
     await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
 
-    # Wait for events to load
-    await page.wait_for_timeout(2000)
-
-    # Check that we have at least one event
+    # Wait for events to load by checking for results summary
     results_summary = page.locator("text=/Found \\d+ event/")
     await results_summary.wait_for(timeout=5000)
     summary_text = await results_summary.text_content()
@@ -576,14 +595,34 @@ async def test_events_clear_filters_functionality(
     await events_page.set_hours_filter("1")
     await events_page.set_only_triggered_filter(True)
 
-    # Wait for filters to be applied
-    await page.wait_for_timeout(1000)
+    # Wait for filters to be applied by checking URL
+    await page.wait_for_function(
+        """() => {
+            const url = window.location.href;
+            return url.includes('source_id=home_assistant') &&
+                   url.includes('hours=1') &&
+                   url.includes('only_triggered=true');
+        }""",
+        timeout=10000,
+    )
 
     # Clear filters using the clear button
     await events_page.clear_filters()
 
-    # Wait for filters to be cleared
-    await page.wait_for_timeout(500)
+    # Wait for filters to be cleared by checking URL and shadcn select trigger states
+    await page.wait_for_function(
+        """() => {
+            const url = window.location.href;
+            const sourceSelect = document.querySelector('#source_id');
+            const hoursSelect = document.querySelector('#hours');
+            const sourceText = sourceSelect?.textContent || '';
+            const hoursText = hoursSelect?.textContent || '';
+            return sourceText.includes('All Sources') &&
+                   hoursText.includes('Last 24 hours') &&
+                   !url.includes('only_triggered=true');
+        }""",
+        timeout=10000,
+    )
 
     # Verify all filters are cleared
     source_value = await events_page.get_source_filter_value()
@@ -623,8 +662,8 @@ async def test_events_page_load_triggers_api_call(
     await page.goto(f"{server_url}/events")
     await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
 
-    # Wait for initial API call
-    await page.wait_for_timeout(2000)
+    # Wait for initial API call by checking the results summary appears
+    await page.wait_for_selector("text=/Found \\d+ event/", timeout=10000)
 
     # Should have made at least one API call
     assert len(api_requests) > 0
@@ -665,8 +704,14 @@ async def test_events_filter_changes_trigger_api_calls(
     # Change a filter using the page object method
     await events_page.set_source_filter("home_assistant")
 
-    # Wait for API call
-    await page.wait_for_timeout(2000)
+    # Wait for API call to be captured (poll the Python list)
+    deadline = time.time() + 10  # 10 second timeout
+    while time.time() < deadline:
+        if len(api_requests) > 0 and any(
+            "source_id=home_assistant" in url for url in api_requests
+        ):
+            break
+        await asyncio.sleep(0.1)  # noqa: ASYNC110 # Poll every 100ms
 
     # Should have made a new API call with filter parameter
     assert len(api_requests) > 0
@@ -685,12 +730,12 @@ async def test_events_404_handling(
     # Navigate to a definitely non-existent event
     await page.goto(f"{server_url}/events/definitely_not_an_event_id_12345")
 
-    # Wait for page to load
-    await page.wait_for_timeout(3000)
+    # Wait for page to load by waiting for back button
+    back_button = page.locator("button:has-text('Back to Events')")
+    await back_button.wait_for(timeout=5000)
 
     # Should show error state
     error_message = page.locator("[class*='error'], .error")
-    back_button = page.locator("button:has-text('Back to Events')")
 
     # Both should be visible
     await back_button.wait_for(timeout=5000)
@@ -775,8 +820,8 @@ async def test_events_json_formatting_in_detail_view(
         # Navigate to event detail page
         await page.goto(f"{server_url}/events/{test_event_id}")
 
-        # Wait for page to load
-        await page.wait_for_timeout(3000)
+        # Wait for page to load by waiting for back button
+        await page.wait_for_selector("button:has-text('Back to Events')", timeout=5000)
 
         # Check that event data section is present
         event_data_section = page.locator(
@@ -825,8 +870,8 @@ async def test_events_triggered_listeners_display(
         # Navigate to event detail page
         await page.goto(f"{server_url}/events/{test_event_id}")
 
-        # Wait for page to load
-        await page.wait_for_timeout(3000)
+        # Wait for page to load by waiting for back button
+        await page.wait_for_selector("button:has-text('Back to Events')", timeout=5000)
 
         # Check for triggered listeners info
         listeners_info = page.locator("text=/\\d+ listener/")
@@ -855,10 +900,7 @@ async def test_events_empty_state_handling(
     await page.goto(f"{server_url}/events")
     await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
 
-    # Wait for API response
-    await page.wait_for_timeout(2000)
-
-    # Check results summary
+    # Wait for API response by checking for results summary
     results_summary = page.locator("text=/Found \\d+ event/")
     await results_summary.wait_for(timeout=5000)
     summary_text = await results_summary.text_content()
@@ -904,7 +946,9 @@ async def test_events_source_icons_display(
     # Navigate to events page
     await page.goto(f"{server_url}/events")
     await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
-    await page.wait_for_timeout(2000)
+
+    # Wait for events to load by checking for results summary
+    await page.wait_for_selector("text=/Found \\d+ event/", timeout=10000)
 
     # Check for source badges/icons
     source_badges = page.locator("[class*='sourceBadge'], .sourceBadge")
@@ -948,7 +992,9 @@ async def test_events_metadata_display(
     if test_event_id:
         # Navigate to event detail page
         await page.goto(f"{server_url}/events/{test_event_id}")
-        await page.wait_for_timeout(3000)
+
+        # Wait for page to load by waiting for back button
+        await page.wait_for_selector("button:has-text('Back to Events')", timeout=5000)
 
         # Check for event metadata sections
         info_items = page.locator("[class*='infoItem'], .infoItem")
