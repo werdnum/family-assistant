@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 # Color codes for output
 RED='\033[0;31m'
@@ -99,6 +99,19 @@ fi
 if [ -z "$PYTEST_ARGS" ]; then
     PYTEST_ARGS="tests --ignore=scratch"
 fi
+
+# Acquire exclusive lock to prevent concurrent test runs
+LOCK_FILE="$HOME/.poe-test.lock"
+exec 200>"$LOCK_FILE"
+
+echo "${BLUE}Acquiring test lock...${NC}"
+if ! flock --exclusive --timeout 300 200; then
+    echo "${RED}❌ Error: Could not acquire lock after waiting 5 minutes.${NC}" >&2
+    echo "${YELLOW}Another test run is still in progress. Please wait or investigate:${NC}" >&2
+    echo "${YELLOW}  Lock file: $LOCK_FILE${NC}" >&2
+    exit 1
+fi
+echo "${GREEN}✓ Lock acquired${NC}"
 
 # Overall timer
 OVERALL_START=$(date +%s)
