@@ -57,15 +57,16 @@ async def test_message_appears_in_second_context(
             raise RuntimeError(f"Could not find conversation_id in URL: {page1_url}")
         conversation_id = match.group(1)
 
-        # Navigate page2 to the SAME conversation
-        await page2.goto(f"{base_url}/chat?conversation_id={conversation_id}")
-        await page2.wait_for_load_state("networkidle")
+        # Navigate page2 to the SAME conversation and wait for SSE connection
+        # Set up listener for SSE connection BEFORE navigation to ensure we don't miss it
+        async with page2.expect_response(
+            lambda r: "/api/v1/chat/events" in r.url and r.ok, timeout=10000
+        ):
+            await page2.goto(f"{base_url}/chat?conversation_id={conversation_id}")
+            await page2.wait_for_load_state("networkidle")
+            # SSE connection will be established within the context manager
 
-        # Wait for SSE connection to be established (1.5s delay + connection time)
-        # This is a necessary wait for the live updates feature to work
-        await page2.wait_for_timeout(2000)
-
-        # Send a message from page1
+        # Now send the test message (SSE is connected, so it will be delivered)
         test_message = "Test message for live updates"
         await send_message(page1, test_message)
 
@@ -116,15 +117,16 @@ async def test_bidirectional_live_updates(
             raise RuntimeError(f"Could not find conversation_id in URL: {page1_url}")
         conversation_id = match.group(1)
 
-        # Navigate page2 to the SAME conversation
-        await page2.goto(f"{base_url}/chat?conversation_id={conversation_id}")
-        await page2.wait_for_load_state("networkidle")
+        # Navigate page2 to the SAME conversation and wait for SSE connection
+        # Set up listener for SSE connection BEFORE navigation to ensure we don't miss it
+        async with page2.expect_response(
+            lambda r: "/api/v1/chat/events" in r.url and r.ok, timeout=10000
+        ):
+            await page2.goto(f"{base_url}/chat?conversation_id={conversation_id}")
+            await page2.wait_for_load_state("networkidle")
+            # SSE connection will be established within the context manager
 
-        # Wait for SSE connection to be established (1.5s delay + connection time)
-        # This is a necessary wait for the live updates feature to work
-        await page2.wait_for_timeout(2000)
-
-        # Send message from page1
+        # Now send test message from page1 (SSE is connected, so it will be delivered)
         message_from_page1 = "Message from first context"
         await send_message(page1, message_from_page1)
 
