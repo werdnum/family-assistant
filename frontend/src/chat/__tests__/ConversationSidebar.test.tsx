@@ -10,6 +10,12 @@ describe('ConversationSidebar', () => {
   beforeEach(() => {
     resetLocalStorageMock();
     vi.clearAllMocks();
+
+    // Clean up URL state from previous tests
+    window.history.replaceState({}, '', '/');
+
+    // Clean up DOM attributes
+    document.documentElement.removeAttribute('data-app-ready');
   });
 
   it('displays conversation list', async () => {

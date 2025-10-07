@@ -55,7 +55,7 @@ class ChatPage(BasePage):
 
         # Wait for the chat app to fully load
         # The default wait_for_load only waits for DOM, not JavaScript modules
-        await self.wait_for_load(wait_for_network=True)
+        await self.wait_for_load(wait_for_app_ready=True)
 
         # Wait for critical UI elements to be present and ready
         # This ensures the React app has fully initialized
@@ -541,10 +541,6 @@ class ChatPage(BasePage):
         Args:
             timeout: Maximum time to wait in milliseconds
         """
-        # TODO: There's a known issue where the chat input remains disabled after streaming completes.
-        # This appears to be related to the assistant-ui library's runtime state management.
-        # For now, we'll just wait for messages to appear and give a delay for streaming to complete.
-
         # Wait for at least one assistant message to appear
         try:
             await self.page.wait_for_selector(
@@ -558,8 +554,21 @@ class ChatPage(BasePage):
                 timeout=timeout,
             )
 
-        # Give time for streaming to complete and UI to stabilize
-        await self.page.wait_for_timeout(2000)
+        # Wait for streaming to complete by checking for stable message count
+        # This waits until no new messages are being added to the DOM
+        await self.page.wait_for_function(
+            """() => {
+                const messages = document.querySelectorAll('[data-testid="assistant-message"]');
+                if (messages.length === 0) return false;
+                const lastMessage = messages[messages.length - 1];
+                // Check if last message has content (not just loading)
+                const hasContent = lastMessage.textContent && lastMessage.textContent.trim().length > 0;
+                // Check if there's no typing indicator
+                const noTyping = !document.querySelector('.typing-indicator');
+                return hasContent && noTyping;
+            }""",
+            timeout=timeout,
+        )
 
         # Also, wait for any loading indicators to disappear
         with contextlib.suppress(Exception):

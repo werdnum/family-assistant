@@ -77,7 +77,10 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
       <ScrollArea className="flex-1 px-6 overflow-y-auto">
         <div className="py-4">
           {conversationsLoading ? (
-            <div className="py-8 text-center text-sm text-muted-foreground italic">
+            <div
+              className="py-8 text-center text-sm text-muted-foreground italic"
+              data-loading-indicator="true"
+            >
               Loading conversations...
             </div>
           ) : filteredConversations.length === 0 ? (

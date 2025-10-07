@@ -689,7 +689,6 @@ async def test_tool_attachment_persistence_after_page_reload(
     # CRITICAL TEST: Reload the page
     # Reloading page to test persistence...
     await page.reload()
-    await page.wait_for_load_state("networkidle")
 
     # Wait for the chat history to reload and attachment tool to be ready
     await chat_page.wait_for_assistant_response(timeout=30000)

@@ -5,7 +5,7 @@ import HistoryFilters from './HistoryFilters';
 import HistoryPagination from './HistoryPagination';
 import styles from './ConversationsList.module.css';
 
-const ConversationsList = () => {
+const ConversationsList = ({ onLoaded }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -78,6 +78,8 @@ const ConversationsList = () => {
         setError(err.message);
       } finally {
         setLoading(false);
+        // Notify parent that loading is complete
+        onLoaded?.();
       }
     },
     [pageSize]

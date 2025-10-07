@@ -26,6 +26,7 @@ interface ProfileSelectorProps {
   selectedProfileId: string;
   onProfileChange: (profileId: string) => void;
   disabled?: boolean;
+  onLoadingChange?: (loading: boolean) => void;
 }
 
 // Map profile IDs to icons for better visual identification
@@ -62,10 +63,16 @@ const ProfileSelector: React.FC<ProfileSelectorProps> = ({
   selectedProfileId,
   onProfileChange,
   disabled = false,
+  onLoadingChange,
 }) => {
   const [profiles, setProfiles] = useState<ServiceProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Notify parent of loading state changes
+  useEffect(() => {
+    onLoadingChange?.(loading);
+  }, [loading, onLoadingChange]);
 
   useEffect(() => {
     const fetchProfiles = async () => {
@@ -100,7 +107,10 @@ const ProfileSelector: React.FC<ProfileSelectorProps> = ({
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+      <div
+        className="flex items-center gap-2 text-sm text-muted-foreground"
+        data-loading-indicator="true"
+      >
         <Bot className="w-4 h-4 animate-pulse" />
         <span>Loading...</span>
       </div>

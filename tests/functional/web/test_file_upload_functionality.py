@@ -522,7 +522,6 @@ async def test_attachment_display_in_message_history(
 
         # **TEST PERSISTENCE: REFRESH THE PAGE**
         await page.reload()
-        await page.wait_for_load_state("networkidle")
 
         # Wait for messages to reload after refresh
         await page.wait_for_selector('[data-testid="user-message"]', timeout=10000)

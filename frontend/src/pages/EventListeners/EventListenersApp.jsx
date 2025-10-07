@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import EventListenersList from './components/EventListenersList';
 import EventListenerDetail from './components/EventListenerDetail';
@@ -6,6 +6,15 @@ import EventListenerForm from './components/EventListenerForm';
 
 const EventListenersApp = () => {
   const navigate = useNavigate();
+
+  // Signal that the app router is ready (for tests)
+  // The router itself has no loading states - child components handle their own loading
+  useEffect(() => {
+    document.documentElement.setAttribute('data-app-ready', 'true');
+    return () => {
+      document.documentElement.removeAttribute('data-app-ready');
+    };
+  }, []);
 
   return (
     <div>

@@ -1,10 +1,21 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import EventsList from './components/EventsList';
 import EventDetail from './components/EventDetail';
 
 const EventsApp = () => {
   const navigate = useNavigate();
+
+  // Signal that app is ready for tests
+  // EventsApp itself doesn't have loading states - child components handle their own loading
+  // and display appropriate loading indicators
+  useEffect(() => {
+    document.documentElement.setAttribute('data-app-ready', 'true');
+
+    return () => {
+      document.documentElement.removeAttribute('data-app-ready');
+    };
+  }, []);
 
   return (
     <div>

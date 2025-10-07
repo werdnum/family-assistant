@@ -36,6 +36,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState<boolean>(true);
+  const [profilesLoading, setProfilesLoading] = useState<boolean>(true);
   const [isMobile, setIsMobile] = useState<boolean>(window.innerWidth <= 768);
   const [currentProfileId, setCurrentProfileId] = useState<string>(() => {
     // Load saved profile from localStorage, fallback to prop
@@ -728,6 +729,19 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     },
   });
 
+  // Signal that app is ready (for tests)
+  // Only set when runtime is ready AND initial data loading is complete
+  useEffect(() => {
+    if (runtime && !conversationsLoading && !profilesLoading) {
+      document.documentElement.setAttribute('data-app-ready', 'true');
+    } else {
+      document.documentElement.removeAttribute('data-app-ready');
+    }
+    return () => {
+      document.documentElement.removeAttribute('data-app-ready');
+    };
+  }, [runtime, conversationsLoading, profilesLoading]);
+
   return (
     <TooltipProvider>
       <div className="flex h-screen flex-col bg-background">
@@ -749,6 +763,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               selectedProfileId={currentProfileId}
               onProfileChange={handleProfileChange}
               disabled={isLoading}
+              onLoadingChange={setProfilesLoading}
             />
           </div>
 

@@ -5,7 +5,7 @@ import TasksFilter from './TasksFilter';
 import TaskCard from './TaskCard';
 import styles from './TasksList.module.css';
 
-const TasksList = () => {
+const TasksList = ({ onLoadingChange }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [tasks, setTasks] = useState([]);
   const [taskTypes, setTaskTypes] = useState([]);
@@ -65,6 +65,8 @@ const TasksList = () => {
       setError(err.message);
     } finally {
       setLoading(false);
+      // Notify parent that loading is complete
+      onLoadingChange?.(false);
     }
   };
 
