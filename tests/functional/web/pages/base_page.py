@@ -21,34 +21,68 @@ class BasePage:
         self.page = page
         self.base_url = base_url or "http://localhost:5173"
 
-    async def navigate_to(self, path: str = "") -> Response | None:
+    async def navigate_to(
+        self, path: str = "", wait_for_app_ready: bool = True
+    ) -> Response | None:
         """Navigate to a specific path relative to the base URL.
 
         Args:
             path: The path to navigate to (e.g., "/notes", "/documents")
+            wait_for_app_ready: If True, waits for React app to be fully ready (default: True)
 
         Returns:
             The response object from the navigation, or None if no response
         """
         url = f"{self.base_url}{path}"
         response = await self.page.goto(url)
-        await self.wait_for_load()
+        await self.wait_for_load(wait_for_app_ready=wait_for_app_ready)
         return response
 
-    async def wait_for_load(self, wait_for_network: bool = True) -> None:
+    async def wait_for_load(self, wait_for_app_ready: bool = True) -> None:
         """Wait for the page to load.
 
         Args:
-            wait_for_network: If True, waits for network idle to ensure dynamic imports are loaded.
-                            If False, only waits for DOM content loaded (may miss lazy-loaded components).
+            wait_for_app_ready: When True, waits for React to mount and initial loading to complete.
+                              When False, only waits for DOM content loaded.
 
-        Note: Default is True because React uses lazy loading for routes. Waiting for networkidle
-        ensures that lazy-loaded components are fetched and executed before tests interact with them.
+        Note: We cannot use "networkidle" because SSE connections prevent it from ever triggering.
+        Instead, we wait for React to mount and loading indicators to disappear.
         """
-        if wait_for_network:
-            await self.page.wait_for_load_state("networkidle")
+        if wait_for_app_ready:
+            # Wait for app to be ready - all pages now use data-app-ready attribute
+            # Fail fast if not found to catch issues
+            await self.page.wait_for_selector(
+                '[data-app-ready="true"]',
+                timeout=10000,
+            )
+
+            # Wait for any loading indicators to disappear
+            # This ensures ProfileSelector and other components have loaded their data
+            # data-app-ready is only set after runtime is ready AND all loading states are false
+            loading_indicator = self.page.locator('[data-loading-indicator="true"]')
+            if await loading_indicator.count() > 0:
+                # Wait for all loading indicators to disappear
+                await loading_indicator.first.wait_for(state="hidden", timeout=10000)
         else:
             await self.page.wait_for_load_state("domcontentloaded")
+
+    async def wait_for_page_idle(self, timeout: int = 5000) -> None:
+        """Wait for page to be truly idle - no loading indicators, background requests settled.
+
+        Use this before checking console errors or tearing down to avoid race conditions
+        with background data fetching.
+
+        Args:
+            timeout: Maximum time to wait in milliseconds
+        """
+        # Wait for any loading indicators to disappear
+        loading_indicator = self.page.locator('[data-loading-indicator="true"]')
+        if await loading_indicator.count() > 0:
+            await loading_indicator.first.wait_for(state="hidden", timeout=timeout)
+
+        # Give a short stabilization period for any final renders/fetches
+        # This avoids race conditions where components start fetching right after mount
+        await self.page.wait_for_timeout(200)
 
     async def wait_for_element(self, selector: str, timeout: int = 30000) -> None:
         """Wait for an element to be present on the page.
@@ -60,16 +94,16 @@ class BasePage:
         await self.page.wait_for_selector(selector, timeout=timeout)
 
     async def click_and_wait(
-        self, selector: str, wait_for_network: bool = False
+        self, selector: str, wait_for_app_ready: bool = False
     ) -> None:
-        """Click an element and wait for navigation or network activity to complete.
+        """Click an element and wait for navigation or app to be ready.
 
         Args:
             selector: CSS selector or text selector for the element to click
-            wait_for_network: If True, waits for network idle after click
+            wait_for_app_ready: If True, waits for app to be fully ready after click
         """
         await self.page.click(selector)
-        await self.wait_for_load(wait_for_network=wait_for_network)
+        await self.wait_for_load(wait_for_app_ready=wait_for_app_ready)
 
     async def fill_form_field(self, selector: str, value: str) -> None:
         """Fill a form field with the specified value.

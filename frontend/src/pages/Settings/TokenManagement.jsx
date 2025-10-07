@@ -152,6 +152,21 @@ const TokenManagement = () => {
     fetchTokens();
   }, []);
 
+  // Set page title and coordinate data-app-ready with loading state
+  useEffect(() => {
+    document.title = 'API Tokens - Family Assistant';
+
+    if (!loading) {
+      document.getElementById('app-root')?.setAttribute('data-app-ready', 'true');
+    } else {
+      document.getElementById('app-root')?.removeAttribute('data-app-ready');
+    }
+
+    return () => {
+      document.getElementById('app-root')?.removeAttribute('data-app-ready');
+    };
+  }, [loading]);
+
   // Handle form input changes
   const handleInputChange = (e) => {
     const { name, value } = e.target;

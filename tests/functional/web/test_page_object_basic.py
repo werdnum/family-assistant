@@ -40,5 +40,9 @@ async def test_base_page_console_errors(
     # Navigate to a page
     await page.navigate_to("/")
 
+    # Wait for page to be truly idle before checking console errors
+    # This prevents race conditions with background data fetching
+    await page.wait_for_page_idle()
+
     # Should have no console errors on homepage
     assert len(errors) == 0, f"Found console errors: {errors}"

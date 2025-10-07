@@ -1,10 +1,19 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import DocumentationList from './components/DocumentationList';
 import DocumentationView from './components/DocumentationView';
 
 const DocumentationApp = () => {
   const navigate = useNavigate();
+
+  // Signal that app is ready (for tests)
+  // DocumentationApp itself has no loading state - child routes handle their own loading
+  useEffect(() => {
+    document.documentElement.setAttribute('data-app-ready', 'true');
+    return () => {
+      document.documentElement.removeAttribute('data-app-ready');
+    };
+  }, []);
 
   return (
     <div>

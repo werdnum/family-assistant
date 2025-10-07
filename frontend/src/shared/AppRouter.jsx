@@ -20,6 +20,7 @@ const VectorSearchPage = lazy(() => import('../pages/VectorSearch/VectorSearchPa
 // Loading component for Suspense fallback
 const LoadingSpinner = () => (
   <div
+    data-loading-indicator="true"
     style={{
       display: 'flex',
       justifyContent: 'center',

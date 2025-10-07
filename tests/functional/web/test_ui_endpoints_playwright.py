@@ -64,9 +64,10 @@ async def check_endpoint(
     try:
         base_page = BasePage(page, base_url)
 
-        # Navigate to the endpoint
+        # Navigate to the endpoint (using fast DOM load only, not React-specific)
+        # These are diverse endpoints, not all are React apps
         print(f"Test: Navigating to {base_url}{path}")
-        response = await base_page.navigate_to(path)
+        response = await base_page.navigate_to(path, wait_for_app_ready=False)
         print(f"Response status: {response.status if response else 'None'}")
 
         # Check response status
@@ -86,9 +87,6 @@ async def check_endpoint(
                 f"{response.status}"
             )
             return failures, warnings
-
-        # Wait for page to load (using fast DOM load by default)
-        await base_page.wait_for_load()
 
         # Check for expected elements
         for selector in expected_elements:
@@ -165,7 +163,6 @@ async def test_navigation_links_work(
     await base_page.navigate_to("/notes")
     await base_page.wait_for_load()
     await page.wait_for_selector("nav a", timeout=10000)
-    await page.wait_for_load_state("networkidle", timeout=5000)
 
     # Collect all navigation links (data only, not element references)
     nav_links = await page.locator("nav a").all()
@@ -201,13 +198,15 @@ async def test_navigation_links_work(
             # Wait for navigation based on destination
             if link_info["href"] == "/chat":
                 await test_page.wait_for_selector(
-                    '[data-react-mounted="true"]', timeout=10000
+                    '[data-app-ready="true"]', timeout=10000
                 )
                 await test_page.wait_for_selector(
                     "main .flex.flex-1.flex-col", timeout=5000
                 )
             else:
-                await test_page.wait_for_load_state("networkidle", timeout=10000)
+                # For other pages, just wait for DOM content loaded
+                # Don't use networkidle as SSE connections prevent it
+                await test_page.wait_for_load_state("domcontentloaded", timeout=10000)
 
             # Verify navigation succeeded
             current_url = test_page.url
@@ -316,8 +315,7 @@ async def test_form_interactions(
     search_button = page.locator('button[type="submit"], button:has-text("Search")')
     if await search_button.count() > 0:
         await search_button.first.click()
-        # Wait for search to complete - the page makes an API call and updates the DOM
-        await page.wait_for_load_state("networkidle", timeout=10000)
+        # No need to wait - this test only checks that the button click doesn't cause errors
 
     # Assert no console errors
     console_error_checker.assert_no_errors()

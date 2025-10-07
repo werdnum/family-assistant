@@ -86,7 +86,7 @@ class NotesPage(BasePage):
         # Wait for navigation to the notes list page after save
         await self.page.wait_for_url(f"{self.base_url}/notes", timeout=10000)
         # Ensure network has settled and the list has updated
-        await self.wait_for_load(wait_for_network=True)
+        await self.wait_for_load(wait_for_app_ready=True)
         # Deterministically wait until the just-created note appears in the list
         try:
             await self.page.wait_for_selector(
@@ -143,7 +143,21 @@ class NotesPage(BasePage):
         await self.page.click(self.SAVE_BUTTON)
         # Wait for navigation to the notes list page after save
         await self.page.wait_for_url(f"{self.base_url}/notes", timeout=10000)
-        await self.wait_for_load()
+        # Ensure network has settled and the list has updated
+        await self.wait_for_load(wait_for_app_ready=True)
+        # Wait for the updated note title to appear in the list (if title was changed)
+        title_to_wait_for = new_title if new_title is not None else original_title
+        try:
+            await self.page.wait_for_selector(
+                f"tbody tr td:first-child:has-text('{title_to_wait_for}')",
+                timeout=10000,
+            )
+        except Exception:
+            # Fall back: small reload to pick up any late updates, then one more quick check
+            await self.reload()
+            await self.page.wait_for_selector(
+                f"tbody tr td:first-child:has-text('{title_to_wait_for}')", timeout=3000
+            )
 
     async def delete_note(self, title: str) -> None:
         """Delete a note.
@@ -167,7 +181,7 @@ class NotesPage(BasePage):
                 if delete_buttons:
                     await delete_buttons[0].click()
                     # Wait for the network request to complete and UI to update
-                    await self.wait_for_load(wait_for_network=True)
+                    await self.wait_for_load(wait_for_app_ready=True)
                     # Explicitly wait for the deleted note to disappear from the DOM
                     await self.page.wait_for_selector(
                         f"tbody tr td:first-child:has-text('{title}')",
@@ -188,7 +202,7 @@ class NotesPage(BasePage):
             await search_input.fill(query)
             # Trigger search by pressing Enter or waiting for debounce
             await self.page.keyboard.press("Enter")
-            await self.wait_for_load(wait_for_network=True)
+            await self.wait_for_load(wait_for_app_ready=True)
             # Wait for the table to be visible and stable after search
             # This ensures React has finished re-rendering the filtered results
             try:
@@ -212,7 +226,7 @@ class NotesPage(BasePage):
         """
         await self.ensure_on_notes_list()
         # Wait for network to settle so the table reflects latest data
-        await self.wait_for_load(wait_for_network=True)
+        await self.wait_for_load(wait_for_app_ready=True)
         # Count table rows, excluding the "No notes found" row
         note_rows = await self.page.query_selector_all(self.NOTE_ROW)
         # Check if it's the empty state

@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import binascii
+import contextlib
 import json
 import logging
 import uuid
@@ -1168,6 +1169,9 @@ async def live_message_events(
         # Register as a listener
         queue = await message_notifier.register(conversation_id, interface_type)
 
+        # Get shutdown event from app state
+        shutdown_event = getattr(request.app.state, "shutdown_event", None)
+
         try:
             # Send initial heartbeat
             yield f"event: connected\ndata: {json.dumps({'conversation_id': conversation_id})}\n\n"
@@ -1182,29 +1186,62 @@ async def live_message_events(
                     yield f"event: message\ndata: {json.dumps({'internal_id': msg['internal_id'], 'timestamp': msg['timestamp'].isoformat(), 'new_messages': True})}\n\n"
 
             # Main event loop - hybrid approach
-            while True:
-                try:
-                    # Wait for notification with 5 second timeout
-                    await asyncio.wait_for(queue.get(), timeout=5.0)
+            queue_task = None
+            shutdown_task = None
+            try:
+                while True:
+                    # Create tasks for message notification and shutdown event
+                    queue_task = asyncio.create_task(queue.get())
+                    tasks = [queue_task]
 
-                    # Notification received - query for new messages
-                    messages, last_check = await query_new_messages(last_check)
-                    for msg in messages:
-                        yield f"event: message\ndata: {json.dumps({'internal_id': msg['internal_id'], 'timestamp': msg['timestamp'].isoformat(), 'new_messages': True})}\n\n"
+                    # Add shutdown event wait if available
+                    if shutdown_event:
+                        shutdown_task = asyncio.create_task(shutdown_event.wait())
+                        tasks.append(shutdown_task)
 
-                except asyncio.TimeoutError:
-                    # Timeout - send heartbeat and poll for messages
-                    yield f"event: heartbeat\ndata: {json.dumps({'timestamp': datetime.now(timezone.utc).isoformat()})}\n\n"
+                    # Wait for first completion with 5 second timeout for heartbeat
+                    done, pending = await asyncio.wait(
+                        tasks, timeout=5.0, return_when=asyncio.FIRST_COMPLETED
+                    )
 
-                    # Polling fallback - check for any messages since last check
-                    messages, last_check = await query_new_messages(last_check)
-                    for msg in messages:
-                        yield f"event: message\ndata: {json.dumps({'internal_id': msg['internal_id'], 'timestamp': msg['timestamp'].isoformat(), 'new_messages': True})}\n\n"
+                    # Cancel pending tasks
+                    for task in pending:
+                        task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await task
 
-                except Exception as e:
-                    logger.error(f"Error in SSE event loop: {e}", exc_info=True)
-                    yield f"event: error\ndata: {json.dumps({'error': 'An error occurred'})}\n\n"
-                    break
+                    # Check if shutdown was triggered
+                    if shutdown_event and shutdown_event.is_set():
+                        logger.debug(
+                            f"SSE stream for conversation {conversation_id} terminating due to shutdown"
+                        )
+                        break
+
+                    # Check if we got a notification
+                    if queue_task in done:
+                        # Notification received - query for new messages
+                        messages, last_check = await query_new_messages(last_check)
+                        for msg in messages:
+                            yield f"event: message\ndata: {json.dumps({'internal_id': msg['internal_id'], 'timestamp': msg['timestamp'].isoformat(), 'new_messages': True})}\n\n"
+                    else:
+                        # Timeout - send heartbeat and poll for messages
+                        yield f"event: heartbeat\ndata: {json.dumps({'timestamp': datetime.now(timezone.utc).isoformat()})}\n\n"
+
+                        # Polling fallback - check for any messages since last check
+                        messages, last_check = await query_new_messages(last_check)
+                        for msg in messages:
+                            yield f"event: message\ndata: {json.dumps({'internal_id': msg['internal_id'], 'timestamp': msg['timestamp'].isoformat(), 'new_messages': True})}\n\n"
+
+            except Exception as e:
+                logger.error(f"Error in SSE event loop: {e}", exc_info=True)
+                yield f"event: error\ndata: {json.dumps({'error': 'An error occurred'})}\n\n"
+            finally:
+                # Clean up any remaining tasks
+                for task in [queue_task, shutdown_task]:
+                    if task and not task.done():
+                        task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await task
 
         finally:
             # Unregister listener on disconnect
