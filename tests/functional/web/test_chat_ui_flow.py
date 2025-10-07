@@ -47,14 +47,22 @@ async def test_basic_chat_conversation(
     # Navigate to chat
     await chat_page.navigate_to_chat()
 
-    # Don't clear localStorage immediately - let the app initialize first
-    await page.wait_for_timeout(2000)
+    # Wait for the chat interface to be fully ready
+    await page.wait_for_selector(
+        '[data-testid="chat-input"]', state="visible", timeout=10000
+    )
+    await page.wait_for_selector(
+        "button[aria-label='Toggle sidebar']", state="visible", timeout=10000
+    )
 
     # Create a new chat to ensure we start fresh
     await chat_page.create_new_chat()
 
-    # Give the app time to set up the new conversation
-    await page.wait_for_timeout(1000)
+    # Wait for the new conversation ID to be set in the URL
+    await page.wait_for_function(
+        "window.location.href.includes('conversation_id=')",
+        timeout=5000,
+    )
 
     # Get the current conversation ID to verify it's set
     conv_id = await chat_page.get_current_conversation_id()
@@ -718,7 +726,14 @@ async def test_responsive_sidebar_mobile(
     await chat_page.navigate_to_chat()
 
     # Wait for React app to fully initialize and adapt to mobile viewport
-    await page.wait_for_timeout(2000)
+    # Check that the toggle button is visible (indicates app is ready)
+    await page.wait_for_selector(
+        "button[aria-label='Toggle sidebar']", state="visible", timeout=10000
+    )
+    # Wait for the chat input to be ready
+    await page.wait_for_selector(
+        '[data-testid="chat-input"]', state="visible", timeout=10000
+    )
 
     # On mobile, sidebar should be closed by default
     assert not await chat_page.is_sidebar_open()
@@ -734,7 +749,14 @@ async def test_responsive_sidebar_mobile(
         try:
             # Try clicking the toggle button to close it
             await page.click("button[aria-label='Toggle sidebar']", timeout=2000)
-            await page.wait_for_timeout(1000)
+            # Wait for the dialog to close
+            await page.wait_for_function(
+                """() => {
+                    const dialog = document.querySelector('[role="dialog"]');
+                    return !dialog || dialog.getAttribute('data-state') === 'closed';
+                }""",
+                timeout=3000,
+            )
         except Exception:
             pass
 
@@ -752,8 +774,10 @@ async def test_responsive_sidebar_mobile(
         '[role="dialog"][data-state="open"]', state="visible", timeout=10000
     )
 
-    # Additional wait for animation completion (Sheet uses duration-500 for open)
-    await page.wait_for_timeout(600)
+    # Wait for the new chat button to be visible, which indicates the sheet is fully open
+    await page.wait_for_selector(
+        '[data-testid="new-chat-button"]', state="visible", timeout=5000
+    )
 
     # Verify sidebar is now open
     assert await chat_page.is_sidebar_open()
@@ -780,7 +804,7 @@ async def test_responsive_sidebar_mobile(
         # Fallback: click in a safe area
         await overlay.click(position={"x": 300, "y": 300})
 
-    # Wait for Sheet to start closing (should show data-state="closed")
+    # Wait for Sheet to start closing (should show data-state="closed" or be removed)
     await page.wait_for_function(
         """() => {
             const dialog = document.querySelector('[role="dialog"]');
@@ -789,8 +813,14 @@ async def test_responsive_sidebar_mobile(
         timeout=5000,
     )
 
-    # Additional wait for closing animation (Sheet uses duration-300 for close)
-    await page.wait_for_timeout(400)
+    # Wait for the new chat button to be hidden/detached, which indicates closing is complete
+    await page.wait_for_function(
+        """() => {
+            const button = document.querySelector('[data-testid="new-chat-button"]');
+            return !button || !button.isConnected || !button.offsetParent;
+        }""",
+        timeout=3000,
+    )
 
     # Verify sidebar is closed
     assert not await chat_page.is_sidebar_open()
@@ -823,7 +853,18 @@ async def test_mobile_chat_input_visibility(
     await chat_page.navigate_to_chat()
 
     # Wait for React app to fully initialize on mobile
-    await page.wait_for_timeout(2000)
+    # Check that critical UI elements are ready
+    await page.wait_for_selector(
+        "button[aria-label='Toggle sidebar']", state="visible", timeout=10000
+    )
+    await page.wait_for_selector(
+        '[data-testid="chat-input"]', state="visible", timeout=10000
+    )
+    # Wait for chat input to be enabled (React initialization complete)
+    await page.wait_for_function(
+        "document.querySelector('[data-testid=\"chat-input\"]')?.disabled === false",
+        timeout=5000,
+    )
 
     # Check if chat input is visible without scrolling
     chat_input = await page.wait_for_selector(
@@ -895,8 +936,20 @@ async def test_mobile_chat_input_visibility(
     assert container_box is not None, "Input container bounding box should be available"
 
     # With the new layout, messages should auto-scroll to be visible
-    # Wait a moment for any automatic scrolling to complete
-    await page.wait_for_timeout(1000)
+    # Wait for the last message to be in viewport by checking its position
+    await page.wait_for_function(
+        """() => {
+            const messages = document.querySelectorAll('[data-testid="user-message"], [data-testid="assistant-message"]');
+            if (messages.length === 0) return false;
+            const lastMessage = messages[messages.length - 1];
+            const rect = lastMessage.getBoundingClientRect();
+            const inputContainer = document.querySelector('.flex-shrink-0.bg-background.border-t');
+            const inputTop = inputContainer ? inputContainer.getBoundingClientRect().top : window.innerHeight;
+            // Check if last message is above the input container
+            return rect.bottom <= inputTop;
+        }""",
+        timeout=5000,
+    )
 
     # Check if the last message is visible without manual scrolling
     last_message_box_auto = await last_message.bounding_box()

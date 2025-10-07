@@ -3,6 +3,8 @@
 import re
 from typing import Any
 
+from playwright.async_api import expect
+
 from .base_page import BasePage
 
 
@@ -62,8 +64,12 @@ class EventsPage(BasePage):
             raise ValueError(f"Could not find option: {option_text}")
         await option.click()
 
-        # Wait for the dropdown to close
-        await self.page.wait_for_timeout(500)
+        # Wait for the dropdown to close by checking that options are no longer visible
+        await self.page.wait_for_selector(
+            f"div[role='option']:has-text('{option_text}')",
+            state="hidden",
+            timeout=5000,
+        )
 
     async def get_hours_filter_value(self) -> str:
         """Get the current hours filter value from the shadcn Select.
@@ -122,8 +128,12 @@ class EventsPage(BasePage):
             raise ValueError(f"Could not find option: {option_text}")
         await option.click()
 
-        # Wait for the dropdown to close
-        await self.page.wait_for_timeout(500)
+        # Wait for the dropdown to close by checking that options are no longer visible
+        await self.page.wait_for_selector(
+            f"div[role='option']:has-text('{option_text}')",
+            state="hidden",
+            timeout=5000,
+        )
 
     async def get_source_filter_value(self) -> str:
         """Get the current source filter value from the shadcn Select.
@@ -153,23 +163,28 @@ class EventsPage(BasePage):
         Args:
             checked: Whether to check or uncheck the checkbox
         """
-        checkbox = await self.page.wait_for_selector(
-            self.ONLY_TRIGGERED_CHECKBOX, state="attached", timeout=5000
-        )
-        if not checkbox:
-            raise ValueError(
-                f"Could not find only triggered checkbox: {self.ONLY_TRIGGERED_CHECKBOX}"
-            )
-        is_checked = await checkbox.is_checked()
+        checkbox_locator = self.page.locator(self.ONLY_TRIGGERED_CHECKBOX)
+
+        # Wait for checkbox to be attached
+        await checkbox_locator.wait_for(state="attached", timeout=5000)
+
+        # Get current state
+        is_checked = await checkbox_locator.is_checked()
+
         if is_checked != checked:
             # Click the label for better reliability with shadcn Checkbox
-            label = await self.page.query_selector("label[for='only_triggered']")
-            if label:
+            label = self.page.locator("label[for='only_triggered']")
+            if await label.count() > 0:
                 await label.click()
             else:
-                await checkbox.click()
-            # Wait for state to update
-            await self.page.wait_for_timeout(500)
+                await checkbox_locator.click()
+
+            # Wait for checkbox state to match expected value using expect
+            # Playwright's expect has built-in polling and retry logic
+            if checked:
+                await expect(checkbox_locator).to_be_checked(timeout=5000)
+            else:
+                await expect(checkbox_locator).not_to_be_checked(timeout=5000)
 
     async def get_only_triggered_filter_value(self) -> bool:
         """Get the current only triggered filter checkbox state.
@@ -188,8 +203,7 @@ class EventsPage(BasePage):
         """Open the filters section if it's closed."""
         # Wait for the page to fully load first
         await self.page.wait_for_load_state("networkidle")
-        await self.page.wait_for_timeout(1000)  # Give React time to render
-
+        # Wait for React to render the filters by checking for the details element
         details = await self.page.wait_for_selector(self.FILTERS_DETAILS, timeout=10000)
         if not details:
             raise ValueError("Could not find filters details element")
@@ -202,7 +216,6 @@ class EventsPage(BasePage):
 
         # Click to open (or close and re-open if already open)
         await summary.click()
-        await self.page.wait_for_timeout(500)
 
         # Check if we can see the source filter now
         try:
@@ -212,7 +225,10 @@ class EventsPage(BasePage):
         except Exception:
             # If not visible, click again to toggle
             await summary.click()
-            await self.page.wait_for_timeout(500)
+            # Wait for the source filter to become visible after the second click
+            await self.page.wait_for_selector(
+                self.SOURCE_FILTER_TRIGGER, state="visible", timeout=5000
+            )
 
         # Final wait for filters to be visible
         await self.page.wait_for_selector(

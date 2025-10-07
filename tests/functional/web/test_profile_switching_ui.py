@@ -143,9 +143,6 @@ class TestProfileSwitchingUI:
                 await option.click()
                 option_selected = True
 
-                # Wait for the profile change to be applied
-                await page.wait_for_timeout(1000)
-
                 # Wait for the selector to update with new text
                 await page.wait_for_function(
                     f"""() => {{
@@ -190,11 +187,11 @@ class TestProfileSwitchingUI:
         # Click the first available option
         if await profile_options.count() > 0:
             selected_option = profile_options.first
-            await selected_option.text_content()  # Get text for potential future use
             await selected_option.click()
 
-            # Wait for selection to be applied
-            await page.wait_for_timeout(500)
+            # Wait for selection to be applied by checking dropdown closes
+            dropdown = page.locator('[role="listbox"]')
+            await expect(dropdown).to_be_hidden(timeout=5000)
 
             # Refresh the page
             await page.reload()
@@ -232,8 +229,9 @@ class TestProfileSwitchingUI:
             # Select the second option
             await profile_options.nth(1).click()
 
-            # Wait for potential navigation
-            await page.wait_for_timeout(1000)
+            # Wait for dropdown to close after selection
+            dropdown = page.locator('[role="listbox"]')
+            await expect(dropdown).to_be_hidden(timeout=5000)
 
             # Check if URL changed (indicating new conversation)
             # URL should either change or conversation should be reset
@@ -391,8 +389,9 @@ class TestProfileSwitchingUI:
         # Select the first available option
         await profile_options.first.click()
 
-        # Wait for profile to be applied and dropdown to close
-        await page.wait_for_timeout(1000)
+        # Wait for dropdown to close after selection
+        dropdown = page.locator('[role="listbox"]')
+        await expect(dropdown).to_be_hidden(timeout=5000)
 
         # Wait for chat interface to be ready
         await page.wait_for_selector('[data-testid="chat-input"]', timeout=10000)

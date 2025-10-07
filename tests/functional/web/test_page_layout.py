@@ -88,7 +88,17 @@ async def test_navigation_dropdowns_open_and_position(
         except Exception:
             if attempt == 2:
                 raise
-            await page.wait_for_timeout(500)
+            # Wait for dropdown to fully close before retry
+            await page.wait_for_function(
+                """() => {
+                    const buttons = Array.from(document.querySelectorAll('button'));
+                    const btn = buttons.find(b => b.textContent?.includes('Data'));
+                    if (!btn) return true;
+                    const expanded = btn.getAttribute('aria-expanded');
+                    return !expanded || expanded === 'false';
+                }""",
+                timeout=2000,
+            )
 
     # Check that dropdown opened (button should be expanded)
     is_expanded = await data_trigger.get_attribute("aria-expanded")
@@ -136,15 +146,24 @@ async def test_navigation_dropdowns_open_and_position(
             const expanded = dataBtn.getAttribute('aria-expanded');
             // Also check that no dropdown content is visible
             const dropdownContent = document.querySelector('[data-radix-navigation-menu-content]');
-            const isDropdownHidden = !dropdownContent || dropdownContent.style.display === 'none' || 
+            const isDropdownHidden = !dropdownContent || dropdownContent.style.display === 'none' ||
                                      dropdownContent.getAttribute('data-state') === 'closed';
             return (!expanded || expanded === 'false') && isDropdownHidden;
         }""",
         timeout=3000,
     )
 
-    # Add a small delay to ensure CSS transitions and state updates are complete
-    await page.wait_for_timeout(100)
+    # Wait for CSS transitions to complete by checking computed styles are stable
+    await page.wait_for_function(
+        """() => {
+            const dropdownContent = document.querySelector('[data-radix-navigation-menu-content]');
+            if (!dropdownContent) return true;
+            // Check that opacity is 0 or element is not visible
+            const style = getComputedStyle(dropdownContent);
+            return style.opacity === '0' || style.display === 'none' || style.visibility === 'hidden';
+        }""",
+        timeout=1000,
+    )
 
     # Test Internal dropdown with fresh state
     internal_trigger = page.locator("button:has-text('Internal')").first
@@ -209,17 +228,31 @@ async def test_navigation_dropdowns_open_and_position(
                     if (!btn) return true;
                     const expanded = btn.getAttribute('aria-expanded');
                     const dropdownContent = document.querySelector('[data-radix-navigation-menu-content]');
-                    const isDropdownHidden = !dropdownContent || dropdownContent.style.display === 'none' || 
+                    const isDropdownHidden = !dropdownContent || dropdownContent.style.display === 'none' ||
                                            dropdownContent.getAttribute('data-state') === 'closed';
                     return (!expanded || expanded === 'false') && isDropdownHidden;
                 }""",
                 timeout=2000,
             )
-            # Add delay before retry to ensure state is fully reset
-            await page.wait_for_timeout(200)
+            # Wait for state reset to complete - verify button is ready for interaction
+            await page.wait_for_function(
+                """() => {
+                    const buttons = Array.from(document.querySelectorAll('button'));
+                    const btn = buttons.find(b => b.textContent?.includes('Internal'));
+                    if (!btn) return false;
+                    const rect = btn.getBoundingClientRect();
+                    const style = getComputedStyle(btn);
+                    return rect.width > 0 && rect.height > 0 && !btn.disabled &&
+                           style.visibility === 'visible' && style.opacity === '1';
+                }""",
+                timeout=1000,
+            )
 
     # Find the Tools link
     tools_link = page.locator("a:has-text('Tools')")
+
+    # Wait for the Tools link to be visible (in case dropdown is still animating)
+    await tools_link.wait_for(state="visible", timeout=2000)
 
     # The key test: Can we actually see the dropdown content?
     is_tools_visible = await tools_link.is_visible()
@@ -270,20 +303,49 @@ async def test_navigation_responsive_behavior(
 
     # Mobile viewport
     await page.set_viewport_size({"width": 375, "height": 667})
-    await page.wait_for_timeout(500)
 
-    # Mobile should hide desktop nav and show mobile button
-    desktop_nav_hidden = await page.is_hidden("nav[data-orientation='horizontal']")
+    # Wait for layout to stabilize after viewport change
+    # The desktop nav is inside a div with class "hidden md:block"
+    # On mobile, this div should have display: none
+    await page.wait_for_function(
+        """() => {
+            const desktopNav = document.querySelector("nav[data-orientation='horizontal']");
+            if (!desktopNav || !desktopNav.parentElement) return false;
+            // Check the parent div has display: none (it has "hidden md:block" class)
+            const parentStyle = getComputedStyle(desktopNav.parentElement);
+            return parentStyle.display === 'none';
+        }""",
+        timeout=10000,
+    )
 
-    # Look for the mobile menu button - it's a button with sr-only text in mobile nav
-    mobile_button = page.locator(".md\\:hidden button").first
+    # Mobile should hide desktop nav container
+    desktop_nav_container_hidden = await page.is_hidden(
+        "nav[data-orientation='horizontal']"
+    )
+    assert desktop_nav_container_hidden, "Desktop navigation should be hidden on mobile"
+
+    # Find the mobile menu button - it has sr-only text "Open navigation menu"
+    # Use getByRole to find the button by its accessible name
+    mobile_button = page.get_by_role("button", name="Open navigation menu")
     await mobile_button.wait_for(state="visible", timeout=5000)
-
-    assert desktop_nav_hidden, "Desktop navigation should be hidden on mobile"
 
     # Test mobile menu functionality - click the mobile navigation button
     await mobile_button.click()
-    await page.wait_for_timeout(500)
+
+    # Wait for navigation sheet/dialog to open and be visible
+    await page.wait_for_function(
+        """() => {
+            const dialog = document.querySelector("[role='dialog']");
+            const openElement = document.querySelector("[data-state='open']");
+            const element = dialog || openElement;
+            if (!element) return false;
+            const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return style.visibility === 'visible' && style.display !== 'none' &&
+                   rect.width > 0 && rect.height > 0;
+        }""",
+        timeout=3000,
+    )
 
     # Should open navigation sheet/dialog
     navigation_opened = await page.is_visible("[role='dialog'], [data-state='open']")

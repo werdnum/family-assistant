@@ -108,8 +108,11 @@ async def test_documentation_navigation(
         # Click the first doc card
         await doc_cards.first.click()
 
-        # Should navigate to document view
-        await page.wait_for_timeout(2000)
+        # Wait for navigation to complete by waiting for one of the navigation elements to appear
+        await page.wait_for_selector(
+            "button:has-text('Documentation'), [class*='sidebar'], [class*='docNavItem']",
+            timeout=10000,
+        )
 
         # Check URL changed
         assert "/docs/" in page.url
