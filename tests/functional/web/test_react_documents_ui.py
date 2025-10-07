@@ -47,7 +47,7 @@ async def test_react_documents_page_loads(web_test_fixture: WebTestFixture) -> N
     await page.wait_for_function(
         """() => {
             const root = document.getElementById('app-root');
-            return root && root.getAttribute('data-react-mounted') === 'true';
+            return root && root.getAttribute('data-app-ready') === 'true';
         }""",
         timeout=15000,
     )
@@ -118,7 +118,7 @@ async def test_create_document_via_api_and_view_in_react_ui(
     await page.wait_for_function(
         """() => {
             const root = document.getElementById('app-root');
-            return root && root.getAttribute('data-react-mounted') === 'true';
+            return root && root.getAttribute('data-app-ready') === 'true';
         }""",
         timeout=15000,
     )
@@ -193,7 +193,7 @@ async def test_multiple_documents_display_in_react_ui(
     await page.wait_for_function(
         """() => {
             const root = document.getElementById('app-root');
-            return root && root.getAttribute('data-react-mounted') === 'true';
+            return root && root.getAttribute('data-app-ready') === 'true';
         }""",
         timeout=15000,
     )
@@ -261,7 +261,7 @@ async def test_document_search_in_react_ui(
     await page.wait_for_function(
         """() => {
             const root = document.getElementById('app-root');
-            return root && root.getAttribute('data-react-mounted') === 'true';
+            return root && root.getAttribute('data-app-ready') === 'true';
         }""",
         timeout=15000,
     )
@@ -341,7 +341,7 @@ async def test_document_detail_navigation_in_react_ui(
     await page.wait_for_function(
         """() => {
             const root = document.getElementById('app-root');
-            return root && root.getAttribute('data-react-mounted') === 'true';
+            return root && root.getAttribute('data-app-ready') === 'true';
         }""",
         timeout=15000,
     )

@@ -16,9 +16,16 @@ const ToolsApp = () => {
   const editorInstanceRef = useRef(null);
   const JSONEditorRef = useRef(null);
 
-  // Set the page title
+  // Set the page title and signal app is ready
   useEffect(() => {
     document.title = 'Tools - Family Assistant';
+
+    // Signal that app is ready (for tests)
+    document.getElementById('app-root')?.setAttribute('data-app-ready', 'true');
+
+    return () => {
+      document.getElementById('app-root')?.removeAttribute('data-app-ready');
+    };
   }, []);
 
   // Fetch available tools

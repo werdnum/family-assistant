@@ -301,6 +301,9 @@ class Assistant:
         self.fastapi_app.state.message_notifier = message_notifier
         logger.info("MessageNotifier created and stored in FastAPI app state")
 
+        # Store shutdown event for SSE and other async endpoints
+        self.fastapi_app.state.shutdown_event = self.shutdown_event
+
         self.shared_httpx_client = httpx.AsyncClient()
         logger.info("Shared httpx.AsyncClient created.")
 

@@ -18,8 +18,7 @@ function mountApp() {
         </ThemeProvider>
       </React.StrictMode>
     );
-    // Add a data attribute to indicate React has mounted (used by tests)
-    container.setAttribute('data-react-mounted', 'true');
+    // Note: Individual apps (ChatApp, ToolsApp, etc.) set data-app-ready when they're fully initialized
   } else {
     console.error('Could not find app-root element');
   }

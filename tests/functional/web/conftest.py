@@ -616,12 +616,11 @@ async def web_test_fixture(
     base_url = f"http://localhost:{api_port}"
 
     # Navigate to base URL for test readiness
-    # Wait for React to mount and the router to be initialized
     await page.goto(base_url)
-    await page.wait_for_load_state("networkidle", timeout=15000)
 
-    # Wait for React to finish mounting the router
-    await page.wait_for_selector('[data-react-mounted="true"]', timeout=10000)
+    # Wait for React to finish mounting - this is the key indicator the app is ready
+    # Note: We cannot wait for "networkidle" because SSE keeps connections open
+    await page.wait_for_selector('[data-app-ready="true"]', timeout=10000)
     print("React router mounted and ready")
 
     fixture = WebTestFixture(
@@ -692,12 +691,11 @@ async def web_test_fixture_readonly(
     base_url = f"http://localhost:{api_port}"
 
     # Navigate to base URL for test readiness
-    # Wait for React to mount and the router to be initialized
     await page.goto(base_url)
-    await page.wait_for_load_state("networkidle", timeout=15000)
 
-    # Wait for React to finish mounting the router
-    await page.wait_for_selector('[data-react-mounted="true"]', timeout=10000)
+    # Wait for React to finish mounting - this is the key indicator the app is ready
+    # Note: We cannot wait for "networkidle" because SSE keeps connections open
+    await page.wait_for_selector('[data-app-ready="true"]', timeout=10000)
     print("React router mounted and ready")
 
     fixture = WebTestFixture(

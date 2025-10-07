@@ -16,13 +16,12 @@ async def test_tools_page_loads(web_test_fixture_readonly: WebTestFixture) -> No
     await page.goto(f"{base_url}/tools")
 
     # Wait for the page to be fully loaded
-    await page.wait_for_load_state("networkidle")
 
     # Wait for React app to mount first
     await page.wait_for_function(
         """() => {
             const root = document.getElementById('app-root');
-            return root && root.getAttribute('data-react-mounted') === 'true';
+            return root && root.getAttribute('data-app-ready') === 'true';
         }""",
         timeout=15000,
     )
@@ -70,13 +69,13 @@ async def test_tools_list_loads(web_test_fixture_readonly: WebTestFixture) -> No
 
     # Navigate to tools page
     await page.goto(f"{base_url}/tools")
-    await page.wait_for_load_state("networkidle")
+    await page.wait_for_load_state("networkidle", timeout=5000)
 
     # Wait for React app to mount first
     await page.wait_for_function(
         """() => {
             const root = document.getElementById('app-root');
-            return root && root.getAttribute('data-react-mounted') === 'true';
+            return root && root.getAttribute('data-app-ready') === 'true';
         }""",
         timeout=15000,
     )
@@ -113,13 +112,13 @@ async def test_tool_execution_interface(
 
     # Navigate to tools page
     await page.goto(f"{base_url}/tools")
-    await page.wait_for_load_state("networkidle")
+    await page.wait_for_load_state("networkidle", timeout=5000)
 
     # Wait for React app to mount first
     await page.wait_for_function(
         """() => {
             const root = document.getElementById('app-root');
-            return root && root.getAttribute('data-react-mounted') === 'true';
+            return root && root.getAttribute('data-app-ready') === 'true';
         }""",
         timeout=15000,
     )
@@ -170,13 +169,13 @@ async def test_responsive_design(web_test_fixture_readonly: WebTestFixture) -> N
 
     # Navigate to tools page
     await page.goto(f"{base_url}/tools")
-    await page.wait_for_load_state("networkidle")
+    await page.wait_for_load_state("networkidle", timeout=5000)
 
     # Wait for React app to mount first
     await page.wait_for_function(
         """() => {
             const root = document.getElementById('app-root');
-            return root && root.getAttribute('data-react-mounted') === 'true';
+            return root && root.getAttribute('data-app-ready') === 'true';
         }""",
         timeout=15000,
     )
@@ -213,13 +212,13 @@ async def test_no_javascript_errors(web_test_fixture_readonly: WebTestFixture) -
 
     # Navigate to tools page
     await page.goto(f"{base_url}/tools")
-    await page.wait_for_load_state("networkidle")
+    await page.wait_for_load_state("networkidle", timeout=5000)
 
     # Wait for React app to mount first
     await page.wait_for_function(
         """() => {
             const root = document.getElementById('app-root');
-            return root && root.getAttribute('data-react-mounted') === 'true';
+            return root && root.getAttribute('data-app-ready') === 'true';
         }""",
         timeout=15000,
     )
