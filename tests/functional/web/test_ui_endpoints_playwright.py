@@ -316,8 +316,8 @@ async def test_form_interactions(
     search_button = page.locator('button[type="submit"], button:has-text("Search")')
     if await search_button.count() > 0:
         await search_button.first.click()
-        # Wait for any response
-        await page.wait_for_timeout(1000)
+        # Wait for search to complete - the page makes an API call and updates the DOM
+        await page.wait_for_load_state("networkidle", timeout=10000)
 
     # Assert no console errors
     console_error_checker.assert_no_errors()

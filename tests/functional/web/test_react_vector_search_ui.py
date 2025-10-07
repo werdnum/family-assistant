@@ -103,17 +103,17 @@ async def test_search_documents_via_react_ui(
     search_button = page.locator("button:has-text('Search')")
     await search_button.click()
 
-    # Step 4: Wait for search results
-    # Give time for the search to complete and results to render
-    await page.wait_for_timeout(3000)
+    # Step 4: Wait for search to complete
+    # Vector search requires embeddings generation which is async
+    # The search button is disabled while loading (line 369 in VectorSearch.jsx)
+    # and re-enabled when search completes
+    await expect(search_button).to_be_enabled(timeout=15000)
 
     # Check if we have results or an appropriate message
     page_content = await page.text_content("body")
     assert page_content is not None, "Page content should not be None"
 
     # The search should return at least the neural networks document
-    # Note: Vector search requires embeddings to be generated, which happens async
-    # So we check for either results or a "no results" message
     has_results = "Deep Learning with Neural Networks" in page_content
     has_no_results = "No results found" in page_content
 
@@ -122,11 +122,12 @@ async def test_search_documents_via_react_ui(
     )
 
     # Step 5: Test filtering by source type
-    # Click on advanced options if available
+    # Click on advanced options if available (just to test the UI interaction)
     advanced_options = page.locator("details summary:has-text('Advanced Options')")
     if await advanced_options.is_visible():
         await advanced_options.click()
-        await page.wait_for_timeout(500)
+        # No need to wait - the next interaction is with source type filters
+        # which are outside the advanced options section
 
     # Check if source type filters are visible and click the label
     # We click the label because the input itself is hidden for styling purposes
@@ -184,8 +185,9 @@ async def test_vector_search_with_filters(
     search_button = page.locator("button:has-text('Search')")
     await search_button.click()
 
-    # Wait for results
-    await page.wait_for_timeout(2000)
+    # Wait for search to complete
+    # The search button is disabled while loading and re-enabled when search completes
+    await expect(search_button).to_be_enabled(timeout=15000)
 
     # Verify the page doesn't show an error
     error_elements = page.locator(".error, [class*='error']")
@@ -212,19 +214,16 @@ async def test_vector_search_empty_query_handling(
     search_button = page.locator("button:has-text('Search')")
     await search_button.click()
 
-    # Should show an error or not perform search
-    await page.wait_for_timeout(1000)
+    # Should show an error message for empty query
+    # The error is displayed as "Error: Please enter a search query" in an Alert component
+    error_alert = page.locator("text='Error: Please enter a search query'")
+    await expect(error_alert).to_be_visible(timeout=5000)
 
-    # Check for error message
+    # Verify the error message is displayed
     page_content = await page.text_content("body")
     assert page_content is not None
-
-    # Should either show an error about empty query or no results
-    has_error = "Please enter a search query" in page_content
-    has_no_action = "Results" not in page_content or "No results" in page_content
-
-    assert has_error or has_no_action, (
-        "Empty search should either show error or not perform search"
+    assert "Please enter a search query" in page_content, (
+        "Empty search should show 'Please enter a search query' error"
     )
 
 
@@ -266,8 +265,14 @@ async def test_vector_search_result_links(
     search_button = page.locator("button:has-text('Search')")
     await search_button.click()
 
-    # Wait for results
-    await page.wait_for_timeout(3000)
+    # Wait for search to complete - either results or no results message
+    try:  # noqa: SIM105  # Try-except is clearer than suppress for conditional waits
+        await page.wait_for_selector(
+            "text='Results', text='No results found'", timeout=10000, state="visible"
+        )
+    except Exception:
+        # Search may have completed without clear indicator
+        pass
 
     # Check if results contain document links
     # The document detail link should point to /documents/{id}
