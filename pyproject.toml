@@ -147,8 +147,8 @@ dev = [
     "pytest-playwright-asyncio>=0.2.0"
 ]
 local-embeddings = [
-    "sentence-transformers>=2.7.0",
-    "torch>=2.0.0",
+    "sentence-transformers>=3.0.1",
+    "torch>=2.4.0",
 ]
 
 [project.scripts]
@@ -383,4 +383,12 @@ dev-dependencies = [
     "pytest-rerunfailures>=16.0.1",
     "pytest-xdist>=3.7.0",
 ]
+
+[[tool.uv.index]]
+name = "torch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "torch-cpu" }
 
