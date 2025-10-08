@@ -54,9 +54,68 @@ async def run_command(
         return -1, "", str(e), duration
 
 
-async def lint_python_file(file_path: str) -> list[LintResult]:
+async def run_hints(
+    file_path: str, tool_name: str, tool_input: dict[str, Any]
+) -> LintResult:
+    """Run hints checker and filter to only new/changed code."""
+    cmd = [".ast-grep/check-hints.py", "--json", file_path]
+    returncode, stdout, stderr, duration = await run_command(cmd, timeout=2.0)
+
+    if returncode != 0 or not stdout:
+        # No hints or error - always succeed
+        return LintResult("hints", True, duration)
+
+    try:
+        hints = json.loads(stdout) if stdout else []
+        if not hints:
+            return LintResult("hints", True, duration)
+
+        # Filter hints based on tool type
+        filtered_hints = []
+
+        if tool_name == "Edit":
+            # For Edit: only show hints where matched code appears in new_string
+            new_string = tool_input.get("new_string", "")
+            for hint in hints:
+                matched_text = hint.get("text", "")
+                if matched_text and matched_text in new_string:
+                    filtered_hints.append(hint)
+
+        elif tool_name == "Write":
+            # For Write: only show hints if file is not tracked by git (new file)
+            check_cmd = ["git", "ls-files", "--error-unmatch", file_path]
+            returncode, _, _, _ = await run_command(check_cmd, timeout=1.0)
+            if returncode != 0:
+                # File not tracked - show all hints
+                filtered_hints = hints
+
+        if filtered_hints:
+            output = f"Code hints for {file_path}:\n"
+            for hint in filtered_hints:
+                line = hint.get("range", {}).get("start", {}).get("line", "?")
+                rule_id = hint.get("ruleId", "unknown")
+                message = hint.get("message", "")
+                output += f"  Line {line}: 💡 [{rule_id}] {message}\n"
+
+            return LintResult(
+                "hints",
+                success=True,  # Hints never fail
+                duration=duration,
+                output=output.strip(),
+            )
+
+        return LintResult("hints", True, duration)
+
+    except json.JSONDecodeError:
+        return LintResult("hints", True, duration)
+
+
+async def lint_python_file(
+    file_path: str, tool_name: str = "", tool_input: dict[str, Any] | None = None
+) -> list[LintResult]:
     """Run fast Python linters on a file in parallel."""
     venv = os.environ.get("VIRTUAL_ENV", ".venv")
+    tool_input = tool_input or {}
 
     # Define all linter tasks
     async def run_code_conformance() -> LintResult:
@@ -175,6 +234,7 @@ async def lint_python_file(file_path: str) -> list[LintResult]:
         run_ruff_check(),
         run_basedpyright(),
         run_code_conformance(),
+        run_hints(file_path, tool_name, tool_input),
     ]
 
     other_results = await asyncio.gather(*other_tasks)
@@ -309,7 +369,7 @@ async def main() -> None:
             file_ext = Path(file_path).suffix.lower()
 
             if file_ext == ".py":
-                results = await lint_python_file(file_path)
+                results = await lint_python_file(file_path, tool_name, tool_input)
             elif file_ext in {".js", ".jsx", ".ts", ".tsx"}:
                 results = await lint_javascript_file(file_path)
             else:
