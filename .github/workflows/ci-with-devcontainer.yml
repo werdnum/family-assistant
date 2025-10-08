@@ -135,7 +135,7 @@ jobs:
     needs: [prepare, detect-changes]
     if: needs.detect-changes.outputs.dockerfile_changes == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 120
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -151,8 +151,11 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:pr-${{ github.event.pull_request.number || 'local' }}
           cache-from: |
+            type=gha
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:main
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:buildcache
+          cache-to: |
+            type=gha,mode=max
   lint:
     needs: [prepare, build-ci-container, detect-changes]
     if: |
