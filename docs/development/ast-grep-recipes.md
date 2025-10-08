@@ -228,9 +228,85 @@ rule:
 - `not: {...}` - Match if rule doesn't match
 - `has: {...}` - Match if contains pattern
 
+## Code Conformance Rules
+
+This project uses ast-grep for code conformance checking - enforcing banned patterns to maintain
+code quality.
+
+### How It Works
+
+Code conformance rules are defined in `.ast-grep/rules/` and enforced at multiple points:
+
+- **Pre-commit hooks**: Blocks commits with new violations
+- **`poe lint`**: Includes conformance checking
+- **Claude lint hook**: Shows violations after edits
+
+### Example: Banning asyncio.sleep() in Tests
+
+**Rule file** (`.ast-grep/rules/no-asyncio-sleep-in-tests.yml`):
+
+```yaml
+id: no-asyncio-sleep-in-tests
+language: python
+severity: error
+message: "Avoid asyncio.sleep() in tests - use wait_for_condition() helper instead"
+note: |
+  Using asyncio.sleep() leads to flaky tests. Use wait_for_condition() instead.
+rule:
+  pattern: asyncio.sleep($$$)
+```
+
+**Checking for violations**:
+
+```bash
+# Check all files
+scripts/check-conformance.sh
+
+# Check specific files
+scripts/check-conformance.sh tests/my_test.py
+```
+
+### Adding Exemptions
+
+When you legitimately need a banned pattern, add an exemption:
+
+**Inline exemption** (single line):
+
+```python
+# ast-grep-ignore: no-asyncio-sleep-in-tests - Mock simulates API delay
+await asyncio.sleep(0.1)
+```
+
+**Block exemption** (multiple lines):
+
+```python
+# ast-grep-ignore-block: no-asyncio-sleep-in-tests - Mock implementation
+async def mock_api_call():
+    await asyncio.sleep(0.05)
+    return data
+# ast-grep-ignore-end
+```
+
+**File-level exemption** (`.ast-grep/exemptions.yml`):
+
+```yaml
+exemptions:
+  - rule: no-asyncio-sleep-in-tests
+    files:
+      - tests/helpers.py
+      - tests/mocks/*.py
+    reason: "Test infrastructure legitimately needs sleep"
+```
+
+### Documentation
+
+- [Code conformance rules](../../.ast-grep/rules/README.md) - Active rules and how to use them
+- [Exemptions guide](../../.ast-grep/EXEMPTIONS.md) - How to add and manage exemptions
+
 ## Tips
 
 1. **Test patterns first**: Use `ast-grep` without `-U` to see what matches
 2. **Start simple**: Build complex rules incrementally
 3. **Use YAML files**: For reusable rules, save to `.yml` files
 4. **Check before applying**: Always review matches before using `-U` (update mode)
+5. **Audit exemptions**: Run `scripts/audit-conformance-exemptions.sh` to review technical debt

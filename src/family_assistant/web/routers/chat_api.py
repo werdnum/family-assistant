@@ -113,28 +113,24 @@ async def _process_user_attachments(
                             )
 
                         # Add image content for LLM processing using the content_url
-                        trigger_content_parts.append(
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": attachment_record.content_url},
-                            }
-                        )
+                        trigger_content_parts.append({
+                            "type": "image_url",
+                            "image_url": {"url": attachment_record.content_url},
+                        })
 
                         # Store attachment metadata for message history
-                        trigger_attachments.append(
-                            {
-                                "type": attachment.get("type", "image"),
-                                "attachment_id": attachment_record.attachment_id,
-                                "url": attachment_record.content_url,
-                                "content_url": attachment_record.content_url,
-                                "mime_type": attachment_record.mime_type,
-                                "description": attachment_record.description,
-                                "filename": attachment_record.metadata.get(
-                                    "original_filename", "unknown"
-                                ),
-                                "size": attachment_record.size,
-                            }
-                        )
+                        trigger_attachments.append({
+                            "type": attachment.get("type", "image"),
+                            "attachment_id": attachment_record.attachment_id,
+                            "url": attachment_record.content_url,
+                            "content_url": attachment_record.content_url,
+                            "mime_type": attachment_record.mime_type,
+                            "description": attachment_record.description,
+                            "filename": attachment_record.metadata.get(
+                                "original_filename", "unknown"
+                            ),
+                            "size": attachment_record.size,
+                        })
 
                     else:
                         # Legacy flow: Handle base64 data (for backwards compatibility)
@@ -193,26 +189,22 @@ async def _process_user_attachments(
                         )
 
                         # Add image content for LLM processing using the content_url
-                        trigger_content_parts.append(
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": attachment_record.content_url},
-                            }
-                        )
+                        trigger_content_parts.append({
+                            "type": "image_url",
+                            "image_url": {"url": attachment_record.content_url},
+                        })
 
                         # Store attachment metadata for message history with stable attachment_id
-                        trigger_attachments.append(
-                            {
-                                "type": attachment.get("type", "image"),
-                                "attachment_id": attachment_record.attachment_id,
-                                "url": attachment_record.content_url,
-                                "content_url": attachment_record.content_url,
-                                "mime_type": attachment_record.mime_type,
-                                "description": attachment_record.description,
-                                "filename": filename,
-                                "size": attachment_record.size,
-                            }
-                        )
+                        trigger_attachments.append({
+                            "type": attachment.get("type", "image"),
+                            "attachment_id": attachment_record.attachment_id,
+                            "url": attachment_record.content_url,
+                            "content_url": attachment_record.content_url,
+                            "mime_type": attachment_record.mime_type,
+                            "description": attachment_record.description,
+                            "filename": filename,
+                            "size": attachment_record.size,
+                        })
 
                 except (ValueError, binascii.Error) as e:
                     # Invalid base64 or data URL format
@@ -653,17 +645,14 @@ async def get_conversation_messages(
                                 )
                             )
                             if att_metadata:
-                                attachments.append(
-                                    {
-                                        "id": att_id,
-                                        "type": "image",
-                                        "name": att_metadata.description
-                                        or "Attachment",
-                                        "content": f"/api/attachments/{att_id}",
-                                        "mime_type": att_metadata.mime_type,
-                                        "size": att_metadata.size,
-                                    }
-                                )
+                                attachments.append({
+                                    "id": att_id,
+                                    "type": "image",
+                                    "name": att_metadata.description or "Attachment",
+                                    "content": f"/api/attachments/{att_id}",
+                                    "mime_type": att_metadata.mime_type,
+                                    "size": att_metadata.size,
+                                })
                         except Exception as e:
                             logger.warning(
                                 f"Failed to fetch attachment metadata for {att_id}: {e}"
@@ -826,30 +815,26 @@ async def api_chat_send_message_stream(
                 )
 
                 # Queue confirmation request event for client
-                await confirmation_queue.put(
-                    {
-                        "type": "confirmation_request",
-                        "request_id": request_id,
-                        "tool_name": tool_name,
-                        "tool_call_id": tool_call_id,
-                        "confirmation_prompt": confirmation_prompt,
-                        "timeout_seconds": timeout_seconds,
-                        "args": tool_args,
-                    }
-                )
+                await confirmation_queue.put({
+                    "type": "confirmation_request",
+                    "request_id": request_id,
+                    "tool_name": tool_name,
+                    "tool_call_id": tool_call_id,
+                    "confirmation_prompt": confirmation_prompt,
+                    "timeout_seconds": timeout_seconds,
+                    "args": tool_args,
+                })
 
                 # Wait for user response
                 try:
                     approved = await future
 
                     # Queue confirmation result event
-                    await confirmation_queue.put(
-                        {
-                            "type": "confirmation_result",
-                            "request_id": request_id,
-                            "approved": approved,
-                        }
-                    )
+                    await confirmation_queue.put({
+                        "type": "confirmation_result",
+                        "request_id": request_id,
+                        "approved": approved,
+                    })
 
                     return approved
                 except asyncio.CancelledError:
@@ -884,12 +869,10 @@ async def api_chat_send_message_stream(
                         if event.type == "error":
                             logger.error(f"Stream event error: {event.error}")
                         # Add events to queue
-                        await confirmation_queue.put(
-                            {
-                                "type": "stream_event",
-                                "event": event,
-                            }
-                        )
+                        await confirmation_queue.put({
+                            "type": "stream_event",
+                            "event": event,
+                        })
 
                     # Signal end of stream
                     await confirmation_queue.put({"type": "stream_end"})

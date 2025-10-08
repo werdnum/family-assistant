@@ -1,0 +1,23 @@
+id: no-asyncio-sleep-in-tests
+language: python
+severity: error
+message: "Avoid asyncio.sleep() in tests - use wait_for_condition() helper instead"
+note: |
+  Using asyncio.sleep() in tests leads to flaky tests and slow test suites.
+
+  Instead, use the wait_for_condition() helper from tests/helpers.py:
+
+    from tests.helpers import wait_for_condition
+
+    # Wait for a condition to be true
+    await wait_for_condition(
+        lambda: check_some_state(),
+        timeout_seconds=5.0,
+        poll_interval_seconds=0.1
+    )
+
+  For exemptions, add a comment above the line:
+    # ast-grep-ignore: no-asyncio-sleep-in-tests - Simulating hardware timeout
+rule:
+  pattern: asyncio.sleep($$$)
+
