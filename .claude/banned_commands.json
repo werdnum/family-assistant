@@ -94,6 +94,10 @@
   {
     "regexp": "\\brm\\b.*\\.poe-test\\.lock",
     "explanation": "Do not remove the test lock file. It protects against concurrent test runs and will be released automatically when tests complete. If tests appear stuck, investigate the running process instead."
+  },
+  {
+    "regexp": "\\bcat\\s+>.*<<",
+    "explanation": "Use the Write tool to create files instead of cat with heredocs. The Write tool is more reliable and doesn't require approval for each attempt."
   }
 ]
 

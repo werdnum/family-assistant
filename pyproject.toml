@@ -300,7 +300,7 @@ from_attributes = true
 strict = false
 
 [tool.ruff]
-extend-exclude = ["alembic/**", "docs/**"]
+extend-exclude = ["alembic/**", "docs/**", ".ast-grep/tests/**"]
 
 [tool.ruff.lint]
 select = [
@@ -367,6 +367,7 @@ exclude = [
     "alembic/**",
     "docs/**",
     "contrib/**",
+    ".ast-grep/tests/**",
 ]
 extraPaths = ["src"] # Add src to the import search paths
 

@@ -11,6 +11,9 @@ py-version=3.11
 # Discover python modules and packages in the file system subtree.
 recursive=yes
 
+# Ignore paths
+ignore-paths=^\.ast-grep/tests/.*$
+
 [MESSAGES CONTROL]
 # Enable errors (E) and warnings (W), disable others
 disable=

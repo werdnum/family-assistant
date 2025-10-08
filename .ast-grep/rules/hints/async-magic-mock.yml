@@ -1,0 +1,30 @@
+id: async-magic-mock
+language: python
+severity: hint
+message: "Consider using AsyncMock instead of MagicMock in async functions"
+note: |
+  MagicMock doesn't properly handle async methods. When mocking in async test functions,
+  use AsyncMock instead.
+
+  Example:
+    # ❌ MagicMock in async function - won't work correctly with async methods
+    async def test_something():
+        mock_service = MagicMock()
+
+    # ✅ AsyncMock properly handles async methods
+    async def test_something():
+        mock_service = AsyncMock()
+
+  Note: This is a hint, not a hard error. However, using MagicMock in async contexts
+  will likely cause test failures when the mock is used with 'await'.
+rule:
+  all:
+    - any:
+        - pattern: MagicMock($$$)
+        - pattern: Mock($$$)
+    - inside:
+        stopBy: end
+        pattern:
+          context: 'async def $FUNC($$$): $$$'
+          selector: function_definition
+

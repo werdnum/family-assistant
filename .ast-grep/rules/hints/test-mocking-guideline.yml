@@ -1,0 +1,36 @@
+id: test-mocking-guideline
+language: python
+severity: hint
+message: "Consider using real objects instead of mocks when practical"
+note: |
+  Project guidelines strongly recommend using real or fake implementations instead of mocks
+  for better test reliability and maintainability.
+
+  Preferred approach:
+    1. Real objects: Use actual implementations when they're lightweight and don't have
+       external dependencies
+    2. Fake implementations: Create test doubles that implement the same interface
+    3. Mocks: Only for truly external dependencies (e.g., Telegram API, external HTTP services)
+
+  Examples:
+
+    # ❌ Mocking internal services
+    async def test_note_creation():
+        mock_db = MagicMock()
+        service = NoteService(mock_db)
+
+    # ✅ Using real database with test fixtures
+    async def test_note_creation(db_context):
+        service = NoteService(db_context)  # Real implementation
+
+    # ✅ Using fake for external service
+    async def test_telegram_bot():
+        fake_telegram = FakeTelegramClient()  # Fake implementation
+
+  This is a reminder, not a hard requirement. Use judgment based on the specific test needs.
+rule:
+  any:
+    - pattern: Mock($$$)
+    - pattern: MagicMock($$$)
+    - pattern: AsyncMock($$$)
+
