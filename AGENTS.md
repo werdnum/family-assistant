@@ -80,7 +80,13 @@ scripts/format-and-lint.sh path/to/file.py path/to/another.py
 scripts/format-and-lint.sh $(git diff --name-only --cached | grep '\.py$')
 ```
 
-This script runs: `ruff check --fix`, `ruff format`, `basedpyright`, and `pylint`.
+This script runs: `ruff check --fix`, `ruff format`, `basedpyright`, `pylint`, and code conformance
+checks.
+
+**Code Conformance**: The project uses ast-grep to enforce pattern-based rules (e.g., banning
+`asyncio.sleep()` in tests). Rules are defined in `.ast-grep/rules/`. See
+[.ast-grep/rules/README.md](.ast-grep/rules/README.md) for active rules and
+[.ast-grep/EXEMPTIONS.md](.ast-grep/EXEMPTIONS.md) for exemption guidance.
 
 **IMPORTANT**: `scripts/format-and-lint.sh` MUST pass before committing. NEVER use
 `git commit --no-verify` -- all lint failures must be fixed or properly disabled.
@@ -217,8 +223,12 @@ overview of:
 - **No Mutable Global State**: Except in the very outer layer of the application.
 - **Repository Pattern**: Data access logic encapsulated in repository classes, accessed via
   DatabaseContext
-- **Dependency Injection**: Non-trivial objects with external dependencies should be created using dependency injection. Core services should accept dependencies as constructor arguments rather than creating them internally.
-- **Testing with Real/Fake Dependencies**: Prefer using real or fake dependencies over mocks in tests, especially functional tests. Mocks should only be used for external services where fakes are not practical (e.g., Telegram). This ensures tests are more realistic and less brittle.
+- **Dependency Injection**: Non-trivial objects with external dependencies should be created using
+  dependency injection. Core services should accept dependencies as constructor arguments rather
+  than creating them internally.
+- **Testing with Real/Fake Dependencies**: Prefer using real or fake dependencies over mocks in
+  tests, especially functional tests. Mocks should only be used for external services where fakes
+  are not practical (e.g., Telegram). This ensures tests are more realistic and less brittle.
 - **Protocol-based Interfaces**: Uses Python protocols for loose coupling (ChatInterface,
   LLMInterface, EmbeddingGenerator)
 - **Async/Await**: Fully asynchronous architecture using asyncio
