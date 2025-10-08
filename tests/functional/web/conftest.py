@@ -826,6 +826,62 @@ def console_error_checker(web_test_fixture: WebTestFixture) -> ConsoleErrorColle
     return ConsoleErrorCollector(web_test_fixture.page)
 
 
+@pytest_asyncio.fixture
+async def web_test_with_console_check(
+    web_test_fixture: WebTestFixture,
+    console_error_checker: ConsoleErrorCollector,
+) -> AsyncGenerator[WebTestFixture, None]:
+    """Web test fixture with automatic console error checking after page cleanup.
+
+    This fixture ensures proper sequencing:
+    1. Test runs with web_test_fixture
+    2. Page is closed (SSE connections terminated cleanly)
+    3. Console errors are checked
+
+    Use this for tests that should fail on any console errors.
+    """
+    yield web_test_fixture
+
+    # Teardown runs after test completes
+    # Close page to cleanly terminate SSE connections before checking console errors
+    print("Closing page to terminate SSE connections...")
+    try:
+        await web_test_fixture.page.close()
+    except Exception as e:
+        print(f"Warning: Error closing page during console check teardown: {e}")
+
+    # Now check for console errors - SSE connections are cleanly closed
+    console_error_checker.assert_no_errors()
+
+
+@pytest_asyncio.fixture
+async def web_test_readonly_with_console_check(
+    web_test_fixture_readonly: WebTestFixture,
+    console_error_checker: ConsoleErrorCollector,
+) -> AsyncGenerator[WebTestFixture, None]:
+    """Readonly web test fixture with automatic console error checking after page cleanup.
+
+    This fixture ensures proper sequencing:
+    1. Test runs with web_test_fixture_readonly
+    2. Page is closed (SSE connections terminated cleanly)
+    3. Console errors are checked
+
+    Use this for read-only tests that should fail on any console errors.
+    """
+    yield web_test_fixture_readonly
+
+    # Teardown runs after test completes
+    # Close page to cleanly terminate SSE connections before checking console errors
+    print("Closing page to terminate SSE connections...")
+    try:
+        await web_test_fixture_readonly.page.close()
+    except Exception as e:
+        print(f"Warning: Error closing page during console check teardown: {e}")
+
+    # Now check for console errors - SSE connections are cleanly closed
+    console_error_checker.assert_no_errors()
+
+
 @pytest.fixture(scope="session")
 def connect_options() -> dict[str, str] | None:
     """Configure Playwright browser connection options.
