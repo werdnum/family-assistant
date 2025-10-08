@@ -43,7 +43,7 @@ check_test_status() {
             file="${file%\"}"
 
             # Skip excluded paths
-            if echo "$file" | grep -qE '(^(docs/|\.claude/|\.github/|deploy/|contrib/|scripts/review-changes\.(py|sh)|scripts/format-and-lint\.sh|\.pre-commit-config\.yaml|\.gitignore|\.dockerignore|scratch/|tmp/|README|LICENSE|CHANGELOG)|\.(md|txt)$)'; then
+            if echo "$file" | grep -qE '(^(docs/|\.claude/|\.github/|deploy/|contrib/|scripts/review-changes\.(py|sh)|scripts/format-and-lint\.sh|\.pre-commit-config\.yaml|\.gitignore|\.dockerignore|scratch/|tmp/|README|LICENSE|CHANGELOG|Dockerfile$|\.devcontainer/Dockerfile$|\.devcontainer/Dockerfile\.ci$)|\.(md|txt)$)'; then
                 continue
             fi
 
@@ -114,7 +114,10 @@ check_test_status() {
                 tmp/|
                 README|
                 LICENSE|
-                CHANGELOG
+                CHANGELOG|
+                ^Dockerfile$|
+                ^\\.devcontainer/Dockerfile$|
+                ^\\.devcontainer/Dockerfile\\.ci$
             )"; "ix") | not)
         ) |
         {id: .id, name: .name, file: .input.file_path}
