@@ -233,47 +233,41 @@ async def lint_javascript_file(file_path: str) -> list[LintResult]:
     return list(results)
 
 
-def format_results(file_path: str, results: list[LintResult]) -> dict[str, Any]:
-    """Format lint results for output."""
+def format_results(file_path: str, results: list[LintResult]) -> dict[str, Any] | None:
+    """Format lint results for output. Returns None if all checks passed."""
     total_duration = sum(r.duration for r in results)
     has_errors = any(not r.success for r in results)
     has_auto_fixable = any(r.auto_fixable for r in results)
 
+    # Only provide feedback if there are actual issues
+    if not has_errors:
+        return None
+
     output_lines = []
+    output_lines.append(f"🔍 Lint issues in {file_path} ({total_duration:.2f}s)")
+    output_lines.append("")
 
-    if has_errors:
-        output_lines.append(f"🔍 Lint issues in {file_path} ({total_duration:.2f}s)")
-        output_lines.append("")
+    for result in results:
+        if not result.success:
+            output_lines.append(f"❌ {result.name} ({result.duration:.2f}s)")
+            if result.output:
+                # Indent the output
+                for line in result.output.split("\n"):
+                    if line.strip():
+                        output_lines.append(f"   {line}")
+            output_lines.append("")
 
-        for result in results:
-            if not result.success:
-                output_lines.append(f"❌ {result.name} ({result.duration:.2f}s)")
-                if result.output:
-                    # Indent the output
-                    for line in result.output.split("\n"):
-                        if line.strip():
-                            output_lines.append(f"   {line}")
-                output_lines.append("")
+    if has_auto_fixable:
+        output_lines.append("💡 Some issues can be auto-fixed")
 
-        if has_auto_fixable:
-            output_lines.append("💡 Some issues can be auto-fixed")
-
-        output_lines.append("")
-        output_lines.append("ℹ️  Note: It's okay to temporarily ignore these if you're")
-        output_lines.append(
-            "   actively working on related changes that will fix them."
-        )
-    else:
-        # All checks passed - brief success message
-        linter_names = [r.name for r in results]
-        output_lines.append(
-            f"✅ {file_path}: {', '.join(linter_names)} ({total_duration:.2f}s)"
-        )
+    output_lines.append("")
+    output_lines.append("ℹ️  Note: It's okay to temporarily ignore these if you're")
+    output_lines.append("   actively working on related changes that will fix them.")
 
     return {
         "hookSpecificOutput": {
             "hookEventName": "PostToolUse",
-            "additionalContext": "\n".join(output_lines) if output_lines else None,
+            "additionalContext": "\n".join(output_lines),
         }
     }
 
@@ -335,7 +329,7 @@ async def main() -> None:
             combined_output = []
             for file_path, results in all_results.items():
                 formatted = format_results(file_path, results)
-                if formatted["hookSpecificOutput"]["additionalContext"]:
+                if formatted is not None:
                     combined_output.append(
                         formatted["hookSpecificOutput"]["additionalContext"]
                     )
