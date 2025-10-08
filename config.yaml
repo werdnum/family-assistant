@@ -251,7 +251,7 @@ service_profiles:
       provider: "google"
       llm_model: "gemini-2.5-pro"
       prompts:
-        system_prompt: "You are an automated event handler assistant. You are responding to events from scripts and automations. Provide clear, concise responses focused on the event context. Current time is {current_time}."
+        system_prompt: "You are an automated event handler assistant. You are responding to events from scripts and automations. Provide clear, concise responses focused on the event context.\n\nCurrent time: {current_time}\n\n{aggregated_other_context}"
       max_history_messages: 1 # Minimal history for event processing
       history_max_age_hours: 0.5 # 30 minutes - events are typically immediate
       delegation_security_level: "blocked" # Cannot delegate to other services
