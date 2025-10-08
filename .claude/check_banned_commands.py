@@ -28,7 +28,7 @@ if tool_name != "Bash" or not command:
 # Load banned commands
 banned_commands_path = os.path.join(os.path.dirname(__file__), "banned_commands.json")
 try:
-    with open(banned_commands_path) as f:
+    with open(banned_commands_path, encoding="utf-8") as f:
         banned_commands = json.load(f)
 except (FileNotFoundError, json.JSONDecodeError) as e:
     print(f"Error loading banned commands: {e}", file=sys.stderr)
@@ -53,6 +53,15 @@ for banned in banned_commands:
 
 if blocked:
     # Exit code 2 blocks tool call and shows stderr to Claude
+    sys.exit(2)
+
+# Check if running poe test in background
+run_in_background = tool_input.get("run_in_background", False)
+if run_in_background and re.search(r"^poe\s+test\b", command):
+    print(
+        "• 'poe test' must NOT be run in the background. Always run it in the foreground.",
+        file=sys.stderr,
+    )
     sys.exit(2)
 
 # Check for minimum timeout requirements
