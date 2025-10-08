@@ -1,4 +1,5 @@
 name: '🔀 Gemini Dispatch'
+
 on:
   pull_request_review_comment:
     types:
@@ -16,9 +17,11 @@ on:
   issue_comment:
     types:
       - 'created'
+
 defaults:
   run:
     shell: 'bash'
+
 jobs:
   debugger:
     if: |-
@@ -38,10 +41,11 @@ jobs:
           DEBUG_event: '${{ toJSON(github.event) }}'
         run: |-
           env | grep '^DEBUG_'
+
   dispatch:
-    # For PRs: only if not from a fork and not from Dependabot
-    # For comments: only if user types @gemini-cli and is OWNER/MEMBER/COLLABORATOR (excluding Dependabot)
-    # For issues: only on open/reopen and not from Dependabot
+    # For PRs: only if not from a fork
+    # For comments: only if user types @gemini-cli and is OWNER/MEMBER/COLLABORATOR
+    # For issues: only on open/reopen
     if: |-
       (
         github.event_name == 'pull_request' &&
@@ -72,16 +76,17 @@ jobs:
         id: 'mint_identity_token'
         if: |-
           ${{ vars.APP_ID }}
-        uses: 'actions/create-github-app-token@67018539274d69449ef7c02e8e71183d1719ab42' # ratchet:actions/create-github-app-token@v2
+        uses: 'actions/create-github-app-token@a8d616148505b5069dccd32f177bb87d7f39123b' # ratchet:actions/create-github-app-token@v2
         with:
           app-id: '${{ vars.APP_ID }}'
           private-key: '${{ secrets.APP_PRIVATE_KEY }}'
           permission-contents: 'read'
           permission-issues: 'write'
           permission-pull-requests: 'write'
+
       - name: 'Extract command'
         id: 'extract_command'
-        uses: 'actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd' # ratchet:actions/github-script@v7
+        uses: 'actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea' # ratchet:actions/github-script@v7
         env:
           EVENT_TYPE: '${{ github.event_name }}.${{ github.event.action }}'
           REQUEST: '${{ github.event.comment.body || github.event.review.body || github.event.issue.body }}'
@@ -108,6 +113,7 @@ jobs:
             } else {
               core.setOutput('command', 'fallthrough');
             }
+
       - name: 'Acknowledge request'
         env:
           GITHUB_TOKEN: '${{ steps.mint_identity_token.outputs.token || secrets.GITHUB_TOKEN || github.token }}'
@@ -119,6 +125,7 @@ jobs:
           gh issue comment "${ISSUE_NUMBER}" \
             --body "${MESSAGE}" \
             --repo "${REPOSITORY}"
+
   review:
     needs: 'dispatch'
     if: |-
@@ -132,6 +139,7 @@ jobs:
     with:
       additional_context: '${{ needs.dispatch.outputs.additional_context }}'
     secrets: 'inherit'
+
   triage:
     needs: 'dispatch'
     if: |-
@@ -145,6 +153,7 @@ jobs:
     with:
       additional_context: '${{ needs.dispatch.outputs.additional_context }}'
     secrets: 'inherit'
+
   invoke:
     needs: 'dispatch'
     if: |-
@@ -158,6 +167,7 @@ jobs:
     with:
       additional_context: '${{ needs.dispatch.outputs.additional_context }}'
     secrets: 'inherit'
+
   fallthrough:
     needs:
       - 'dispatch'
@@ -176,13 +186,14 @@ jobs:
         id: 'mint_identity_token'
         if: |-
           ${{ vars.APP_ID }}
-        uses: 'actions/create-github-app-token@67018539274d69449ef7c02e8e71183d1719ab42' # ratchet:actions/create-github-app-token@v2
+        uses: 'actions/create-github-app-token@a8d616148505b5069dccd32f177bb87d7f39123b' # ratchet:actions/create-github-app-token@v2
         with:
           app-id: '${{ vars.APP_ID }}'
           private-key: '${{ secrets.APP_PRIVATE_KEY }}'
           permission-contents: 'read'
           permission-issues: 'write'
           permission-pull-requests: 'write'
+
       - name: 'Send failure comment'
         env:
           GITHUB_TOKEN: '${{ steps.mint_identity_token.outputs.token || secrets.GITHUB_TOKEN || github.token }}'

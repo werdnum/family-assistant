@@ -1,4 +1,5 @@
 name: '▶️ Gemini Invoke'
+
 on:
   workflow_call:
     inputs:
@@ -6,12 +7,15 @@ on:
         type: 'string'
         description: 'Any additional context from the request'
         required: false
+
 concurrency:
   group: '${{ github.workflow }}-invoke-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number }}'
   cancel-in-progress: false
+
 defaults:
   run:
     shell: 'bash'
+
 jobs:
   invoke:
     runs-on: 'ubuntu-latest'
@@ -25,13 +29,14 @@ jobs:
         id: 'mint_identity_token'
         if: |-
           ${{ vars.APP_ID }}
-        uses: 'actions/create-github-app-token@67018539274d69449ef7c02e8e71183d1719ab42' # ratchet:actions/create-github-app-token@v2
+        uses: 'actions/create-github-app-token@a8d616148505b5069dccd32f177bb87d7f39123b' # ratchet:actions/create-github-app-token@v2
         with:
           app-id: '${{ vars.APP_ID }}'
           private-key: '${{ secrets.APP_PRIVATE_KEY }}'
           permission-contents: 'read'
           permission-issues: 'write'
           permission-pull-requests: 'write'
+
       - name: 'Run Gemini CLI'
         id: 'run_gemini'
         uses: 'google-github-actions/run-gemini-cli@v0' # ratchet:exclude
