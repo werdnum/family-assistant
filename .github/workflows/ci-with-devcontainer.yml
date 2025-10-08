@@ -40,6 +40,7 @@ jobs:
       backend_tests_playwright: ${{ steps.filter.outputs.backend_tests_playwright }}
       ci_workflow: ${{ steps.filter.outputs.ci_workflow }}
       web_api: ${{ steps.filter.outputs.web_api }}
+      dockerfile_changes: ${{ steps.filter.outputs.dockerfile_changes }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -95,6 +96,11 @@ jobs:
               - '.github/workflows/ci-*.yml'
             web_api:
               - 'src/family_assistant/web/**/*.py'
+            dockerfile_changes:
+              - 'Dockerfile'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'requirements*.txt'
   build-ci-container:
     needs: [prepare, detect-changes]
     if: needs.detect-changes.outputs.has_code_changes == 'true'
@@ -125,6 +131,28 @@ jobs:
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:cache-devcontainer-ci
           cache-to: |
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:cache-devcontainer-ci,mode=max
+  build-main-container:
+    needs: [prepare, detect-changes]
+    if: needs.detect-changes.outputs.dockerfile_changes == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build main application image (verification only)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:pr-${{ github.event.pull_request.number || 'local' }}
+          cache-from: |
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:main
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:buildcache
   lint:
     needs: [prepare, build-ci-container, detect-changes]
     if: |
