@@ -1,5 +1,6 @@
 """Base Page Object Model for Playwright tests."""
 
+import contextlib
 import logging
 from typing import Any
 
@@ -80,9 +81,11 @@ class BasePage:
         if await loading_indicator.count() > 0:
             await loading_indicator.first.wait_for(state="hidden", timeout=timeout)
 
-        # Give a short stabilization period for any final renders/fetches
-        # This avoids race conditions where components start fetching right after mount
-        await self.page.wait_for_timeout(200)
+        # Wait for network to be idle to avoid race conditions where components
+        # start fetching right after mount
+        # If network doesn't go idle within 1s, that's okay - continue anyway
+        with contextlib.suppress(Exception):
+            await self.page.wait_for_load_state("networkidle", timeout=1000)
 
     async def wait_for_element(self, selector: str, timeout: int = 30000) -> None:
         """Wait for an element to be present on the page.

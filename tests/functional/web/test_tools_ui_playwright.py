@@ -41,7 +41,10 @@ async def test_tools_page_loads(web_test_fixture_readonly: WebTestFixture) -> No
     internal_menu = page.locator("button:has-text('Internal')")
     if await internal_menu.is_visible():
         await internal_menu.click()
-        await page.wait_for_timeout(500)  # Wait for menu to open
+        # Wait for the Tools link to become visible in the dropdown
+        await page.wait_for_selector(
+            "nav a:has-text('Tools')", state="visible", timeout=5000
+        )
 
     # Now check for the Tools link
     tools_link = await page.query_selector("nav a:has-text('Tools')")

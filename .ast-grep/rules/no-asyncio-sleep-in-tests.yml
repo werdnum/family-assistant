@@ -16,8 +16,17 @@ note: |
         poll_interval_seconds=0.1
     )
 
+  NOTE: This rule allows asyncio.sleep() inside while loops, as those are typically
+  polling intervals in condition-checking loops, not arbitrary waits. The polling interval
+  itself is not the problem - it's the arbitrary "hope things are done" waits that cause
+  flaky tests.
+
   For exemptions, add a comment above the line:
     # ast-grep-ignore: no-asyncio-sleep-in-tests - Simulating hardware timeout
 rule:
-  pattern: asyncio.sleep($$$)
+  all:
+    - pattern: asyncio.sleep($$$)
+    - not:
+        inside:
+          kind: while
 
