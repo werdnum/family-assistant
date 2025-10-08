@@ -237,8 +237,13 @@ class StarlarkEngine:
                     tool_name = tool_info["name"]
 
                     # Create a closure to capture the tool name
-                    def make_tool_wrapper(name: str) -> Callable[..., str]:
-                        def tool_wrapper(*args: Any, **kwargs: Any) -> str:  # noqa: ANN401 # Tool args can be any type
+                    def make_tool_wrapper(
+                        name: str,
+                    ) -> Callable[..., str | dict[str, Any]]:
+                        def tool_wrapper(
+                            *args: Any,  # noqa: ANN401 # Tool args can be any type
+                            **kwargs: Any,  # noqa: ANN401
+                        ) -> str | dict[str, Any]:
                             """Execute the tool with the given arguments."""
                             # If positional args are provided, we need to map them to kwargs
                             # This requires knowing the parameter names of the tool

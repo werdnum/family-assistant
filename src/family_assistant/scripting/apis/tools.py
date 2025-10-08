@@ -9,7 +9,9 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import mimetypes
 import threading
+import uuid
 from collections.abc import Coroutine
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -26,6 +28,7 @@ from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
 )
+from family_assistant.tools.types import ToolResult
 
 T = TypeVar("T")
 
@@ -350,7 +353,12 @@ class ToolsAPI:
                 return tool
         return None
 
-    def execute(self, tool_name: str, *args: Any, **kwargs: Any) -> str:  # noqa: ANN401
+    def execute(
+        self,
+        tool_name: str,
+        *args: Any,  # noqa: ANN401
+        **kwargs: Any,  # noqa: ANN401
+    ) -> str | dict[str, Any]:
         """
         Execute a tool with the given arguments.
 
@@ -414,8 +422,102 @@ class ToolsAPI:
 
             logger.debug(f"Tool '{tool_name}' executed successfully")
 
+            # Handle ToolResult with attachments
+            if isinstance(result, ToolResult):
+                # Check if we have attachments with content to store
+                if result.attachments:
+                    attachment_registry = self.execution_context.attachment_registry
+                    if not attachment_registry:
+                        logger.warning(
+                            f"Tool '{tool_name}' returned attachments but attachment_registry not available"
+                        )
+                        # Fall back to returning text only
+                        return result.to_string()
+
+                    # Store attachments and collect IDs
+                    attachment_ids = []
+                    for attachment in result.attachments:
+                        # Check if this attachment has content (new attachment) or just an ID (reference)
+                        if attachment.content:
+                            # Store the attachment - must have content to reach here
+                            try:
+                                # Determine file extension from MIME type
+                                file_ext = (
+                                    mimetypes.guess_extension(attachment.mime_type)
+                                    or ".bin"
+                                )
+                                # Generate filename
+                                filename = f"tool_result_{uuid.uuid4()}{file_ext}"
+
+                                # Store and register the attachment directly
+                                registered_metadata = self._run_async(
+                                    attachment_registry.store_and_register_tool_attachment(
+                                        file_content=attachment.content,
+                                        filename=filename,
+                                        content_type=attachment.mime_type,
+                                        tool_name=tool_name,
+                                        description=attachment.description
+                                        or f"Output from {tool_name}",
+                                        conversation_id=self.execution_context.conversation_id,
+                                        metadata={
+                                            "source": "script_tool_call",
+                                            "auto_display": True,
+                                        },
+                                    )
+                                )
+
+                                # Update the attachment object with the stored ID
+                                attachment.attachment_id = (
+                                    registered_metadata.attachment_id
+                                )
+                                attachment_ids.append(registered_metadata.attachment_id)
+
+                                logger.info(
+                                    f"Stored tool attachment from '{tool_name}': {registered_metadata.attachment_id}"
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Failed to store attachment from tool '{tool_name}': {e}",
+                                    exc_info=True,
+                                )
+                                # Continue without this attachment
+                        elif attachment.attachment_id:
+                            # Reference to existing attachment
+                            attachment_ids.append(attachment.attachment_id)
+                            logger.debug(
+                                f"Tool '{tool_name}' returned reference to attachment {attachment.attachment_id}"
+                            )
+
+                    # Return appropriate format based on number of attachments
+                    if len(attachment_ids) == 1:
+                        # Single attachment: return ID string if no text, otherwise return dict
+                        if not result.text or not result.text.strip():
+                            # No meaningful text, return just the ID for convenience
+                            logger.debug(
+                                f"Returning single attachment ID: {attachment_ids[0]}"
+                            )
+                            return attachment_ids[0]
+                        else:
+                            # Has text, return dict to preserve both
+                            return {
+                                "text": result.text,
+                                "attachment_id": attachment_ids[0],
+                            }
+                    elif len(attachment_ids) > 1:
+                        # Multiple attachments: return dict with text and IDs
+                        return {
+                            "text": result.text,
+                            "attachment_ids": attachment_ids,
+                        }
+                    else:
+                        # No attachments were successfully stored
+                        return result.to_string()
+                else:
+                    # ToolResult with no attachments, just return text
+                    return result.to_string()
+
             # Convert result to JSON string if it's a dict or list
-            if isinstance(result, dict | list):
+            elif isinstance(result, dict | list):
                 return json.dumps(result)
             else:
                 return str(result)
@@ -425,7 +527,7 @@ class ToolsAPI:
             logger.error(error_msg, exc_info=True)
             raise RuntimeError(error_msg) from e
 
-    def execute_json(self, tool_name: str, args_json: str) -> str:
+    def execute_json(self, tool_name: str, args_json: str) -> str | dict[str, Any]:
         """
         Execute a tool with JSON-encoded arguments.
 
@@ -436,7 +538,7 @@ class ToolsAPI:
             args_json: JSON string containing the arguments
 
         Returns:
-            String result from tool execution
+            String or dict result from tool execution
 
         Raises:
             Exception: If tool execution fails or JSON is invalid
@@ -492,11 +594,16 @@ class StarlarkToolsAPI:
             }
         return None
 
-    def execute(self, tool_name: str, *args: Any, **kwargs: Any) -> str:  # noqa: ANN401
+    def execute(
+        self,
+        tool_name: str,
+        *args: Any,  # noqa: ANN401
+        **kwargs: Any,  # noqa: ANN401
+    ) -> str | dict[str, Any]:
         """Execute a tool."""
         return self._api.execute(tool_name, *args, **kwargs)
 
-    def execute_json(self, tool_name: str, args_json: str) -> str:
+    def execute_json(self, tool_name: str, args_json: str) -> str | dict[str, Any]:
         """Execute a tool with JSON arguments."""
         return self._api.execute_json(tool_name, args_json)
 
