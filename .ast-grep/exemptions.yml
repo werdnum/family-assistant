@@ -50,10 +50,22 @@ exemptions:
       - tests/functional/indexing/*.py
       - tests/functional/test_*.py
       - tests/functional/web/test_*.py
+      - tests/functional/web/conftest.py
       - tests/unit/web/test_message_notifier.py
     reason: |
       Legacy tests that predate wait_for_condition() helper.
       Should be refactored to use condition-based waiting.
+    ticket: "#TBD-refactor-sleep-to-wait-for-condition"
+
+  # ===========================================================================
+  # time.sleep() exemptions - Legacy test code (to be refactored)
+  # ===========================================================================
+  - rule: no-time-sleep-in-tests
+    files:
+      - tests/conftest.py
+    reason: |
+      Legacy test fixtures in conftest.py use time.sleep() for synchronous
+      blocking waits. Should be refactored to use async alternatives.
     ticket: "#TBD-refactor-sleep-to-wait-for-condition"
 
   # ===========================================================================
