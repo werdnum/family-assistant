@@ -87,17 +87,10 @@ class NotesPage(BasePage):
         await self.page.wait_for_url(f"{self.base_url}/notes", timeout=10000)
         # Ensure network has settled and the list has updated
         await self.wait_for_load(wait_for_app_ready=True)
-        # Deterministically wait until the just-created note appears in the list
-        try:
-            await self.page.wait_for_selector(
-                f"tbody tr td:first-child:has-text('{title}')", timeout=10000
-            )
-        except Exception:
-            # Fall back: small reload to pick up any late updates, then one more quick check
-            await self.reload()
-            await self.page.wait_for_selector(
-                f"tbody tr td:first-child:has-text('{title}')", timeout=3000
-            )
+        # Wait for the note to appear in the list
+        await self.page.wait_for_selector(
+            f"tbody tr td:first-child:has-text('{title}')", timeout=10000
+        )
 
     async def edit_note(
         self,
