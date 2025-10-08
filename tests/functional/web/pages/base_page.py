@@ -235,14 +235,6 @@ class BasePage:
         self.page.on("requestfinished", handle_request_finished)
         self.page.on("requestfailed", handle_request_failed)
 
-    async def wait_for_network_idle(self, timeout: int = 30000) -> None:
-        """Wait for network activity to settle.
-
-        Args:
-            timeout: Maximum time to wait in milliseconds
-        """
-        await self.page.wait_for_load_state("networkidle", timeout=timeout)
-
     async def reload(self) -> None:
         """Reload the current page."""
         await self.page.reload()

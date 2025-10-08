@@ -11,7 +11,6 @@ from tests.functional.web.conftest import WebTestFixture
 async def navigate_to_chat(page: Page, base_url: str) -> None:
     """Navigate a page to the chat interface and wait for it to load."""
     await page.goto(f"{base_url}/chat")
-    await page.wait_for_load_state("networkidle", timeout=5000)
 
 
 async def send_message(page: Page, message: str) -> None:
@@ -63,7 +62,7 @@ async def test_message_appears_in_second_context(
             lambda r: "/api/v1/chat/events" in r.url and r.ok, timeout=10000
         ):
             await page2.goto(f"{base_url}/chat?conversation_id={conversation_id}")
-            await page2.wait_for_load_state("networkidle", timeout=5000)
+
             # SSE connection will be established within the context manager
 
         # Now send the test message (SSE is connected, so it will be delivered)
@@ -123,7 +122,7 @@ async def test_bidirectional_live_updates(
             lambda r: "/api/v1/chat/events" in r.url and r.ok, timeout=10000
         ):
             await page2.goto(f"{base_url}/chat?conversation_id={conversation_id}")
-            await page2.wait_for_load_state("networkidle", timeout=5000)
+
             # SSE connection will be established within the context manager
 
         # Now send test message from page1 (SSE is connected, so it will be delivered)

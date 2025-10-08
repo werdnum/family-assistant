@@ -19,7 +19,6 @@ async def test_navigation_dropdowns_open_and_position(
 
     # Navigate to notes page which has the full navigation menu
     await page.goto(f"{base_url}/notes")
-    await page.wait_for_load_state("networkidle", timeout=5000)
 
     # Wait for navigation to be rendered and interactive
     await page.wait_for_selector(
@@ -291,7 +290,11 @@ async def test_navigation_responsive_behavior(
     # Desktop viewport
     await page.set_viewport_size({"width": 1280, "height": 720})
     await page.goto(f"{base_url}/notes")
-    await page.wait_for_load_state("networkidle", timeout=5000)
+
+    # Wait for navigation to render before checking
+    await page.wait_for_selector(
+        "nav[data-orientation='horizontal']", state="visible", timeout=10000
+    )
 
     # Desktop should show horizontal navigation
     desktop_nav = await page.query_selector("nav[data-orientation='horizontal']")
@@ -362,7 +365,6 @@ async def test_navigation_hover_states(
     base_url = web_test_fixture_readonly.base_url
 
     await page.goto(f"{base_url}/notes")
-    await page.wait_for_load_state("networkidle", timeout=5000)
 
     # Wait for navigation
     await page.wait_for_selector(

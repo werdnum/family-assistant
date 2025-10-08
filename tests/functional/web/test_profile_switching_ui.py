@@ -42,7 +42,6 @@ class TestProfileSwitchingUI:
         base_url = web_test_fixture.base_url
 
         await page.goto(f"{base_url}/chat")
-        await page.wait_for_load_state("networkidle", timeout=5000)
 
         # Find and click the profile selector
         profile_selector = page.locator('button[role="combobox"]').first
@@ -61,7 +60,6 @@ class TestProfileSwitchingUI:
         base_url = web_test_fixture.base_url
 
         await page.goto(f"{base_url}/chat")
-        await page.wait_for_load_state("networkidle", timeout=5000)
 
         # Open the profile selector
         profile_selector = page.locator('button[role="combobox"]').first
@@ -92,7 +90,6 @@ class TestProfileSwitchingUI:
         base_url = web_test_fixture.base_url
 
         await page.goto(f"{base_url}/chat")
-        await page.wait_for_load_state("networkidle", timeout=5000)
 
         # Wait for profile selector to be fully loaded
         profile_selector = page.locator('button[role="combobox"]').first
@@ -173,7 +170,6 @@ class TestProfileSwitchingUI:
         base_url = web_test_fixture.base_url
 
         await page.goto(f"{base_url}/chat")
-        await page.wait_for_load_state("networkidle", timeout=5000)
 
         # Select a specific profile
         profile_selector = page.locator('button[role="combobox"]').first
@@ -194,7 +190,6 @@ class TestProfileSwitchingUI:
 
             # Refresh the page
             await page.reload()
-            await page.wait_for_load_state("networkidle", timeout=5000)
 
             # Check if the profile is still selected
             profile_selector = page.locator('button[role="combobox"]').first
@@ -212,7 +207,6 @@ class TestProfileSwitchingUI:
         base_url = web_test_fixture.base_url
 
         await page.goto(f"{base_url}/chat")
-        await page.wait_for_load_state("networkidle", timeout=5000)
 
         # Get initial conversation ID from URL or state
         # (Profile switching may change URL or reset conversation)
@@ -302,7 +296,6 @@ class TestProfileSwitchingUI:
         )
 
         await page.goto(f"{base_url}/chat")
-        await page.wait_for_load_state("networkidle", timeout=5000)
 
         # Should show error state instead of crashing
         error_indicator = page.locator("text=Error loading profiles")
@@ -316,7 +309,6 @@ class TestProfileSwitchingUI:
         base_url = web_test_fixture.base_url
 
         await page.goto(f"{base_url}/chat")
-        await page.wait_for_load_state("networkidle", timeout=5000)
 
         # Open profile dropdown
         profile_selector = page.locator('button[role="combobox"]').first
@@ -341,7 +333,6 @@ class TestProfileSwitchingUI:
         base_url = web_test_fixture.base_url
 
         await page.goto(f"{base_url}/chat")
-        await page.wait_for_load_state("networkidle", timeout=5000)
 
         # Check ARIA attributes
         profile_selector = page.locator('button[role="combobox"]').first
@@ -370,7 +361,6 @@ class TestProfileSwitchingUI:
         base_url = web_test_fixture.base_url
 
         await page.goto(f"{base_url}/chat")
-        await page.wait_for_load_state("networkidle", timeout=5000)
 
         # Wait for profile selector to be ready
         profile_selector = page.locator('button[role="combobox"]').first

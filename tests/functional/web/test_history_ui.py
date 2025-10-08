@@ -27,8 +27,6 @@ async def wait_for_history_page_loaded(page: Page, timeout: int = 15000) -> bool
             return True
 
         # If no text, try waiting a bit more for React to mount
-        # Wait for page to fully load
-        await page.wait_for_load_state("networkidle", timeout=5000)
         page_text = await page.text_content("body")
         return page_text is not None and "Conversation History" in page_text
 
@@ -93,7 +91,6 @@ async def test_history_page_basic_loading(
 
     # Wait for React to mount
     # Wait for page to fully load
-    await page.wait_for_load_state("networkidle", timeout=5000)
 
     # Check for any h1 elements
     h1_count = await page.locator("h1").count()
@@ -106,7 +103,7 @@ async def test_history_page_basic_loading(
     )
 
     # Wait for network idle to ensure all resources loaded
-    await page.wait_for_load_state("networkidle", timeout=5000)
+
     print("Network idle state reached")
 
     # Check for console and network errors
@@ -330,9 +327,12 @@ async def test_history_conversations_list_display(
     # Wait for page to load
     await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
 
-    # Wait for API response (might show empty state or conversations)
-    # Wait for page to fully load
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    # Wait for API response - either conversations container or empty state will appear
+    await page.wait_for_selector(
+        "[class*='conversationsContainer'], .conversationsContainer, [class*='emptyState'], .emptyState",
+        state="visible",
+        timeout=10000,
+    )
 
     # Check for either conversations or empty state
     conversations_container = page.locator(
@@ -395,12 +395,12 @@ async def test_history_conversation_navigation(
     # Navigate to history page
     await page.goto(f"{server_url}/history")
 
-    # Wait for page to load
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
-
-    # Wait for API response
-    # Wait for page to fully load
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    # Wait for API response - either conversations container or empty state will appear
+    await page.wait_for_selector(
+        "[class*='conversationsContainer'], .conversationsContainer, [class*='emptyState'], .emptyState",
+        state="visible",
+        timeout=10000,
+    )
 
     # Look for conversation links
     conversation_links = page.locator(
@@ -495,12 +495,12 @@ async def test_history_pagination_interface(
     # Navigate to history page
     await page.goto(f"{server_url}/history")
 
-    # Wait for page to load
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
-
-    # Wait for API response
-    # Wait for page to fully load
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    # Wait for API response - either conversations container or empty state will appear
+    await page.wait_for_selector(
+        "[class*='conversationsContainer'], .conversationsContainer, [class*='emptyState'], .emptyState",
+        state="visible",
+        timeout=10000,
+    )
 
     # Check if pagination controls are present
     pagination = page.locator("[class*='pagination'], .pagination")
@@ -781,8 +781,6 @@ async def test_history_interface_filter_functionality(
 
     # Test different interface filter options (should be visible due to URL parameters)
     history_page = HistoryPage(page, server_url)
-    # Wait for navigation
-    await page.wait_for_load_state("networkidle", timeout=5000)  # Let React render
 
     # Check that all interface options are available
     options = await history_page.get_interface_type_options()
@@ -794,11 +792,16 @@ async def test_history_interface_filter_functionality(
 
     # Test filtering by telegram (should show fewer/no results in test env)
     await history_page.set_interface_type_filter("telegram")
-    # Wait for navigation
-    await page.wait_for_load_state("networkidle", timeout=5000)  # Wait for API call
 
-    # Check URL updated
+    # Wait for URL to update and content to reload
     await page.wait_for_url("**/history?*interface_type=telegram*", timeout=5000)
+
+    # Wait for content to finish loading after filter change
+    await page.wait_for_selector(
+        "[class*='conversationsContainer'], .conversationsContainer, [class*='emptyState'], .emptyState",
+        state="visible",
+        timeout=10000,
+    )
 
     # Check results summary updated
     results_summary = page.locator("text=/Found \\d+ conversation/")
@@ -808,11 +811,16 @@ async def test_history_interface_filter_functionality(
 
     # Switch back to web filter
     await history_page.set_interface_type_filter("web")
-    # Wait for navigation
-    await page.wait_for_load_state("networkidle", timeout=5000)
 
-    # Check URL updated again
+    # Wait for URL to update and content to reload
     await page.wait_for_url("**/history?*interface_type=web*", timeout=5000)
+
+    # Wait for content to finish loading after filter change
+    await page.wait_for_selector(
+        "[class*='conversationsContainer'], .conversationsContainer, [class*='emptyState'], .emptyState",
+        state="visible",
+        timeout=10000,
+    )
 
 
 @pytest.mark.playwright
@@ -844,8 +852,9 @@ async def test_history_date_range_filtering(
 
     await date_to_input.fill("2024-12-31", force=True)
     await date_to_input.press("Tab")
-    # Wait for navigation
-    await page.wait_for_load_state("networkidle", timeout=5000)
+
+    # Wait for URL to update with date filters
+    await page.wait_for_url("**/history?*date_from=2024-01-01*", timeout=5000)
 
     # Check URL contains date filters
     current_url = page.url
@@ -855,8 +864,15 @@ async def test_history_date_range_filtering(
     # Clear date filters and verify they're removed from URL
     clear_button = page.locator("details button:has-text('Clear Filters')")
     await clear_button.click()
-    # Wait for navigation
-    await page.wait_for_load_state("networkidle", timeout=5000)
+
+    # Wait for URL to update without date filters
+    await page.wait_for_function(
+        """() => {
+            const url = window.location.href;
+            return !url.includes('date_from') && !url.includes('date_to');
+        }""",
+        timeout=5000,
+    )
 
     # URL should no longer have date filters
     cleared_url = page.url
@@ -888,8 +904,11 @@ async def test_history_conversation_id_filter(
     test_conv_id = "web_conv_test_123"
     await conv_input.fill(test_conv_id, force=True)
     await conv_input.press("Tab")
-    # Wait for navigation
-    await page.wait_for_load_state("networkidle", timeout=5000)
+
+    # Wait for URL to update with conversation ID filter
+    await page.wait_for_url(
+        f"**/history?*conversation_id={test_conv_id}*", timeout=5000
+    )
 
     # Check URL contains the conversation ID filter
     current_url = page.url
@@ -937,8 +956,8 @@ async def test_history_combined_filters_interaction(
     await conv_input.fill("web_conv", force=True)
     await conv_input.press("Tab")
 
-    # Wait for filters to be applied
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    # Wait for URL to update with conversation ID filter
+    await page.wait_for_url("**/history?*conversation_id=web_conv*", timeout=5000)
 
     # Verify all filters are in URL
     current_url = page.url
@@ -949,8 +968,15 @@ async def test_history_combined_filters_interaction(
     # Clear all filters
     clear_button = page.locator("details button:has-text('Clear Filters')")
     await clear_button.click()
-    # Wait for navigation
-    await page.wait_for_load_state("networkidle", timeout=5000)
+
+    # Wait for URL to update without filters
+    await page.wait_for_function(
+        """() => {
+            const url = window.location.href;
+            return !url.includes('date_from') && !url.includes('conversation_id');
+        }""",
+        timeout=5000,
+    )
 
     # Verify all filter values are cleared
     interface_value = await history_page.get_interface_type_filter_value()

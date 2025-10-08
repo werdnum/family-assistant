@@ -729,10 +729,6 @@ async def test_tool_attachment_persistence_after_page_reload(
             "[SUCCESS] Tool attachment persisted after page reload - bug fix verified!"
         )
 
-        # Wait for any pending network requests to complete before teardown
-        # This prevents "connection closed" errors during database teardown
-        await page.wait_for_load_state("networkidle", timeout=5000)
-
     except Exception as e:
         # If we can't find the attachment after reload, that's the bug!
         pytest.fail(
