@@ -1,0 +1,8 @@
+# ast-grep project configuration for code conformance checking
+#
+# This configuration enables project-wide code pattern enforcement to maintain
+# code quality and prevent anti-patterns.
+
+ruleDirs:
+  - .ast-grep/rules
+

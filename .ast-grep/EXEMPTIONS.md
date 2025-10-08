@@ -1,0 +1,293 @@
+# Code Conformance Exemptions Guide
+
+This guide explains how to use exemptions from code conformance rules effectively.
+
+## When to Use Exemptions
+
+Exemptions should be used when:
+
+1. **Test infrastructure needs the pattern**: Helpers, mocks, and fixtures may legitimately use
+   banned patterns
+2. **Legacy code requires gradual migration**: Existing code can be exempted with a plan to fix it
+3. **Edge cases have valid reasons**: Rare situations where the pattern is actually appropriate
+4. **External constraints**: Third-party code or specific requirements that mandate the pattern
+
+**Do NOT use exemptions** to:
+
+- Avoid fixing fixable code
+- Bypass code review
+- Hide technical debt without a plan to address it
+
+## Exemption Types
+
+### 1. Inline Exemptions (Preferred for Small Cases)
+
+Use for a single line that needs an exemption:
+
+```python
+# ast-grep-ignore: no-asyncio-sleep-in-tests - Simulating network delay for timeout testing
+await asyncio.sleep(30)
+```
+
+**Format**: `# ast-grep-ignore: <rule-id> - <reason>`
+
+**Scope**: Next non-comment line only
+
+**Best for**:
+
+- One-off legitimate uses
+- Cases that need inline documentation
+- Specific edge cases
+
+### 2. Block Exemptions (For Multiple Lines)
+
+Use for a code block that needs exemption:
+
+```python
+# ast-grep-ignore-block: no-asyncio-sleep-in-tests - Mock implementation simulates delays
+async def mock_slow_network_call():
+    await asyncio.sleep(0.5)  # Simulate network latency
+    return {"status": "ok"}
+    await asyncio.sleep(0.1)  # Simulate processing time
+# ast-grep-ignore-end
+```
+
+**Format**:
+
+- Start: `# ast-grep-ignore-block: <rule-id> - <reason>`
+- End: `# ast-grep-ignore-end`
+
+**Scope**: All code between markers (comments excluded)
+
+**Best for**:
+
+- Multiple related violations in one function/block
+- Mock implementations
+- Test helpers with specific timing needs
+
+### 3. File-Level Exemptions (For Systematic Cases)
+
+Use for entire files or glob patterns:
+
+Edit `.ast-grep/exemptions.yml`:
+
+```yaml
+exemptions:
+  - rule: no-asyncio-sleep-in-tests
+    files:
+      - tests/helpers.py
+      - tests/mocks/*.py
+      - tests/integration/llm/*.py
+    reason: |
+      Test infrastructure files that implement timing-sensitive helpers
+      and mock objects with deliberate delays.
+    ticket: null
+```
+
+**Best for**:
+
+- Infrastructure files (helpers, mocks, fixtures)
+- Entire modules with consistent needs
+- Gradual migration of legacy code
+- Third-party or generated code
+
+## Exemption Requirements
+
+All exemptions MUST include:
+
+1. **Rule ID**: The specific rule being exempted (e.g., `no-asyncio-sleep-in-tests`)
+2. **Clear reason**: Explain WHY the exemption is needed
+3. **Optional ticket**: Reference a ticket number for tracking future removal
+
+### Good Exemption Reasons
+
+✅ **Good**:
+
+```python
+# ast-grep-ignore: no-asyncio-sleep-in-tests - Mock LLM simulates 100ms API latency
+await asyncio.sleep(0.1)
+```
+
+```yaml
+reason: |
+  Playwright page objects use wait_for_timeout() for animation completion.
+  Refactoring to use proper wait mechanisms tracked in #456.
+ticket: "#456"
+```
+
+✅ **Good**:
+
+```python
+# ast-grep-ignore: no-playwright-wait-for-timeout - Waiting for CSS transition (300ms)
+await page.wait_for_timeout(350)
+```
+
+### Bad Exemption Reasons
+
+❌ **Bad** (too vague):
+
+```python
+# ast-grep-ignore: no-asyncio-sleep-in-tests - needed
+```
+
+❌ **Bad** (no reason):
+
+```python
+# ast-grep-ignore: no-asyncio-sleep-in-tests
+```
+
+❌ **Bad** (should fix instead):
+
+```python
+# ast-grep-ignore: no-asyncio-sleep-in-tests - too hard to fix
+```
+
+## Managing Exemptions
+
+### Review Exemptions Regularly
+
+Audit current exemptions:
+
+```bash
+scripts/audit-conformance-exemptions.sh
+```
+
+This shows:
+
+- All file-level exemptions from `.ast-grep/exemptions.yml`
+- Number of files and violations covered
+- Ticket numbers for tracking
+
+### Removing Exemptions
+
+When you fix violations:
+
+1. **Inline/block exemptions**: Just delete the comment
+2. **File-level exemptions**: Remove from `.ast-grep/exemptions.yml`
+3. **Verify**: Run `scripts/check-conformance.sh` to ensure no new violations
+
+### Gradual Migration Strategy
+
+For large-scale refactoring:
+
+1. **Initial state**: Add file-level exemptions for all existing violations
+2. **Add tracking**: Include ticket numbers in exemptions
+3. **Enable enforcement**: Prevents NEW violations
+4. **Incremental fixes**: Remove exemptions as you fix files
+5. **Final cleanup**: Remove all exemptions when complete
+
+Example workflow:
+
+```yaml
+# Initial exemptions.yml
+exemptions:
+  - rule: no-asyncio-sleep-in-tests
+    files:
+      - tests/functional/*.py # 45 files with violations
+    reason: "Legacy tests need refactoring to use wait_for_condition()"
+    ticket: "#789"
+```
+
+As you fix files, narrow the exemption:
+
+```yaml
+# After fixing some files
+exemptions:
+  - rule: no-asyncio-sleep-in-tests
+    files:
+      - tests/functional/test_legacy_*.py # 12 files remaining
+    reason: "Legacy tests need refactoring to use wait_for_condition()"
+    ticket: "#789"
+```
+
+## Examples by Use Case
+
+### Test Infrastructure
+
+```python
+# In tests/helpers.py
+# ast-grep-ignore-block: no-asyncio-sleep-in-tests - Helper implements polling with sleep
+async def wait_for_condition(
+    condition: Callable[[], bool],
+    timeout_seconds: float = 5.0,
+    poll_interval_seconds: float = 0.1,
+) -> None:
+    """Poll until condition is true or timeout."""
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if condition():
+            return
+        await asyncio.sleep(poll_interval_seconds)  # Legitimate use
+    raise TimeoutError("Condition not met")
+# ast-grep-ignore-end
+```
+
+### Mock Objects
+
+```python
+# In tests/mocks/mock_api.py
+# ast-grep-ignore-block: no-asyncio-sleep-in-tests - Mock simulates realistic API delays
+class MockAPIClient:
+    async def fetch_data(self):
+        await asyncio.sleep(0.05)  # Simulate network latency
+        return {"data": "mock"}
+# ast-grep-ignore-end
+```
+
+### Animation Timing
+
+```python
+# In tests/functional/web/test_animations.py
+async def test_sidebar_animation():
+    await page.click("#toggle-sidebar")
+    # ast-grep-ignore: no-playwright-wait-for-timeout - CSS transition duration is 300ms
+    await page.wait_for_timeout(350)
+    await expect(page.locator("#sidebar")).to_be_visible()
+```
+
+### Legacy Code Migration
+
+```yaml
+# .ast-grep/exemptions.yml
+exemptions:
+  - rule: no-asyncio-sleep-in-tests
+    files:
+      - tests/functional/test_old_*.py
+    reason: |
+      Legacy functional tests written before wait_for_condition() helper existed.
+      Scheduled for refactoring in Q2 2024.
+    ticket: "#1234"
+```
+
+## Troubleshooting
+
+### Exemption Not Working
+
+1. **Check syntax**: Ensure comment format is exact
+2. **Check placement**: Inline exemptions must be immediately before the violation
+3. **Check rule ID**: Must match exactly (case-sensitive)
+4. **Check file patterns**: Glob patterns in `.ast-grep/exemptions.yml` must match file paths
+
+### Too Many Exemptions
+
+If you find yourself adding many exemptions:
+
+1. **Question the rule**: Is the rule too strict?
+2. **Consider refactoring**: Can the code be restructured to avoid the pattern?
+3. **Use file-level exemptions**: More maintainable than many inline exemptions
+4. **Create a plan**: Add ticket numbers and schedule cleanup
+
+## Best Practices
+
+1. **Be specific**: Explain exactly why the exemption is needed
+2. **Add context**: Reference tickets, documentation, or specific requirements
+3. **Prefer narrow scope**: Use inline/block over file-level when possible
+4. **Review regularly**: Audit exemptions periodically
+5. **Plan removal**: Include tickets for tracking future cleanup
+6. **Document edge cases**: If it's truly an edge case, explain it well
+
+## Resources
+
+- [Code conformance rules documentation](.ast-grep/rules/README.md)
+- [ast-grep documentation](https://ast-grep.github.io/)
+- [Project testing guide](../tests/CLAUDE.md)

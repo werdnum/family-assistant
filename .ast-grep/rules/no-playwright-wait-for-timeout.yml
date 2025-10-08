@@ -1,0 +1,25 @@
+id: no-playwright-wait-for-timeout
+language: python
+severity: error
+message: "Avoid page.wait_for_timeout() - use Playwright's built-in wait mechanisms"
+note: |
+  wait_for_timeout() is fragile and makes tests slower. Use Playwright's built-in waits:
+
+  # Wait for element to be visible
+  await page.wait_for_selector("#element", state="visible")
+
+  # Wait for element with text
+  await page.get_by_text("Submit").wait_for(state="visible")
+
+  # Wait for condition using expect
+  from playwright.async_api import expect
+  await expect(page.locator("#status")).to_have_text("Complete")
+
+  # Wait for network to be idle
+  await page.wait_for_load_state("networkidle")
+
+  For exemptions, add a comment above the line:
+    # ast-grep-ignore: no-playwright-wait-for-timeout - Awaiting animation completion
+rule:
+  pattern: $PAGE.wait_for_timeout($$$)
+

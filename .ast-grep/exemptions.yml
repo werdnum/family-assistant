@@ -1,0 +1,73 @@
+# Code Conformance Exemptions
+#
+# This file tracks exemptions from code conformance rules. Exemptions are granted
+# for existing code that violates rules but cannot be fixed immediately.
+#
+# All exemptions should:
+# - Include a clear reason explaining why the exemption is needed
+# - Reference a ticket number for tracking future removal (when applicable)
+# - Be reviewed periodically to assess if they can be removed
+#
+# Format:
+#   exemptions:
+#     - rule: <rule-id>
+#       files:
+#         - <file-path-or-glob>
+#       reason: <explanation>
+#       ticket: <ticket-number>  # optional
+
+exemptions:
+  # ===========================================================================
+  # asyncio.sleep() exemptions - wait_for_condition() helper implementation
+  # ===========================================================================
+  - rule: no-asyncio-sleep-in-tests
+    files:
+      - tests/helpers.py
+    reason: |
+      The wait_for_condition() helper function itself uses asyncio.sleep() to poll.
+      This is the legitimate implementation of a proper wait helper that other
+      tests should use instead of calling asyncio.sleep() directly.
+    ticket: null
+
+  # ===========================================================================
+  # asyncio.sleep() exemptions - Mock implementations
+  # ===========================================================================
+  - rule: no-asyncio-sleep-in-tests
+    files:
+      - tests/mocks/mock_llm.py
+      - tests/integration/llm/streaming_mocks.py
+    reason: |
+      Mock LLM implementations use asyncio.sleep() to simulate realistic API delays
+      and streaming behavior. This is intentional for testing timing-dependent code.
+    ticket: null
+
+  # ===========================================================================
+  # asyncio.sleep() exemptions - Legacy test code (to be refactored)
+  # ===========================================================================
+  - rule: no-asyncio-sleep-in-tests
+    files:
+      - tests/conftest.py
+      - tests/functional/indexing/*.py
+      - tests/functional/test_*.py
+      - tests/functional/web/test_*.py
+      - tests/unit/web/test_message_notifier.py
+    reason: |
+      Legacy tests that use asyncio.sleep() instead of wait_for_condition().
+      These should be refactored to use proper condition-based waiting.
+    ticket: "#TBD-refactor-sleep-to-wait-for-condition"
+
+  # ===========================================================================
+  # page.wait_for_timeout() exemptions - Legacy Playwright tests
+  # ===========================================================================
+  - rule: no-playwright-wait-for-timeout
+    files:
+      - tests/functional/web/pages/*.py
+      - tests/functional/web/test_*.py
+    reason: |
+      Legacy Playwright tests that use wait_for_timeout().
+      Should be refactored to use proper Playwright wait mechanisms:
+      - wait_for_selector() for element visibility
+      - expect().to_have_text() for text content
+      - wait_for_load_state() for network/DOM readiness
+    ticket: "#TBD-refactor-playwright-waits"
+
