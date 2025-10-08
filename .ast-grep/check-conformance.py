@@ -180,6 +180,7 @@ def run_ast_grep(files: list[str]) -> list[Violation]:
             "no-asyncio-sleep-in-tests",
             "no-time-sleep-in-tests",
             "no-playwright-wait-for-timeout",
+            "no-networkidle-in-web-tests",
         }
 
         violations = []

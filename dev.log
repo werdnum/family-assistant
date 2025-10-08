@@ -1,0 +1,19 @@
+Poe => echo '🚀 Starting development servers...'
+🚀 Starting development servers...
+Poe => echo ''
+
+Poe => echo '📱 Access the app at:'
+📱 Access the app at:
+Poe => echo '   - Local: http://localhost:5173'
+   - Local: http://localhost:5173
+Poe => echo '   - Remote: http://<your-ip>:5173'
+   - Remote: http://<your-ip>:5173
+Poe => echo ''
+
+Poe => echo '🔄 Development features:'
+🔄 Development features:
+Poe => echo '   - Backend API on port 8000 with auto-reload (hupper)'
+   - Backend API on port 8000 with auto-reload (hupper)
+Poe => echo '   - Vite dev server on port 5173 (main entry point)'
+   - Vite dev server on port 5173 (main entry point)
+Poe => echo '   - Both servers listening on 0.0.0.0 for remote access'

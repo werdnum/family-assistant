@@ -6,12 +6,13 @@ import pytest
 from playwright.async_api import Browser, BrowserContext, Page
 
 from tests.functional.web.conftest import WebTestFixture
+from tests.functional.web.pages.chat_page import ChatPage
 
 
 async def navigate_to_chat(page: Page, base_url: str) -> None:
     """Navigate a page to the chat interface and wait for it to load."""
-    await page.goto(f"{base_url}/chat")
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    chat_page = ChatPage(page, base_url)
+    await chat_page.navigate_to_chat()
 
 
 async def send_message(page: Page, message: str) -> None:
@@ -59,11 +60,11 @@ async def test_message_appears_in_second_context(
 
         # Navigate page2 to the SAME conversation and wait for SSE connection
         # Set up listener for SSE connection BEFORE navigation to ensure we don't miss it
+        chat_page2 = ChatPage(page2, base_url)
         async with page2.expect_response(
             lambda r: "/api/v1/chat/events" in r.url and r.ok, timeout=10000
         ):
-            await page2.goto(f"{base_url}/chat?conversation_id={conversation_id}")
-            await page2.wait_for_load_state("networkidle", timeout=5000)
+            await chat_page2.navigate_to_chat(conversation_id=conversation_id)
             # SSE connection will be established within the context manager
 
         # Now send the test message (SSE is connected, so it will be delivered)
@@ -119,11 +120,11 @@ async def test_bidirectional_live_updates(
 
         # Navigate page2 to the SAME conversation and wait for SSE connection
         # Set up listener for SSE connection BEFORE navigation to ensure we don't miss it
+        chat_page2 = ChatPage(page2, base_url)
         async with page2.expect_response(
             lambda r: "/api/v1/chat/events" in r.url and r.ok, timeout=10000
         ):
-            await page2.goto(f"{base_url}/chat?conversation_id={conversation_id}")
-            await page2.wait_for_load_state("networkidle", timeout=5000)
+            await chat_page2.navigate_to_chat(conversation_id=conversation_id)
             # SSE connection will be established within the context manager
 
         # Now send test message from page1 (SSE is connected, so it will be delivered)

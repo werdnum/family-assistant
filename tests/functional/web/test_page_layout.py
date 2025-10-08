@@ -3,6 +3,7 @@
 import pytest
 
 from tests.functional.web.conftest import WebTestFixture
+from tests.functional.web.pages.base_page import BasePage
 
 
 @pytest.mark.playwright
@@ -16,10 +17,10 @@ async def test_navigation_dropdowns_open_and_position(
     animations and asynchronous state updates."""
     page = web_test_fixture_readonly.page
     base_url = web_test_fixture_readonly.base_url
+    base_page = BasePage(page, base_url)
 
     # Navigate to notes page which has the full navigation menu
-    await page.goto(f"{base_url}/notes")
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await base_page.navigate_to("/notes")
 
     # Wait for navigation to be rendered and interactive
     await page.wait_for_selector(
@@ -69,17 +70,17 @@ async def test_navigation_dropdowns_open_and_position(
                     const buttons = Array.from(document.querySelectorAll('button'));
                     const btn = buttons.find(b => b.textContent?.includes('Data'));
                     if (!btn || btn.getAttribute('aria-expanded') !== 'true') return false;
-                    
+
                     const links = Array.from(document.querySelectorAll('a'));
                     const notesLink = links.find(a => a.textContent?.includes('Notes'));
                     if (!notesLink) return false;
-                    
+
                     const style = getComputedStyle(notesLink);
                     const rect = notesLink.getBoundingClientRect();
-                    
-                    return style.visibility === 'visible' && 
+
+                    return style.visibility === 'visible' &&
                            style.opacity === '1' &&
-                           rect.width > 0 && 
+                           rect.width > 0 &&
                            rect.height > 0;
                 }""",
                 timeout=3000,
@@ -192,21 +193,21 @@ async def test_navigation_dropdowns_open_and_position(
                     const buttons = Array.from(document.querySelectorAll('button'));
                     const btn = buttons.find(b => b.textContent?.includes('Internal'));
                     if (!btn || btn.getAttribute('aria-expanded') !== 'true') return false;
-                    
+
                     const links = Array.from(document.querySelectorAll('a'));
                     const toolsLink = links.find(a => a.textContent?.includes('Tools'));
                     if (!toolsLink) return false;
-                    
+
                     const rect = toolsLink.getBoundingClientRect();
                     const style = getComputedStyle(toolsLink);
                     const btnRect = btn.getBoundingClientRect();
-                    
+
                     // Check that dropdown is visible and positioned correctly (not at far left)
                     // The dropdown should be positioned relative to its trigger button
                     const isPositionedCorrectly = rect.x > 100; // Should not be at far left edge
-                    
-                    return rect.width > 0 && 
-                           rect.height > 0 && 
+
+                    return rect.width > 0 &&
+                           rect.height > 0 &&
                            style.visibility === 'visible' &&
                            style.opacity === '1' &&
                            style.display !== 'none' &&
@@ -287,11 +288,11 @@ async def test_navigation_responsive_behavior(
     """Test that navigation layout adapts to different viewport sizes."""
     page = web_test_fixture_readonly.page
     base_url = web_test_fixture_readonly.base_url
+    base_page = BasePage(page, base_url)
 
     # Desktop viewport
     await page.set_viewport_size({"width": 1280, "height": 720})
-    await page.goto(f"{base_url}/notes")
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await base_page.navigate_to("/notes")
 
     # Desktop should show horizontal navigation
     desktop_nav = await page.query_selector("nav[data-orientation='horizontal']")
@@ -360,9 +361,9 @@ async def test_navigation_hover_states(
     """Test that navigation menu items have proper hover states."""
     page = web_test_fixture_readonly.page
     base_url = web_test_fixture_readonly.base_url
+    base_page = BasePage(page, base_url)
 
-    await page.goto(f"{base_url}/notes")
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await base_page.navigate_to("/notes")
 
     # Wait for navigation
     await page.wait_for_selector(
@@ -379,7 +380,7 @@ async def test_navigation_hover_states(
             const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('Internal'));
             if (!btn) return false;
             const btnStyle = getComputedStyle(btn);
-            return style.visibility === 'visible' && 
+            return style.visibility === 'visible' &&
                    style.opacity === '1' &&
                    btnStyle.visibility === 'visible' &&
                    btnStyle.opacity === '1';
@@ -411,11 +412,11 @@ async def test_navigation_hover_states(
             const buttons = Array.from(document.querySelectorAll('button'));
             const btn = buttons.find(b => b.textContent?.includes('Internal'));
             if (!btn || btn.getAttribute('aria-expanded') !== 'true') return false;
-            
+
             const links = Array.from(document.querySelectorAll('a'));
             const toolsLink = links.find(a => a.textContent?.includes('Tools'));
             if (!toolsLink) return false;
-            
+
             const style = getComputedStyle(toolsLink);
             return style.visibility === 'visible' && style.opacity === '1';
         }""",

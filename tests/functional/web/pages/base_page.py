@@ -66,24 +66,6 @@ class BasePage:
         else:
             await self.page.wait_for_load_state("domcontentloaded")
 
-    async def wait_for_page_idle(self, timeout: int = 5000) -> None:
-        """Wait for page to be truly idle - no loading indicators, background requests settled.
-
-        Use this before checking console errors or tearing down to avoid race conditions
-        with background data fetching.
-
-        Args:
-            timeout: Maximum time to wait in milliseconds
-        """
-        # Wait for any loading indicators to disappear
-        loading_indicator = self.page.locator('[data-loading-indicator="true"]')
-        if await loading_indicator.count() > 0:
-            await loading_indicator.first.wait_for(state="hidden", timeout=timeout)
-
-        # Give a short stabilization period for any final renders/fetches
-        # This avoids race conditions where components start fetching right after mount
-        await self.page.wait_for_timeout(200)
-
     async def wait_for_element(self, selector: str, timeout: int = 30000) -> None:
         """Wait for an element to be present on the page.
 
@@ -241,7 +223,7 @@ class BasePage:
         Args:
             timeout: Maximum time to wait in milliseconds
         """
-        await self.page.wait_for_load_state("networkidle", timeout=timeout)
+        await self.wait_for_page_idle(timeout=timeout)
 
     async def reload(self) -> None:
         """Reload the current page."""

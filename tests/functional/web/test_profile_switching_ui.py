@@ -9,6 +9,7 @@ import pytest
 from playwright.async_api import expect
 
 from tests.functional.web.conftest import WebTestFixture
+from tests.functional.web.pages.chat_page import ChatPage
 
 
 @pytest.mark.playwright
@@ -21,10 +22,9 @@ class TestProfileSwitchingUI:
         """Test that the profile selector renders in the chat interface."""
         page = web_test_fixture.page
         base_url = web_test_fixture.base_url
+        chat_page = ChatPage(page, base_url)
 
-        await page.goto(f"{base_url}/chat")
-
-        # Wait for the page to load
+        await chat_page.navigate_to_chat()
 
         # Check that the profile selector is present
         profile_selector = page.locator('[data-testid="profile-selector"]')
@@ -40,9 +40,9 @@ class TestProfileSwitchingUI:
         """Test that clicking the profile selector opens the dropdown."""
         page = web_test_fixture.page
         base_url = web_test_fixture.base_url
+        chat_page = ChatPage(page, base_url)
 
-        await page.goto(f"{base_url}/chat")
-        await page.wait_for_load_state("networkidle", timeout=5000)
+        await chat_page.navigate_to_chat()
 
         # Find and click the profile selector
         profile_selector = page.locator('button[role="combobox"]').first
@@ -59,9 +59,9 @@ class TestProfileSwitchingUI:
         """Test that profile options are displayed in the dropdown."""
         page = web_test_fixture.page
         base_url = web_test_fixture.base_url
+        chat_page = ChatPage(page, base_url)
 
-        await page.goto(f"{base_url}/chat")
-        await page.wait_for_load_state("networkidle", timeout=5000)
+        await chat_page.navigate_to_chat()
 
         # Open the profile selector
         profile_selector = page.locator('button[role="combobox"]').first
@@ -90,9 +90,9 @@ class TestProfileSwitchingUI:
         """Test that selecting a profile updates the UI."""
         page = web_test_fixture.page
         base_url = web_test_fixture.base_url
+        chat_page = ChatPage(page, base_url)
 
-        await page.goto(f"{base_url}/chat")
-        await page.wait_for_load_state("networkidle", timeout=5000)
+        await chat_page.navigate_to_chat()
 
         # Wait for profile selector to be fully loaded
         profile_selector = page.locator('button[role="combobox"]').first
@@ -171,9 +171,9 @@ class TestProfileSwitchingUI:
         """Test that profile selection persists across page refreshes."""
         page = web_test_fixture.page
         base_url = web_test_fixture.base_url
+        chat_page = ChatPage(page, base_url)
 
-        await page.goto(f"{base_url}/chat")
-        await page.wait_for_load_state("networkidle", timeout=5000)
+        await chat_page.navigate_to_chat()
 
         # Select a specific profile
         profile_selector = page.locator('button[role="combobox"]').first
@@ -194,7 +194,7 @@ class TestProfileSwitchingUI:
 
             # Refresh the page
             await page.reload()
-            await page.wait_for_load_state("networkidle", timeout=5000)
+            await chat_page.wait_for_load()
 
             # Check if the profile is still selected
             profile_selector = page.locator('button[role="combobox"]').first
@@ -210,9 +210,9 @@ class TestProfileSwitchingUI:
         """Test that switching profiles creates a new conversation."""
         page = web_test_fixture.page
         base_url = web_test_fixture.base_url
+        chat_page = ChatPage(page, base_url)
 
-        await page.goto(f"{base_url}/chat")
-        await page.wait_for_load_state("networkidle", timeout=5000)
+        await chat_page.navigate_to_chat()
 
         # Get initial conversation ID from URL or state
         # (Profile switching may change URL or reset conversation)
@@ -243,11 +243,9 @@ class TestProfileSwitchingUI:
         """Test that profile selector handles loading states properly."""
         page = web_test_fixture.page
         base_url = web_test_fixture.base_url
+        chat_page = ChatPage(page, base_url)
 
-        await page.goto(f"{base_url}/chat")
-
-        # Wait for the page to start loading
-        await page.wait_for_load_state("domcontentloaded")
+        await chat_page.navigate_to_chat()
 
         # Profile selector should appear once loading is complete
         profile_selector = page.locator('button[role="combobox"]').first
@@ -259,11 +257,11 @@ class TestProfileSwitchingUI:
                 // Check if profile selector is present and visible
                 const selector = document.querySelector('button[role="combobox"]');
                 if (!selector) return false;
-                
+
                 // Check if it's not in loading state (should have actual profile text, not "Loading...")
                 const textContent = selector.textContent || '';
                 return selector.offsetParent !== null && // is visible
-                       textContent.trim() !== '' && 
+                       textContent.trim() !== '' &&
                        !textContent.includes('Loading');
             }""",
             timeout=15000,
@@ -290,6 +288,8 @@ class TestProfileSwitchingUI:
         """Test that profile selector handles API errors gracefully."""
         page = web_test_fixture.page
         base_url = web_test_fixture.base_url
+        chat_page = ChatPage(page, base_url)
+
 
         # Intercept API calls and simulate error
         await page.route(
@@ -301,8 +301,7 @@ class TestProfileSwitchingUI:
             ),
         )
 
-        await page.goto(f"{base_url}/chat")
-        await page.wait_for_load_state("networkidle", timeout=5000)
+        await chat_page.navigate_to_chat()
 
         # Should show error state instead of crashing
         error_indicator = page.locator("text=Error loading profiles")
@@ -314,9 +313,9 @@ class TestProfileSwitchingUI:
         """Test that profile descriptions are shown in the dropdown."""
         page = web_test_fixture.page
         base_url = web_test_fixture.base_url
+        chat_page = ChatPage(page, base_url)
 
-        await page.goto(f"{base_url}/chat")
-        await page.wait_for_load_state("networkidle", timeout=5000)
+        await chat_page.navigate_to_chat()
 
         # Open profile dropdown
         profile_selector = page.locator('button[role="combobox"]').first
@@ -339,9 +338,9 @@ class TestProfileSwitchingUI:
         """Test that profile selector is accessible."""
         page = web_test_fixture.page
         base_url = web_test_fixture.base_url
+        chat_page = ChatPage(page, base_url)
 
-        await page.goto(f"{base_url}/chat")
-        await page.wait_for_load_state("networkidle", timeout=5000)
+        await chat_page.navigate_to_chat()
 
         # Check ARIA attributes
         profile_selector = page.locator('button[role="combobox"]').first
@@ -368,9 +367,9 @@ class TestProfileSwitchingUI:
         """Test that profile switching works correctly with messaging."""
         page = web_test_fixture.page
         base_url = web_test_fixture.base_url
+        chat_page = ChatPage(page, base_url)
 
-        await page.goto(f"{base_url}/chat")
-        await page.wait_for_load_state("networkidle", timeout=5000)
+        await chat_page.navigate_to_chat()
 
         # Wait for profile selector to be ready
         profile_selector = page.locator('button[role="combobox"]').first

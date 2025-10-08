@@ -1,0 +1,13 @@
+id: no-networkidle-in-web-tests
+language: python
+severity: error
+message: "Avoid networkidle checks in web tests - it is unreliable with SSE."
+note: |
+  Using `wait_for_load_state("networkidle")` is unreliable in this application due to the
+  use of Server-Sent Events (SSE) for real-time updates. The connection can be held
+  open, causing `networkidle` to time out.
+
+  Instead, use a more reliable wait method, such as `wait_for_load_state("domcontentloaded")`
+  or the `wait_for_load()` method from a page object.
+rule:
+  pattern: await $_.wait_for_load_state("networkidle", $$$)

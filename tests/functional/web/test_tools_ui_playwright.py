@@ -3,6 +3,7 @@
 import pytest
 
 from tests.functional.web.conftest import WebTestFixture
+from tests.functional.web.pages.base_page import BasePage
 
 
 @pytest.mark.playwright
@@ -11,11 +12,10 @@ async def test_tools_page_loads(web_test_fixture_readonly: WebTestFixture) -> No
     """Test that the tools page loads successfully."""
     page = web_test_fixture_readonly.page
     base_url = web_test_fixture_readonly.base_url
+    base_page = BasePage(page, base_url)
 
     # Navigate to tools page
-    await page.goto(f"{base_url}/tools")
-
-    # Wait for the page to be fully loaded
+    await base_page.navigate_to("/tools")
 
     # Wait for React app to mount first
     await page.wait_for_function(
@@ -66,10 +66,10 @@ async def test_tools_list_loads(web_test_fixture_readonly: WebTestFixture) -> No
     """Test that the tools list loads and displays available tools."""
     page = web_test_fixture_readonly.page
     base_url = web_test_fixture_readonly.base_url
+    base_page = BasePage(page, base_url)
 
     # Navigate to tools page
-    await page.goto(f"{base_url}/tools")
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await base_page.navigate_to("/tools")
 
     # Wait for React app to mount first
     await page.wait_for_function(
@@ -109,10 +109,10 @@ async def test_tool_execution_interface(
     """Test that clicking on a tool shows the execution interface."""
     page = web_test_fixture_readonly.page
     base_url = web_test_fixture_readonly.base_url
+    base_page = BasePage(page, base_url)
 
     # Navigate to tools page
-    await page.goto(f"{base_url}/tools")
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await base_page.navigate_to("/tools")
 
     # Wait for React app to mount first
     await page.wait_for_function(
@@ -163,13 +163,13 @@ async def test_responsive_design(web_test_fixture_readonly: WebTestFixture) -> N
     """Test that the tools UI is responsive and works on mobile viewport."""
     page = web_test_fixture_readonly.page
     base_url = web_test_fixture_readonly.base_url
+    base_page = BasePage(page, base_url)
 
     # Set mobile viewport
     await page.set_viewport_size({"width": 375, "height": 667})
 
     # Navigate to tools page
-    await page.goto(f"{base_url}/tools")
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await base_page.navigate_to("/tools")
 
     # Wait for React app to mount first
     await page.wait_for_function(
@@ -202,6 +202,7 @@ async def test_no_javascript_errors(web_test_fixture_readonly: WebTestFixture) -
     """Test that the tools page loads without JavaScript errors."""
     page = web_test_fixture_readonly.page
     base_url = web_test_fixture_readonly.base_url
+    base_page = BasePage(page, base_url)
 
     # Collect console errors
     console_errors = []
@@ -211,8 +212,7 @@ async def test_no_javascript_errors(web_test_fixture_readonly: WebTestFixture) -
     )
 
     # Navigate to tools page
-    await page.goto(f"{base_url}/tools")
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await base_page.navigate_to("/tools")
 
     # Wait for React app to mount first
     await page.wait_for_function(
@@ -224,7 +224,7 @@ async def test_no_javascript_errors(web_test_fixture_readonly: WebTestFixture) -
     )
 
     # Wait for network to be idle to ensure all async operations complete
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await base_page.wait_for_page_idle()
 
     # Filter out non-critical errors (like 404s for sourcemaps in dev mode)
     critical_errors = [

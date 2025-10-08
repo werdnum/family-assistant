@@ -45,7 +45,8 @@ async def test_events_page_basic_loading(
     await page.goto(f"{server_url}/events")
 
     # Wait for React to mount and network to settle
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    events_page = EventsPage(page, server_url)
+    await events_page.wait_for_load()
 
     # Check for console and network errors
     if console_errors:
@@ -466,8 +467,9 @@ async def test_events_api_error_handling(
     await page.goto(f"{server_url}/events")
     await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
 
-    # Wait for the page to finish loading (network idle indicates API calls complete)
-    await page.wait_for_load_state("networkidle", timeout=10000)
+    # Wait for the page to finish loading
+    events_page = EventsPage(page, server_url)
+    await events_page.wait_for_load()
 
     # The page should handle API responses gracefully
     # Either show events, empty state, or error message

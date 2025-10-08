@@ -50,6 +50,7 @@ from family_assistant.tools import (
 from family_assistant.web.web_chat_interface import WebChatInterface
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
+from tests.functional.web.pages.base_page import BasePage
 
 
 class WebTestFixture(NamedTuple):
@@ -636,9 +637,10 @@ async def web_test_fixture(
     # This prevents "database closed" errors during teardown when requests are still processing
     print("Waiting for in-flight requests to complete...")
     try:
-        await page.wait_for_load_state("networkidle", timeout=5000)
+        base_page = BasePage(page)
+        await base_page.wait_for_page_idle(timeout=5000)
     except Exception as e:
-        print(f"Warning: Could not wait for network idle during teardown: {e}")
+        print(f"Warning: Could not wait for page idle during teardown: {e}")
 
     # Close the page to terminate any active SSE streams
     print("Closing page to terminate streaming connections...")
@@ -710,9 +712,10 @@ async def web_test_fixture_readonly(
     # Teardown: Wait for any in-flight requests to complete
     print("Waiting for in-flight requests to complete...")
     try:
-        await page.wait_for_load_state("networkidle", timeout=5000)
+        base_page = BasePage(page)
+        await base_page.wait_for_page_idle(timeout=5000)
     except Exception as e:
-        print(f"Warning: Could not wait for network idle during teardown: {e}")
+        print(f"Warning: Could not wait for page idle during teardown: {e}")
 
     # Close the page to terminate any active SSE streams
     print("Closing page to terminate streaming connections...")

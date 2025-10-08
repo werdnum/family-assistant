@@ -3,6 +3,7 @@
 import pytest
 
 from tests.functional.web.conftest import WebTestFixture
+from tests.functional.web.pages.base_page import BasePage
 
 
 @pytest.mark.playwright
@@ -11,6 +12,7 @@ async def test_homepage_loads_with_playwright(web_test_fixture: WebTestFixture) 
     """Test that the homepage loads successfully using Playwright."""
     page = web_test_fixture.page
     base_url = web_test_fixture.base_url
+    base_page = BasePage(page, base_url)
 
     # Register console error handler BEFORE navigation to catch all errors
     console_errors = []
@@ -20,9 +22,7 @@ async def test_homepage_loads_with_playwright(web_test_fixture: WebTestFixture) 
     )
 
     # Navigate to homepage
-    await page.goto(base_url)
-
-    # Wait for the page to be fully loaded
+    await base_page.navigate_to("/")
 
     # Verify page has a title
     title = await page.title()
@@ -55,12 +55,10 @@ async def test_notes_page_accessible(web_test_fixture: WebTestFixture) -> None:
     """Test that the notes page is accessible and renders correctly."""
     page = web_test_fixture.page
     base_url = web_test_fixture.base_url
+    base_page = BasePage(page, base_url)
 
     # Navigate to notes page
-    await page.goto(f"{base_url}/notes")
-
-    # Wait for page to load
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await base_page.navigate_to("/notes")
 
     # Check for notes-specific elements
     # Look for "Add New Note" button or link
@@ -130,10 +128,10 @@ async def test_page_navigation_elements(web_test_fixture: WebTestFixture) -> Non
     """Test that main navigation elements are present and functional."""
     page = web_test_fixture.page
     base_url = web_test_fixture.base_url
+    base_page = BasePage(page, base_url)
 
     # Navigate to notes page which has traditional navigation
-    await page.goto(f"{base_url}/notes")
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await base_page.navigate_to("/notes")
 
     # Check for any navigation links - the app should have some navigation
     # Since the exact navigation structure may vary, just verify links exist
@@ -160,13 +158,13 @@ async def test_responsive_design(web_test_fixture: WebTestFixture) -> None:
     """Test that the UI is responsive and works on mobile viewport."""
     page = web_test_fixture.page
     base_url = web_test_fixture.base_url
+    base_page = BasePage(page, base_url)
 
     # Set mobile viewport
     await page.set_viewport_size({"width": 375, "height": 667})
 
     # Navigate to homepage
-    await page.goto(base_url)
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await base_page.navigate_to("/")
 
     # Check that main content is still visible
     main_element = await page.wait_for_selector("main", state="visible", timeout=5000)
@@ -182,10 +180,10 @@ async def test_add_note_with_javascript(web_test_fixture: WebTestFixture) -> Non
     """Test adding a note using the UI with JavaScript/CSS functionality."""
     page = web_test_fixture.page
     base_url = web_test_fixture.base_url
+    base_page = BasePage(page, base_url)
 
     # Navigate to notes page
-    await page.goto(f"{base_url}/notes")
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await base_page.navigate_to("/notes")
 
     # Click on Add Note link/button
     await page.click("a[href='/notes/add'], button:has-text('Add Note')")
@@ -238,10 +236,10 @@ async def test_css_and_styling_loads(web_test_fixture: WebTestFixture) -> None:
     """Test that CSS stylesheets are properly loaded through Vite."""
     page = web_test_fixture.page
     base_url = web_test_fixture.base_url
+    base_page = BasePage(page, base_url)
 
     # Navigate to homepage
-    await page.goto(base_url)
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await base_page.navigate_to("/")
 
     # Check that CSS is loaded by verifying computed styles
     # Get a main element to check styling
@@ -286,8 +284,8 @@ async def test_css_and_styling_loads(web_test_fixture: WebTestFixture) -> None:
             }));
             return {
                 count: styles.length,
-                hasViteStyles: Array.from(styles).some(el => 
-                    el.href?.includes('/src/') || 
+                hasViteStyles: Array.from(styles).some(el =>
+                    el.href?.includes('/src/') ||
                     el.textContent?.includes('--vite-') ||
                     el.getAttribute('data-vite-dev-id')
                 ),

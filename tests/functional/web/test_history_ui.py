@@ -5,41 +5,11 @@ from typing import Any
 
 import httpx
 import pytest
-from playwright.async_api import Page
+from playwright.async_api import Page, expect
 
 from tests.functional.web.pages.history_page import HistoryPage
 
 from .conftest import WebTestFixture
-
-
-async def wait_for_history_page_loaded(page: Page, timeout: int = 15000) -> bool:
-    """Wait for the history page to load completely and return whether it succeeded."""
-    try:
-        # Try multiple selectors that indicate the page is loaded
-        await page.wait_for_selector(
-            "h1:has-text('Conversation History'), h1, main, [data-testid='history-page']",
-            timeout=timeout,
-        )
-
-        # Additional check - make sure the page text is there
-        page_text = await page.text_content("body")
-        if page_text and "Conversation History" in page_text:
-            return True
-
-        # If no text, try waiting a bit more for React to mount
-        # Wait for page to fully load
-        await page.wait_for_load_state("networkidle", timeout=5000)
-        page_text = await page.text_content("body")
-        return page_text is not None and "Conversation History" in page_text
-
-    except Exception as e:
-        logging.error(f"Failed to wait for history page: {e}")
-        # Check if page has any content at all
-        try:
-            page_text = await page.text_content("body")
-            return page_text is not None and "Conversation History" in page_text
-        except Exception:
-            return False
 
 
 @pytest.mark.playwright
@@ -50,6 +20,7 @@ async def test_history_page_basic_loading(
     """Test basic functionality of the history page React interface."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    history_page = HistoryPage(page, server_url)
 
     # Set up console error tracking
     console_errors = []
@@ -71,84 +42,15 @@ async def test_history_page_basic_loading(
     page.on("response", on_response)
 
     # Navigate to history page
-    print(f"=== Navigating to {server_url}/history ===")
-    await page.goto(f"{server_url}/history")
-
-    # Take a screenshot before waiting
-    await page.screenshot(path="/tmp/history_page_initial.png")
-    print("Screenshot saved to /tmp/history_page_initial.png")
-
-    # Check page content
-    page_content = await page.content()
-    print(f"Page content length: {len(page_content)}")
-    print(f"Page title: {await page.title()}")
-
-    # Check if React app root exists
-    app_root = await page.locator("#app-root").count()
-    print(f"Found {app_root} #app-root elements")
-
-    # Check for router.html markers
-    router_marker = "router-entry.jsx" in page_content
-    print(f"Router entry point loaded: {router_marker}")
-
-    # Wait for React to mount
-    # Wait for page to fully load
-    await page.wait_for_load_state("networkidle", timeout=5000)
-
-    # Check for any h1 elements
-    h1_count = await page.locator("h1").count()
-    print(f"Found {h1_count} h1 elements on page")
-
-    # Check for any text content
-    body_text = await page.locator("body").text_content()
-    print(
-        f"Body text (first 500 chars): {body_text[:500] if body_text else 'No text content'}"
-    )
-
-    # Wait for network idle to ensure all resources loaded
-    await page.wait_for_load_state("networkidle", timeout=5000)
-    print("Network idle state reached")
-
-    # Check for console and network errors
-    if console_errors:
-        print("=== CONSOLE ERRORS DETECTED ===")
-        for err in console_errors:
-            print(f"  - {err}")
-        # Don't fail immediately, let's see what loaded
-
-    if network_errors:
-        print("=== NETWORK ERRORS DETECTED ===")
-        for err in network_errors:
-            print(f"  - {err}")
-
-    # Wait for the history page to load
-    page_loaded = await wait_for_history_page_loaded(page, timeout=15000)
-
-    if not page_loaded:
-        print("Failed to detect history page load - taking diagnostics")
-        # Take another screenshot
-        await page.screenshot(path="/tmp/history_page_after_wait.png")
-        print("Screenshot saved to /tmp/history_page_after_wait.png")
-
-        # Get final page state
-        final_content = await page.content()
-        print(f"Final page HTML (first 2000 chars):{final_content[:2000]}")
-
-        # Check if there were critical errors
-        if console_errors:
-            print(f"Console errors detected: {console_errors}")
-
-        assert not console_errors, f"Console errors detected: {console_errors}"
-        assert page_loaded, "History page failed to load properly"
+    await history_page.navigate_to("/history")
 
     # Verify React components have loaded by checking for filters section
     filters_section = page.locator("details summary:has-text('Filters')")
-    await filters_section.wait_for(timeout=5000)
-    assert await filters_section.is_visible()
+    await expect(filters_section).to_be_visible()
 
     # Check that results summary is present (handles empty state)
     results_summary = page.locator("text=/Found \\d+ conversation/")
-    await results_summary.wait_for(timeout=5000)
+    await expect(results_summary).to_be_visible()
     summary_text = await results_summary.text_content()
     assert summary_text is not None
     assert "Found" in summary_text and "conversation" in summary_text
@@ -165,12 +67,10 @@ async def test_history_page_css_styling(
     """Test that CSS styling is properly applied to React components."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    history_page = HistoryPage(page, server_url)
 
     # Navigate to history page
-    await page.goto(f"{server_url}/history")
-
-    # Wait for page to load
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+    await history_page.navigate_to("/history")
 
     # Check that main container has expected CSS classes (indicating React components loaded)
     # The exact class names depend on the CSS modules
@@ -195,7 +95,7 @@ async def test_history_filters_interface(
 
     # Navigate to history page
     history_page = HistoryPage(page, server_url)
-    await history_page.navigate_to()
+    await history_page.navigate_to("/history")
 
     # Wait for filters section to be visible
     filters_section = page.locator("details summary:has-text('Filters')")
@@ -293,15 +193,12 @@ async def test_history_filters_url_state_preservation(
     """Test that filter state is preserved in URL parameters."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    history_page = HistoryPage(page, server_url)
 
     # Navigate to history page with query parameters
-    await page.goto(f"{server_url}/history?interface_type=web&page=1")
-
-    # Wait for page to load
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+    await history_page.navigate_to("/history?interface_type=web&page=1")
 
     # Use HistoryPage to check filter values
-    history_page = HistoryPage(page, server_url)
     # Wait for the filter value to be applied from URL params
     await page.wait_for_function(
         "() => document.querySelector('[role=combobox]')?.textContent?.includes('Web')",
@@ -323,22 +220,18 @@ async def test_history_conversations_list_display(
     """Test conversations list display and metadata."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    history_page = HistoryPage(page, server_url)
 
     # Navigate to history page
-    await page.goto(f"{server_url}/history")
-
-    # Wait for page to load
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
-
-    # Wait for API response (might show empty state or conversations)
-    # Wait for page to fully load
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await history_page.navigate_to("/history")
 
     # Check for either conversations or empty state
     conversations_container = page.locator(
         "[class*='conversationsContainer'], .conversationsContainer"
     )
     empty_state = page.locator("[class*='emptyState'], .emptyState")
+
+    await expect(conversations_container.or_(empty_state)).to_be_visible()
 
     # Either conversations are displayed or empty state is shown
     has_conversations = (
@@ -391,16 +284,10 @@ async def test_history_conversation_navigation(
     """Test navigation to conversation detail view."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    history_page = HistoryPage(page, server_url)
 
     # Navigate to history page
-    await page.goto(f"{server_url}/history")
-
-    # Wait for page to load
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
-
-    # Wait for API response
-    # Wait for page to fully load
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await history_page.navigate_to("/history")
 
     # Look for conversation links
     conversation_links = page.locator(
@@ -451,10 +338,11 @@ async def test_history_conversation_detail_view(
     """Test conversation detail view functionality."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    history_page = HistoryPage(page, server_url)
 
     # Try to navigate directly to a conversation detail (will show error for non-existent ID)
     test_conversation_id = "test_conversation_id"
-    await page.goto(f"{server_url}/history/{test_conversation_id}")
+    await history_page.navigate_to(f"/history/{test_conversation_id}")
 
     # Wait for the loading indicator to disappear.
     await page.locator("text=Loading conversation...").wait_for(
@@ -491,16 +379,10 @@ async def test_history_pagination_interface(
     """Test pagination controls when available."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    history_page = HistoryPage(page, server_url)
 
     # Navigate to history page
-    await page.goto(f"{server_url}/history")
-
-    # Wait for page to load
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
-
-    # Wait for API response
-    # Wait for page to fully load
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await history_page.navigate_to("/history")
 
     # Check if pagination controls are present
     pagination = page.locator("[class*='pagination'], .pagination")
@@ -524,17 +406,15 @@ async def test_history_responsive_design(
     """Test responsive design of history page."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    history_page = HistoryPage(page, server_url)
 
     # Navigate to history page
-    await page.goto(f"{server_url}/history")
-
-    # Wait for page to load
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+    await history_page.navigate_to("/history")
 
     # Test mobile viewport
     await page.set_viewport_size({"width": 375, "height": 667})
     # Wait for viewport change to render
-    await page.wait_for_load_state("domcontentloaded")
+    await history_page.wait_for_load(wait_for_app_ready=False)
 
     # Check that main elements are still visible
     heading = page.locator("h1:has-text('Conversation History')")
@@ -547,7 +427,7 @@ async def test_history_responsive_design(
     # Test tablet viewport
     await page.set_viewport_size({"width": 768, "height": 1024})
     # Wait for viewport change to render
-    await page.wait_for_load_state("domcontentloaded")
+    await history_page.wait_for_load(wait_for_app_ready=False)
 
     # Check elements are still visible
     assert await heading.is_visible()
@@ -556,7 +436,7 @@ async def test_history_responsive_design(
     # Test desktop viewport
     await page.set_viewport_size({"width": 1200, "height": 800})
     # Wait for viewport change to render
-    await page.wait_for_load_state("domcontentloaded")
+    await history_page.wait_for_load(wait_for_app_ready=False)
 
     # Check elements are still visible
     assert await heading.is_visible()
@@ -571,12 +451,10 @@ async def test_history_api_error_handling(
     """Test handling of API errors in history page."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    history_page = HistoryPage(page, server_url)
 
     # Navigate to history page
-    await page.goto(f"{server_url}/history")
-
-    # Wait for page to load
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+    await history_page.navigate_to("/history")
 
     # Wait for conversations or empty/error state to appear
     await page.wait_for_selector(
@@ -605,9 +483,10 @@ async def test_history_message_display_structure(
     """Test message display structure in conversation view."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    history_page = HistoryPage(page, server_url)
 
     # Navigate directly to a conversation (will handle non-existent gracefully)
-    await page.goto(f"{server_url}/history/test_conv_id")
+    await history_page.navigate_to("/history/test_conv_id")
 
     # Wait for page response - look for back button which should always be present
     await page.wait_for_selector(
@@ -649,16 +528,15 @@ async def test_history_filter_state_management(
     """Test comprehensive filter state management."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    history_page = HistoryPage(page, server_url)
 
     # Navigate to history page with URL parameters to auto-expand filters
-    await page.goto(f"{server_url}/history?interface_type=all")
+    await history_page.navigate_to("/history?interface_type=all")
 
-    # Wait for page to load
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+    # Wait for page content to load (not show "Loading...")
     await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
 
     # Apply multiple filters
-    history_page = HistoryPage(page, server_url)
     await history_page.set_interface_type_filter("telegram")
 
     date_from_input = page.locator("input[name='date_from']")
@@ -677,7 +555,7 @@ async def test_history_filter_state_management(
 
     # Refresh page and verify filters persist
     await page.reload()
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+    await history_page.wait_for_load()
 
     # Check that filter values are restored after reload
     interface_value = await history_page.get_interface_type_filter_value()
@@ -695,6 +573,7 @@ async def test_history_page_with_conversation_data(
     """Test history page with actual conversation data."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    history_page = HistoryPage(page, server_url)
 
     # First, create some test conversation data via the API
     # This would typically be done through a fixture, but for now we'll use the API directly
@@ -712,10 +591,7 @@ async def test_history_page_with_conversation_data(
         assert response.status_code == 200
 
     # Navigate to history page
-    await page.goto(f"{server_url}/history")
-
-    # Wait for page to load
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+    await history_page.navigate_to("/history")
 
     # Check that we have at least one conversation
     results_summary = page.locator("text=/Found \\d+ conversation/")
@@ -771,18 +647,17 @@ async def test_history_interface_filter_functionality(
     """Test interface type filter functionality with real API integration."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    history_page = HistoryPage(page, server_url)
 
     # Navigate to history page with URL parameters to auto-expand filters
-    await page.goto(f"{server_url}/history?interface_type=all")
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+    await history_page.navigate_to("/history?interface_type=all")
 
     # Wait for page content to load (not show "Loading...")
     await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
 
     # Test different interface filter options (should be visible due to URL parameters)
-    history_page = HistoryPage(page, server_url)
     # Wait for navigation
-    await page.wait_for_load_state("networkidle", timeout=5000)  # Let React render
+    await history_page.wait_for_load()
 
     # Check that all interface options are available
     options = await history_page.get_interface_type_options()
@@ -795,7 +670,7 @@ async def test_history_interface_filter_functionality(
     # Test filtering by telegram (should show fewer/no results in test env)
     await history_page.set_interface_type_filter("telegram")
     # Wait for navigation
-    await page.wait_for_load_state("networkidle", timeout=5000)  # Wait for API call
+    await history_page.wait_for_load()
 
     # Check URL updated
     await page.wait_for_url("**/history?*interface_type=telegram*", timeout=5000)
@@ -809,7 +684,7 @@ async def test_history_interface_filter_functionality(
     # Switch back to web filter
     await history_page.set_interface_type_filter("web")
     # Wait for navigation
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await history_page.wait_for_load()
 
     # Check URL updated again
     await page.wait_for_url("**/history?*interface_type=web*", timeout=5000)
@@ -823,10 +698,10 @@ async def test_history_date_range_filtering(
     """Test date range filtering functionality."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    history_page = HistoryPage(page, server_url)
 
     # Navigate to history page
-    await page.goto(f"{server_url}/history?interface_type=all")
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+    await history_page.navigate_to("/history?interface_type=all")
 
     # Wait for page content to load (not show "Loading...")
     await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
@@ -845,7 +720,7 @@ async def test_history_date_range_filtering(
     await date_to_input.fill("2024-12-31", force=True)
     await date_to_input.press("Tab")
     # Wait for navigation
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await history_page.wait_for_load()
 
     # Check URL contains date filters
     current_url = page.url
@@ -856,7 +731,7 @@ async def test_history_date_range_filtering(
     clear_button = page.locator("details button:has-text('Clear Filters')")
     await clear_button.click()
     # Wait for navigation
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await history_page.wait_for_load()
 
     # URL should no longer have date filters
     cleared_url = page.url
@@ -872,10 +747,10 @@ async def test_history_conversation_id_filter(
     """Test conversation ID filtering functionality."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    history_page = HistoryPage(page, server_url)
 
     # Navigate to history page with URL parameters to auto-expand filters
-    await page.goto(f"{server_url}/history?interface_type=all")
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+    await history_page.navigate_to("/history?interface_type=all")
 
     # Wait for page content to load (not show "Loading...")
     await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
@@ -889,7 +764,7 @@ async def test_history_conversation_id_filter(
     await conv_input.fill(test_conv_id, force=True)
     await conv_input.press("Tab")
     # Wait for navigation
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await history_page.wait_for_load()
 
     # Check URL contains the conversation ID filter
     current_url = page.url
@@ -914,19 +789,15 @@ async def test_history_combined_filters_interaction(
     """Test interaction of multiple filters applied together."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    history_page = HistoryPage(page, server_url)
 
     # Navigate to history page
-    await page.goto(f"{server_url}/history?interface_type=all")
-
-    # Wait for page to load
-    page_loaded = await wait_for_history_page_loaded(page)
-    assert page_loaded, "History page failed to load"
+    await history_page.navigate_to("/history?interface_type=all")
 
     # Wait for page content to load (not show "Loading...")
     await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
 
     # Apply multiple filters
-    history_page = HistoryPage(page, server_url)
     await history_page.set_interface_type_filter("web")
 
     date_from_input = page.locator("input[name='date_from']")
@@ -938,7 +809,7 @@ async def test_history_combined_filters_interaction(
     await conv_input.press("Tab")
 
     # Wait for filters to be applied
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await history_page.wait_for_load()
 
     # Verify all filters are in URL
     current_url = page.url
@@ -950,7 +821,7 @@ async def test_history_combined_filters_interaction(
     clear_button = page.locator("details button:has-text('Clear Filters')")
     await clear_button.click()
     # Wait for navigation
-    await page.wait_for_load_state("networkidle", timeout=5000)
+    await history_page.wait_for_load()
 
     # Verify all filter values are cleared
     interface_value = await history_page.get_interface_type_filter_value()
@@ -976,10 +847,10 @@ async def test_history_filter_validation_and_error_handling(
     """Test filter validation and error handling."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
+    history_page = HistoryPage(page, server_url)
 
     # Navigate to history page with invalid date format in URL
-    await page.goto(f"{server_url}/history?date_from=invalid-date")
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+    await history_page.navigate_to("/history?date_from=invalid-date")
 
     # Page should still load (frontend handles invalid dates gracefully)
     # The frontend should show an error message or fallback gracefully
@@ -989,8 +860,7 @@ async def test_history_filter_validation_and_error_handling(
 
     # Test with valid date format
     # Navigate with URL parameters to auto-expand filters
-    await page.goto(f"{server_url}/history?interface_type=all")
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+    await history_page.navigate_to("/history?interface_type=all")
     await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
 
     date_from_input = page.locator("input[name='date_from']")

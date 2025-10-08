@@ -1,15 +1,11 @@
 """Page Object Model for History UI testing."""
 
 from playwright.async_api import Page
+from .base_page import BasePage
 
 
-class HistoryPage:
+class HistoryPage(BasePage):
     """Page Object Model for History page interactions."""
-
-    def __init__(self, page: Page, base_url: str) -> None:
-        """Initialize with a Playwright page and base URL."""
-        self.page = page
-        self.base_url = base_url
 
     # Selectors using data-testid or specific component patterns
     INTERFACE_TYPE_TRIGGER = "[role='combobox']"
@@ -23,15 +19,17 @@ class HistoryPage:
     CONVERSATION_LIST = ".conversation-list"
     CONVERSATION_ITEM = ".conversation-item"
 
-    async def navigate_to(self) -> None:
-        """Navigate to the history page."""
-        await self.page.goto(f"{self.base_url}/history")
-        await self.wait_for_load()
+    async def wait_for_load(self, wait_for_app_ready: bool = True) -> None:  # noqa: F841
+        """Wait for the history page to load.
 
-    async def wait_for_load(self) -> None:
-        """Wait for the history page to load."""
+        The history page is a separate app and doesn't use the data-app-ready signal.
+        We just wait for DOM content and a key element to be visible.
+        The wait_for_app_ready param is ignored but kept for signature compatibility.
+        """
+        await self.page.wait_for_load_state("domcontentloaded")
         await self.page.wait_for_selector(
-            "h1:has-text('Conversation History')", timeout=10000
+            "h1:has-text('Conversation History'), h1:has-text('Conversation Details')",
+            timeout=10000,
         )
 
     async def set_interface_type_filter(self, interface_type: str) -> None:

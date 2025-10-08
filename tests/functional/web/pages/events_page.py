@@ -39,6 +39,24 @@ class EventsPage(BasePage):
         await self.navigate_to("/events")
         await self.wait_for_load()
 
+    async def wait_for_load(self) -> None:
+        """Wait for the events page to load.
+
+        The events page is a separate app and doesn't use the data-app-ready signal.
+        We wait for DOM content, the main heading, and for loading indicators to disappear.
+        """
+        await self.page.wait_for_load_state("domcontentloaded")
+        await self.page.wait_for_selector("h1:has-text('Events')", timeout=10000)
+
+        # Also wait for the initial data to load, indicated by the results summary.
+        # This handles both empty and non-empty states.
+        await self.page.wait_for_selector("text=/Found \\d+ event/", timeout=10000)
+
+        # Wait for any loading indicators to disappear.
+        loading_indicator = self.page.locator(".loading", has_text="Loading events...")
+        if await loading_indicator.count() > 0:
+            await loading_indicator.wait_for(state="hidden", timeout=10000)
+
     async def set_hours_filter(self, hours: str) -> None:
         """Set the hours filter using shadcn Select.
 
@@ -202,7 +220,7 @@ class EventsPage(BasePage):
     async def open_filters(self) -> None:
         """Open the filters section if it's closed."""
         # Wait for the page to fully load first
-        await self.page.wait_for_load_state("networkidle", timeout=5000)
+        await self.wait_for_load()
         # Wait for React to render the filters by checking for the details element
         details = await self.page.wait_for_selector(self.FILTERS_DETAILS, timeout=10000)
         if not details:
