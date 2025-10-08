@@ -124,9 +124,9 @@ USER root
 # Copy dependency definition files
 COPY --chown=appuser:appuser pyproject.toml uv.lock* ./
 
-# Install Python dependencies
+# Install Python dependencies (without installing the project itself yet)
 USER appuser
-RUN uv sync --extra local-embeddings
+RUN uv sync --no-install-project --extra local-embeddings
 
 # --- Frontend Build Stage ---
 # Copy frontend package files first for layer caching
@@ -151,11 +151,10 @@ USER root
 COPY --chown=appuser:appuser . .
 
 # --- Install the Package ---
-# Install the package in editable mode. This is useful for development, but for production
-# a standard installation is often preferred. Since this is a single image for both,
-# this is a reasonable compromise.
+# Install the package using uv sync to ensure uv.lock continues to apply.
+# This completes the installation by adding the project itself.
 USER appuser
-RUN uv pip install -e .
+RUN uv sync --extra local-embeddings
 
 # --- Runtime Configuration ---
 # Expose the port the web server listens on
