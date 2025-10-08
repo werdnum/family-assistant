@@ -69,7 +69,6 @@ async def test_tools_list_loads(web_test_fixture_readonly: WebTestFixture) -> No
 
     # Navigate to tools page
     await page.goto(f"{base_url}/tools")
-    await page.wait_for_load_state("networkidle", timeout=5000)
 
     # Wait for React app to mount first
     await page.wait_for_function(
@@ -112,7 +111,6 @@ async def test_tool_execution_interface(
 
     # Navigate to tools page
     await page.goto(f"{base_url}/tools")
-    await page.wait_for_load_state("networkidle", timeout=5000)
 
     # Wait for React app to mount first
     await page.wait_for_function(
@@ -169,7 +167,6 @@ async def test_responsive_design(web_test_fixture_readonly: WebTestFixture) -> N
 
     # Navigate to tools page
     await page.goto(f"{base_url}/tools")
-    await page.wait_for_load_state("networkidle", timeout=5000)
 
     # Wait for React app to mount first
     await page.wait_for_function(
@@ -212,7 +209,6 @@ async def test_no_javascript_errors(web_test_fixture_readonly: WebTestFixture) -
 
     # Navigate to tools page
     await page.goto(f"{base_url}/tools")
-    await page.wait_for_load_state("networkidle", timeout=5000)
 
     # Wait for React app to mount first
     await page.wait_for_function(
@@ -224,7 +220,6 @@ async def test_no_javascript_errors(web_test_fixture_readonly: WebTestFixture) -
     )
 
     # Wait for network to be idle to ensure all async operations complete
-    await page.wait_for_load_state("networkidle", timeout=5000)
 
     # Filter out non-critical errors (like 404s for sourcemaps in dev mode)
     critical_errors = [

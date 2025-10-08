@@ -632,15 +632,7 @@ async def web_test_fixture(
 
     yield fixture
 
-    # Teardown: Wait for any in-flight requests to complete before assistant shutdown
-    # This prevents "database closed" errors during teardown when requests are still processing
-    print("Waiting for in-flight requests to complete...")
-    try:
-        await page.wait_for_load_state("networkidle", timeout=5000)
-    except Exception as e:
-        print(f"Warning: Could not wait for network idle during teardown: {e}")
-
-    # Close the page to terminate any active SSE streams
+    # Teardown: Close the page to terminate any active SSE streams
     print("Closing page to terminate streaming connections...")
     try:
         await page.close()
@@ -707,14 +699,7 @@ async def web_test_fixture_readonly(
 
     yield fixture
 
-    # Teardown: Wait for any in-flight requests to complete
-    print("Waiting for in-flight requests to complete...")
-    try:
-        await page.wait_for_load_state("networkidle", timeout=5000)
-    except Exception as e:
-        print(f"Warning: Could not wait for network idle during teardown: {e}")
-
-    # Close the page to terminate any active SSE streams
+    # Teardown: Close the page to terminate any active SSE streams
     print("Closing page to terminate streaming connections...")
     try:
         await page.close()

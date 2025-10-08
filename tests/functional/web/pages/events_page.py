@@ -201,8 +201,6 @@ class EventsPage(BasePage):
 
     async def open_filters(self) -> None:
         """Open the filters section if it's closed."""
-        # Wait for the page to fully load first
-        await self.page.wait_for_load_state("networkidle", timeout=5000)
         # Wait for React to render the filters by checking for the details element
         details = await self.page.wait_for_selector(self.FILTERS_DETAILS, timeout=10000)
         if not details:

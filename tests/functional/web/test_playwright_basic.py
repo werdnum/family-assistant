@@ -59,9 +59,6 @@ async def test_notes_page_accessible(web_test_fixture: WebTestFixture) -> None:
     # Navigate to notes page
     await page.goto(f"{base_url}/notes")
 
-    # Wait for page to load
-    await page.wait_for_load_state("networkidle", timeout=5000)
-
     # Check for notes-specific elements
     # Look for "Add New Note" button or link
     add_note_element = await page.wait_for_selector(
@@ -133,7 +130,9 @@ async def test_page_navigation_elements(web_test_fixture: WebTestFixture) -> Non
 
     # Navigate to notes page which has traditional navigation
     await page.goto(f"{base_url}/notes")
-    await page.wait_for_load_state("networkidle", timeout=5000)
+
+    # Wait for navigation to be rendered (indicates React app is ready)
+    await page.wait_for_selector("nav", state="visible", timeout=15000)
 
     # Check for any navigation links - the app should have some navigation
     # Since the exact navigation structure may vary, just verify links exist
@@ -166,7 +165,6 @@ async def test_responsive_design(web_test_fixture: WebTestFixture) -> None:
 
     # Navigate to homepage
     await page.goto(base_url)
-    await page.wait_for_load_state("networkidle", timeout=5000)
 
     # Check that main content is still visible
     main_element = await page.wait_for_selector("main", state="visible", timeout=5000)
@@ -185,7 +183,6 @@ async def test_add_note_with_javascript(web_test_fixture: WebTestFixture) -> Non
 
     # Navigate to notes page
     await page.goto(f"{base_url}/notes")
-    await page.wait_for_load_state("networkidle", timeout=5000)
 
     # Click on Add Note link/button
     await page.click("a[href='/notes/add'], button:has-text('Add Note')")
@@ -241,7 +238,6 @@ async def test_css_and_styling_loads(web_test_fixture: WebTestFixture) -> None:
 
     # Navigate to homepage
     await page.goto(base_url)
-    await page.wait_for_load_state("networkidle", timeout=5000)
 
     # Check that CSS is loaded by verifying computed styles
     # Get a main element to check styling

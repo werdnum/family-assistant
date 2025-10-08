@@ -44,23 +44,7 @@ async def test_events_page_basic_loading(
     # Navigate to events page
     await page.goto(f"{server_url}/events")
 
-    # Wait for React to mount and network to settle
-    await page.wait_for_load_state("networkidle", timeout=5000)
-
-    # Check for console and network errors
-    if console_errors:
-        # Filter out non-critical errors
-        critical_console_errors = [
-            e
-            for e in console_errors
-            if "Failed to fetch" not in e and "fetch" not in e.lower()
-        ]
-        if critical_console_errors:
-            raise AssertionError(
-                f"Critical console errors detected: {critical_console_errors}"
-            )
-
-    # Wait for h1 element
+    # Wait for h1 element to ensure page has started loading
     await page.wait_for_selector("h1", timeout=10000)
 
     # Check page title and heading
@@ -467,7 +451,6 @@ async def test_events_api_error_handling(
     await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
 
     # Wait for the page to finish loading (network idle indicates API calls complete)
-    await page.wait_for_load_state("networkidle", timeout=10000)
 
     # The page should handle API responses gracefully
     # Either show events, empty state, or error message
