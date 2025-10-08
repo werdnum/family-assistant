@@ -18,15 +18,15 @@
 
 exemptions:
   # ===========================================================================
-  # asyncio.sleep() exemptions - wait_for_condition() helper implementation
+  # asyncio.sleep() exemptions - Helper implementation
   # ===========================================================================
   - rule: no-asyncio-sleep-in-tests
     files:
       - tests/helpers.py
     reason: |
-      The wait_for_condition() helper function itself uses asyncio.sleep() to poll.
-      This is the legitimate implementation of a proper wait helper that other
-      tests should use instead of calling asyncio.sleep() directly.
+      The wait_for_condition() helper itself needs asyncio.sleep() for its polling
+      implementation. The rule's spirit (avoid fixed waits in tests) doesn't apply
+      to the implementation of the proper alternative.
     ticket: null
 
   # ===========================================================================
@@ -37,8 +37,8 @@ exemptions:
       - tests/mocks/mock_llm.py
       - tests/integration/llm/streaming_mocks.py
     reason: |
-      Mock LLM implementations use asyncio.sleep() to simulate realistic API delays
-      and streaming behavior. This is intentional for testing timing-dependent code.
+      Mock implementations intentionally simulate realistic delays and streaming
+      behavior. The rule targets flaky test waits, not deliberate timing simulation.
     ticket: null
 
   # ===========================================================================
@@ -52,8 +52,8 @@ exemptions:
       - tests/functional/web/test_*.py
       - tests/unit/web/test_message_notifier.py
     reason: |
-      Legacy tests that use asyncio.sleep() instead of wait_for_condition().
-      These should be refactored to use proper condition-based waiting.
+      Legacy tests that predate wait_for_condition() helper.
+      Should be refactored to use condition-based waiting.
     ticket: "#TBD-refactor-sleep-to-wait-for-condition"
 
   # ===========================================================================
@@ -64,10 +64,8 @@ exemptions:
       - tests/functional/web/pages/*.py
       - tests/functional/web/test_*.py
     reason: |
-      Legacy Playwright tests that use wait_for_timeout().
-      Should be refactored to use proper Playwright wait mechanisms:
-      - wait_for_selector() for element visibility
-      - expect().to_have_text() for text content
-      - wait_for_load_state() for network/DOM readiness
+      Legacy Playwright tests that predate proper wait pattern adoption.
+      Should be refactored to use wait_for_selector(), expect().to_have_text(),
+      or wait_for_load_state() instead of fixed timeouts.
     ticket: "#TBD-refactor-playwright-waits"
 

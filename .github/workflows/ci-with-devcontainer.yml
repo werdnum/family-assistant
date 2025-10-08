@@ -32,6 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       has_code_changes: ${{ steps.filter.outputs.has_code_changes }}
+      ast_grep_changes: ${{ steps.filter.outputs.ast_grep_changes }}
       frontend_source: ${{ steps.filter.outputs.frontend_source }}
       frontend_tests: ${{ steps.filter.outputs.frontend_tests }}
       backend_source: ${{ steps.filter.outputs.backend_source }}
@@ -53,6 +54,7 @@ jobs:
               - '!*.md'
               - '!.claude/**'
               - '!.serena/**'
+              - '!.ast-grep/**'
               - '!.github/workflows/gemini-*.yml'
               - '!.github/workflows/build-containers.yml'
               - '!.github/dependabot.yml'
@@ -72,6 +74,8 @@ jobs:
               - '!.mcp.json'
               - '!mcp_config.dev.json'
               - '!.build'
+            ast_grep_changes:
+              - '.ast-grep/**'
             frontend_source:
               - 'frontend/src/**'
               - 'frontend/*.html'
@@ -123,7 +127,9 @@ jobs:
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:cache-devcontainer-ci,mode=max
   lint:
     needs: [prepare, build-ci-container, detect-changes]
-    if: needs.detect-changes.outputs.has_code_changes == 'true'
+    if: |
+      needs.detect-changes.outputs.has_code_changes == 'true' ||
+      needs.detect-changes.outputs.ast_grep_changes == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
