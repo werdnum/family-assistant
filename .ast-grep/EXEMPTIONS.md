@@ -6,15 +6,13 @@ This guide explains how to use exemptions from code conformance rules effectivel
 
 Exemptions should be used when:
 
-1. **Test infrastructure needs the pattern**: Helpers, mocks, and fixtures may legitimately use
-   banned patterns
-2. **Legacy code requires gradual migration**: Existing code can be exempted with a plan to fix it
-3. **Edge cases have valid reasons**: Rare situations where the pattern is actually appropriate
-4. **External constraints**: Third-party code or specific requirements that mandate the pattern
+1. **The spirit of the rule doesn't apply** - The rule was designed to prevent a specific problem,
+   but that problem doesn't exist in this context
+2. **The pattern is unavoidable** - There's no practical alternative that doesn't violate the rule
 
 **Do NOT use exemptions** to:
 
-- Avoid fixing fixable code
+- Avoid fixing code that should be fixed (e.g., "it would take too much time")
 - Bypass code review
 - Hide technical debt without a plan to address it
 
@@ -101,25 +99,27 @@ All exemptions MUST include:
 
 ### Good Exemption Reasons
 
-✅ **Good**:
+✅ **Good** (spirit of rule doesn't apply):
 
 ```python
-# ast-grep-ignore: no-asyncio-sleep-in-tests - Mock LLM simulates 100ms API latency
-await asyncio.sleep(0.1)
+# ast-grep-ignore: no-asyncio-sleep-in-tests - wait_for_condition() implementation itself
+await asyncio.sleep(poll_interval)
 ```
+
+✅ **Good** (pattern is unavoidable):
+
+```python
+# ast-grep-ignore: no-playwright-wait-for-timeout - CSS transition has fixed 300ms duration, no selector to wait for
+await page.wait_for_timeout(350)
+```
+
+✅ **Good** (legacy code with plan):
 
 ```yaml
 reason: |
-  Playwright page objects use wait_for_timeout() for animation completion.
-  Refactoring to use proper wait mechanisms tracked in #456.
+  Legacy test code that needs refactoring to use condition-based waits.
+  Scheduled for cleanup - see ticket for details.
 ticket: "#456"
-```
-
-✅ **Good**:
-
-```python
-# ast-grep-ignore: no-playwright-wait-for-timeout - Waiting for CSS transition (300ms)
-await page.wait_for_timeout(350)
 ```
 
 ### Bad Exemption Reasons
@@ -136,10 +136,16 @@ await page.wait_for_timeout(350)
 # ast-grep-ignore: no-asyncio-sleep-in-tests
 ```
 
-❌ **Bad** (should fix instead):
+❌ **Bad** (avoids fixing):
 
 ```python
-# ast-grep-ignore: no-asyncio-sleep-in-tests - too hard to fix
+# ast-grep-ignore: no-asyncio-sleep-in-tests - too hard to fix right now
+```
+
+❌ **Bad** (assumes "infrastructure" is always exempt):
+
+```python
+# ast-grep-ignore: no-asyncio-sleep-in-tests - this is test infrastructure
 ```
 
 ## Managing Exemptions
