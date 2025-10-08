@@ -29,6 +29,8 @@ Additional guidance is available in subdirectories:
 
 ## Style
 
+- All imports must be at the top of the file, organized by the isort rules in `pyproject.toml`.
+- All methods must have type hints for their parameters and return values.
 - Comments are used to explain implementation when it's unclear. Do NOT add comments that are
   self-evident from the code, or that explain the code's history (that's what commit history is
   for). No comments like `# Removed db_context`.
