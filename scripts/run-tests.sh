@@ -107,8 +107,21 @@ exec 200>"$LOCK_FILE"
 echo "${BLUE}Acquiring test lock...${NC}"
 if ! flock --exclusive --timeout 300 200; then
     echo "${RED}❌ Error: Could not acquire lock after waiting 5 minutes.${NC}" >&2
-    echo "${YELLOW}Another test run is still in progress. Please wait or investigate:${NC}" >&2
+    echo "${YELLOW}Tests are currently running in another process.${NC}" >&2
     echo "${YELLOW}  Lock file: $LOCK_FILE${NC}" >&2
+
+    # Try to show which process holds the lock
+    if command -v lsof >/dev/null 2>&1; then
+        LOCK_HOLDER=$(lsof "$LOCK_FILE" 2>/dev/null | tail -n +2 | awk '{print $2}')
+        if [ -n "$LOCK_HOLDER" ]; then
+            echo "${YELLOW}  Process holding lock: PID $LOCK_HOLDER${NC}" >&2
+            ps -p "$LOCK_HOLDER" -o pid,cmd 2>/dev/null | grep -v "PID CMD" | sed "s/^/${YELLOW}    /" | sed "s/$/${NC}/" >&2
+        fi
+    fi
+
+    echo "" >&2
+    echo "${YELLOW}Please wait for the other test run to complete.${NC}" >&2
+    echo "${YELLOW}Do NOT remove the lock file - it will be released automatically.${NC}" >&2
     exit 1
 fi
 echo "${GREEN}✓ Lock acquired${NC}"

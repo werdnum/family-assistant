@@ -90,6 +90,10 @@
   {
     "regexp": "\\bllm\\s+.*-m\\s+gemini-2\\.0",
     "explanation": "gemini-2.0 models are outdated. Use gemini-2.5-pro or gemini-2.5-flash instead for better performance."
+  },
+  {
+    "regexp": "\\brm\\b.*\\.poe-test\\.lock",
+    "explanation": "Do not remove the test lock file. It protects against concurrent test runs and will be released automatically when tests complete. If tests appear stuck, investigate the running process instead."
   }
 ]
 
