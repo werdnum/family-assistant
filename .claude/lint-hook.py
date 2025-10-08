@@ -326,13 +326,11 @@ async def main() -> None:
 
         # Format and output results
         if all_results:
-            combined_output = []
-            for file_path, results in all_results.items():
-                formatted = format_results(file_path, results)
-                if formatted is not None:
-                    combined_output.append(
-                        formatted["hookSpecificOutput"]["additionalContext"]
-                    )
+            combined_output = [
+                formatted["hookSpecificOutput"]["additionalContext"]
+                for file_path, results in all_results.items()
+                if (formatted := format_results(file_path, results)) is not None
+            ]
 
             if combined_output:
                 output = {
