@@ -89,12 +89,9 @@ async def test_event_listeners_filters_interaction(
     # Wait for page to load
     await page.wait_for_selector("h1:has-text('Event Listeners')", timeout=10000)
 
-    # The details element should be open by default according to the component
-    # Just wait a moment for React to fully render
-    await page.wait_for_timeout(1000)
-
-    # Test source filter dropdown - use force=True to interact even if not visible
+    # Wait for the filter dropdown to be ready
     source_select = page.locator("select[name='source_id']")
+    await source_select.wait_for(state="attached", timeout=5000)
     await source_select.select_option("home_assistant", force=True)
     selected_value = await source_select.input_value()
     assert selected_value == "home_assistant"

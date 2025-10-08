@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 import pytest
-from playwright.async_api import Page
+from playwright.async_api import Page, expect
 
 from tests.functional.web.pages.history_page import HistoryPage
 
@@ -225,10 +225,8 @@ async def test_history_filters_interface(
     # Clear any existing value first, then fill the new value
     await conv_input.clear()
     await conv_input.fill("web_conv_123", force=True)
-    # Add a small delay for React state to update
-    await page.wait_for_timeout(100)
-    conv_value = await conv_input.input_value()
-    assert conv_value == "web_conv_123"
+    # Wait for the value to be set using expect
+    await expect(conv_input).to_have_value("web_conv_123", timeout=5000)
 
     # Test date filters
     date_from_input = page.locator("input[name='date_from']")
@@ -238,11 +236,9 @@ async def test_history_filters_interface(
         "document.querySelector('input[name=\"date_from\"]').disabled === false",
         timeout=5000,
     )
-    # For date inputs, use fill with force and a small delay
+    # For date inputs, use fill with force and wait for value to be set
     await date_from_input.fill("2024-01-01", force=True)
-    await page.wait_for_timeout(100)
-    from_value = await date_from_input.input_value()
-    assert from_value == "2024-01-01"
+    await expect(date_from_input).to_have_value("2024-01-01", timeout=5000)
 
     date_to_input = page.locator("input[name='date_to']")
     await date_to_input.wait_for(state="visible", timeout=5000)
@@ -251,11 +247,9 @@ async def test_history_filters_interface(
         "document.querySelector('input[name=\"date_to\"]').disabled === false",
         timeout=5000,
     )
-    # For date inputs, use fill with force and a small delay
+    # For date inputs, use fill with force and wait for value to be set
     await date_to_input.fill("2024-12-31", force=True)
-    await page.wait_for_timeout(100)
-    to_value = await date_to_input.input_value()
-    assert to_value == "2024-12-31"
+    await expect(date_to_input).to_have_value("2024-12-31", timeout=5000)
 
     # Test Clear Filters button
     # Look for Clear Filters button within the filters form (more specific selector)

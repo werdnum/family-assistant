@@ -5,6 +5,7 @@ import time
 from typing import Any
 
 import httpx
+from playwright.async_api import expect
 
 from .base_page import BasePage
 
@@ -69,8 +70,11 @@ class ChatPage(BasePage):
             self.CHAT_INPUT, state="visible", timeout=15000
         )
 
-        # Give a bit more time for any final initialization
-        await self.page.wait_for_timeout(500)
+        # Wait for chat input to be enabled (not disabled)
+        chat_input = self.page.locator(self.CHAT_INPUT)
+        await chat_input.wait_for(state="visible", timeout=5000)
+        # Wait for it to be enabled by checking the disabled attribute
+        await expect(chat_input).to_be_enabled(timeout=5000)
 
     async def send_message(self, message: str) -> None:
         """Send a message in the chat.
@@ -89,14 +93,15 @@ class ChatPage(BasePage):
         # Type the message character by character
         await chat_input.type(message)
 
-        # Small delay to ensure input is processed
-        await self.page.wait_for_timeout(500)
-
         # Press Enter to send (this is more reliable than clicking the button)
         await chat_input.press("Enter")
 
-        # Give time for the message to be processed and appear
-        await self.page.wait_for_timeout(3000)
+        # Wait for the message to appear in the UI
+        await self.page.wait_for_selector(
+            f'{self.MESSAGE_USER}:has-text("{message[:20]}")',
+            state="visible",
+            timeout=10000,
+        )
 
     async def get_last_assistant_message(self, timeout: int = 15000) -> str:
         """Get the text content of the last assistant message, waiting for it to stabilize."""
@@ -296,12 +301,9 @@ class ChatPage(BasePage):
         viewport_size = self.page.viewport_size
         if viewport_size and viewport_size["width"] <= 768:
             if not was_open:
-                # Opening: wait for dialog to appear and fully open
-                await self.page.wait_for_selector(
-                    '[role="dialog"][data-state="open"]', state="visible", timeout=3000
-                )
-                # Additional buffer for animation completion (Sheet duration-500)
-                await self.page.wait_for_timeout(600)
+                # Opening: wait for dialog to appear with open state
+                dialog = self.page.locator('[role="dialog"][data-state="open"]')
+                await dialog.wait_for(state="visible", timeout=3000)
             else:
                 # Closing: wait for dialog to close or disappear
                 await self.page.wait_for_function(
@@ -311,10 +313,11 @@ class ChatPage(BasePage):
                     }""",
                     timeout=3000,
                 )
-                # Additional buffer for closing animation (Sheet duration-300)
-                await self.page.wait_for_timeout(400)
         else:
-            await self.page.wait_for_timeout(300)  # Standard wait for desktop
+            # Desktop: sidebar is always visible, just wait a bit for any transitions
+            # Networkidle not critical for desktop sidebar, suppress if times out
+            with contextlib.suppress(Exception):
+                await self.page.wait_for_load_state("networkidle", timeout=500)
 
     async def is_sidebar_open(self) -> bool:
         """Check if the sidebar is open."""
@@ -380,8 +383,10 @@ class ChatPage(BasePage):
         )
 
         await self.wait_for_load()
-        # Additional small wait to ensure React state is fully updated
-        await self.page.wait_for_timeout(200)
+        # Wait for the input to be ready for the new conversation
+        await self.page.wait_for_selector(
+            self.CHAT_INPUT, state="visible", timeout=5000
+        )
 
     async def get_conversation_list(self) -> list[dict[str, Any]]:
         """Get the list of conversations from the sidebar.
@@ -627,10 +632,8 @@ class ChatPage(BasePage):
         if not current_conv_id:
             raise RuntimeError("No current conversation ID found")
 
-        # Give a small buffer for the database transaction to commit after message is sent
-        await self.page.wait_for_timeout(500)
-
         # Poll the API directly to check if conversation exists
+        # Start polling immediately - the first check will likely fail but that's okay
         while time.time() - start_time < timeout / 1000:
             try:
                 if await self.conversation_exists_via_api(current_conv_id):
