@@ -104,15 +104,14 @@ async def check_endpoint(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_ui_endpoint_accessibility_playwright(
-    web_test_fixture: WebTestFixture,
-    console_error_checker: ConsoleErrorCollector,
+    web_test_with_console_check: WebTestFixture,
 ) -> None:
     """
     Test that all UI endpoints are accessible via Playwright and render without errors.
     Uses parallel execution to speed up testing of multiple endpoints.
     """
-    browser = web_test_fixture.page.context.browser
-    base_url = web_test_fixture.base_url
+    browser = web_test_with_console_check.page.context.browser
+    base_url = web_test_with_console_check.base_url
 
     # Split endpoints into batches for parallel processing
     # Process 5 endpoints at a time to avoid overwhelming the server
@@ -144,20 +143,19 @@ async def test_ui_endpoint_accessibility_playwright(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_navigation_links_work(
-    web_test_fixture: WebTestFixture,
-    console_error_checker: ConsoleErrorCollector,
+    web_test_with_console_check: WebTestFixture,
 ) -> None:
     """Test that all navigation links in the UI work correctly.
 
     This is a smoke test that discovers all nav links dynamically and tests each one
     in isolation to avoid stale element references and ensure proper testing.
     """
-    browser = web_test_fixture.page.context.browser
+    browser = web_test_with_console_check.page.context.browser
     assert browser is not None, "Browser not available"
-    base_url = web_test_fixture.base_url
+    base_url = web_test_with_console_check.base_url
 
     # Discover all navigation links using the existing page
-    page = web_test_fixture.page
+    page = web_test_with_console_check.page
     base_page = BasePage(page, base_url)
 
     await base_page.navigate_to("/notes")
@@ -236,19 +234,15 @@ async def test_navigation_links_work(
             + "\n".join(f"  - {f}" for f in failures)
         )
 
-    # Check console errors from original page
-    console_error_checker.assert_no_errors()
-
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_responsive_design_mobile(
-    web_test_fixture: WebTestFixture,
-    console_error_checker: ConsoleErrorCollector,
+    web_test_with_console_check: WebTestFixture,
 ) -> None:
     """Test that pages work on mobile viewport sizes."""
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_with_console_check.page
+    base_url = web_test_with_console_check.base_url
     base_page = BasePage(page, base_url)
 
     # Set mobile viewport
@@ -273,20 +267,16 @@ async def test_responsive_design_mobile(
             f"body width {body_width}px > viewport {viewport_width}px"
         )
 
-    # Assert no console errors
-    console_error_checker.assert_no_errors()
-
 
 @pytest.mark.flaky(reruns=3, reruns_delay=2)
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_form_interactions(
-    web_test_fixture: WebTestFixture,
-    console_error_checker: ConsoleErrorCollector,
+    web_test_with_console_check: WebTestFixture,
 ) -> None:
     """Test basic form interactions work without errors."""
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_with_console_check.page
+    base_url = web_test_with_console_check.base_url
     base_page = BasePage(page, base_url)
 
     # Navigate to vector search page (has a simple search form)
@@ -317,19 +307,15 @@ async def test_form_interactions(
         await search_button.first.click()
         # No need to wait - this test only checks that the button click doesn't cause errors
 
-    # Assert no console errors
-    console_error_checker.assert_no_errors()
-
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_loading_states(
-    web_test_fixture_readonly: WebTestFixture,
-    console_error_checker: ConsoleErrorCollector,
+    web_test_readonly_with_console_check: WebTestFixture,
 ) -> None:
     """Test that pages show appropriate loading states."""
-    page = web_test_fixture_readonly.page
-    base_url = web_test_fixture_readonly.base_url
+    page = web_test_readonly_with_console_check.page
+    base_url = web_test_readonly_with_console_check.base_url
     base_page = BasePage(page, base_url)
 
     # Navigate to tasks page (likely to have loading states)
@@ -348,6 +334,3 @@ async def test_loading_states(
 
     # Wait for final load
     await base_page.wait_for_load()
-
-    # Assert no console errors
-    console_error_checker.assert_no_errors()

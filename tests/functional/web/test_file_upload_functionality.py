@@ -13,19 +13,18 @@ from PIL import Image
 from tests.functional.web.pages.chat_page import ChatPage
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 
-from .conftest import ConsoleErrorCollector, WebTestFixture
+from .conftest import WebTestFixture
 
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_image_upload_basic_functionality(
-    web_test_fixture: WebTestFixture,
+    web_test_with_console_check: WebTestFixture,
     mock_llm_client: RuleBasedMockLLMClient,
-    console_error_checker: "ConsoleErrorCollector",
 ) -> None:
     """Test basic image upload and processing functionality."""
-    page = web_test_fixture.page
-    chat_page = ChatPage(page, web_test_fixture.base_url)
+    page = web_test_with_console_check.page
+    chat_page = ChatPage(page, web_test_with_console_check.base_url)
 
     # Configure mock LLM to recognize image content
     def image_matcher(args: dict) -> bool:
@@ -88,6 +87,9 @@ async def test_image_upload_basic_functionality(
         # Wait for assistant response
         await chat_page.wait_for_assistant_response()
 
+        # Wait for streaming to complete to avoid SSE connection errors
+        await chat_page.wait_for_streaming_complete()
+
         # Verify the response indicates image processing
         last_response = await chat_page.get_last_assistant_message()
         assert last_response
@@ -96,13 +98,6 @@ async def test_image_upload_basic_functionality(
     finally:
         # Clean up temp file
         Path(temp_path).unlink(missing_ok=True)
-
-        # Check for console errors (will raise assertion error if found)
-        if console_error_checker.errors:
-            print("\n=== Console Errors During Test ===")
-            for error in console_error_checker.errors:
-                print(f"ERROR: {error}")
-        console_error_checker.assert_no_errors()
 
 
 @pytest.mark.playwright
