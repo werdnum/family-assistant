@@ -18,8 +18,17 @@ note: |
   # Wait for network to be idle
   await page.wait_for_load_state("networkidle")
 
+  NOTE: This rule allows wait_for_timeout() inside while loops, as those are typically
+  polling intervals in condition-checking loops, not arbitrary waits. The polling interval
+  itself is not the problem - it's the arbitrary "hope things are done" waits that cause
+  flaky tests.
+
   For exemptions, add a comment above the line:
     # ast-grep-ignore: no-playwright-wait-for-timeout - Awaiting animation completion
 rule:
-  pattern: $PAGE.wait_for_timeout($$$)
+  all:
+    - pattern: $PAGE.wait_for_timeout($$$)
+    - not:
+        inside:
+          kind: while
 

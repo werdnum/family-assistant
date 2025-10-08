@@ -68,16 +68,3 @@ exemptions:
       blocking waits. Should be refactored to use async alternatives.
     ticket: "#TBD-refactor-sleep-to-wait-for-condition"
 
-  # ===========================================================================
-  # page.wait_for_timeout() exemptions - Legacy Playwright tests
-  # ===========================================================================
-  - rule: no-playwright-wait-for-timeout
-    files:
-      - tests/functional/web/pages/*.py
-      - tests/functional/web/test_*.py
-    reason: |
-      Legacy Playwright tests that predate proper wait pattern adoption.
-      Should be refactored to use wait_for_selector(), expect().to_have_text(),
-      or wait_for_load_state() instead of fixed timeouts.
-    ticket: "#TBD-refactor-playwright-waits"
-

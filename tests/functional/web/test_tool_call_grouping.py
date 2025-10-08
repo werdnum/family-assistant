@@ -85,13 +85,14 @@ async def test_multiple_tool_calls_are_grouped(
     # Wait for the assistant's response and tool calls
     await chat_page.wait_for_message_content("I'll add several notes for you.")
 
-    # Wait a bit longer for tool calls to appear
-    await page.wait_for_timeout(2000)
-
-    # First, let's check if any tool-related content appears at all
-    # This will help us understand if tools are being rendered differently than expected
+    # Wait for tool calls to appear
     assistant_message = page.locator('[data-testid="assistant-message"]')
     await assistant_message.wait_for(state="visible", timeout=10000)
+
+    # Wait for tool call elements to be visible
+    await page.wait_for_selector(
+        '[data-testid*="tool-call"]', state="visible", timeout=10000
+    )
 
     # Check console logs for our ToolGroup debug message
     console_messages = []
@@ -210,8 +211,10 @@ async def test_tool_group_expand_collapse_interaction(
         "I'll search for information and then add a note."
     )
 
-    # Wait a bit longer for tool calls to appear
-    await page.wait_for_timeout(2000)
+    # Wait for tool calls to appear
+    await page.wait_for_selector(
+        '[data-testid*="tool-call"]', state="visible", timeout=10000
+    )
 
     # Check if tool elements are rendered at all
     tool_selectors = [
@@ -315,8 +318,10 @@ async def test_single_tool_call_uses_toolgroup(
     # Wait for assistant message
     await chat_page.wait_for_message_content("I'll add a single note for you.")
 
-    # Wait a bit longer for tool calls to appear
-    await page.wait_for_timeout(2000)
+    # Wait for tool call elements to be visible
+    await page.wait_for_selector(
+        '[data-testid*="tool-call"]', state="visible", timeout=10000
+    )
 
     # Check if tool elements are rendered at all
     tool_selectors = [
