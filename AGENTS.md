@@ -28,8 +28,8 @@ Additional guidance is available in subdirectories:
   transformation recipes
 
 ## Style
-
-- All imports must be at the top of the file, organized by the isort rules in `pyproject.toml`.
+- Place all imports at the top of the file, organized by the isort rules in `pyproject.toml`.
+- Use type hints for all method parameters and return values.
 - All methods must have type hints for their parameters and return values.
 - Comments are used to explain implementation when it's unclear. Do NOT add comments that are
   self-evident from the code, or that explain the code's history (that's what commit history is
