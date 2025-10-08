@@ -19,6 +19,12 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+      - id: code-conformance
+        name: code-conformance
+        entry: .ast-grep/check-conformance.py
+        language: system
+        types: [python]
+        pass_filenames: true
   - repo: local
     hooks:
       - id: mdformat
@@ -45,3 +51,4 @@ repos:
         language: system
         files: ^frontend/.*\.(js|jsx|ts|tsx)$
         pass_filenames: true
+

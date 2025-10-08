@@ -1,0 +1,16 @@
+id: no-time-sleep-in-tests
+language: python
+severity: error
+message: "Avoid time.sleep() in tests - use async wait helpers instead"
+note: |
+  Using time.sleep() blocks the event loop and makes tests slow and unreliable.
+
+  Instead, use wait_for_condition() from tests/helpers.py (see no-asyncio-sleep-in-tests).
+
+  For exemptions, add a comment above the line:
+    # ast-grep-ignore: no-time-sleep-in-tests - Required for sync code testing
+rule:
+  any:
+    - pattern: time.sleep($$$)
+    - pattern: sleep($$$)
+

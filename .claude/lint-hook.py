@@ -59,6 +59,35 @@ async def lint_python_file(file_path: str) -> list[LintResult]:
     venv = os.environ.get("VIRTUAL_ENV", ".venv")
 
     # Define all linter tasks
+    async def run_code_conformance() -> LintResult:
+        """Run code conformance check (ast-grep)."""
+        cmd = [".ast-grep/check-conformance.py", "--json", file_path]
+        returncode, stdout, stderr, duration = await run_command(cmd, timeout=2.0)
+
+        if returncode != 0 and stdout:
+            # Parse JSON to extract violations
+            try:
+                violations = json.loads(stdout) if stdout else []
+                if violations:
+                    output = f"Code conformance violations in {file_path}:\n"
+                    for v in violations:
+                        line = v.get("range", {}).get("start", {}).get("line", "?")
+                        rule_id = v.get("ruleId", "unknown")
+                        message = v.get("message", "")
+                        output += f"  Line {line}: [{rule_id}] {message}\n"
+
+                    return LintResult(
+                        "code-conformance",
+                        success=False,
+                        duration=duration,
+                        output=output.strip(),
+                        auto_fixable=False,
+                    )
+            except json.JSONDecodeError:
+                pass
+
+        return LintResult("code-conformance", True, duration)
+
     async def run_ruff_check() -> LintResult:
         # Run Ruff without auto-fixing to avoid mutating files while work is in progress.
         check_cmd = [
@@ -145,6 +174,7 @@ async def lint_python_file(file_path: str) -> list[LintResult]:
     other_tasks = [
         run_ruff_check(),
         run_basedpyright(),
+        run_code_conformance(),
     ]
 
     other_results = await asyncio.gather(*other_tasks)
