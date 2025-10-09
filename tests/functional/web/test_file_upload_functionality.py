@@ -4,9 +4,9 @@ import asyncio
 import json
 import tempfile
 import time
-from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 from PIL import Image
 
@@ -97,7 +97,7 @@ async def test_image_upload_basic_functionality(
 
     finally:
         # Clean up temp file
-        Path(temp_path).unlink(missing_ok=True)
+        await anyio.Path(temp_path).unlink(missing_ok=True)
 
 
 @pytest.mark.playwright
@@ -141,7 +141,7 @@ async def test_image_upload_validation_file_type(
 
     finally:
         # Clean up temp file
-        Path(temp_path).unlink(missing_ok=True)
+        await anyio.Path(temp_path).unlink(missing_ok=True)
 
 
 @pytest.mark.playwright
@@ -232,7 +232,7 @@ async def test_multiple_image_formats_support(
 
         finally:
             # Clean up temp file
-            Path(temp_path).unlink(missing_ok=True)
+            await anyio.Path(temp_path).unlink(missing_ok=True)
 
 
 @pytest.mark.playwright
@@ -284,7 +284,7 @@ async def test_attachment_removal_functionality(
 
     finally:
         # Clean up temp file
-        Path(temp_path).unlink(missing_ok=True)
+        await anyio.Path(temp_path).unlink(missing_ok=True)
 
 
 @pytest.mark.playwright
@@ -337,7 +337,7 @@ async def test_image_preview_dialog(
 
     finally:
         # Clean up temp file
-        Path(temp_path).unlink(missing_ok=True)
+        await anyio.Path(temp_path).unlink(missing_ok=True)
 
 
 @pytest.mark.playwright
@@ -367,7 +367,7 @@ async def test_drag_and_drop_upload(
         await composer.wait_for(state="visible", timeout=10000)
 
         # Create file for drag and drop
-        Path(temp_path).read_bytes()
+        await anyio.Path(temp_path).read_bytes()
 
         # Simulate drag and drop (note: actual drag/drop testing may require different approach)
         # For now, we'll use the file chooser method as drag/drop is complex in Playwright
@@ -382,7 +382,7 @@ async def test_drag_and_drop_upload(
 
     finally:
         # Clean up temp file
-        Path(temp_path).unlink(missing_ok=True)
+        await anyio.Path(temp_path).unlink(missing_ok=True)
 
 
 @pytest.mark.playwright
@@ -462,7 +462,7 @@ async def test_api_request_includes_attachments(
 
     finally:
         # Clean up temp file
-        Path(temp_path).unlink(missing_ok=True)
+        await anyio.Path(temp_path).unlink(missing_ok=True)
 
 
 @pytest.mark.playwright
@@ -543,4 +543,4 @@ async def test_attachment_display_in_message_history(
 
     finally:
         # Clean up temp file
-        Path(temp_path).unlink(missing_ok=True)
+        await anyio.Path(temp_path).unlink(missing_ok=True)

@@ -75,9 +75,11 @@ def create_mock_update(
         text=message_text,
         reply_to_message=reply_to_message,
     )
-    update = Update(
-        update_id=uuid.uuid4().int & (1 << 31) - 1, message=message
-    )  # Ensure positive int
+    # Generate positive int for update_id by masking to 31 bits
+    uuid_obj = uuid.uuid4()
+    # basedpyright incorrectly infers UUID.int as a property descriptor rather than int
+    update_id = uuid_obj.int & ((1 << 31) - 1)  # type: ignore[operator]
+    update = Update(update_id=update_id, message=message)
     return update
 
 
