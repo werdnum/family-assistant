@@ -5,6 +5,7 @@ import tempfile
 from collections.abc import AsyncGenerator
 from io import BytesIO
 
+import anyio
 import numpy as np
 import pytest
 from PIL import Image
@@ -366,9 +367,11 @@ class TestDocumentRetrieval:
             )
 
             # Remove the file to simulate missing file
-            stored_files = list(temp_storage_path.glob("*missing.pdf"))
+            stored_files = [
+                p async for p in anyio.Path(temp_storage_path).glob("*missing.pdf")
+            ]
             for file_path in stored_files:
-                file_path.unlink()
+                await anyio.Path(file_path).unlink()
 
             # Retrieve should fall back to text content
             content_result = await get_full_document_content_tool(
@@ -477,4 +480,4 @@ class TestDocumentRetrieval:
             assert doc_result is not None
             assert doc_result["file_path"] is not None
             assert "path_test.pdf" in doc_result["file_path"]
-            assert pathlib.Path(doc_result["file_path"]).exists()
+            assert await anyio.Path(doc_result["file_path"]).exists()
