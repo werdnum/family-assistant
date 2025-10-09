@@ -20,6 +20,8 @@ import logging  # Changed
 import sys
 from collections.abc import Sequence  # Removed Dict, Any, Tuple, Optional
 
+import aiofiles
+
 # --- MCP Imports ---
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -269,8 +271,8 @@ if __name__ == "__main__":
                         sys.exit(1)
                     if args.output_file:
                         try:
-                            with open(args.output_file, "wb") as f:
-                                f.write(result.content_bytes)
+                            async with aiofiles.open(args.output_file, "wb") as f:
+                                await f.write(result.content_bytes)
                             logger.info(
                                 f"Image content (MIME: {result.mime_type}, Source: {result.source_description}) saved to {args.output_file}"
                             )
