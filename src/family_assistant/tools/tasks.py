@@ -178,25 +178,25 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "list_pending_callbacks",
+            "name": "list_pending_actions",
             "description": (
-                "Lists all pending LLM callback tasks for the current conversation, including:"
-                "\n- One-time callbacks from schedule_future_callback"
-                "\n- Reminder callbacks from schedule_reminder"
-                "\n- Individual instances of recurring tasks from schedule_recurring_task"
-                "\nReturns task IDs, scheduled times, and context for each pending callback.\n\n"
-                "Returns: A formatted string listing pending callbacks. "
-                "If callbacks exist, returns 'Pending LLM callbacks:' followed by entries with '- Task ID: [id]\n  Scheduled At: [time]\n  Context: [context preview]'. "
-                "If no callbacks found, returns 'No pending LLM callbacks found for this conversation.'. "
-                "On error, returns 'Error: Failed to list pending callbacks. [details]'."
+                "Lists all pending scheduled actions for the current conversation, including:"
+                "\n- LLM callbacks from schedule_future_callback, schedule_reminder, schedule_recurring_task"
+                "\n- Script actions from schedule_action, schedule_recurring_action"
+                "\n- Individual instances of recurring tasks"
+                "\nReturns task IDs, types, scheduled times, and configuration for each pending action.\n\n"
+                "Returns: A formatted string listing pending actions. "
+                "If actions exist, returns 'Pending scheduled actions:' followed by entries with task details. "
+                "If no actions found, returns 'No pending scheduled actions found for this conversation.'. "
+                "On error, returns 'Error: Failed to list pending actions. [details]'."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "limit": {
                         "type": "integer",
-                        "description": "Optional. Maximum number of pending callbacks to list (default: 5).",
-                        "default": 5,
+                        "description": "Optional. Maximum number of pending actions to list (default: 10).",
+                        "default": 10,
                     },
                 },
                 "required": [],
@@ -206,34 +206,41 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "modify_pending_callback",
+            "name": "modify_pending_action",
             "description": (
-                "Modifies the scheduled time or context of a specific pending LLM callback task. You must provide the task_id of the callback to modify.\n\n"
+                "Modifies a pending scheduled action (LLM callback or script). You must provide the task_id of the action to modify.\n\n"
+                "Can modify:\n"
+                "- Schedule time (for any action type)\n"
+                "- LLM callback context (for wake_llm actions)\n"
+                "- Script code (for script actions)\n\n"
                 "Returns: A string indicating the result. "
-                "On success, returns 'Callback task [task_id] modified successfully.'. "
-                "If neither new_callback_time nor new_context provided, returns 'Error: You must provide either a new_callback_time or a new_context to modify.'. "
-                "If task not found, returns 'Error: Callback task with ID [task_id] not found.'. "
-                "If task not an LLM callback, returns 'Error: Task [task_id] is not an LLM callback task.'. "
-                "If task not pending, returns 'Error: Callback task [task_id] is not pending (current status: [status]). It cannot be modified.'. "
-                "If task belongs to different conversation, returns 'Error: Callback task [task_id] does not belong to this conversation. Modification denied.'. "
-                "On invalid new time, returns 'Error: Invalid new_callback_time. [details]'. "
-                "On other errors, returns 'Error: Failed to modify callback task. [details]'."
+                "On success, returns 'Action [task_id] modified successfully.'. "
+                "If no modifications provided, returns 'Error: You must provide at least one modification parameter.'. "
+                "If task not found, returns 'Error: Action with ID [task_id] not found.'. "
+                "If task not pending, returns 'Error: Action [task_id] is not pending (current status: [status]). It cannot be modified.'. "
+                "If task belongs to different conversation, returns 'Error: Action [task_id] does not belong to this conversation. Modification denied.'. "
+                "On invalid new time, returns 'Error: Invalid new_schedule_time. [details]'. "
+                "On other errors, returns 'Error: Failed to modify action. [details]'."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "task_id": {
                         "type": "string",
-                        "description": "The unique ID of the LLM callback task to modify (obtained from list_pending_callbacks or when it was scheduled).",
+                        "description": "The unique ID of the action to modify (obtained from list_pending_actions or when it was scheduled).",
                     },
-                    "new_callback_time": {
+                    "new_schedule_time": {
                         "type": "string",
                         "format": "date-time",
-                        "description": "Optional. The new exact date and time (ISO 8601 format, including timezone, e.g., '2025-06-01T10:00:00-07:00') for the callback. If omitted, the time is not changed.",
+                        "description": "Optional. The new exact date and time (ISO 8601 format, including timezone, e.g., '2025-06-01T10:00:00-07:00') for the action. If omitted, the time is not changed.",
                     },
                     "new_context": {
                         "type": "string",
-                        "description": "Optional. The new context or instructions for the callback. If omitted, the context is not changed.",
+                        "description": "Optional. The new context or instructions for LLM callback actions. If omitted, the context is not changed. Only applies to wake_llm actions.",
+                    },
+                    "new_script_code": {
+                        "type": "string",
+                        "description": "Optional. The new script code for script actions. If omitted, the script code is not changed. Only applies to script actions.",
                     },
                 },
                 "required": ["task_id"],
@@ -243,28 +250,27 @@ TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "cancel_pending_callback",
+            "name": "cancel_pending_action",
             "description": (
-                "Cancels a specific pending LLM callback task by its task_id. Use this to:"
-                "\n- Cancel one-time future callbacks"
+                "Cancels a specific pending scheduled action by its task_id. Use this to:"
+                "\n- Cancel one-time LLM callbacks or script actions"
                 "\n- Cancel scheduled reminders"
                 "\n- Cancel individual instances of recurring tasks"
-                "\n- Stop a recurring task by canceling all its pending instances (use list_pending_callbacks first to find them)"
-                "\nNote: This cancels only the specific task instance identified by task_id.\n\n"
+                "\n- Stop a recurring task by canceling all its pending instances (use list_pending_actions first to find them)"
+                "\nNote: This cancels only the specific action instance identified by task_id.\n\n"
                 "Returns: A string indicating the result. "
-                "On success, returns 'Callback task [task_id] cancelled successfully.'. "
-                "If task not found, returns 'Error: Callback task with ID [task_id] not found.'. "
-                "If task not an LLM callback, returns 'Error: Task [task_id] is not an LLM callback task.'. "
-                "If task not pending, returns 'Error: Callback task [task_id] is not pending (current status: [status]). It cannot be cancelled.'. "
-                "If task belongs to different conversation, returns 'Error: Callback task [task_id] does not belong to this conversation. Cancellation denied.'. "
-                "On other errors, returns 'Error: Failed to cancel callback task. [details]'."
+                "On success, returns 'Action [task_id] cancelled successfully.'. "
+                "If task not found, returns 'Error: Action with ID [task_id] not found.'. "
+                "If task not pending, returns 'Error: Action [task_id] is not pending (current status: [status]). It cannot be cancelled.'. "
+                "If task belongs to different conversation, returns 'Error: Action [task_id] does not belong to this conversation. Cancellation denied.'. "
+                "On other errors, returns 'Error: Failed to cancel action. [details]'."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "task_id": {
                         "type": "string",
-                        "description": "The unique ID of the LLM callback task to cancel (obtained from list_pending_callbacks or when it was scheduled).",
+                        "description": "The unique ID of the action to cancel (obtained from list_pending_actions or when it was scheduled).",
                     },
                 },
                 "required": ["task_id"],
@@ -653,40 +659,45 @@ async def schedule_future_callback_tool(
         return "Error: Failed to schedule the callback."
 
 
-async def list_pending_callbacks_tool(
+async def list_pending_actions_tool(
     exec_context: ToolExecutionContext,
-    limit: int = 5,
+    limit: int = 10,
 ) -> str:
     """
-    Lists pending 'llm_callback' tasks for the current conversation.
+    Lists pending scheduled actions (both LLM callbacks and scripts) for the current conversation.
 
     Args:
         exec_context: The execution context.
-        limit: Maximum number of callbacks to list.
+        limit: Maximum number of actions to list.
 
     Returns:
-        A string listing pending callbacks or a message if none are found.
+        A string listing pending actions or a message if none are found.
     """
     db_context = exec_context.db_context
     conversation_id = exec_context.conversation_id
     interface_type = exec_context.interface_type
     timezone_str = exec_context.timezone_str
     logger.info(
-        f"Executing list_pending_callbacks_tool for {interface_type}:{conversation_id}, limit={limit}"
+        f"Executing list_pending_actions_tool for {interface_type}:{conversation_id}, limit={limit}"
     )
 
     try:
-        # Filter pending llm_callback tasks for this conversation
-        # Note: We'll fetch all pending llm_callback tasks and filter in Python
+        # Filter pending tasks (both llm_callback and script_execution) for this conversation
+        # Note: We'll fetch all pending tasks and filter in Python
         # to avoid database-specific JSON syntax issues
         stmt = (
             select(
                 storage.tasks_table.c.task_id,
+                storage.tasks_table.c.task_type,
                 storage.tasks_table.c.scheduled_at,
                 storage.tasks_table.c.payload,
+                storage.tasks_table.c.recurrence_rule,
             )
             .where(
-                storage.tasks_table.c.task_type == "llm_callback",
+                storage.tasks_table.c.task_type.in_([
+                    "llm_callback",
+                    "script_execution",
+                ]),
                 storage.tasks_table.c.status == "pending",
             )
             .order_by(storage.tasks_table.c.scheduled_at.asc())
@@ -707,17 +718,18 @@ async def list_pending_callbacks_tool(
                     break
 
         if not filtered_results:
-            return "No pending LLM callbacks found for this conversation."
+            return "No pending scheduled actions found for this conversation."
 
-        formatted_callbacks = ["Pending LLM callbacks:"]
+        formatted_actions = ["Pending scheduled actions:"]
         for row_proxy in filtered_results:
             # row_proxy is already a Mapping[str, Any] as per fetch_all's contract
             row: Mapping[str, Any] = row_proxy
 
             task_id = row.get("task_id")
+            task_type = row.get("task_type")
             scheduled_at_utc = row.get("scheduled_at")
             payload = row.get("payload", {})
-            callback_context = payload.get("callback_context", "No context available.")
+            recurrence_rule = row.get("recurrence_rule")
 
             scheduled_at_local_str = "Unknown time"
             if scheduled_at_utc:
@@ -729,33 +741,55 @@ async def list_pending_callbacks_tool(
                     "%Y-%m-%d %H:%M:%S %Z"
                 )
 
-            formatted_callbacks.append(
-                f"- Task ID: {task_id}\n  Scheduled At: {scheduled_at_local_str}\n  Context: {callback_context[:100]}{'...' if len(callback_context) > 100 else ''}"
+            # Format based on task type
+            if task_type == "llm_callback":
+                callback_context = payload.get(
+                    "callback_context", "No context available."
+                )
+                action_type = "LLM Callback"
+                detail = f"Context: {callback_context[:100]}{'...' if len(callback_context) > 100 else ''}"
+            elif task_type == "script_execution":
+                script_code = payload.get("script_code", "")
+                task_name = payload.get("task_name", "Unnamed")
+                action_type = f"Script: {task_name}"
+                detail = f"Script: {script_code[:100]}{'...' if len(script_code) > 100 else ''}"
+            else:
+                action_type = task_type
+                detail = "No details available"
+
+            recurrence_info = (
+                f" (Recurring: {recurrence_rule})" if recurrence_rule else ""
             )
-        return "\n".join(formatted_callbacks)
+
+            formatted_actions.append(
+                f"- Task ID: {task_id}\n  Type: {action_type}{recurrence_info}\n  Scheduled At: {scheduled_at_local_str}\n  {detail}"
+            )
+        return "\n".join(formatted_actions)
 
     except Exception as e:
         logger.error(
-            f"Error listing pending callbacks for {interface_type}:{conversation_id}: {e}",
+            f"Error listing pending actions for {interface_type}:{conversation_id}: {e}",
             exc_info=True,
         )
-        return f"Error: Failed to list pending callbacks. {e}"
+        return f"Error: Failed to list pending actions. {e}"
 
 
-async def modify_pending_callback_tool(
+async def modify_pending_action_tool(
     exec_context: ToolExecutionContext,
     task_id: str,
-    new_callback_time: str | None = None,
+    new_schedule_time: str | None = None,
     new_context: str | None = None,
+    new_script_code: str | None = None,
 ) -> str:
     """
-    Modifies the scheduled time or context of a pending 'llm_callback' task.
+    Modifies a pending scheduled action (LLM callback or script).
 
     Args:
         exec_context: The execution context.
-        task_id: The ID of the callback task to modify.
-        new_callback_time: Optional. New ISO 8601 time for the callback.
-        new_context: Optional. New context string for the callback.
+        task_id: The ID of the action to modify.
+        new_schedule_time: Optional. New ISO 8601 time for the action.
+        new_context: Optional. New context string for LLM callback actions.
+        new_script_code: Optional. New script code for script actions.
 
     Returns:
         A string confirming modification or an error message.
@@ -766,11 +800,11 @@ async def modify_pending_callback_tool(
     timezone_str = exec_context.timezone_str
     clock = exec_context.clock or SystemClock()
     logger.info(
-        f"Executing modify_pending_callback_tool for task_id='{task_id}' in {interface_type}:{conversation_id}"
+        f"Executing modify_pending_action_tool for task_id='{task_id}' in {interface_type}:{conversation_id}"
     )
 
-    if not new_callback_time and not new_context:
-        return "Error: You must provide either a new_callback_time or a new_context to modify."
+    if not new_schedule_time and not new_context and not new_script_code:
+        return "Error: You must provide at least one modification parameter."
 
     try:
         # Fetch the task to verify ownership and status
@@ -780,40 +814,54 @@ async def modify_pending_callback_tool(
         task_row_proxy = await db_context.fetch_one(task_stmt)
 
         if not task_row_proxy:
-            return f"Error: Callback task with ID '{task_id}' not found."
+            return f"Error: Action with ID '{task_id}' not found."
 
         # task_row_proxy is already a Mapping[str, Any] as per fetch_one's contract
         task: Mapping[str, Any] = task_row_proxy
+        task_type = task.get("task_type")
 
-        if task.get("task_type") != "llm_callback":
-            return f"Error: Task '{task_id}' is not an LLM callback task."
+        # Verify it's a manageable action type
+        if task_type not in {"llm_callback", "script_execution"}:
+            return f"Error: Task '{task_id}' is not a scheduled action (type: {task_type})."
+
         if task.get("status") != "pending":
-            return f"Error: Callback task '{task_id}' is not pending (current status: {task.get('status')}). It cannot be modified."
+            return f"Error: Action '{task_id}' is not pending (current status: {task.get('status')}). It cannot be modified."
 
         task_payload = task.get("payload", {})
         if (
             task_payload.get("interface_type") != interface_type
             or task_payload.get("conversation_id") != conversation_id
         ):
-            return f"Error: Callback task '{task_id}' does not belong to this conversation. Modification denied."
+            return f"Error: Action '{task_id}' does not belong to this conversation. Modification denied."
 
         updates: dict[str, Any] = {}
-        if new_callback_time:
+
+        # Handle schedule time update (works for both types)
+        if new_schedule_time:
             try:
-                scheduled_dt = isoparse(new_callback_time)
+                scheduled_dt = isoparse(new_schedule_time)
                 if scheduled_dt.tzinfo is None:
                     scheduled_dt = scheduled_dt.replace(tzinfo=ZoneInfo(timezone_str))
-                if scheduled_dt <= clock.now():  # Use clock from context
-                    raise ValueError("New callback time must be in the future.")
-                updates["scheduled_at"] = scheduled_dt.astimezone(
-                    timezone.utc
-                )  # Store as UTC
+                if scheduled_dt <= clock.now():
+                    raise ValueError("New schedule time must be in the future.")
+                updates["scheduled_at"] = scheduled_dt.astimezone(timezone.utc)
             except ValueError as ve:
-                return f"Error: Invalid new_callback_time. {ve}"
+                return f"Error: Invalid new_schedule_time. {ve}"
 
-        if new_context:
-            new_payload = task_payload.copy()
+        # Handle payload updates based on task type
+        new_payload = task_payload.copy()
+        payload_modified = False
+
+        if task_type == "llm_callback" and new_context:
             new_payload["callback_context"] = new_context
+            payload_modified = True
+        elif task_type == "script_execution" and new_script_code:
+            new_payload["script_code"] = new_script_code
+            if "config" in new_payload:
+                new_payload["config"]["script_code"] = new_script_code
+            payload_modified = True
+
+        if payload_modified:
             updates["payload"] = new_payload
 
         if not updates:
@@ -828,29 +876,27 @@ async def modify_pending_callback_tool(
         result = await db_context.execute_with_retry(update_stmt)
 
         if result and result.rowcount > 0:  # type: ignore
-            # Notification happens automatically in enqueue_task when tasks are updated
-            return f"Callback task '{task_id}' modified successfully."
+            return f"Action '{task_id}' modified successfully."
         else:
-            # This case should ideally not be reached if fetch_one found the task
-            return f"Error: Failed to modify callback task '{task_id}'. It might have been processed or deleted."
+            return f"Error: Failed to modify action '{task_id}'. It might have been processed or deleted."
 
     except Exception as e:
         logger.error(
-            f"Error modifying callback task '{task_id}' for {interface_type}:{conversation_id}: {e}",
+            f"Error modifying action '{task_id}' for {interface_type}:{conversation_id}: {e}",
             exc_info=True,
         )
-        return f"Error: Failed to modify callback task. {e}"
+        return f"Error: Failed to modify action. {e}"
 
 
-async def cancel_pending_callback_tool(
+async def cancel_pending_action_tool(
     exec_context: ToolExecutionContext, task_id: str
 ) -> str:
     """
-    Cancels a pending 'llm_callback' task.
+    Cancels a pending scheduled action (LLM callback or script).
 
     Args:
         exec_context: The execution context.
-        task_id: The ID of the callback task to cancel.
+        task_id: The ID of the action to cancel.
 
     Returns:
         A string confirming cancellation or an error message.
@@ -859,7 +905,7 @@ async def cancel_pending_callback_tool(
     conversation_id = exec_context.conversation_id
     interface_type = exec_context.interface_type
     logger.info(
-        f"Executing cancel_pending_callback_tool for task_id='{task_id}' in {interface_type}:{conversation_id}"
+        f"Executing cancel_pending_action_tool for task_id='{task_id}' in {interface_type}:{conversation_id}"
     )
 
     try:
@@ -870,37 +916,40 @@ async def cancel_pending_callback_tool(
         task_row_proxy = await db_context.fetch_one(task_stmt)
 
         if not task_row_proxy:
-            return f"Error: Callback task with ID '{task_id}' not found."
+            return f"Error: Action with ID '{task_id}' not found."
 
         # task_row_proxy is already a Mapping[str, Any] as per fetch_one's contract
         task: Mapping[str, Any] = task_row_proxy
+        task_type = task.get("task_type")
 
-        if task.get("task_type") != "llm_callback":
-            return f"Error: Task '{task_id}' is not an LLM callback task."
+        # Verify it's a manageable action type
+        if task_type not in {"llm_callback", "script_execution"}:
+            return f"Error: Task '{task_id}' is not a scheduled action (type: {task_type})."
+
         if task.get("status") != "pending":
-            return f"Error: Callback task '{task_id}' is not pending (current status: {task.get('status')}). It cannot be cancelled."
+            return f"Error: Action '{task_id}' is not pending (current status: {task.get('status')}). It cannot be cancelled."
 
         task_payload = task.get("payload", {})
         if (
             task_payload.get("interface_type") != interface_type
             or task_payload.get("conversation_id") != conversation_id
         ):
-            return f"Error: Callback task '{task_id}' does not belong to this conversation. Cancellation denied."
+            return f"Error: Action '{task_id}' does not belong to this conversation. Cancellation denied."
 
         # Mark as 'failed' with a specific error message indicating cancellation
         await db_context.tasks.update_status(
             task_id=task_id,
-            status="failed",  # Using 'failed' as 'cancelled' might not be a standard status
-            error="Callback cancelled by user.",
+            status="failed",
+            error="Action cancelled by user.",
         )
-        return f"Callback task '{task_id}' cancelled successfully."
+        return f"Action '{task_id}' cancelled successfully."
 
     except Exception as e:
         logger.error(
-            f"Error cancelling callback task '{task_id}' for {interface_type}:{conversation_id}: {e}",
+            f"Error cancelling action '{task_id}' for {interface_type}:{conversation_id}: {e}",
             exc_info=True,
         )
-        return f"Error: Failed to cancel callback task. {e}"
+        return f"Error: Failed to cancel action. {e}"
 
 
 async def schedule_action_tool(
