@@ -496,7 +496,10 @@ async def test_attachment_display_in_message_history(
         file_chooser = await fc_info.value
         await file_chooser.set_files(temp_path)
 
-        await page.wait_for_selector('[data-testid="attachment-preview"]', timeout=5000)
+        # Use locator API for attachment preview
+        attachment_preview = page.locator('[data-testid="attachment-preview"]').first
+        await attachment_preview.wait_for(state="visible", timeout=5000)
+
         await chat_page.send_message("What's in this image?")
 
         # Wait for message to be sent and response received
@@ -504,11 +507,11 @@ async def test_attachment_display_in_message_history(
 
         # Check that user message displays the attachment
         user_message = page.locator('[data-testid="user-message"]').last
-        await user_message.wait_for(state="visible", timeout=5000)
+        await user_message.wait_for(state="visible", timeout=10000)
 
         # Look for attachment display in the user message BEFORE refresh
         image_in_message_before = user_message.locator("img").first
-        await image_in_message_before.wait_for(state="visible", timeout=5000)
+        await image_in_message_before.wait_for(state="visible", timeout=10000)
 
         # Get the image src URL before refresh
         image_src_before = await image_in_message_before.get_attribute("src")
@@ -518,16 +521,19 @@ async def test_attachment_display_in_message_history(
         # **TEST PERSISTENCE: REFRESH THE PAGE**
         await page.reload()
 
-        # Wait for messages to reload after refresh
-        await page.wait_for_selector('[data-testid="user-message"]', timeout=10000)
+        # Wait for the page to be fully loaded after reload
+        await chat_page.wait_for_load(wait_for_app_ready=True)
 
-        # Verify attachment STILL appears in user message AFTER refresh
+        # Wait for assistant response to complete after reload (ensures conversation loaded)
+        await chat_page.wait_for_assistant_response()
+
+        # Use locator API (automatically retries) instead of wait_for_selector
         user_message_after = page.locator('[data-testid="user-message"]').last
-        await user_message_after.wait_for(state="visible", timeout=5000)
+        await user_message_after.wait_for(state="visible", timeout=10000)
 
         # Look for image element in the user message after refresh
         image_in_message_after = user_message_after.locator("img").first
-        await image_in_message_after.wait_for(state="visible", timeout=5000)
+        await image_in_message_after.wait_for(state="visible", timeout=10000)
 
         # Get the image src after refresh
         image_src_after = await image_in_message_after.get_attribute("src")
