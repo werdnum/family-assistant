@@ -28,11 +28,13 @@ if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
 
     from family_assistant.storage.repositories import (
+        AutomationsRepository,
         EmailRepository,
         ErrorLogsRepository,
         EventsRepository,
         MessageHistoryRepository,
         NotesRepository,
+        ScheduleAutomationsRepository,
         TasksRepository,
         VectorRepository,
     )
@@ -89,6 +91,8 @@ class DatabaseContext:
         self._error_logs = None
         self._events = None
         self._vector = None
+        self._schedule_automations = None
+        self._automations = None
 
     async def __aenter__(self) -> "DatabaseContext":
         """Enter the async context manager, starting a transaction."""
@@ -344,6 +348,28 @@ class DatabaseContext:
 
             self._vector = VectorRepository(self)
         return self._vector
+
+    @property
+    def schedule_automations(self) -> "ScheduleAutomationsRepository":
+        """Get the schedule automations repository instance."""
+        if self._schedule_automations is None:
+            from family_assistant.storage.repositories import (  # noqa: PLC0415
+                ScheduleAutomationsRepository,
+            )
+
+            self._schedule_automations = ScheduleAutomationsRepository(self)
+        return self._schedule_automations
+
+    @property
+    def automations(self) -> "AutomationsRepository":
+        """Get the unified automations repository instance."""
+        if self._automations is None:
+            from family_assistant.storage.repositories import (  # noqa: PLC0415
+                AutomationsRepository,
+            )
+
+            self._automations = AutomationsRepository(self)
+        return self._automations
 
     async def init_vector_db(self) -> None:
         """Initialize vector database components."""
