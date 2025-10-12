@@ -167,6 +167,15 @@ default_profile_settings:
       - "delete_event_listener" # Event system tool
       - "toggle_event_listener" # Event system tool
       - "test_event_listener" # Event system tool
+      # Unified automation tools (event and schedule-based)
+      - "create_automation" # Create event or schedule-based automations
+      - "list_automations" # List all automations
+      - "get_automation" # Get automation details
+      - "update_automation" # Update automation configuration
+      - "enable_automation" # Enable a disabled automation
+      - "disable_automation" # Disable an automation
+      - "delete_automation" # Delete an automation
+      - "get_automation_stats" # Get automation execution statistics
       # Image generation tools
       - "generate_image" # Generate images from text using AI
       - "transform_image" # Transform existing images based on instructions
