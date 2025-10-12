@@ -42,6 +42,41 @@ from family_assistant.utils.clock import Clock, SystemClock
 logger = logging.getLogger(__name__)
 
 
+async def _handle_schedule_automation_recurrence(
+    exec_context: ToolExecutionContext,
+    payload: dict[str, Any],
+) -> None:
+    """
+    Handle schedule automation recurrence after successful task execution.
+
+    Checks if the task was triggered by a schedule automation and schedules
+    the next instance via the after_task_execution callback.
+
+    Args:
+        exec_context: Tool execution context with DB access
+        payload: Task payload that may contain automation_id and automation_type
+    """
+    automation_id = payload.get("automation_id")
+    automation_type = payload.get("automation_type")
+
+    if automation_id and automation_type == "schedule":
+        try:
+            clock = exec_context.clock or SystemClock()
+            await exec_context.db_context.schedule_automations.after_task_execution(
+                automation_id=int(automation_id),
+                execution_time=clock.now(),
+            )
+            logger.info(
+                f"Scheduled next instance for schedule automation {automation_id}"
+            )
+        except Exception as auto_err:
+            logger.error(
+                f"Failed to schedule next instance for automation {automation_id}: {auto_err}",
+                exc_info=True,
+            )
+            # Don't raise - the automation already executed successfully
+
+
 async def _schedule_reminder_follow_up(
     exec_context: ToolExecutionContext,
     original_context: str,
@@ -413,6 +448,9 @@ async def handle_llm_callback(
                 f"No content generated for non-reminder callback in {interface_type}:{conversation_id}"
             )
             raise RuntimeError("LLM failed to generate response content for callback.")
+
+        # Handle schedule automation recurrence if this was from a schedule automation
+        await _handle_schedule_automation_recurrence(exec_context, payload)
 
     except Exception as e:
         # Catch errors during the generate_llm_response_for_chat call or sending/saving messages
@@ -1239,6 +1277,9 @@ async def handle_script_execution(
                     event_data=event_data,
                     listener_id=listener_id,
                 )
+
+        # Handle schedule automation recurrence if this was from a schedule automation
+        await _handle_schedule_automation_recurrence(exec_context, payload)
 
     except ScriptTimeoutError as e:
         logger.error(
