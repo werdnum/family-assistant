@@ -35,18 +35,22 @@ class AutomationsRepository(BaseRepository):
         self,
         conversation_id: str,
         automation_type: AutomationType | None = None,
-        enabled_only: bool = False,
-    ) -> list[dict[str, Any]]:
+        enabled: bool | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
         """
-        List all automations for a conversation.
+        List automations for a conversation with pagination.
 
         Args:
             conversation_id: Conversation ID
             automation_type: Filter by type (event, schedule) or None for all
-            enabled_only: Filter by enabled status
+            enabled: Filter by enabled status (True, False, or None for all)
+            limit: Maximum number of results to return
+            offset: Number of results to skip
 
         Returns:
-            List of automation dictionaries with "type" field added
+            Tuple of (automations list, total count)
         """
         automations = []
 
@@ -54,7 +58,7 @@ class AutomationsRepository(BaseRepository):
         if automation_type is None or automation_type == "event":
             event_listeners = await self._events_repo.get_event_listeners(
                 conversation_id=conversation_id,
-                enabled=True if enabled_only else None,
+                enabled=enabled,
             )
             for listener in event_listeners:
                 listener["type"] = "event"
@@ -62,10 +66,21 @@ class AutomationsRepository(BaseRepository):
 
         # Fetch schedule automations if needed
         if automation_type is None or automation_type == "schedule":
+            # Map enabled filter to enabled_only parameter
+            # enabled=True -> enabled_only=True (only enabled)
+            # enabled=False -> fetch all then filter (repository doesn't support disabled-only)
+            # enabled=None -> enabled_only=False (all)
             schedule_automations = await self._schedule_repo.list_all(
                 conversation_id=conversation_id,
-                enabled_only=enabled_only,
+                enabled_only=enabled is True,
             )
+            # If enabled=False, filter out enabled ones to get only disabled
+            if enabled is False:
+                schedule_automations = [
+                    auto
+                    for auto in schedule_automations
+                    if not auto.get("enabled", True)
+                ]
             for automation in schedule_automations:
                 automation["type"] = "schedule"
                 automations.append(automation)
@@ -75,7 +90,19 @@ class AutomationsRepository(BaseRepository):
         sentinel = datetime.min.replace(tzinfo=timezone.utc)
         automations.sort(key=lambda x: x.get("created_at") or sentinel, reverse=True)
 
-        return automations
+        # Get total count before pagination
+        total_count = len(automations)
+
+        # Apply pagination if specified
+        # TODO: This is in-memory pagination which doesn't scale well. For better performance,
+        # we should implement database-level pagination, possibly using a UNION query across
+        # both event_listeners and schedule_automations tables.
+        if offset is not None:
+            automations = automations[offset:]
+        if limit is not None:
+            automations = automations[:limit]
+
+        return automations, total_count
 
     async def get_by_id(
         self,

@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from dateutil import rrule
 from dateutil.parser import ParserError
@@ -12,6 +12,9 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.schedule_automations import schedule_automations_table
 from family_assistant.storage.tasks import enqueue_task, tasks_table
+
+# Sentinel to distinguish "not provided" from "explicitly None"
+_UNSET = object()
 
 
 class ScheduleAutomationsRepository(BaseRepository):
@@ -54,6 +57,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         conversation_id: str,
         interface_type: str = "telegram",
         description: str | None = None,
+        enabled: bool = True,
     ) -> int:
         """
         Create a schedule automation and schedule first task instance.
@@ -88,7 +92,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                     action_config=action_config,
                     conversation_id=conversation_id,
                     interface_type=interface_type,
-                    enabled=True,
+                    enabled=enabled,
                     created_at=datetime.now(timezone.utc),
                     execution_count=0,
                 )
@@ -323,9 +327,11 @@ class ScheduleAutomationsRepository(BaseRepository):
         self,
         automation_id: int,
         conversation_id: str,
-        recurrence_rule: str | None = None,
-        action_config: dict[str, Any] | None = None,
-        description: str | None = None,
+        name: str | None | object = _UNSET,
+        recurrence_rule: str | None | object = _UNSET,
+        action_config: dict[str, Any] | None | object = _UNSET,
+        description: str | None | object = _UNSET,
+        enabled: bool | None | object = _UNSET,
     ) -> bool:
         """
         Update automation configuration.
@@ -333,9 +339,11 @@ class ScheduleAutomationsRepository(BaseRepository):
         Args:
             automation_id: Automation ID
             conversation_id: Conversation ID for verification
+            name: New name (optional, use None to clear)
             recurrence_rule: New RRULE (if provided, recalculates next_scheduled_at)
-            action_config: New action configuration
-            description: New description
+            action_config: New action configuration (use None to clear)
+            description: New description (use None to clear)
+            enabled: New enabled status (optional)
 
         Returns:
             True if updated, False if not found
@@ -350,15 +358,23 @@ class ScheduleAutomationsRepository(BaseRepository):
 
         update_values: dict[str, Any] = {}
 
-        if description is not None:
+        if name is not _UNSET:
+            update_values["name"] = name
+
+        if description is not _UNSET:
             update_values["description"] = description
 
-        if action_config is not None:
+        if action_config is not _UNSET:
             update_values["action_config"] = action_config
 
-        if recurrence_rule is not None:
+        if enabled is not _UNSET:
+            update_values["enabled"] = enabled
+
+        if recurrence_rule is not _UNSET and recurrence_rule is not None:
             # Validate and calculate new next_scheduled_at
-            next_scheduled_at = self._parse_rrule_and_get_next(recurrence_rule)
+            next_scheduled_at = self._parse_rrule_and_get_next(
+                cast("str", recurrence_rule)
+            )
             if next_scheduled_at is None:
                 raise ValueError(f"Invalid RRULE: {recurrence_rule}")
 
@@ -383,7 +399,13 @@ class ScheduleAutomationsRepository(BaseRepository):
             }
 
             # Add action-specific payload
-            final_action_config = action_config or existing["action_config"]
+            # Use updated action_config if provided, otherwise use existing
+            final_action_config = (
+                action_config
+                if action_config is not _UNSET
+                else existing["action_config"]
+            )
+            final_action_config = cast("dict[str, Any]", final_action_config)
             if action_type == "wake_llm":
                 payload["callback_context"] = final_action_config.get("context", "")
             else:  # script

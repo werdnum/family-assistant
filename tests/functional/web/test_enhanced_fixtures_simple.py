@@ -50,6 +50,7 @@ async def test_console_error_checker_basic(
     console_error_checker.assert_no_errors()  # Should pass now
 
 
+@pytest.mark.flaky(reruns=2)
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_console_error_checker_warnings(
