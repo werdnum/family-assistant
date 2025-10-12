@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter
 
 from .attachments_api import attachments_api_router
+from .automations_api import automations_api_router
 from .chat_api import chat_api_router
 from .context_viewer import context_viewer_router
 from .debug_api import debug_api_router
@@ -24,6 +25,9 @@ api_router.include_router(
     documents_api_router, prefix="/documents", tags=["Document Ingestion"]
 )
 api_router.include_router(errors_api_router, prefix="/errors", tags=["Error Logs"])
+api_router.include_router(
+    automations_api_router, prefix="/automations", tags=["Automations"]
+)
 api_router.include_router(
     listeners_api_router, prefix="/event-listeners", tags=["Event Listeners"]
 )

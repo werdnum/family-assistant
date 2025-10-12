@@ -385,10 +385,10 @@ async def list_automations_tool(
             _validate_automation_type(automation_type) if automation_type else None
         )
 
-        automations = await exec_context.db_context.automations.list_all(
+        automations, _total_count = await exec_context.db_context.automations.list_all(
             conversation_id=exec_context.conversation_id,
             automation_type=type_filter,
-            enabled_only=enabled_only,
+            enabled=True if enabled_only else None,
         )
 
         if not automations:
