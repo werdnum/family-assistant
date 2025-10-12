@@ -41,7 +41,13 @@ class MockExecutionContext:
 )
 @pytest.mark.asyncio
 async def test_generate_image_with_real_api() -> None:
-    """Test image generation with real Gemini API (requires API key)."""
+    """Test image generation with real Gemini API (requires API key).
+
+    Known flaky test: This test can intermittently fail with "No image data found in
+    Gemini API response". The Gemini API may return valid responses but without the
+    expected inline_data, possibly due to API rate limiting or transient service issues.
+    If this test fails, rerun it individually to verify it's not a regression.
+    """
     # Get API key from environment
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 

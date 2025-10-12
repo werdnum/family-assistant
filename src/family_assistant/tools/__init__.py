@@ -52,15 +52,6 @@ from family_assistant.tools.documents import (
     ingest_document_from_url_tool,
     search_documents_tool,
 )
-from family_assistant.tools.event_listeners import (
-    EVENT_LISTENER_TOOLS_DEFINITION,
-    create_event_listener_tool,
-    delete_event_listener_tool,
-    list_event_listeners_tool,
-    test_event_listener_script_tool,
-    toggle_event_listener_tool,
-    validate_event_listener_script_tool,
-)
 from family_assistant.tools.events import (
     EVENT_TOOLS_DEFINITION,
     query_recent_events_tool,
@@ -177,13 +168,6 @@ __all__ = [
     "EVENT_TOOLS_DEFINITION",
     "query_recent_events_tool",
     "test_event_listener_tool",
-    "EVENT_LISTENER_TOOLS_DEFINITION",
-    "create_event_listener_tool",
-    "list_event_listeners_tool",
-    "delete_event_listener_tool",
-    "toggle_event_listener_tool",
-    "validate_event_listener_script_tool",
-    "test_event_listener_script_tool",
     "HOME_ASSISTANT_TOOLS_DEFINITION",
     "render_home_assistant_template_tool",
     "storage",
@@ -257,12 +241,6 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "cancel_pending_callback": cancel_pending_callback_tool,
     "query_recent_events": query_recent_events_tool,
     "test_event_listener": test_event_listener_tool,
-    "create_event_listener": create_event_listener_tool,
-    "list_event_listeners": list_event_listeners_tool,
-    "delete_event_listener": delete_event_listener_tool,
-    "toggle_event_listener": toggle_event_listener_tool,
-    "validate_event_listener_script": validate_event_listener_script_tool,
-    "test_event_listener_script": test_event_listener_script_tool,
     "render_home_assistant_template": render_home_assistant_template_tool,
     "get_camera_snapshot": get_camera_snapshot_tool,
     "execute_script": execute_script_tool,
@@ -294,7 +272,6 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
     + TASK_TOOLS_DEFINITION
     + DOCUMENT_TOOLS_DEFINITION
     + EVENT_TOOLS_DEFINITION
-    + EVENT_LISTENER_TOOLS_DEFINITION
     + AUTOMATIONS_TOOLS_DEFINITION  # Unified automations (event + schedule)
     + HOME_ASSISTANT_TOOLS_DEFINITION
     + CALENDAR_TOOLS_DEFINITION
