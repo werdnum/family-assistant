@@ -6,13 +6,18 @@ This file provides guidance for working with tests in this project.
 
 - **Testing Philosophy: Prefer Real/Fake Dependencies Over Mocks**
 
-  - **Write tests as "end-to-end" as possible.** The most valuable tests are those that resemble how the application is used in production.
-  - **Use real dependencies** like the test database (`test_db_engine` fixture) whenever you can. This provides the highest confidence.
-  - **Use fake dependencies** for services that are complex or slow to run in tests. A "fake" is a high-fidelity test implementation that mimics the real service's API and behavior.
+  - **Write tests as "end-to-end" as possible.** The most valuable tests are those that resemble how
+    the application is used in production.
+  - **Use real dependencies** like the test database (`test_db_engine` fixture) whenever you can.
+    This provides the highest confidence.
+  - **Use fake dependencies** for services that are complex or slow to run in tests. A "fake" is a
+    high-fidelity test implementation that mimics the real service's API and behavior.
   - **Use mocks sparingly.** Mocks should be a last resort, primarily for:
     - Isolating a single unit of code in a pure unit test.
-    - Simulating external third-party services that are difficult to control or fake (e.g., Telegram, Home Assistant).
-  - **Why?** Real and fake dependencies make tests more robust and realistic. Mocks can be brittle, often breaking when the underlying implementation changes, and can hide real integration bugs.
+    - Simulating external third-party services that are difficult to control or fake (e.g.,
+      Telegram, Home Assistant).
+  - **Why?** Real and fake dependencies make tests more robust and realistic. Mocks can be brittle,
+    often breaking when the underlying implementation changes, and can hide real integration bugs.
 
 - **Each test tests one independent behaviour** of the system under test. Arrange, Act, Assert.
   NEVER Arrange, Act, Assert, Act, Assert.
@@ -61,6 +66,19 @@ pytest tests/path/to/test.py --flake-finder --flake-runs=100 -x
 
 This is much more efficient than running tests in a loop. The `-x` flag stops on first failure.
 Never use manual loops or shell scripts to repeatedly run tests.
+
+## Known Flaky Tests
+
+This section documents tests that are known to be flaky and their causes:
+
+### `test_generate_image_with_real_api`
+
+- **File**: `tests/functional/test_image_generation_integration.py`
+- **Issue**: Intermittently fails with "No image data found in Gemini API response"
+- **Cause**: Gemini's image generation API can return valid responses but without the expected
+  `inline_data` field, possibly due to API rate limiting or transient service issues
+- **Resolution**: Test passes when run individually. If this fails in CI, re-run the workflow to
+  verify it's not a regression
 
 ## Running Tests
 
