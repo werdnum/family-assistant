@@ -87,10 +87,9 @@ class NotesPage(BasePage):
         await self.page.wait_for_url(f"{self.base_url}/notes", timeout=10000)
         # Ensure network has settled and the list has updated
         await self.wait_for_load(wait_for_app_ready=True)
-        # Wait for the note to appear in the list
-        await self.page.wait_for_selector(
-            f"tbody tr td:first-child:has-text('{title}')", timeout=10000
-        )
+        # Wait for the note to appear in the list - use locator API with automatic retries
+        note_cell = self.page.locator(f"tbody tr td:first-child:has-text('{title}')")
+        await note_cell.wait_for(state="visible", timeout=15000)
 
     async def edit_note(
         self,
@@ -140,17 +139,11 @@ class NotesPage(BasePage):
         await self.wait_for_load(wait_for_app_ready=True)
         # Wait for the updated note title to appear in the list (if title was changed)
         title_to_wait_for = new_title if new_title is not None else original_title
-        try:
-            await self.page.wait_for_selector(
-                f"tbody tr td:first-child:has-text('{title_to_wait_for}')",
-                timeout=10000,
-            )
-        except Exception:
-            # Fall back: small reload to pick up any late updates, then one more quick check
-            await self.reload()
-            await self.page.wait_for_selector(
-                f"tbody tr td:first-child:has-text('{title_to_wait_for}')", timeout=3000
-            )
+        # Use locator API with automatic retries - more robust than wait_for_selector
+        note_cell = self.page.locator(
+            f"tbody tr td:first-child:has-text('{title_to_wait_for}')"
+        )
+        await note_cell.wait_for(state="visible", timeout=15000)
 
     async def delete_note(self, title: str) -> None:
         """Delete a note.
@@ -242,20 +235,25 @@ class NotesPage(BasePage):
         """
         await self.ensure_on_notes_list()
         # Wait for the table to be fully rendered
-        await self.page.locator(self.NOTE_ROW).first.wait_for(
-            state="visible", timeout=5000
-        )
+        try:
+            await self.page.locator(self.NOTE_ROW).first.wait_for(
+                state="visible", timeout=10000
+            )
+        except Exception:
+            # If no rows visible, the list is empty
+            return False
 
         try:
             # Look for a table cell containing the exact title
             # Use has-text for more flexible matching (handles whitespace better)
-            elements = await self.page.locator(f"td:has-text('{title}')").all()
-            # Check if any element contains exactly the title
-            for elem in elements:
-                text = await elem.text_content()
-                if text and text.strip() == title:
-                    return True
-            return False
+            note_cell = self.page.locator(
+                f"tbody tr td:first-child:has-text('{title}')"
+            ).first
+            # Check if element is visible with a short timeout
+            await note_cell.wait_for(state="visible", timeout=2000)
+            # Verify exact match
+            text = await note_cell.text_content()
+            return text is not None and text.strip() == title
         except Exception:
             return False
 

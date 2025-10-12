@@ -14,6 +14,17 @@ from family_assistant.tools.attachments import (
     ATTACHMENT_TOOLS_DEFINITION,
     attach_to_response_tool,
 )
+from family_assistant.tools.automations import (
+    AUTOMATIONS_TOOLS_DEFINITION,
+    create_automation_tool,
+    delete_automation_tool,
+    disable_automation_tool,
+    enable_automation_tool,
+    get_automation_stats_tool,
+    get_automation_tool,
+    list_automations_tool,
+    update_automation_tool,
+)
 from family_assistant.tools.calendar import (
     CALENDAR_TOOLS_DEFINITION,
     add_calendar_event_tool,
@@ -264,6 +275,15 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     # Image generation tools
     "generate_image": generate_image_tool,
     "transform_image": transform_image_tool,
+    # Automation tools (unified event + schedule)
+    "create_automation": create_automation_tool,
+    "list_automations": list_automations_tool,
+    "get_automation": get_automation_tool,
+    "update_automation": update_automation_tool,
+    "enable_automation": enable_automation_tool,
+    "disable_automation": disable_automation_tool,
+    "delete_automation": delete_automation_tool,
+    "get_automation_stats": get_automation_stats_tool,
 }
 
 
@@ -275,6 +295,7 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
     + DOCUMENT_TOOLS_DEFINITION
     + EVENT_TOOLS_DEFINITION
     + EVENT_LISTENER_TOOLS_DEFINITION
+    + AUTOMATIONS_TOOLS_DEFINITION  # Unified automations (event + schedule)
     + HOME_ASSISTANT_TOOLS_DEFINITION
     + CALENDAR_TOOLS_DEFINITION
     + COMMUNICATION_TOOLS_DEFINITION
