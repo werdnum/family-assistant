@@ -1,0 +1,2 @@
+Poe => DEV_MODE=false GEMINI_API_KEY=${GEMINI_API_KEY:-dev-key} hupper -m family_assistant -w config.yaml -w prompts.yaml
+   Building family-assistant @ file:///app

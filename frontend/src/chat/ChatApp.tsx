@@ -695,6 +695,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     const newConvId = `web_conv_${generateUUID()}`;
     setConversationId(newConvId);
     setMessages([]);
+    setIsLoading(false); // Explicitly set loading to false for new chats
     localStorage.setItem('lastConversationId', newConvId);
     window.history.pushState({}, '', `/chat?conversation_id=${newConvId}`);
 
@@ -806,9 +807,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   });
 
   // Signal that app is ready (for tests)
-  // Only set when runtime is ready AND initial data loading is complete
+  // Only set when runtime is ready AND all initial data loading is complete
   useEffect(() => {
-    if (runtime && !conversationsLoading && !profilesLoading) {
+    const isReady = runtime && !isLoading && !conversationsLoading && !profilesLoading;
+
+    if (isReady) {
       document.documentElement.setAttribute('data-app-ready', 'true');
     } else {
       document.documentElement.removeAttribute('data-app-ready');
@@ -816,7 +819,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     return () => {
       document.documentElement.removeAttribute('data-app-ready');
     };
-  }, [runtime, conversationsLoading, profilesLoading]);
+  }, [runtime, isLoading, conversationsLoading, profilesLoading]);
 
   return (
     <TooltipProvider>

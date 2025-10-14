@@ -255,7 +255,7 @@ sequence = [
     { shell = "echo '   - Auto-reloads on Python code and config file changes'" },
     { shell = "echo ''" },
     { shell = "echo 'Press Ctrl+C to stop'" },
-    { shell = "trap 'echo \"\\n🛑 Stopping servers...\"; exit' INT; (DEV_MODE=true poe serve-reload & poe ui-dev & wait)" }
+    { shell = "trap 'echo \"\\n🛑 Stopping servers...\"; exit' INT; (DEV_MODE=true poe serve-reload > backend.log 2>&1 & poe ui-dev > frontend.log 2>&1 & wait)" }
 ]
 
 [tool.poe.tasks.frontend-lint]
