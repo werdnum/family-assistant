@@ -1,0 +1,203 @@
+import React, { useState, useEffect, ChangeEvent, FormEvent } from 'react';
+import { useParams } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+
+interface NotesFormProps {
+  isEdit: boolean;
+  onSuccess: () => void;
+  onCancel: () => void;
+}
+
+interface FormData {
+  title: string;
+  content: string;
+  include_in_prompt: boolean;
+}
+
+const NotesForm: React.FC<NotesFormProps> = ({ isEdit, onSuccess, onCancel }) => {
+  const { title: urlTitle } = useParams<{ title: string }>();
+  const [formData, setFormData] = useState<FormData>({
+    title: '',
+    content: '',
+    include_in_prompt: true,
+  });
+  const [originalTitle, setOriginalTitle] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [initialLoading, setInitialLoading] = useState<boolean>(isEdit);
+
+  useEffect(() => {
+    const fetchNote = async (title: string) => {
+      try {
+        setInitialLoading(true);
+        const response = await fetch(`/api/notes/${encodeURIComponent(title)}`);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch note: ${response.status}`);
+        }
+        const note = await response.json();
+        setFormData({
+          title: note.title,
+          content: note.content,
+          include_in_prompt: note.include_in_prompt,
+        });
+        setOriginalTitle(note.title);
+      } catch (err: any) {
+        setError(err.message);
+      } finally {
+        setInitialLoading(false);
+      }
+    };
+
+    if (isEdit && urlTitle) {
+      fetchNote(urlTitle);
+    }
+  }, [isEdit, urlTitle]);
+
+  const handleChange = (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { name, value, type } = e.target;
+    const checked = (e.target as HTMLInputElement).checked;
+    setFormData((prev) => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value,
+    }));
+  };
+
+  const handleCheckboxChange = (checked: boolean | 'indeterminate') => {
+    if (typeof checked === 'boolean') {
+      setFormData((prev) => ({
+        ...prev,
+        include_in_prompt: checked,
+      }));
+    }
+  };
+
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+
+    if (!formData.title.trim() || !formData.content.trim()) {
+      setError('Title and content are required');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const requestBody: any = {
+        ...formData,
+        ...(isEdit && originalTitle ? { original_title: originalTitle } : {}),
+      };
+
+      const response = await fetch('/api/notes/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+      }
+
+      onSuccess();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (initialLoading) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <div>Loading note...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold">{isEdit ? 'Edit Note' : 'Add New Note'}</h1>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>Error: {error}</AlertDescription>
+        </Alert>
+      )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Note Details</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="space-y-2">
+              <Label htmlFor="title">Title *</Label>
+              <Input
+                type="text"
+                id="title"
+                name="title"
+                value={formData.title}
+                onChange={handleChange}
+                required
+                disabled={loading}
+                placeholder="Enter note title"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="content">Content *</Label>
+              <Textarea
+                id="content"
+                name="content"
+                value={formData.content}
+                onChange={handleChange}
+                required
+                disabled={loading}
+                rows={20}
+                className="font-mono"
+                placeholder="Enter note content..."
+              />
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="include_in_prompt"
+                  checked={formData.include_in_prompt}
+                  onCheckedChange={handleCheckboxChange}
+                  disabled={loading}
+                />
+                <Label htmlFor="include_in_prompt" className="font-normal">
+                  Include in system prompt
+                </Label>
+              </div>
+              <p className="text-sm text-muted-foreground pl-6">
+                When enabled, this note will be included in the system prompt for LLM conversations.
+              </p>
+            </div>
+
+            <div className="flex gap-4 pt-6">
+              <Button type="submit" disabled={loading}>
+                {loading ? 'Saving...' : 'Save'}
+              </Button>
+              <Button type="button" variant="secondary" onClick={onCancel} disabled={loading}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
+
+export default NotesForm;

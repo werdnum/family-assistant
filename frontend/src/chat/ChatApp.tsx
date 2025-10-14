@@ -28,12 +28,12 @@ const parseToolArguments = (args: unknown): Record<string, unknown> => {
       return { raw: args };
     }
   }
-  return args;
+  return args as Record<string, unknown>;
 };
 
 const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) => {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(window.innerWidth > 768);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -343,8 +343,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         signal: messagesAbortController.signal,
       });
       if (response.ok) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const data: { messages: any[] } = await response.json();
+        const data: { messages: Message[] } = await response.json();
 
         const processedMessages: Message[] = [];
         const toolResponses = new Map<string, string>();
@@ -353,7 +352,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         // First pass: collect tool responses and attachments
         data.messages.forEach((msg) => {
           if (msg.role === 'tool' && msg.tool_call_id) {
-            toolResponses.set(msg.tool_call_id, msg.content || 'Tool executed successfully');
+            toolResponses.set(msg.tool_call_id, msg.content as string || 'Tool executed successfully');
 
             // Collect attachments from tool messages for synthesis
             if (msg.attachments && Array.isArray(msg.attachments) && msg.attachments.length > 0) {
