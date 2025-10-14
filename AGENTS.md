@@ -256,10 +256,11 @@ overview of:
 - IMPORTANT: You NEVER leave tests broken. We do not commit changes that cause tests to break. You
   NEVER make excuses like saying that test failures are 'unrelated' or 'separate issues'. You ALWAYS
   fix ALL test failures, even if you don't think you caused them.
-- **Assumption about test failures**: Always assume that any test failure is caused by your local
-  changes unless either (a) the user explicitly tells you the failure is pre-existing, or (b) you
-  verify the failure exists with all local changes stashed. Since we never commit with failing
-  tests, any failure you encounter should be treated as your responsibility to fix.
+- **Assumption about test failures**: You are responsible for fixing all test failures, even if you
+  believe they are pre-existing. Since the project never commits with failing tests, any failure
+  you encounter should be treated as a result of your changes. If you suspect a test is flaky, you
+  may try re-running `poe test` to confirm, but you must ultimately resolve all failures before
+  committing.
 - **Hook bypassing**: NEVER attempt to bypass pre-commit hooks, PreToolUse hooks, or any other
   verification hooks (e.g., using `--no-verify`, `--no-gpg-sign`) without explicit permission from
   the user. These hooks exist to enforce quality standards and prevent broken code from being
