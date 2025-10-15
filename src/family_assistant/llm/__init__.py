@@ -118,8 +118,6 @@ if LITELLM_DEBUG_ENABLED:
     logger.info(
         "Enabled LiteLLM verbose logging (set_verbose = True) because LITELLM_DEBUG is set."
     )
-else:
-    logger.info("LiteLLM verbose logging is disabled (LITELLM_DEBUG not set or false).")
 # --- End Debug Logging Control ---
 
 # --- Debug LLM Messages Control ---
@@ -130,10 +128,6 @@ DEBUG_LLM_MESSAGES_ENABLED = os.getenv("DEBUG_LLM_MESSAGES", "false").lower() in
 }
 if DEBUG_LLM_MESSAGES_ENABLED:
     logger.info("Debug LLM messages logging is enabled (DEBUG_LLM_MESSAGES is set).")
-else:
-    logger.info(
-        "Debug LLM messages logging is disabled (DEBUG_LLM_MESSAGES not set or false)."
-    )
 
 
 def _truncate_content(content: str, max_length: int = 500) -> str:

@@ -102,7 +102,6 @@ middleware = []
 
 if SESSION_SECRET_KEY:
     middleware.append(Middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY))
-    logger.info("SessionMiddleware added (SESSION_SECRET_KEY is set).")
 else:
     logger.warning(
         "SessionMiddleware NOT added (SESSION_SECRET_KEY is not set). Accessing request.session will fail, which might break OIDC if it were enabled."
@@ -138,7 +137,6 @@ class AuthMiddlewareWrapper:
 
 if AUTH_ENABLED:
     middleware.append(Middleware(AuthMiddlewareWrapper))
-    logger.info("AuthMiddleware wrapper added to the application middleware stack.")
 else:
     logger.info("AuthMiddleware NOT added as AUTH_ENABLED is false.")
 
@@ -213,9 +211,6 @@ def create_app() -> FastAPI:
             from family_assistant.tools import TOOLS_DEFINITION  # noqa: PLC0415
 
             new_app.state.tool_definitions = TOOLS_DEFINITION
-            logger.info(
-                f"Loaded {len(TOOLS_DEFINITION)} tool definitions for development mode"
-            )
         except ImportError as e:
             new_app.state.tool_definitions = []
             logger.warning(f"Could not import tool definitions for development: {e}")
@@ -294,12 +289,6 @@ def create_app() -> FastAPI:
 # - Direct imports from existing code
 # New code should use create_app() to get isolated instances
 app = create_app()
-
-# Restore logging to INFO for module-level app initialization
-logger.info(f"Module-level app created and mounted static files from: {static_dir}")
-logger.info("Registered UI routes from vite_pages_router")
-logger.info("Routers included in module-level app")
-
 
 # --- Configure template helpers ---
 def get_dev_mode_from_request(request: Request) -> bool:
