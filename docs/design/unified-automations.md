@@ -2,7 +2,87 @@
 
 ## Status
 
-**Proposed** - 2025-10-11
+**In Progress** - Backend Complete, Frontend Pending
+
+- **Phase 1-4 Complete** (2025-10-11 to 2025-10-12): Database, tools, task worker, and API
+  implemented
+- **Phase 5 In Progress** (2025-10-12): Frontend UI migration underway
+- **Remaining**: Documentation updates, old tool/UI cleanup, final testing
+
+## Progress Summary
+
+### What's Complete
+
+**Phase 1: Database Layer** (commit 9542ef03)
+
+- Created `schedule_automations` table with RRULE support
+- Implemented `ScheduleAutomationsRepository` for schedule-based automations
+- Implemented `AutomationsRepository` as unified abstraction layer
+- Added repositories to `DatabaseContext`
+- Full test coverage for repository layer
+
+**Phase 2: Tool Layer** (commits 7799d541, 213271f6, 7b80cdcf)
+
+- Created 8 unified automation tools (`create_event_automation`, `create_schedule_automation`, etc.)
+- Removed old event listener tools to eliminate confusion
+- Updated `config.yaml` to enable new tools in default profile
+- All tools working with LLM integration
+
+**Phase 3: Task Worker** (commit 4664d105)
+
+- Updated task worker to track automation lifecycle
+- Added `after_task_execution` callback for schedule automations
+- Automatic rescheduling of recurring tasks
+- Execution count and last_execution_at tracking
+
+**Phase 4: Web API** (commit 1c6da302)
+
+- Created unified `/api/v1/automations` REST API
+- CRUD operations for both event and schedule automations
+- Preserved old `/api/v1/event-listeners` for backward compatibility
+- Fixed FastAPI Union validation issue (parse dict based on path param)
+- Implemented sentinel pattern for nullable field updates
+- Added conversation_id security verification on all endpoints
+- Pagination support (currently in-memory, database-level pending)
+
+### What's Remaining
+
+**Phase 5: Frontend UI** (in progress)
+
+- Create new `pages/Automations/` React components
+- Unified list view with type filtering
+- Detail views for both automation types
+- Create forms for event and schedule automations
+- Update navigation to use new `/automations` route
+- Delete old `pages/EventListeners/` after migration
+- Remove old `listeners_api.py` after UI fully migrated
+
+**Phase 6: Documentation** (pending)
+
+- Update user guide with automations documentation
+- Update system prompt to explain unified automation concept to LLM
+- Add tool usage examples
+- Document migration from old event listeners
+
+**Phase 7: Final Testing** (pending)
+
+- Frontend component tests
+- E2E tests for full automation lifecycle
+- Performance testing for pagination at scale
+- Database-level pagination implementation (UNION query optimization)
+
+### Known Limitations
+
+1. **In-memory pagination**: Current implementation fetches all automations then paginates in
+   memory. This is acceptable for typical users (\<100 automations) but won't scale. Database-level
+   UNION pagination will be implemented in Phase 7.
+
+2. **Inconsistent sentinel pattern**: Schedule automation updates use `_UNSET` sentinel for clean
+   partial updates, but event listener updates do not. This causes API layer complexity for event
+   updates.
+
+3. **Dual API during migration**: Both `/automations` and `/event-listeners` APIs are operational.
+   The old API will be removed after frontend migration completes.
 
 ## Overview
 
@@ -1185,40 +1265,45 @@ operations (enable/disable multiple) ✅ Export/import automation definitions
 
 ## Implementation Checklist
 
-### Database Layer
+### Phase 1: Database Layer ✅ COMPLETE (commit 9542ef03)
 
-- [ ] Create `schedule_automations_table` schema
-- [ ] Create Alembic migration
-- [ ] Implement `ScheduleAutomationsRepository`
-- [ ] Implement `AutomationsRepository` abstraction
-- [ ] Add to `DatabaseContext`
-- [ ] Unit tests for repositories
+- [x] Create `schedule_automations_table` schema
+- [x] Create Alembic migration
+- [x] Implement `ScheduleAutomationsRepository`
+- [x] Implement `AutomationsRepository` abstraction
+- [x] Add to `DatabaseContext`
+- [x] Unit tests for repositories
 
-### Tool Layer
+### Phase 2: Tool Layer ✅ COMPLETE (commits 7799d541, 213271f6, 7b80cdcf)
 
-- [ ] Create `src/family_assistant/tools/automations.py`
-- [ ] Implement 8 automation tools
-- [ ] Update `schedule_recurring_action` to create entities
-- [ ] Register tools in `__init__.py`
-- [ ] Update `config.yaml`
-- [ ] Integration tests for tools
+- [x] Create `src/family_assistant/tools/automations.py`
+- [x] Implement 8 automation tools
+- [x] Update `schedule_recurring_action` to create entities
+- [x] Register tools in `__init__.py`
+- [x] Update `config.yaml`
+- [x] Integration tests for tools
+- [x] Remove old event listener tools
 
-### Task Worker
+### Phase 3: Task Worker ✅ COMPLETE (commit 4664d105)
 
-- [ ] Update script execution handler
-- [ ] Update LLM callback handler
-- [ ] Call `after_task_execution` for schedule automations
-- [ ] Tests for automation lifecycle
+- [x] Update script execution handler
+- [x] Update LLM callback handler
+- [x] Call `after_task_execution` for schedule automations
+- [x] Tests for automation lifecycle
 
-### Web API
+### Phase 4: Web API ✅ COMPLETE (commit 1c6da302)
 
-- [ ] Create `automations_api.py` router
-- [ ] Implement REST endpoints
-- [ ] Add Pydantic models
-- [ ] Register router in app
-- [ ] API tests
+- [x] Create `automations_api.py` router
+- [x] Implement REST endpoints (GET, POST, PATCH, DELETE)
+- [x] Add Pydantic models
+- [x] Register router in app
+- [x] Preserve old `listeners_api.py` for backward compatibility during migration
+- [x] Fix Union request body validation issue
+- [x] Implement sentinel pattern for nullable fields
+- [x] Add conversation_id security verification
+- [x] API tests (covered by existing test suite)
 
-### Frontend
+### Phase 5: Frontend 🔄 IN PROGRESS
 
 - [ ] Create `pages/Automations/` directory
 - [ ] Implement `AutomationsList` component
@@ -1228,23 +1313,26 @@ operations (enable/disable multiple) ✅ Export/import automation definitions
 - [ ] Update navigation
 - [ ] Component tests
 - [ ] E2E tests
+- [ ] Delete old `pages/EventListeners/` directory (after UI migration complete)
+- [ ] Remove old `listeners_api.py` (after UI migration complete)
 
-### Documentation
+### Phase 6: Documentation ⏳ PENDING
 
-- [ ] Update `docs/user/USER_GUIDE.md`
-- [ ] Update system prompt in `prompts.yaml`
+- [ ] Update `docs/user/USER_GUIDE.md` with automations guide
+- [ ] Update system prompt in `prompts.yaml` to explain automations
 - [ ] Add tool usage examples
-- [ ] Create migration guide
+- [ ] Create migration guide for users
 - [ ] Update architecture diagram
 
-### Testing
+### Phase 7: Final Testing ⏳ PENDING
 
-- [ ] Unit tests for all new repositories
-- [ ] Integration tests for tool workflows
-- [ ] API endpoint tests
-- [ ] Frontend component tests
-- [ ] E2E tests for full automation lifecycle
-- [ ] Test both PostgreSQL and SQLite
+- [x] Unit tests for all new repositories
+- [x] Integration tests for tool workflows
+- [x] Test both PostgreSQL and SQLite
+- [ ] Frontend component tests (after Phase 5)
+- [ ] E2E tests for full automation lifecycle (after Phase 5)
+- [ ] Performance testing for pagination at scale
+- [ ] Final verification of all workflows
 
 ## Future Enhancements
 
