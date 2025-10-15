@@ -54,7 +54,6 @@ try:
     )
 
     VECTOR_STORAGE_ENABLED = True
-    logger.info("Vector storage module imported successfully.")
 except ImportError:
     # Define placeholder types if vector_storage is not available
     class Base:  # type: ignore

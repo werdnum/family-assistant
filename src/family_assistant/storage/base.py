@@ -130,8 +130,6 @@ api_tokens_table = Table(
     extend_existing=True,
 )
 
-logger.info("Defined api_tokens table schema.")
-
 
 # Define the attachment_metadata table for unified attachment tracking
 attachment_metadata_table = Table(
@@ -158,5 +156,3 @@ attachment_metadata_table = Table(
     Index("idx_attachment_created", "created_at"),
     extend_existing=True,
 )
-
-logger.info("Defined attachment_metadata table schema.")
