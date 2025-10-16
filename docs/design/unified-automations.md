@@ -62,66 +62,20 @@ deployment.
   `src/family_assistant/templates/base.html.j2`) so "Automations" appears alongside existing product
   sections
 
+**Phase 6: Test Coverage**
+
+- Added comprehensive integration tests for all 8 automation tools
+  (`tests/functional/test_unified_automations.py` - 1,250 lines)
+- Added comprehensive API endpoint tests (`tests/functional/web/test_automations_api.py` - 845
+  lines)
+- Added repository unit tests for both repositories
+  (`tests/unit/storage/test_automations_repository.py` - 1,331 lines)
+- Tests cover schedule automation lifecycle, cross-type name uniqueness, and both action types
+- All tests pass with PostgreSQL and SQLite backends
+- Refactored tools to return ToolResult with embedded JSON for robust testing
+- Total: ~3,426 lines of new tests vs. ~2,630 deleted
+
 ### What's Remaining
-
-**Critical Gap: Test Coverage**
-
-When the old event listener tools were removed in commit `7b80cdcf`, approximately 2,630 lines of
-tests were deleted and never replaced with equivalent tests for the unified automation system:
-
-- `test_event_listener_crud.py` (590 lines) - CRUD operations for old tools
-- `test_event_listener_validation.py` (390 lines) - Validation logic
-- `test_event_listener_script_tools.py` (232 lines) - Script testing
-- `test_event_script_integration.py` (408 lines) - End-to-end integration
-- `test_script_conditions_integration.py` (325 lines) - Condition script testing
-- `test_event_listener_validation.py` unit tests (215 lines)
-- `test_event_listeners_api.py` (300 lines) - REST API tests
-- `test_event_listeners_ui.py` (168 lines) - Replaced with `test_automations_ui.py`
-
-The current test suite has:
-
-- ✅ Playwright UI tests for the Automations page
-- ✅ Existing tests for event system internals (event processing, matching)
-- ✅ Existing tests for scheduled script execution
-- ❌ NO integration tests for unified automation tools
-- ❌ NO API tests for `/api/automations` endpoints
-- ❌ NO repository unit tests for `AutomationsRepository` or `ScheduleAutomationsRepository`
-- ❌ NO end-to-end tests for schedule automation lifecycle
-
-**Phase 6: Test Coverage** (not started)
-
-1. **Integration tests for automation tools** (`tests/functional/test_unified_automations.py`):
-
-   - Test all 8 automation tools via LLM tool execution
-   - Test `create_automation` for both event and schedule types
-   - Test `list_automations` with filtering (type, enabled status)
-   - Test `get_automation`, `update_automation`
-   - Test `enable_automation` / `disable_automation`
-   - Test `delete_automation` with task cancellation verification
-   - Test `get_automation_stats`
-   - Test cross-type name uniqueness enforcement
-   - Test schedule automation lifecycle: create → task executes → next occurrence scheduled
-   - Test both wake_llm and script action types
-
-2. **API endpoint tests** (`tests/functional/web/test_automations_api.py`):
-
-   - Test `POST /api/automations/event` and `/api/automations/schedule`
-   - Test `GET /api/automations` with pagination and filtering
-   - Test `GET /api/automations/{type}/{id}`
-   - Test `PATCH /api/automations/{type}/{id}` for updates
-   - Test `PATCH /api/automations/{type}/{id}/enabled` for toggle
-   - Test `DELETE /api/automations/{type}/{id}` with task cleanup
-   - Test `GET /api/automations/{type}/{id}/stats`
-   - Test error handling, validation, and conversation scoping
-
-3. **Repository unit tests** (`tests/unit/storage/test_automations_repository.py`):
-
-   - Test `AutomationsRepository.list_all` with filtering and pagination
-   - Test `AutomationsRepository.check_name_available` for cross-type uniqueness
-   - Test `ScheduleAutomationsRepository` CRUD operations
-   - Test RRULE recalculation on updates
-   - Test task cancellation on delete/disable
-   - Test with both PostgreSQL and SQLite
 
 **Phase 7: Documentation** (not started)
 
