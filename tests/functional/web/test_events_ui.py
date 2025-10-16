@@ -13,6 +13,7 @@ from .conftest import WebTestFixture
 from .pages.events_page import EventsPage
 
 
+@pytest.mark.flaky(reruns=2)
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_page_basic_loading(

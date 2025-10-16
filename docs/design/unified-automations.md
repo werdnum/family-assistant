@@ -2,17 +2,18 @@
 
 ## Status
 
-**QA Stabilization** – Unified automations now span backend, API, and the new React experience.
-Legacy event-listener assets have been removed, and Playwright coverage exists for the automations
-UI. The remaining work is focused on documentation/prompt updates and the last round of performance
-polish (database pagination).
+**Functional but Undertested** – The unified automations system is functionally complete across
+backend, API, and React UI. However, when the old event listener tools were removed, approximately
+2,630 lines of tests were deleted and never replaced. The system needs comprehensive integration
+tests before it can be considered production-ready.
 
 - **Phase 1–5 Complete**: Database, repositories, tools, task worker hooks, REST API, and the
-  Automations React experience (list/detail/create) are shipping together.
-- **Phase 6 In Progress**: Documentation and system prompt updates; this document is being refreshed
-  as part of that work.
-- **Phase 7 In Progress**: Final QA items (database-level pagination optimisation, additional E2E
-  coverage for creation flows) are queued.
+  Automations React experience (list/detail/create) are fully implemented and working.
+- **Phase 6 Not Started**: Test coverage to replace deleted tests (~2,630 lines). This is critical
+  work that must be completed before the feature can be safely deployed.
+- **Phase 7 Not Started**: Documentation updates to replace "event listener" terminology with
+  "automation" and update system prompts.
+- **Phase 8 Not Started**: Database pagination optimization and frontend cleanup.
 
 ## Progress Summary
 
@@ -64,33 +65,109 @@ polish (database pagination).
 
 ### What's Remaining
 
-**Phase 6: Documentation** (in progress)
+**Critical Gap: Test Coverage**
 
-- Refresh `docs/user/USER_GUIDE.md` with automations walkthroughs and screenshots
-- Update `prompts.yaml` (and related system prompts) so the LLM understands the new tool surface
-- Add tool usage examples and migration notes here and in the user-facing docs
+When the old event listener tools were removed in commit `7b80cdcf`, approximately 2,630 lines of
+tests were deleted and never replaced with equivalent tests for the unified automation system:
 
-**Phase 7: Final Testing & Polish** (in progress)
+- `test_event_listener_crud.py` (590 lines) - CRUD operations for old tools
+- `test_event_listener_validation.py` (390 lines) - Validation logic
+- `test_event_listener_script_tools.py` (232 lines) - Script testing
+- `test_event_script_integration.py` (408 lines) - End-to-end integration
+- `test_script_conditions_integration.py` (325 lines) - Condition script testing
+- `test_event_listener_validation.py` unit tests (215 lines)
+- `test_event_listeners_api.py` (300 lines) - REST API tests
+- `test_event_listeners_ui.py` (168 lines) - Replaced with `test_automations_ui.py`
 
-- Expand Playwright coverage to exercise creation flows end-to-end once deterministic fixtures are
-  in place
-- Implement database-level pagination (likely via UNION querying) so the API scales beyond the
-  current in-memory slice
-- Capture additional performance telemetry (e.g., load time with 250+ automations) and adjust page
-  defaults if required
+The current test suite has:
+
+- ✅ Playwright UI tests for the Automations page
+- ✅ Existing tests for event system internals (event processing, matching)
+- ✅ Existing tests for scheduled script execution
+- ❌ NO integration tests for unified automation tools
+- ❌ NO API tests for `/api/automations` endpoints
+- ❌ NO repository unit tests for `AutomationsRepository` or `ScheduleAutomationsRepository`
+- ❌ NO end-to-end tests for schedule automation lifecycle
+
+**Phase 6: Test Coverage** (not started)
+
+1. **Integration tests for automation tools** (`tests/functional/test_unified_automations.py`):
+
+   - Test all 8 automation tools via LLM tool execution
+   - Test `create_automation` for both event and schedule types
+   - Test `list_automations` with filtering (type, enabled status)
+   - Test `get_automation`, `update_automation`
+   - Test `enable_automation` / `disable_automation`
+   - Test `delete_automation` with task cancellation verification
+   - Test `get_automation_stats`
+   - Test cross-type name uniqueness enforcement
+   - Test schedule automation lifecycle: create → task executes → next occurrence scheduled
+   - Test both wake_llm and script action types
+
+2. **API endpoint tests** (`tests/functional/web/test_automations_api.py`):
+
+   - Test `POST /api/automations/event` and `/api/automations/schedule`
+   - Test `GET /api/automations` with pagination and filtering
+   - Test `GET /api/automations/{type}/{id}`
+   - Test `PATCH /api/automations/{type}/{id}` for updates
+   - Test `PATCH /api/automations/{type}/{id}/enabled` for toggle
+   - Test `DELETE /api/automations/{type}/{id}` with task cleanup
+   - Test `GET /api/automations/{type}/{id}/stats`
+   - Test error handling, validation, and conversation scoping
+
+3. **Repository unit tests** (`tests/unit/storage/test_automations_repository.py`):
+
+   - Test `AutomationsRepository.list_all` with filtering and pagination
+   - Test `AutomationsRepository.check_name_available` for cross-type uniqueness
+   - Test `ScheduleAutomationsRepository` CRUD operations
+   - Test RRULE recalculation on updates
+   - Test task cancellation on delete/disable
+   - Test with both PostgreSQL and SQLite
+
+**Phase 7: Documentation** (not started)
+
+1. **Update user documentation**:
+
+   - Replace "event listener" terminology with "automation" in `docs/user/USER_GUIDE.md`
+   - Update "Monitor Events and Get Automated Notifications" section
+   - Add examples using new automation tools
+   - Update `docs/user/scripting.md` examples
+
+2. **Update system prompts**:
+
+   - Update `prompts.yaml` to reference automation tools instead of old patterns
+   - Clarify when to use `create_automation` vs `schedule_action`/`schedule_recurring_action`
+   - Explain event vs schedule automation types
+   - Remove references to removed tools
+
+**Phase 8: Technical Improvements** (not started)
+
+1. **Database pagination**:
+
+   - Implement UNION query in `AutomationsRepository.list_all`
+   - Replace in-memory slicing with database-level LIMIT/OFFSET
+   - Test with both PostgreSQL and SQLite
+   - Verify count queries remain accurate
+
+2. **Frontend cleanup**:
+
+   - Check tool icon mappings in `frontend/src/chat/toolIconMapping.ts`
+   - Update test data files to use automation terminology
+   - Remove any stale event listener references
 
 ### Known Limitations
 
 1. **In-memory pagination**: `AutomationsRepository.list_all` still fetches everything before
-   slicing. That is acceptable for typical (\<100) automations but needs a UNION-based query in the
-   follow-up polish work.
+   slicing. That is acceptable for typical (\<100) automations but needs a UNION-based query for
+   better scalability.
 
-2. **Conversation selection stub**: The React UI sends `conversation_id=web` for now. Wiring the UI
-   into the real conversation picker is required before we expose automations broadly.
-
-3. **Disabled-only filtering gap**: `ScheduleAutomationsRepository.list_all` only understands an
-   `enabled_only` flag. Getting “disabled automations” still requires loading everything and
+2. **Disabled-only filtering gap**: `ScheduleAutomationsRepository.list_all` only understands an
+   `enabled_only` flag. Getting "disabled automations" still requires loading everything and
    filtering in Python, which prevents efficient pagination for that slice.
+
+3. **Test coverage gap**: The unified automation tools and API lack comprehensive integration tests.
+   Approximately 2,630 lines of tests were removed with the old event listener system and need to be
+   replaced.
 
 ## Overview
 
@@ -357,17 +434,24 @@ Both automation types share:
 - Added Playwright smoke tests for page load, navigation, and filter interactions.
 - Deleted the legacy Event Listeners React stack, CSS, and Playwright coverage.
 
-### Phase 6 – Documentation and prompts 🔄 In progress
+### Phase 6 – Test Coverage ❌ Not Started
 
-- Refresh `docs/user/USER_GUIDE.md`, update system prompts, and add tool usage examples.
-- Capture migration notes for any lingering references to event listeners.
+- Write integration tests for automation tools (`tests/functional/test_unified_automations.py`)
+- Write API endpoint tests (`tests/functional/web/test_automations_api.py`)
+- Write repository unit tests (`tests/unit/storage/test_automations_repository.py`)
+- Replace ~2,630 lines of deleted test coverage
 
-### Phase 7 – Final QA and performance 🔄 In progress
+### Phase 7 – Documentation ❌ Not Started
 
-- Replace in-memory pagination with a UNION query.
-- Expand Playwright coverage to exercise creation flows end-to-end once deterministic fixtures are
-  ready.
-- Gather performance metrics for large automation sets and tune defaults if needed.
+- Replace "event listener" terminology with "automation" in user docs
+- Update system prompts to reference automation tools
+- Update scripting examples
+
+### Phase 8 – Technical Improvements ❌ Not Started
+
+- Implement database-level UNION query for pagination
+- Clean up frontend references
+- Remove stale event listener terminology
 
 ## Trade-offs and Alternatives
 
@@ -522,23 +606,31 @@ operations (enable/disable multiple) ✅ Export/import automation definitions
 - [x] Add Playwright smoke coverage in `tests/functional/web/test_automations_ui.py`
 - [x] Remove legacy Event Listeners React views, CSS, and tests
 
-### Phase 6: Documentation 🔄 In progress
+### Phase 6: Test Coverage ❌ Not Started
 
-- [ ] Update `docs/user/USER_GUIDE.md` with automations guide
-- [ ] Update system prompt in `prompts.yaml` to explain automations
-- [ ] Add tool usage examples
-- [ ] Create migration guide for users
-- [ ] Update architecture diagram
+Critical work to replace ~2,630 lines of deleted tests:
 
-### Phase 7: Final Testing & polish 🔄 In progress
+- [ ] Create `tests/functional/test_unified_automations.py` with integration tests for all 8
+  automation tools
+- [ ] Create `tests/functional/web/test_automations_api.py` with comprehensive API endpoint tests
+- [ ] Create `tests/unit/storage/test_automations_repository.py` with repository unit tests
+- [ ] Test schedule automation lifecycle (create → execute → reschedule)
+- [ ] Test cross-type name uniqueness enforcement
+- [ ] Test both wake_llm and script action types
+- [ ] Verify tests pass with both PostgreSQL and SQLite
 
-- [x] Unit tests for all new repositories
-- [x] Integration tests for tool workflows
-- [x] Test both PostgreSQL and SQLite
-- [ ] Frontend component tests (targeted coverage for Automations forms)
-- [ ] Expand Playwright coverage to exercise creation and deletion flows
-- [ ] Replace in-memory pagination with database-level UNION queries
-- [ ] Performance testing for pagination at scale & final verification
+### Phase 7: Documentation ❌ Not Started
+
+- [ ] Replace "event listener" terminology with "automation" in `docs/user/USER_GUIDE.md`
+- [ ] Update system prompt in `prompts.yaml` to reference automation tools
+- [ ] Clarify when to use `create_automation` vs `schedule_action`/`schedule_recurring_action`
+- [ ] Update `docs/user/scripting.md` examples
+
+### Phase 8: Technical Improvements ❌ Not Started
+
+- [ ] Implement UNION query for database-level pagination in `AutomationsRepository.list_all`
+- [ ] Clean up frontend tool icon mappings and test data
+- [ ] Remove any stale event listener references
 
 ## Future Enhancements
 
