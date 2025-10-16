@@ -87,6 +87,19 @@ deployment.
 - Updated system prompts in `prompts.yaml` to reference automation tools instead of event listener
   tools
 
+**Phase 8: Technical Improvements**
+
+- Implemented database-level UNION query with LIMIT/OFFSET for efficient pagination
+- Added `_format_datetime()` helpers in both tools and API layer for cross-database compatibility
+- Updated frontend tool icon mappings to use automation tools
+
+**Phase 9: Test Organization** (Review Feedback Implementation)
+
+- Moved repository tests from `tests/unit/storage/` to `tests/functional/storage/`
+- Updated fixtures to use standard `db_engine` from conftest.py
+- Tests now run against both SQLite and PostgreSQL backends automatically
+- All 86 tests pass with both database backends
+
 ### What's Remaining
 
 All phases are now complete. The unified automations system is fully implemented, tested, and
