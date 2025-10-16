@@ -2,11 +2,12 @@
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any, cast
+from typing import Any
 
 from dateutil import rrule
 from dateutil.parser import ParserError
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import String, delete, insert, select, update
+from sqlalchemy import cast as sa_cast
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from family_assistant.storage.repositories.base import BaseRepository
@@ -358,23 +359,21 @@ class ScheduleAutomationsRepository(BaseRepository):
 
         update_values: dict[str, Any] = {}
 
-        if name is not _UNSET:
+        if isinstance(name, str) or name is None:
             update_values["name"] = name
 
-        if description is not _UNSET:
+        if isinstance(description, str) or description is None:
             update_values["description"] = description
 
-        if action_config is not _UNSET:
+        if isinstance(action_config, dict):
             update_values["action_config"] = action_config
 
-        if enabled is not _UNSET:
+        if isinstance(enabled, bool):
             update_values["enabled"] = enabled
 
-        if recurrence_rule is not _UNSET and recurrence_rule is not None:
+        if isinstance(recurrence_rule, str):
             # Validate and calculate new next_scheduled_at
-            next_scheduled_at = self._parse_rrule_and_get_next(
-                cast("str", recurrence_rule)
-            )
+            next_scheduled_at = self._parse_rrule_and_get_next(recurrence_rule)
             if next_scheduled_at is None:
                 raise ValueError(f"Invalid RRULE: {recurrence_rule}")
 
@@ -402,10 +401,9 @@ class ScheduleAutomationsRepository(BaseRepository):
             # Use updated action_config if provided, otherwise use existing
             final_action_config = (
                 action_config
-                if action_config is not _UNSET
+                if isinstance(action_config, dict)
                 else existing["action_config"]
             )
-            final_action_config = cast("dict[str, Any]", final_action_config)
             if action_type == "wake_llm":
                 payload["callback_context"] = final_action_config.get("context", "")
             else:  # script
@@ -517,13 +515,14 @@ class ScheduleAutomationsRepository(BaseRepository):
         """
         try:
             # Find pending tasks with this automation_id in payload
-            # The .astext accessor works across both SQLite and PostgreSQL
+            payload_automation_id = sa_cast(
+                tasks_table.c.payload["automation_id"], String
+            )
+
             stmt = (
                 update(tasks_table)
                 .where(tasks_table.c.status == "pending")
-                .where(
-                    tasks_table.c.payload["automation_id"].astext == str(automation_id)
-                )
+                .where(payload_automation_id == str(automation_id))
                 .values(status="cancelled")
             )
 

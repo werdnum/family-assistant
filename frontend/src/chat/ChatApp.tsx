@@ -11,7 +11,15 @@ import { useLiveMessageUpdates } from './useLiveMessageUpdates';
 import { LOADING_MARKER } from './constants';
 import { generateUUID } from '../utils/uuid';
 import { defaultAttachmentAdapter } from './attachmentAdapter';
-import { ChatAppProps, Message, MessageContent, Conversation } from './types';
+import {
+  ChatAppProps,
+  Message,
+  MessageContent,
+  Conversation,
+  BackendAttachment,
+  BackendConversationMessage,
+  ConversationMessagesResponse,
+} from './types';
 import NavigationSheet from '../shared/NavigationSheet';
 import { ToolConfirmationProvider } from './ToolConfirmationContext';
 import ProfileSelector from './ProfileSelector';
@@ -343,26 +351,31 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         signal: messagesAbortController.signal,
       });
       if (response.ok) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const data: { messages: any[] } = await response.json();
-
+        const data = (await response.json()) as ConversationMessagesResponse;
         const processedMessages: Message[] = [];
         const toolResponses = new Map<string, string>();
-        const toolAttachments = new Map<string, any[]>();
+        const toolAttachments = new Map<string, BackendAttachment[]>();
 
         // First pass: collect tool responses and attachments
-        data.messages.forEach((msg) => {
+        data.messages.forEach((msg: BackendConversationMessage) => {
           if (msg.role === 'tool' && msg.tool_call_id) {
-            toolResponses.set(msg.tool_call_id, msg.content || 'Tool executed successfully');
+            const responseContent =
+              typeof msg.content === 'string'
+                ? msg.content
+                : Array.isArray(msg.content)
+                  ? JSON.stringify(msg.content)
+                  : 'Tool executed successfully';
+            toolResponses.set(msg.tool_call_id, responseContent);
 
             // Collect attachments from tool messages for synthesis
-            if (msg.attachments && Array.isArray(msg.attachments) && msg.attachments.length > 0) {
-              toolAttachments.set(msg.tool_call_id, msg.attachments);
+            const toolMessageAttachments = msg.attachments;
+            if (Array.isArray(toolMessageAttachments) && toolMessageAttachments.length > 0) {
+              toolAttachments.set(msg.tool_call_id, toolMessageAttachments);
             }
           }
         });
 
-        data.messages.forEach((msg) => {
+        data.messages.forEach((msg: BackendConversationMessage) => {
           if (msg.role === 'tool') {
             return;
           }
@@ -389,25 +402,21 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
             // Process explicit tool calls if present
 
-            if (msg.tool_calls && msg.tool_calls.length > 0) {
-              msg.tool_calls.forEach((toolCall: any) => {
+            if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+              msg.tool_calls.forEach((toolCall) => {
                 const toolResponse = toolResponses.get(toolCall.id);
-                // Extract the function name from the tool call
                 const toolName = toolCall.function?.name || toolCall.name || 'unknown';
-                // Parse arguments if they're a string
-                const args = parseToolArguments(toolCall.function?.arguments || toolCall.arguments);
+                const argumentSource = toolCall.function?.arguments ?? toolCall.arguments;
+                const args = parseToolArguments(argumentSource);
+                const argsText =
+                  typeof argumentSource === 'string' ? argumentSource : JSON.stringify(args);
 
                 content.push({
                   type: 'tool-call',
                   toolCallId: toolCall.id,
                   toolName: toolName,
                   args: args,
-                  argsText:
-                    typeof toolCall.function?.arguments === 'string'
-                      ? toolCall.function.arguments
-                      : typeof toolCall.arguments === 'string'
-                        ? toolCall.arguments
-                        : JSON.stringify(args),
+                  argsText: argsText,
                   result: toolResponse ?? undefined,
                 });
               });
@@ -417,16 +426,16 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             // This extracts attachments from tool messages and associates them with the
             // assistant message that made the tool call
             // Collect all attachments from tool calls in this message
-            const allToolAttachments: any[] = [];
+            const allToolAttachments: BackendAttachment[] = [];
             const allAttachmentIds: string[] = [];
 
-            if (msg.tool_calls && msg.tool_calls.length > 0) {
-              msg.tool_calls.forEach((toolCall: any) => {
+            if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+              msg.tool_calls.forEach((toolCall) => {
                 const attachments = toolAttachments.get(toolCall.id);
                 if (attachments && attachments.length > 0) {
                   allToolAttachments.push(...attachments);
-                  attachments.forEach((att: any) => {
-                    if (att.attachment_id) {
+                  attachments.forEach((att) => {
+                    if (typeof att.attachment_id === 'string') {
                       allAttachmentIds.push(att.attachment_id);
                     }
                   });
@@ -436,11 +445,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
             // Also check for attachments in the assistant message's metadata
             // These are attachments queued by tools like attach_to_response
-            if (msg.metadata?.attachments && Array.isArray(msg.metadata.attachments)) {
+            const metadataAttachments = msg.metadata?.attachments;
+            if (Array.isArray(metadataAttachments) && metadataAttachments.length > 0) {
               // Add attachments from metadata to the collection
-              allToolAttachments.push(...msg.metadata.attachments);
-              msg.metadata.attachments.forEach((att: any) => {
-                if (att.attachment_id) {
+              allToolAttachments.push(...metadataAttachments);
+              metadataAttachments.forEach((att) => {
+                if (typeof att.attachment_id === 'string') {
                   allAttachmentIds.push(att.attachment_id);
                 }
               });
@@ -483,31 +493,46 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             if (typeof msg.content === 'string') {
               messageContent.push({ type: 'text', text: msg.content });
             } else if (Array.isArray(msg.content)) {
-              // If content is an array, process both text and image_url types
               for (const part of msg.content) {
                 if (part.type === 'text') {
-                  messageContent.push({ type: 'text', text: part.text });
-                } else if (part.type === 'image_url' && part.image_url) {
-                  // Convert image_url to attachment for display
-                  attachments.push({
-                    id: `att_${msg.internal_id}_${attachments.length}`,
-                    type: 'image',
-                    name: `Image ${attachments.length + 1}`,
-                    content: part.image_url.url,
-                  });
+                  const textValue = (part as { text?: unknown }).text;
+                  if (typeof textValue === 'string') {
+                    messageContent.push({ type: 'text', text: textValue });
+                  }
+                } else if (part.type === 'image_url') {
+                  const imageUrl = (part as { image_url?: { url?: unknown } }).image_url?.url;
+                  if (typeof imageUrl === 'string') {
+                    attachments.push({
+                      id: `att_${msg.internal_id}_${attachments.length}`,
+                      type: 'image',
+                      name: `Image ${attachments.length + 1}`,
+                      content: imageUrl,
+                    });
+                  }
                 }
               }
             }
           }
 
           // Handle attachments from the dedicated attachments field (new format)
-          if (msg.attachments && Array.isArray(msg.attachments)) {
+          if (Array.isArray(msg.attachments)) {
             for (const attachment of msg.attachments) {
+              const attachmentType =
+                attachment.type === 'image' || attachment.type === 'document'
+                  ? attachment.type
+                  : 'file';
+              const attachmentName =
+                typeof attachment.name === 'string'
+                  ? attachment.name
+                  : `Attachment ${attachments.length + 1}`;
+              const contentUrl =
+                typeof attachment.content_url === 'string' ? attachment.content_url : undefined;
+
               attachments.push({
                 id: `att_${msg.internal_id}_${attachments.length}`,
-                type: attachment.type || 'file',
-                name: attachment.name || `Attachment ${attachments.length + 1}`,
-                content: attachment.content_url,
+                type: attachmentType,
+                name: attachmentName,
+                content: contentUrl,
               });
             }
           }
