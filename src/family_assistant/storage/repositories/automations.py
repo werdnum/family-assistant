@@ -1,9 +1,9 @@
 """Unified repository for managing both event and schedule-based automations."""
 
-from datetime import datetime, timezone
 from typing import Any, Literal
 
-from sqlalchemy import select
+from sqlalchemy import literal, select, union_all
+from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.events import event_listeners_table
@@ -12,6 +12,7 @@ from family_assistant.storage.repositories.events import EventsRepository
 from family_assistant.storage.repositories.schedule_automations import (
     ScheduleAutomationsRepository,
 )
+from family_assistant.storage.schedule_automations import schedule_automations_table
 
 AutomationType = Literal["event", "schedule"]
 
@@ -52,55 +53,97 @@ class AutomationsRepository(BaseRepository):
         Returns:
             Tuple of (automations list, total count)
         """
-        automations = []
+        # Build queries for each automation type
+        queries = []
 
-        # Fetch event listeners if needed
+        # Event listeners query
         if automation_type is None or automation_type == "event":
-            event_listeners = await self._events_repo.get_event_listeners(
-                conversation_id=conversation_id,
-                enabled=enabled,
-            )
-            for listener in event_listeners:
-                listener["type"] = "event"
-                automations.append(listener)
+            event_query = select(
+                event_listeners_table.c.id,
+                event_listeners_table.c.name,
+                event_listeners_table.c.description,
+                event_listeners_table.c.conversation_id,
+                event_listeners_table.c.interface_type,
+                event_listeners_table.c.action_type,
+                event_listeners_table.c.action_config,
+                event_listeners_table.c.enabled,
+                event_listeners_table.c.created_at,
+                event_listeners_table.c.source_id,
+                event_listeners_table.c.match_conditions,
+                event_listeners_table.c.condition_script,
+                event_listeners_table.c.one_time,
+                event_listeners_table.c.daily_executions,
+                event_listeners_table.c.daily_reset_at,
+                event_listeners_table.c.last_execution_at,
+                literal("event").label("type"),
+                literal(None).label("recurrence_rule"),
+                literal(None).label("next_scheduled_at"),
+                literal(None).label("execution_count"),
+            ).where(event_listeners_table.c.conversation_id == conversation_id)
 
-        # Fetch schedule automations if needed
+            if enabled is not None:
+                event_query = event_query.where(
+                    event_listeners_table.c.enabled.is_(enabled)
+                )
+
+            queries.append(event_query)
+
+        # Schedule automations query
         if automation_type is None or automation_type == "schedule":
-            # Map enabled filter to enabled_only parameter
-            # enabled=True -> enabled_only=True (only enabled)
-            # enabled=False -> fetch all then filter (repository doesn't support disabled-only)
-            # enabled=None -> enabled_only=False (all)
-            schedule_automations = await self._schedule_repo.list_all(
-                conversation_id=conversation_id,
-                enabled_only=enabled is True,
-            )
-            # If enabled=False, filter out enabled ones to get only disabled
-            if enabled is False:
-                schedule_automations = [
-                    auto
-                    for auto in schedule_automations
-                    if not auto.get("enabled", True)
-                ]
-            for automation in schedule_automations:
-                automation["type"] = "schedule"
-                automations.append(automation)
+            schedule_query = select(
+                schedule_automations_table.c.id,
+                schedule_automations_table.c.name,
+                schedule_automations_table.c.description,
+                schedule_automations_table.c.conversation_id,
+                schedule_automations_table.c.interface_type,
+                schedule_automations_table.c.action_type,
+                schedule_automations_table.c.action_config,
+                schedule_automations_table.c.enabled,
+                schedule_automations_table.c.created_at,
+                literal(None).label("source_id"),
+                literal(None).label("match_conditions"),
+                literal(None).label("condition_script"),
+                literal(None).label("one_time"),
+                literal(None).label("daily_executions"),
+                literal(None).label("daily_reset_at"),
+                schedule_automations_table.c.last_execution_at,
+                literal("schedule").label("type"),
+                schedule_automations_table.c.recurrence_rule,
+                schedule_automations_table.c.next_scheduled_at,
+                schedule_automations_table.c.execution_count,
+            ).where(schedule_automations_table.c.conversation_id == conversation_id)
 
-        # Sort by created_at descending (newest first)
-        # Use a sentinel datetime for missing created_at (shouldn't happen in practice)
-        sentinel = datetime.min.replace(tzinfo=timezone.utc)
-        automations.sort(key=lambda x: x.get("created_at") or sentinel, reverse=True)
+            if enabled is not None:
+                schedule_query = schedule_query.where(
+                    schedule_automations_table.c.enabled.is_(enabled)
+                )
+
+            queries.append(schedule_query)
+
+        # Combine queries with UNION ALL or use single query
+        if len(queries) == 1:
+            # Single query case - convert to subquery for consistent handling
+            subquery = queries[0].subquery()
+        else:
+            # Combine with UNION ALL
+            subquery = union_all(*queries).subquery()
 
         # Get total count before pagination
-        total_count = len(automations)
+        count_query = select(func.count().label("count")).select_from(subquery)
+        count_row = await self._db.fetch_one(count_query)
+        total_count = count_row["count"] if count_row else 0
 
-        # Apply pagination if specified
-        # TODO: This is in-memory pagination which doesn't scale well. For better performance,
-        # we should implement database-level pagination, possibly using a UNION query across
-        # both event_listeners and schedule_automations tables.
-        if offset is not None:
-            automations = automations[offset:]
+        # Build final query with ordering and pagination
+        combined_query = select(subquery).order_by(subquery.c.created_at.desc())
+
         if limit is not None:
-            automations = automations[:limit]
+            combined_query = combined_query.limit(limit)
+        if offset is not None:
+            combined_query = combined_query.offset(offset)
+
+        # Execute and convert to dictionaries
+        rows = await self._db.fetch_all(combined_query)
+        automations = [dict(row) for row in rows]
 
         return automations, total_count
 
