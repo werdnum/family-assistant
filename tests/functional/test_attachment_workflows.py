@@ -112,7 +112,7 @@ class TestAttachmentWorkflows:
             # The mock camera tool should return a ToolResult with attachment
             if isinstance(camera_result, ToolResult):
                 # It's a ToolResult
-                assert "snapshot" in camera_result.text.lower()
+                assert "snapshot" in camera_result.get_text().lower()
                 assert camera_result.attachments and len(camera_result.attachments) > 0
                 assert camera_result.attachments[0].mime_type.startswith("image/")
                 assert camera_result.attachments[0].content is not None
@@ -158,7 +158,7 @@ class TestAttachmentWorkflows:
             # Should return successful annotation with new attachment
             if isinstance(annotate_result, ToolResult):
                 # It's a ToolResult
-                assert "annotated" in annotate_result.text.lower()
+                assert "annotated" in annotate_result.get_text().lower()
                 assert (
                     annotate_result.attachments and len(annotate_result.attachments) > 0
                 )
@@ -202,7 +202,9 @@ class TestAttachmentWorkflows:
 
             # Should return successful attachment to response
             result_text = (
-                attach_result if isinstance(attach_result, str) else attach_result.text
+                attach_result
+                if isinstance(attach_result, str)
+                else attach_result.get_text()
             )
             assert (
                 "sent" in result_text.lower()
@@ -295,7 +297,7 @@ class TestAttachmentWorkflows:
             assert isinstance(process_result, ToolResult), (
                 f"Expected ToolResult, got {type(process_result)}"
             )
-            assert "annotated" in process_result.text.lower()
+            assert "annotated" in process_result.get_text().lower()
             assert process_result.attachments and len(process_result.attachments) > 0
             assert process_result.attachments[0].mime_type.startswith("image/")
             assert process_result.attachments[0].content is not None
@@ -361,7 +363,9 @@ class TestAttachmentWorkflows:
             # Should return successful sending
             # Handle ToolResult return type from tools provider
             result_text = (
-                send_result.text if isinstance(send_result, ToolResult) else send_result
+                send_result.get_text()
+                if isinstance(send_result, ToolResult)
+                else send_result
             )
             assert (
                 "sent successfully" in result_text.lower()

@@ -548,7 +548,9 @@ async def test_get_full_document_content_with_raw_content(
 
             # Result should contain the text but may have duplicates due to overlap
             # Handle both string and ToolResult return types
-            result2_text = result2.text if isinstance(result2, ToolResult) else result2
+            result2_text = (
+                result2.get_text() if isinstance(result2, ToolResult) else result2
+            )
 
             assert len(result2_text) > len(full_text), (
                 "Reconstructed text should be longer due to overlap"

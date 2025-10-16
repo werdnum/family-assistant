@@ -206,6 +206,138 @@ Some parameters are automatically injected by the `LocalToolsProvider`:
 - If your tool has a parameter named `calendar_config` with type `dict[str, Any]`, it will be
   injected
 
+## Structured Data in Tool Results
+
+### Overview
+
+Tools can return results with structured data for programmatic access by tests and scripts, while
+maintaining human-readable text for the LLM. The `ToolResult` class supports three patterns:
+
+1. **Data-only**: For simple operations where structured data is sufficient
+2. **Both text and data**: When human-readable text adds significant context
+3. **Text-only**: For simple messages or backward compatibility
+
+### Three Patterns
+
+**1. Data-Only (simple operations)**
+
+Use when structured data tells the complete story:
+
+```python
+from family_assistant.tools.types import ToolResult
+
+async def enable_something_tool(exec_context: ToolExecutionContext, item_id: int) -> ToolResult:
+    success = await perform_operation(item_id)
+    if success:
+        return ToolResult(data={"id": item_id, "enabled": True})
+    else:
+        return ToolResult(data={"error": f"Item {item_id} not found"})
+```
+
+The text is auto-generated via JSON serialization (suitable for LLM consumption).
+
+**2. Both Fields (human context adds value)**
+
+Use when explanation or formatting enhances understanding:
+
+```python
+async def create_something_tool(
+    exec_context: ToolExecutionContext,
+    name: str,
+    config: dict
+) -> ToolResult:
+    item_id = await create_item(name, config)
+    next_run = calculate_next_run(config)
+
+    return ToolResult(
+        text=f"Created item '{name}' (ID: {item_id}). Next run: {format_datetime(next_run)}",
+        data={
+            "id": item_id,
+            "name": name,
+            "next_run": next_run.isoformat()
+        }
+    )
+```
+
+The LLM receives the human-friendly text, while tests/scripts can access the structured data.
+
+**3. Text-Only (for backward compatibility)**
+
+Simple messages or when structure isn't needed:
+
+```python
+async def simple_operation_tool(exec_context: ToolExecutionContext) -> ToolResult:
+    return ToolResult(text="Operation completed successfully")
+```
+
+### Fallback Behavior
+
+The `ToolResult` class provides automatic fallbacks:
+
+**data → text**: JSON serialization
+
+```python
+result = ToolResult(data={"x": 1, "y": 2})
+result.get_text()  # Returns '{\n  "x": 1,\n  "y": 2\n}'
+```
+
+**text → data**: JSON parse, else return string
+
+```python
+result = ToolResult(text='{"x": 1}')
+result.get_data()  # Returns {"x": 1}
+
+result = ToolResult(text='Error message')
+result.get_data()  # Returns "Error message" (string, not dict)
+```
+
+### Accessing Data in Tests
+
+Tests can use `.get_data()` to access structured data with fallback handling:
+
+```python
+result = await my_tool(...)
+
+# Get structured data (with fallback)
+data = result.get_data()
+
+# Handle both dict and string results
+if isinstance(data, dict):
+    item_id = data["id"]
+    assert data.get("success") is True
+elif isinstance(data, str):
+    # Handle string result (error message, etc.)
+    assert "error" in data.lower()
+```
+
+### Guidelines
+
+**Populate both when:**
+
+- Human text provides context beyond the data (e.g., "Next run: tomorrow at 9am")
+- Explanations enhance understanding (e.g., "Will trigger when sensor detects motion")
+- Formatting significantly improves readability
+
+**Use data-only when:**
+
+- Operation is simple (enable, disable, delete, update)
+- Structured data tells the complete story
+- No additional context needed for LLM
+
+**Use text-only when:**
+
+- Simple error or success messages
+- Backward compatibility with existing tools
+- No structured output needed for programmatic access
+
+### Examples from the Codebase
+
+See `src/family_assistant/tools/automations.py` for comprehensive examples:
+
+- Data-only: `enable_automation_tool`, `disable_automation_tool`, `delete_automation_tool`
+- Both fields: `create_automation_tool`, `list_automations_tool`, `get_automation_tool`
+- Error handling with structured data across all tools
+
 ## Tool Categories
 
 - **Notes**: Managing personal notes (`notes.py`)
@@ -229,8 +361,12 @@ Some parameters are automatically injected by the `LocalToolsProvider`:
 
 ## Best Practices
 
-1. **Return Strings**: All tools must return strings. Convert other types to string representations.
-2. **Error Handling**: Return error messages as strings starting with "Error:"
+1. **Return ToolResult**: Tools should return `ToolResult` objects. Use appropriate pattern
+   (data-only, both fields, or text-only) based on whether structured data or human context is
+   needed. For backward compatibility, returning plain strings is still supported.
+2. **Error Handling**: Return errors with structured data when possible:
+   `ToolResult(data={"error": "message"})` or
+   `ToolResult(text="Error: message", data={"error": "message"})`
 3. **Logging**: Use appropriate log levels (info for normal operations, error for failures)
 4. **Type Hints**: Always use proper type hints for better IDE support
 5. **Docstrings**: Document all functions with clear descriptions

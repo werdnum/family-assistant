@@ -394,7 +394,9 @@ async def test_confirming_tools_provider_with_calendar_events(
 
         # The tool should have executed successfully
 
-        result_text = result.text if isinstance(result, ToolResult) else str(result)
+        result_text = (
+            result.get_text() if isinstance(result, ToolResult) else str(result)
+        )
         assert (
             "updated" in result_text.lower()
             or "successfully" in result_text.lower()
