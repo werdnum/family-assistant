@@ -6,6 +6,7 @@ from sqlalchemy import literal, select, union_all
 from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.events import event_listeners_table
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.repositories.events import EventsRepository
@@ -141,9 +142,21 @@ class AutomationsRepository(BaseRepository):
         if offset is not None:
             combined_query = combined_query.offset(offset)
 
-        # Execute and convert to dictionaries
+        # Execute and convert to dictionaries, normalizing datetime fields
         rows = await self._db.fetch_all(combined_query)
-        automations = [dict(row) for row in rows]
+        automations = []
+        for row in rows:
+            auto = dict(row)
+            # Normalize datetime fields
+            auto["created_at"] = normalize_datetime(auto.get("created_at"))
+            auto["last_execution_at"] = normalize_datetime(
+                auto.get("last_execution_at")
+            )
+            auto["next_scheduled_at"] = normalize_datetime(
+                auto.get("next_scheduled_at")
+            )
+            auto["daily_reset_at"] = normalize_datetime(auto.get("daily_reset_at"))
+            automations.append(auto)
 
         return automations, total_count
 
@@ -170,16 +183,20 @@ class AutomationsRepository(BaseRepository):
                 conversation_id=conversation_id,
             )
             if automation:
-                automation["type"] = "event"
+                automation_dict: dict[str, Any] = dict(automation)
+                automation_dict["type"] = "event"
+                return automation_dict
         else:  # schedule
             automation = await self._schedule_repo.get_by_id(
                 automation_id=automation_id,
                 conversation_id=conversation_id,
             )
             if automation:
-                automation["type"] = "schedule"
+                automation_dict = dict(automation)
+                automation_dict["type"] = "schedule"
+                return automation_dict
 
-        return automation
+        return None
 
     async def get_by_name(
         self,
@@ -204,6 +221,16 @@ class AutomationsRepository(BaseRepository):
         row = await self._events_repo._db.fetch_one(stmt)
         if row:
             event_listener = dict(row)
+            # Normalize datetime fields
+            event_listener["created_at"] = normalize_datetime(
+                event_listener.get("created_at")
+            )
+            event_listener["last_execution_at"] = normalize_datetime(
+                event_listener.get("last_execution_at")
+            )
+            event_listener["daily_reset_at"] = normalize_datetime(
+                event_listener.get("daily_reset_at")
+            )
             event_listener["type"] = "event"
             return event_listener
 
@@ -213,8 +240,9 @@ class AutomationsRepository(BaseRepository):
             conversation_id=conversation_id,
         )
         if schedule_automation:
-            schedule_automation["type"] = "schedule"
-            return schedule_automation
+            automation_dict = dict(schedule_automation)
+            automation_dict["type"] = "schedule"
+            return automation_dict
 
         return None
 

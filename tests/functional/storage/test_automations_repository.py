@@ -666,10 +666,7 @@ class TestScheduleAutomationsRepository:
         assert automation["execution_count"] == 1
         assert automation["last_execution_at"] is not None
         # Check that last_execution_at is close to execution_time (within 1 second)
-        # Handle timezone-naive datetimes from SQLite by normalizing to UTC
         last_exec = automation["last_execution_at"]
-        if last_exec.tzinfo is None:
-            last_exec = last_exec.replace(tzinfo=timezone.utc)
         time_diff = abs((last_exec - execution_time).total_seconds())
         assert time_diff < 1
 
@@ -702,10 +699,8 @@ class TestScheduleAutomationsRepository:
         automation = await db_context.schedule_automations.get_by_id(automation_id)
         assert automation is not None
         new_next = automation["next_scheduled_at"]
+        assert new_next is not None  # Should be set after execution
         # Next scheduled time should be after the execution time
-        # Handle timezone-naive datetimes from SQLite by normalizing to UTC
-        if new_next.tzinfo is None:
-            new_next = new_next.replace(tzinfo=timezone.utc)
         assert new_next > execution_time
 
     @pytest.mark.asyncio

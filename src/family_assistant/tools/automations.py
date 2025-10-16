@@ -4,35 +4,47 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime  # noqa: TC003
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.tools.types import ToolResult
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from family_assistant.storage.repositories.automations import AutomationType
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
 
-def _format_datetime(dt: datetime | str | None) -> str | None:
+def _format_datetime(dt: datetime | None) -> str:
     """
-    Safely format a datetime object or string to a standard format.
-
-    Handles both datetime objects and already-formatted strings (e.g., from SQLite).
+    Format a datetime object to human-readable format.
 
     Args:
-        dt: Datetime object, formatted string, or None
+        dt: Datetime object or None
 
     Returns:
-        Formatted datetime string or None if input was None
+        Formatted datetime string or "Never" if input was None
+    """
+    if dt is None:
+        return "Never"
+    return dt.strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _to_isoformat(dt: datetime | None) -> str | None:
+    """
+    Convert a datetime object to ISO format.
+
+    Args:
+        dt: Datetime object or None
+
+    Returns:
+        ISO format string or None if input was None
     """
     if dt is None:
         return None
-    if isinstance(dt, str):
-        return dt
-    return dt.strftime("%Y-%m-%d %H:%M UTC")
+    return dt.isoformat()
 
 
 # Tool Definitions
@@ -387,10 +399,10 @@ async def create_automation_tool(
             automation = await exec_context.db_context.schedule_automations.get_by_id(
                 automation_id
             )
-            if automation and automation.get("next_scheduled_at"):
-                next_run = _format_datetime(automation["next_scheduled_at"])
-            else:
-                next_run = "unknown"
+            next_scheduled_at = (
+                automation.get("next_scheduled_at") if automation else None
+            )
+            next_run = _format_datetime(next_scheduled_at)
 
             # Return structured data with human-readable text
             result_data = {
@@ -462,9 +474,7 @@ async def list_automations_tool(
             else:  # schedule
                 next_run = auto.get("next_scheduled_at")
                 if next_run:
-                    next_run_str = _format_datetime(next_run)
-                    if next_run_str:
-                        lines.append(f"      Next run: {next_run_str}")
+                    lines.append(f"      Next run: {_format_datetime(next_run)}")
 
             # Build structured data
             auto_data = {
@@ -478,7 +488,7 @@ async def list_automations_tool(
             if auto_type == "event":
                 auto_data["event_source"] = auto.get("event_source")
             elif next_run:
-                auto_data["next_scheduled_at"] = _format_datetime(next_run)
+                auto_data["next_scheduled_at"] = _to_isoformat(next_run)
             automation_list.append(auto_data)
 
         text = (
@@ -539,14 +549,12 @@ async def get_automation_tool(
                 lines.append(f"Event filter: {automation['event_filter']}")
         else:  # schedule
             lines.append(f"Recurrence rule: {automation.get('recurrence_rule')}")
-            if automation.get("next_scheduled_at"):
-                lines.append(
-                    f"Next run: {_format_datetime(automation['next_scheduled_at'])}"
-                )
-            if automation.get("last_execution_at"):
-                lines.append(
-                    f"Last run: {_format_datetime(automation['last_execution_at'])}"
-                )
+            next_scheduled = automation.get("next_scheduled_at")
+            if next_scheduled:
+                lines.append(f"Next run: {_format_datetime(next_scheduled)}")
+            last_execution = automation.get("last_execution_at")
+            if last_execution:
+                lines.append(f"Last run: {_format_datetime(last_execution)}")
 
         # Action info
         action_type = automation.get("action_type")
@@ -574,14 +582,12 @@ async def get_automation_tool(
                 result_data["event_filter"] = automation["event_filter"]
         else:  # schedule
             result_data["recurrence_rule"] = automation.get("recurrence_rule")
-            if automation.get("next_scheduled_at"):
-                result_data["next_scheduled_at"] = _format_datetime(
-                    automation["next_scheduled_at"]
-                )
-            if automation.get("last_execution_at"):
-                result_data["last_execution_at"] = _format_datetime(
-                    automation["last_execution_at"]
-                )
+            next_scheduled = automation.get("next_scheduled_at")
+            if next_scheduled:
+                result_data["next_scheduled_at"] = _to_isoformat(next_scheduled)
+            last_execution = automation.get("last_execution_at")
+            if last_execution:
+                result_data["last_execution_at"] = _to_isoformat(last_execution)
         if automation.get("action_config"):
             result_data["action_config"] = automation["action_config"]
 
@@ -866,17 +872,15 @@ async def get_automation_stats_tool(
             "total_executions": stats.get("total_executions", 0),
         }
 
-        if stats.get("last_execution_at"):
-            last_exec = _format_datetime(stats["last_execution_at"])
-            if last_exec:
-                lines.append(f"Last execution: {last_exec}")
-                stats_data["last_execution_at"] = last_exec
+        last_execution_at = stats.get("last_execution_at")
+        if last_execution_at:
+            lines.append(f"Last execution: {_format_datetime(last_execution_at)}")
+            stats_data["last_execution_at"] = _to_isoformat(last_execution_at)
 
-        if stats.get("next_scheduled_at"):
-            next_sched = _format_datetime(stats["next_scheduled_at"])
-            if next_sched:
-                lines.append(f"Next scheduled: {next_sched}")
-                stats_data["next_scheduled_at"] = next_sched
+        next_scheduled_at = stats.get("next_scheduled_at")
+        if next_scheduled_at:
+            lines.append(f"Next scheduled: {_format_datetime(next_scheduled_at)}")
+            stats_data["next_scheduled_at"] = _to_isoformat(next_scheduled_at)
 
         recent = stats.get("recent_executions", [])
         if recent:
@@ -886,13 +890,11 @@ async def get_automation_stats_tool(
                 status = execution.get("status", "unknown")
                 created = execution.get("created_at")
                 if created:
-                    created_str = _format_datetime(created)
-                    if created_str:
-                        lines.append(f"  - {created_str}: {status}")
-                        recent_list.append({
-                            "created_at": created_str,
-                            "status": status,
-                        })
+                    lines.append(f"  - {_format_datetime(created)}: {status}")
+                    recent_list.append({
+                        "created_at": _to_isoformat(created),
+                        "status": status,
+                    })
             stats_data["recent_executions"] = recent_list
 
         text = "\n".join(lines) + f"\n\nData: {json.dumps(stats_data)}"

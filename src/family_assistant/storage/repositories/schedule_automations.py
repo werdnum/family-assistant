@@ -10,9 +10,11 @@ from sqlalchemy import String, delete, insert, select, update
 from sqlalchemy import cast as sa_cast
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.schedule_automations import schedule_automations_table
 from family_assistant.storage.tasks import enqueue_task, tasks_table
+from family_assistant.storage.types import ScheduleAutomationDict
 
 # Sentinel to distinguish "not provided" from "explicitly None"
 _UNSET = object()
@@ -23,6 +25,38 @@ VALID_ACTION_TYPES = {"wake_llm", "script"}
 
 class ScheduleAutomationsRepository(BaseRepository):
     """Repository for managing schedule-based automations."""
+
+    def _normalize_automation(self, row: dict[str, Any]) -> ScheduleAutomationDict:
+        """
+        Normalize a database row to ScheduleAutomationDict.
+
+        Ensures all datetime fields are timezone-aware UTC datetimes.
+
+        Args:
+            row: Raw database row as dict
+
+        Returns:
+            Normalized ScheduleAutomationDict
+        """
+        created_at = normalize_datetime(row["created_at"])
+        if created_at is None:
+            raise ValueError("created_at cannot be None for automation record")
+
+        return ScheduleAutomationDict(
+            id=row["id"],
+            name=row["name"],
+            description=row["description"],
+            conversation_id=row["conversation_id"],
+            interface_type=row["interface_type"],
+            recurrence_rule=row["recurrence_rule"],
+            next_scheduled_at=normalize_datetime(row["next_scheduled_at"]),
+            action_type=row["action_type"],
+            action_config=row["action_config"],
+            enabled=row["enabled"],
+            created_at=created_at,
+            last_execution_at=normalize_datetime(row["last_execution_at"]),
+            execution_count=row["execution_count"],
+        )
 
     def _parse_rrule_and_get_next(
         self, recurrence_rule: str, after: datetime | None = None
@@ -184,7 +218,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         conversation_id: str,
         interface_type: str = "telegram",
         description: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> ScheduleAutomationDict:
         """
         Create automation and return full entity (avoids extra query).
 
@@ -214,7 +248,7 @@ class ScheduleAutomationsRepository(BaseRepository):
 
     async def get_by_id(
         self, automation_id: int, conversation_id: str | None = None
-    ) -> dict[str, Any] | None:
+    ) -> ScheduleAutomationDict | None:
         """
         Get automation by ID, optionally verifying conversation.
 
@@ -239,11 +273,11 @@ class ScheduleAutomationsRepository(BaseRepository):
         if not row:
             return None
 
-        return dict(row)
+        return self._normalize_automation(dict(row))
 
     async def get_by_name(
         self, name: str, conversation_id: str
-    ) -> dict[str, Any] | None:
+    ) -> ScheduleAutomationDict | None:
         """
         Get automation by name within a conversation.
 
@@ -263,13 +297,13 @@ class ScheduleAutomationsRepository(BaseRepository):
         if not row:
             return None
 
-        return dict(row)
+        return self._normalize_automation(dict(row))
 
     async def list_all(
         self,
         conversation_id: str,
         enabled_only: bool = False,
-    ) -> list[dict[str, Any]]:
+    ) -> list[ScheduleAutomationDict]:
         """
         List all schedule automations for a conversation.
 
@@ -290,7 +324,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         stmt = stmt.order_by(schedule_automations_table.c.created_at.desc())
 
         rows = await self._db.fetch_all(stmt)
-        return [dict(row) for row in rows]
+        return [self._normalize_automation(dict(row)) for row in rows]
 
     async def update_enabled(
         self,
