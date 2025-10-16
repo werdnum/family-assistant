@@ -19,6 +19,9 @@ deployment.
   and PostgreSQL backends.
 - **Phase 10 Complete**: Console message collection refactoring - updated automations UI tests to
   use the existing `console_error_checker` fixture instead of duplicating console collection code.
+- **Phase 11 Complete**: DateTime normalization implemented at repository layer - all repositories
+  now return timezone-aware datetime objects, eliminating cross-database inconsistencies and
+  improving type safety with TypedDict return types.
 
 ## Progress Summary
 
@@ -111,6 +114,19 @@ deployment.
 - All 20 Playwright tests pass with the refactored code
 - Improved code maintainability by reusing existing infrastructure
 
+**Phase 11: DateTime Normalization** (Review Feedback Implementation)
+
+- Created TypedDict definitions for repository return types (`EventListenerDict`,
+  `ScheduleAutomationDict`)
+- Added `_normalize_datetime()` helper to ScheduleAutomationsRepository, EventsRepository, and
+  AutomationsRepository
+- All repository methods now normalize datetime fields before returning, ensuring timezone-aware UTC
+  datetime objects
+- Removed `_format_datetime()` helpers from API layer - Pydantic/FastAPI handle serialization
+- Simplified tools layer to use standard `.isoformat()` and `.strftime()` methods
+- All tests pass with both SQLite and PostgreSQL backends (1346+ tests)
+- Improved type safety eliminates cross-database datetime inconsistencies
+
 ### What's Remaining
 
 All phases are now complete. The unified automations system is fully implemented, tested, and
@@ -118,12 +134,7 @@ documented.
 
 ### Known Limitations
 
-1. **Database datetime handling**: SQLite returns ISO strings for datetime columns while PostgreSQL
-   returns datetime objects. Both the automation tools (`src/family_assistant/tools/automations.py`)
-   and API router (`src/family_assistant/web/routers/automations_api.py`) include
-   `_format_datetime()` helpers to handle both types safely.
-
-2. **Disabled-only filtering gap**: `ScheduleAutomationsRepository.list_all` only understands an
+1. **Disabled-only filtering gap**: `ScheduleAutomationsRepository.list_all` only understands an
    `enabled_only` flag. Getting "disabled automations" still requires loading everything and
    filtering in Python, which prevents efficient pagination for that slice.
 
@@ -823,30 +834,35 @@ The following phases address the review feedback:
 - ✅ Code duplication eliminated
 - ✅ Tests pass as before (20/20 tests passing)
 
-#### Phase 11: DateTime Normalization (Priority: High)
+#### Phase 11: DateTime Normalization ✅ Completed (Priority: High)
 
 **Effort**: Medium (4-6 hours) **Risk**: Medium (touches multiple layers, requires careful testing)
 
-**Substeps**:
+**Completed**: 2025-10-16
 
-1. Add `_normalize_datetime()` helper to schedule_automations repository
-2. Update all repository methods to normalize datetime fields
-3. Add similar normalization to events repository
-4. Remove `_format_datetime()` from API layer
-5. Remove `_format_datetime()` from tools layer
-6. Update all affected tests
-7. Run full test suite with both SQLite and PostgreSQL
+- ✅ Created TypedDict definitions for repository return types
+  (`src/family_assistant/storage/types.py`)
+- ✅ Added `_normalize_datetime()` helper to ScheduleAutomationsRepository
+- ✅ Added `_normalize_datetime()` helper to EventsRepository
+- ✅ Added `_normalize_datetime()` helper to AutomationsRepository for unified list views
+- ✅ Updated all repository methods to normalize datetime fields before returning
+- ✅ Removed `_format_datetime()` from API layer (`automations_api.py`)
+- ✅ Updated API response models to use `datetime` types (Pydantic handles serialization)
+- ✅ Simplified tools layer (`automations.py`) to use standard `.isoformat()` and `.strftime()`
+- ✅ All tests pass with both SQLite and PostgreSQL backends
+- ✅ No regressions in datetime handling
 
-**Success Criteria**:
+**Success Criteria** (All Met):
 
-- All datetime fields returned as Python `datetime` objects from repositories
-- SQLite string datetimes converted to `datetime` objects at repository boundary
-- PostgreSQL `datetime` objects passed through unchanged
-- All returned datetimes are timezone-aware (UTC)
-- API layer simplified (Pydantic/FastAPI handle serialization)
-- Tools layer simplified (standard `.isoformat()` or `.strftime()` for formatting)
-- All tests pass with both SQLite and PostgreSQL backends
-- No regressions in datetime handling
+- ✅ All datetime fields returned as Python `datetime` objects from repositories
+- ✅ SQLite string datetimes converted to `datetime` objects at repository boundary
+- ✅ PostgreSQL `datetime` objects passed through unchanged
+- ✅ All returned datetimes are timezone-aware (UTC)
+- ✅ API layer simplified (Pydantic/FastAPI handle serialization automatically)
+- ✅ Tools layer simplified (standard `.isoformat()` or `.strftime()` for formatting)
+- ✅ All tests pass with both SQLite and PostgreSQL backends (1346 tests passing)
+- ✅ No regressions in datetime handling
+- ✅ Type safety improved with TypedDict return types
 
 #### Phase 12: Tool Structured Data Refactoring (Priority: Medium)
 
