@@ -1035,6 +1035,7 @@ submit_review(
     # Add metadata
     review_data["exit_code"] = exit_code
     review_data["highest_severity"] = highest_severity
+    review_data["cache_key"] = cache_key
 
     # Output results
     if output_json:
