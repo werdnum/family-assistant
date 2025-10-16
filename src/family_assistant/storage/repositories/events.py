@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.sql import functions as func
 
+from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.events import (
     EventActionType,
     EventSourceType,
@@ -17,10 +18,50 @@ from family_assistant.storage.events import (
     recent_events_table,
 )
 from family_assistant.storage.repositories.base import BaseRepository
+from family_assistant.storage.types import EventListenerDict, RecentEventDict
 
 
 class EventsRepository(BaseRepository):
     """Repository for managing events and rate limiting in the database."""
+
+    def _normalize_event_listener(self, row: dict[str, Any]) -> EventListenerDict:
+        """
+        Normalize event listener row from database.
+
+        Args:
+            row: Database row as dictionary
+
+        Returns:
+            EventListenerDict with normalized datetime fields
+        """
+        listener = dict(row)
+
+        # Normalize datetime fields
+        listener["created_at"] = normalize_datetime(listener.get("created_at"))
+        listener["daily_reset_at"] = normalize_datetime(listener.get("daily_reset_at"))
+        listener["last_execution_at"] = normalize_datetime(
+            listener.get("last_execution_at")
+        )
+
+        return listener  # type: ignore[return-value]
+
+    def _normalize_event(self, row: dict[str, Any]) -> RecentEventDict:
+        """
+        Normalize recent event row from database.
+
+        Args:
+            row: Database row as dictionary
+
+        Returns:
+            RecentEventDict with normalized datetime fields
+        """
+        event = dict(row)
+
+        # Normalize datetime fields
+        event["timestamp"] = normalize_datetime(event.get("timestamp"))
+        event["created_at"] = normalize_datetime(event.get("created_at"))
+
+        return event  # type: ignore[return-value]
 
     async def check_and_update_rate_limit(
         self,
@@ -51,9 +92,6 @@ class EventsRepository(BaseRepository):
 
             # Check if we need to reset daily counter
             daily_reset_at = listener["daily_reset_at"]
-            # Handle SQLite returning naive datetimes
-            if daily_reset_at and daily_reset_at.tzinfo is None:
-                daily_reset_at = daily_reset_at.replace(tzinfo=timezone.utc)
 
             if not daily_reset_at or now > daily_reset_at:
                 # Reset counter for new day
@@ -188,7 +226,7 @@ class EventsRepository(BaseRepository):
         conversation_id: str,
         source_id: str | None = None,
         enabled: bool | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[EventListenerDict]:
         """
         Get event listeners for a conversation with optional filters.
 
@@ -216,17 +254,11 @@ class EventsRepository(BaseRepository):
 
         rows = await self._db.fetch_all(stmt)
 
-        # Convert rows to dicts
-        listeners = []
-        for row in rows:
-            listener = dict(row)
-            listeners.append(listener)
-
-        return listeners
+        return [self._normalize_event_listener(dict(row)) for row in rows]
 
     async def get_event_listener_by_id(
         self, listener_id: int, conversation_id: str | None = None
-    ) -> dict[str, Any] | None:
+    ) -> EventListenerDict | None:
         """
         Get a specific listener, optionally ensuring it belongs to the conversation.
 
@@ -251,9 +283,7 @@ class EventsRepository(BaseRepository):
         if not row:
             return None
 
-        # Convert to dict
-        listener = dict(row)
-        return listener
+        return self._normalize_event_listener(dict(row))
 
     async def update_event_listener_enabled(
         self,
@@ -774,7 +804,9 @@ class EventsRepository(BaseRepository):
                 "daily_executions": listener.get("daily_executions", 0),
                 "daily_limit": 5,  # Hardcoded in check_and_update_rate_limit
                 "last_execution_at": listener.get("last_execution_at"),
-                "recent_events": [dict(row) for row in recent_events],
+                "recent_events": [
+                    self._normalize_event(dict(row)) for row in recent_events
+                ],
             }
 
         except SQLAlchemyError as e:
@@ -806,7 +838,7 @@ class EventsRepository(BaseRepository):
         enabled: bool | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> tuple[list[dict], int]:
+    ) -> tuple[list[EventListenerDict], int]:
         """Get all event listeners (admin view) with pagination."""
         try:
             # Build base query
@@ -837,7 +869,7 @@ class EventsRepository(BaseRepository):
 
             rows = await self._db.fetch_all(stmt)
 
-            listeners = [dict(row) for row in rows]
+            listeners = [self._normalize_event_listener(dict(row)) for row in rows]
             return listeners, total_count
 
         except SQLAlchemyError as e:

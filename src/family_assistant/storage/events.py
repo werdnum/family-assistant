@@ -27,6 +27,7 @@ from sqlalchemy.sql import func
 
 from family_assistant.storage.base import metadata
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.types import EventListenerDict
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +182,7 @@ async def get_event_listeners(
     conversation_id: str,
     source_id: str | None = None,
     enabled: bool | None = None,
-) -> list[dict[str, Any]]:
+) -> list[EventListenerDict]:
     """Get event listeners for a conversation with optional filters."""
     return await db_context.events.get_event_listeners(
         conversation_id=conversation_id,
@@ -194,7 +195,7 @@ async def get_event_listener_by_id(
     db_context: DatabaseContext,
     listener_id: int,
     conversation_id: str,
-) -> dict[str, Any] | None:
+) -> EventListenerDict | None:
     """Get a specific listener, ensuring it belongs to the conversation."""
     return await db_context.events.get_event_listener_by_id(
         listener_id=listener_id,
