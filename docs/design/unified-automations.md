@@ -12,7 +12,8 @@ deployment.
   all tests passing.
 - **Phase 7 Not Started**: Documentation updates to replace "event listener" terminology with
   "automation" and update system prompts.
-- **Phase 8 Not Started**: Database pagination optimization and frontend cleanup.
+- **Phase 8 Complete**: Database pagination optimization implemented with UNION-based queries and
+  frontend tool icon mapping updated for automation tools.
 
 ## Progress Summary
 
@@ -110,9 +111,9 @@ deployment.
 
 ### Known Limitations
 
-1. **In-memory pagination**: `AutomationsRepository.list_all` still fetches everything before
-   slicing. That is acceptable for typical (\<100) automations but needs a UNION-based query for
-   better scalability.
+1. **Database datetime handling**: SQLite returns ISO strings for datetime columns while PostgreSQL
+   returns datetime objects. The automation tools include a `_format_datetime()` helper to handle
+   both types safely.
 
 2. **Disabled-only filtering gap**: `ScheduleAutomationsRepository.list_all` only understands an
    `enabled_only` flag. Getting "disabled automations" still requires loading everything and
@@ -583,11 +584,11 @@ Test coverage implementation (~3,426 lines added to replace ~2,630 deleted):
 - [ ] Clarify when to use `create_automation` vs `schedule_action`/`schedule_recurring_action`
 - [ ] Update `docs/user/scripting.md` examples
 
-### Phase 8: Technical Improvements ❌ Not Started
+### Phase 8: Technical Improvements ✅ Completed
 
-- [ ] Implement UNION query for database-level pagination in `AutomationsRepository.list_all`
-- [ ] Clean up frontend tool icon mappings and test data
-- [ ] Remove any stale event listener references
+- [x] Implement UNION query for database-level pagination in `AutomationsRepository.list_all`
+- [x] Clean up frontend tool icon mappings and test data
+- [x] Add datetime formatting helper to handle cross-database datetime differences
 
 ## Future Enhancements
 
