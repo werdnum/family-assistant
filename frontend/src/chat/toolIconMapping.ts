@@ -114,13 +114,15 @@ export const toolIconMapping: Record<string, ToolIconInfo> = {
   query_recent_events: { icon: Search, category: 'events', label: 'Query Events' },
   test_event_listener: { icon: Play, category: 'events', label: 'Test Listener' },
 
-  // Event listener tools (6)
-  create_event_listener: { icon: Zap, category: 'events', label: 'Create Listener' },
-  list_event_listeners: { icon: List, category: 'events', label: 'List Listeners' },
-  delete_event_listener: { icon: Trash2, category: 'events', label: 'Delete Listener' },
-  toggle_event_listener: { icon: Settings, category: 'events', label: 'Toggle Listener' },
-  validate_event_listener_script: { icon: Code, category: 'events', label: 'Validate Script' },
-  test_event_listener_script: { icon: Play, category: 'events', label: 'Test Script' },
+  // Automation tools (8)
+  create_automation: { icon: Zap, category: 'events', label: 'Create Automation' },
+  list_automations: { icon: List, category: 'events', label: 'List Automations' },
+  get_automation: { icon: Search, category: 'events', label: 'Get Automation' },
+  update_automation: { icon: Edit, category: 'events', label: 'Update Automation' },
+  enable_automation: { icon: Play, category: 'events', label: 'Enable Automation' },
+  disable_automation: { icon: Settings, category: 'events', label: 'Disable Automation' },
+  delete_automation: { icon: Trash2, category: 'events', label: 'Delete Automation' },
+  get_automation_stats: { icon: FileSearch, category: 'events', label: 'Automation Stats' },
 
   // Home Assistant tools (2)
   render_home_assistant_template: { icon: Home, category: 'home_assistant', label: 'HA Template' },
