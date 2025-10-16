@@ -160,22 +160,23 @@ You can ask the assistant a wide variety of things:
 - **Monitor Events and Get Automated Notifications:** \*The assistant can now watch for specific
   events and notify you when they happen: \*"Let me know when Alex arrives home" \*"Alert me if
   the garage door opens after 10pm" \*"Watch for when the washing machine finishes" \*"Notify me
-  when any new documents are indexed" \*You can manage these event listeners: \*"List all my event
-  listeners" \*"Disable the garage door alert" \*"Delete the washing machine listener" \*Test
-  conditions before creating listeners: \*"Show me recent events from home assistant" \*"Test if
-  person.alex state changes to 'Home' would have triggered in the last day" \*You can also edit
-  event listeners through the Web UI: navigate to the Event Listeners section to view all listeners,
-  see their execution history, and modify their conditions or scripts
+  when any new documents are indexed" \*You can manage these automations: \*"List all my
+  automations" or "List all my event automations" \*"Disable the garage door alert" \*"Delete the
+  washing machine automation" \*Test conditions before creating automations: \*"Show me recent
+  events from home assistant" \*"Test if person.alex state changes to 'Home' would have triggered
+  in the last day" \*You can also manage automations through the Web UI: navigate to the Automations
+  section to view all automations, see their execution history, and modify their conditions or
+  scripts
 
 - **Automated Script Actions for Events:** \*For simple, deterministic actions, you can now create
-  script-based event listeners that run instantly without waking the assistant: \*"Run a script to
+  script-based event automations that run instantly without waking the assistant: \*"Run a script to
   log all motion events to a note when motion is detected" \*"Create a script that sends me a
   Telegram message when the temperature goes above 25°C during business hours" \*"Set up a script to
   track daily energy usage in a note whenever the meter reading changes" \*Benefits of script-based
-  listeners: \*Much faster execution (no LLM processing delay) \*No API costs \*Predictable,
+  automations: \*Much faster execution (no LLM processing delay) \*No API costs \*Predictable,
   repeatable behavior \*Perfect for logging, simple notifications, and data collection \*Managing
-  script listeners: \*"Show me the script for my temperature alert" \*"Test this script with a
-  sample temperature event: [provide script code]" \*"Convert my garage door listener to use a
+  script automations: \*"Show me the script for my temperature alert" \*"Test this script with a
+  sample temperature event: [provide script code]" \*"Convert my garage door automation to use a
   script instead"
 
 ## 4. Working with Attachments
@@ -372,12 +373,13 @@ various tasks with dark mode support and mobile optimization.
   - \*\*Tool Testing:\*\*A "Tools" page allows developers to test and debug tool interactions
     directly from the web interface.
 
-  - \*\*Event Listeners Management:\*\*The Event Listeners page provides: \*A comprehensive list of
-    all active event listeners \*Create new event listeners directly from the UI with the "Create
-    New Listener" button \*Detailed view of each listener's configuration and execution history
-    \*Edit functionality to modify listener conditions, scripts, and settings (including changing
-    between LLM callback and script action types) \*Live script validation for script-based
-    listeners \*Enable/disable and delete controls for managing listeners
+  - \*\*Automations Management:\*\*The Automations page provides: \*A comprehensive list of all
+    automations (both event-based and schedule-based) \*Create new automations directly from the UI
+    \*Detailed view of each automation's configuration and execution history \*Edit functionality to
+    modify automation conditions, scripts, and settings (including changing between LLM callback and
+    script action types) \*Live script validation for script-based automations \*Enable/disable and
+    delete controls for managing automations \*Filter by automation type (event or schedule) and
+    enabled status
 
 ## 8. Tips for Best Results
 
@@ -390,21 +392,21 @@ various tasks with dark mode support and mobile optimization.
   password note" instead of searching \*"List all my notes" to see everything at once \*"Delete the
   old shopping list" to remove outdated notes
 
-- \*\*Setting Up Event Listeners:\*\*You can create event listeners either by asking the assistant
-  or through the Web UI. When creating event listeners: \*Start by exploring what events are
-  available: "Show me recent home assistant events" \*Test your conditions before creating the
-  listener: "Test if entity_id equals 'person.alex' would match recent events" \*Be specific with
-  field names - use the exact names you see in the event data \*You can filter by event type: "Test
-  if event_type equals 'state_changed' and entity_id equals 'person.alex'" \*For complex
+- \*\*Setting Up Event Automations:\*\*You can create event automations either by asking the
+  assistant or through the Web UI. When creating event automations: \*Start by exploring what events
+  are available: "Show me recent home assistant events" \*Test your conditions before creating the
+  automation: "Test if entity_id equals 'person.alex' would match recent events" \*Be specific
+  with field names - use the exact names you see in the event data \*You can filter by event type:
+  "Test if event_type equals 'state_changed' and entity_id equals 'person.alex'" \*For complex
   conditions (like detecting zone entry/exit or temperature thresholds), use condition scripts:
-  \*"Create a listener that detects when I arrive home" (state changes from not 'home' to 'home')
+  \*"Create an automation that detects when I arrive home" (state changes from not 'home' to 'home')
   \*"Alert me when temperature rises above 25°C" (numeric threshold checking) \*"Watch for any
   motion sensor that turns on" (pattern matching with entity_id) \*Choose between two action types:
 
   - **wake_llm**: Wakes the assistant to handle complex situations requiring reasoning - **script**:
     Runs automated Starlark code for simple, deterministic tasks \*Scripts can also use wake_llm()
-    to conditionally wake the assistant with specific context \*Via the Web UI: Navigate to Event
-    Listeners and click "Create New Listener" to use the visual form with live script validation
+    to conditionally wake the assistant with specific context \*Via the Web UI: Navigate to
+    Automations and click "Create New Automation" to use the visual form with live script validation
 
 - \*\*Reply Directly:\*\*If you're responding to something the assistant just said, use Telegram's
   "Reply" feature so it knows exactly what message you're referring to. This is especially helpful
@@ -440,11 +442,11 @@ various tasks with dark mode support and mobile optimization.
   (e.g., "Is it okay to use the web browser for this?"). This is normal and helps it use the most
   appropriate tools.
 
-- \*\*Event Listeners:\*\*If an event listener isn't triggering as expected: \*Use "Show me recent
-  events from [source]" to see what events are being captured \*Use the test tool to check if your
-  conditions would match recent events \*Make sure you're using the exact field names from the event
-  data (use dot notation for nested fields like "new_state.state") \*For condition scripts, test
-  them first: "Test this condition script with a sample event: [your script]" \*Remember that
+- \*\*Event Automations:\*\*If an event automation isn't triggering as expected: \*Use "Show me
+  recent events from [source]" to see what events are being captured \*Use the test tool to check if
+  your conditions would match recent events \*Make sure you're using the exact field names from the
+  event data (use dot notation for nested fields like "new_state.state") \*For condition scripts,
+  test them first: "Test this condition script with a sample event: [your script]" \*Remember that
   condition scripts must return a boolean value \*Common issue: Home Assistant sends state_changed
   events even when only attributes change - use condition scripts to detect actual state transitions
 

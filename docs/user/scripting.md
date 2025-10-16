@@ -387,7 +387,7 @@ other sources. This enables powerful automation without the delay and cost of LL
 
 ### Creating Event-Triggered Scripts
 
-Ask the assistant to create a script-based event listener:
+Ask the assistant to create a script-based event automation:
 
 ```
 "Create a script that logs all motion events when motion is detected in the living room"
@@ -400,7 +400,7 @@ Ask the assistant to create a script-based event listener:
 For complex event matching that can't be expressed as simple equality checks, use condition scripts:
 
 ```
-"Create a listener that detects when someone arrives home (state changes from not 'home' to 'home')"
+"Create an automation that detects when someone arrives home (state changes from not 'home' to 'home')"
 "Alert me when temperature rises above 25°C but only if it was below 20°C before"
 "Watch for any sensor that starts with 'sensor.motion_' and turns on"
 ```
@@ -435,8 +435,8 @@ When triggered by an event, scripts receive special global variables:
 ```starlark
 # Available global variables in event scripts:
 # event - Dictionary containing all event data
-# conversation_id - The conversation this listener belongs to
-# listener_id - ID of the event listener that triggered this script
+# conversation_id - The conversation this automation belongs to
+# automation_id - ID of the event automation that triggered this script
 
 # Example: Log temperature changes (note: Starlark only has int(), not float())
 temp = int(event.get("new_state", {}).get("state", "0").split('.')[0])  # Truncate decimals
@@ -560,12 +560,12 @@ Before creating an event listener, test your script:
 "Validate this script syntax: [paste your script]"
 ```
 
-### Managing Script Listeners
+### Managing Script Automations
 
 ```
-"Show me all my script-based event listeners"
+"Show me all my script-based event automations"
 "Disable the temperature monitoring script"
-"Convert my motion listener from wake_llm to a script"
+"Convert my motion automation from wake_llm to a script"
 "Create a script that uses wake_llm when the garage door opens"
 ```
 
@@ -731,5 +731,5 @@ When presenting scripts to users:
 
 - Focus on what the script does, not how
 - Mention any limitations or requirements
-- Suggest testing before creating event listeners
+- Suggest testing before creating event automations
 - Offer to modify if it doesn't meet their needs
