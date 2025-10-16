@@ -2,32 +2,23 @@
 
 import pytest
 
-from .conftest import ConsoleErrorCollector, WebTestFixture
+from .conftest import WebTestFixture
 
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_automations_page_basic_functionality(
-    web_test_fixture: WebTestFixture,
-    console_error_checker: "ConsoleErrorCollector",
+    web_test_with_console_check: WebTestFixture,
 ) -> None:
     """Test basic functionality of the automations React interface."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_with_console_check.page
+    server_url = web_test_with_console_check.base_url
 
     # Navigate to automations page
     await page.goto(f"{server_url}/automations")
 
     # Wait for page to load
-    try:
-        await page.wait_for_selector("h1", timeout=10000)
-    except Exception:
-        # Print console logs on failure
-        print("\n=== Console Logs ===")
-        print(f"Errors: {console_error_checker.errors}")
-        print(f"Warnings: {console_error_checker.warnings}")
-        print(f"\n=== Page Content ===\n{await page.content()}")
-        raise
+    await page.wait_for_selector("h1", timeout=10000)
 
     # Check page title and heading
     await page.wait_for_selector("h1:has-text('Automations')")
@@ -53,22 +44,9 @@ async def test_automations_page_basic_functionality(
 
     # Wait for the component to finish loading
     # It should show either "Loading automations...", an error, or the results
-    try:
-        await page.wait_for_selector(
-            "text=/Loading automations|Error:|Found \\d+ automation(s)?/", timeout=10000
-        )
-    except Exception:
-        # Debug: Take screenshot and print console
-        screenshot_path = "/tmp/automations-test-failure.png"
-        await page.screenshot(path=screenshot_path)
-        print(f"\n=== Screenshot saved to {screenshot_path} ===")
-        print("\n=== Console messages ===")
-        print(f"Errors: {console_error_checker.errors}")
-        print(f"Warnings: {console_error_checker.warnings}")
-        # Print a snippet of the page content
-        content = await page.content()
-        print(f"\n=== Page body (first 2000 chars) ===\n{content[:2000]}")
-        raise
+    await page.wait_for_selector(
+        "text=/Loading automations|Error:|Found \\d+ automation(s)?/", timeout=10000
+    )
 
     # If we see "Loading", wait a bit more
     if await page.locator("text=Loading automations").is_visible():
@@ -88,22 +66,17 @@ async def test_automations_page_basic_functionality(
         # There's an error - print it for debugging
         error_elem = page.locator("text=/Error:/")
         error_text = await error_elem.text_content()
-        print(f"\n=== Error on page ===\n{error_text}")
-        # Also capture console for more context
-        print("\n=== Console messages ===")
-        print(f"Errors: {console_error_checker.errors}")
-        print(f"Warnings: {console_error_checker.warnings}")
         raise AssertionError(f"Component displayed error: {error_text}")
 
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_automations_create_event_navigation(
-    web_test_fixture: WebTestFixture,
+    web_test_with_console_check: WebTestFixture,
 ) -> None:
     """Test navigation to create new event automation form."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_with_console_check.page
+    server_url = web_test_with_console_check.base_url
 
     # Navigate to automations page
     await page.goto(f"{server_url}/automations")
@@ -126,11 +99,11 @@ async def test_automations_create_event_navigation(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_automations_create_schedule_navigation(
-    web_test_fixture: WebTestFixture,
+    web_test_with_console_check: WebTestFixture,
 ) -> None:
     """Test navigation to create new schedule automation form."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_with_console_check.page
+    server_url = web_test_with_console_check.base_url
 
     # Navigate to automations page
     await page.goto(f"{server_url}/automations")
@@ -155,11 +128,11 @@ async def test_automations_create_schedule_navigation(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_automations_filters_interaction(
-    web_test_fixture: WebTestFixture,
+    web_test_with_console_check: WebTestFixture,
 ) -> None:
     """Test filter form interactions on automations page."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_with_console_check.page
+    server_url = web_test_with_console_check.base_url
 
     # Navigate to automations page
     await page.goto(f"{server_url}/automations")
@@ -211,11 +184,11 @@ async def test_automations_filters_interaction(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_automations_responsive_design(
-    web_test_fixture: WebTestFixture,
+    web_test_with_console_check: WebTestFixture,
 ) -> None:
     """Test responsive design of automations page."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_with_console_check.page
+    server_url = web_test_with_console_check.base_url
 
     # Navigate to automations page
     await page.goto(f"{server_url}/automations")
@@ -256,11 +229,11 @@ async def test_automations_responsive_design(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_create_schedule_automation_form(
-    web_test_fixture: WebTestFixture,
+    web_test_with_console_check: WebTestFixture,
 ) -> None:
     """Test creating a schedule automation via the form."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_with_console_check.page
+    server_url = web_test_with_console_check.base_url
 
     # Navigate to create schedule automation page
     await page.goto(f"{server_url}/automations/create/schedule")
@@ -298,11 +271,11 @@ async def test_create_schedule_automation_form(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_schedule_automation_detail_view(
-    web_test_fixture: WebTestFixture,
+    web_test_with_console_check: WebTestFixture,
 ) -> None:
     """Test viewing schedule automation details."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_with_console_check.page
+    server_url = web_test_with_console_check.base_url
 
     # First create a schedule automation
     await page.goto(f"{server_url}/automations/create/schedule")
@@ -341,11 +314,11 @@ async def test_schedule_automation_detail_view(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_toggle_schedule_automation_enabled(
-    web_test_fixture: WebTestFixture,
+    web_test_with_console_check: WebTestFixture,
 ) -> None:
     """Test toggling a schedule automation's enabled state."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_with_console_check.page
+    server_url = web_test_with_console_check.base_url
 
     # Create a schedule automation
     await page.goto(f"{server_url}/automations/create/schedule")
@@ -395,12 +368,11 @@ async def test_toggle_schedule_automation_enabled(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_delete_schedule_automation(
-    web_test_fixture: WebTestFixture,
-    console_error_checker: ConsoleErrorCollector,
+    web_test_with_console_check: WebTestFixture,
 ) -> None:
     """Test deleting a schedule automation."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_with_console_check.page
+    server_url = web_test_with_console_check.base_url
 
     # Create a schedule automation
     await page.goto(f"{server_url}/automations/create/schedule")
@@ -427,15 +399,7 @@ async def test_delete_schedule_automation(
     await delete_button.click()
 
     # Should navigate back to list
-    try:
-        await page.wait_for_url("**/automations", timeout=10000)
-    except Exception:
-        print("\n=== Console messages during delete ===")
-        print(f"Errors: {console_error_checker.errors}")
-        print(f"Warnings: {console_error_checker.warnings}")
-        print("\n=== Page content ===")
-        print(await page.content())
-        raise
+    await page.wait_for_url("**/automations", timeout=10000)
 
     # Verify the automation no longer appears in the list
     await page.wait_for_timeout(1000)
@@ -445,11 +409,11 @@ async def test_delete_schedule_automation(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_filter_schedule_automations(
-    web_test_fixture: WebTestFixture,
+    web_test_with_console_check: WebTestFixture,
 ) -> None:
     """Test filtering to show only schedule automations."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_with_console_check.page
+    server_url = web_test_with_console_check.base_url
 
     # Create a schedule automation
     await page.goto(f"{server_url}/automations/create/schedule")
