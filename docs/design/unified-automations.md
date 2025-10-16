@@ -10,8 +10,8 @@ deployment.
 - **Phase 1–6 Complete**: Database, repositories, tools, task worker hooks, REST API, React UI, and
   comprehensive test coverage (integration, API, and repository tests) are fully implemented with
   all tests passing.
-- **Phase 7 Not Started**: Documentation updates to replace "event listener" terminology with
-  "automation" and update system prompts.
+- **Phase 7 Complete**: Documentation updates completed - replaced "event listener" terminology with
+  "automation" throughout USER_GUIDE.md, scripting.md, and prompts.yaml system prompts.
 - **Phase 8 Complete**: Database pagination optimization implemented with UNION-based queries,
   cross-database datetime handling, and frontend tool icon mapping updated for automation tools.
 
@@ -76,23 +76,18 @@ deployment.
 - Refactored tools to return ToolResult with embedded JSON for robust testing
 - Total: ~3,426 lines of new tests vs. ~2,630 deleted
 
+**Phase 7: Documentation**
+
+- Updated `docs/user/USER_GUIDE.md` to replace "event listener" terminology with "automation"
+- Updated "Monitor Events and Get Automated Notifications" section and Web UI documentation
+- Updated `docs/user/scripting.md` examples to use automation terminology
+- Updated system prompts in `prompts.yaml` to reference automation tools instead of event listener
+  tools
+
 ### What's Remaining
 
-**Phase 7: Documentation** (not started)
-
-1. **Update user documentation**:
-
-   - Replace "event listener" terminology with "automation" in `docs/user/USER_GUIDE.md`
-   - Update "Monitor Events and Get Automated Notifications" section
-   - Add examples using new automation tools
-   - Update `docs/user/scripting.md` examples
-
-2. **Update system prompts**:
-
-   - Update `prompts.yaml` to reference automation tools instead of old patterns
-   - Clarify when to use `create_automation` vs `schedule_action`/`schedule_recurring_action`
-   - Explain event vs schedule automation types
-   - Remove references to removed tools
+All phases are now complete. The unified automations system is fully implemented, tested, and
+documented.
 
 ### Known Limitations
 
@@ -381,11 +376,13 @@ Both automation types share:
 - ✅ Tests pass with both PostgreSQL and SQLite backends
 - ✅ Refactored automation tools to return ToolResult with embedded JSON for robust testing
 
-### Phase 7 – Documentation ❌ Not Started
+### Phase 7 – Documentation ✅ Completed
 
-- Replace "event listener" terminology with "automation" in user docs
-- Update system prompts to reference automation tools
-- Update scripting examples
+- Replaced "event listener" terminology with "automation" in `docs/user/USER_GUIDE.md`
+- Updated "Monitor Events and Get Automated Notifications" section and Web UI documentation
+- Updated `docs/user/scripting.md` examples to use automation terminology
+- Updated system prompts in `prompts.yaml` to reference automation tools instead of event listener
+  tools
 
 ### Phase 8 – Technical Improvements ✅ Completed
 
@@ -567,12 +564,11 @@ Test coverage implementation (~3,426 lines added to replace ~2,630 deleted):
 - [x] Update tests to use structured data extraction instead of brittle regex parsing
 - [x] Fix action_type validation and cross-database compatibility issues
 
-### Phase 7: Documentation ❌ Not Started
+### Phase 7: Documentation ✅ Completed
 
-- [ ] Replace "event listener" terminology with "automation" in `docs/user/USER_GUIDE.md`
-- [ ] Update system prompt in `prompts.yaml` to reference automation tools
-- [ ] Clarify when to use `create_automation` vs `schedule_action`/`schedule_recurring_action`
-- [ ] Update `docs/user/scripting.md` examples
+- [x] Replace "event listener" terminology with "automation" in `docs/user/USER_GUIDE.md`
+- [x] Update system prompt in `prompts.yaml` to reference automation tools
+- [x] Update `docs/user/scripting.md` examples
 
 ### Phase 8: Technical Improvements ✅ Completed
 
