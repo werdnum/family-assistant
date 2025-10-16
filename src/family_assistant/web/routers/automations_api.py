@@ -1,6 +1,7 @@
 """API endpoints for unified automations management (event + schedule)."""
 
 import logging
+from datetime import datetime
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -15,6 +16,25 @@ logger = logging.getLogger(__name__)
 _UNSET = object()
 
 automations_api_router = APIRouter(tags=["Automations"])
+
+
+def _format_datetime(dt: datetime | str | None) -> str | None:
+    """
+    Safely format a datetime object or string to ISO format.
+
+    Handles both datetime objects (from PostgreSQL) and ISO strings (from SQLite).
+
+    Args:
+        dt: A datetime object, ISO string, or None
+
+    Returns:
+        ISO format string or None
+    """
+    if dt is None:
+        return None
+    if isinstance(dt, str):
+        return dt
+    return dt.isoformat()
 
 
 class AutomationResponse(BaseModel):
@@ -129,12 +149,8 @@ def _format_automation_response(automation: dict[str, Any]) -> AutomationRespons
         "action_type": automation["action_type"],
         "action_config": automation["action_config"],
         "enabled": automation["enabled"],
-        "created_at": automation["created_at"].isoformat(),
-        "last_execution_at": (
-            automation["last_execution_at"].isoformat()
-            if automation.get("last_execution_at")
-            else None
-        ),
+        "created_at": _format_datetime(automation["created_at"]),
+        "last_execution_at": _format_datetime(automation.get("last_execution_at")),
     }
 
     # Type-specific fields
@@ -149,11 +165,7 @@ def _format_automation_response(automation: dict[str, Any]) -> AutomationRespons
     else:  # schedule
         response_data.update({
             "recurrence_rule": automation["recurrence_rule"],
-            "next_scheduled_at": (
-                automation["next_scheduled_at"].isoformat()
-                if automation.get("next_scheduled_at")
-                else None
-            ),
+            "next_scheduled_at": _format_datetime(automation.get("next_scheduled_at")),
             "execution_count": automation.get("execution_count", 0),
         })
 
