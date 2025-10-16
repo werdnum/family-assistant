@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING, Any
+
+from family_assistant.tools.types import ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.storage.repositories.automations import AutomationType
@@ -276,7 +279,7 @@ async def create_automation_tool(
     action_type: str,
     action_config: dict[str, Any],
     description: str | None = None,
-) -> str:
+) -> ToolResult:
     """
     Create a new automation (event or schedule-based).
 
@@ -290,9 +293,12 @@ async def create_automation_tool(
         description: Optional description
 
     Returns:
-        Success message with automation ID
+        ToolResult with structured data containing automation ID and details
     """
     try:
+        # Validate automation_type first
+        validated_type = _validate_automation_type(automation_type)
+
         # Check name availability
         (
             is_available,
@@ -302,15 +308,19 @@ async def create_automation_tool(
             conversation_id=exec_context.conversation_id,
         )
         if not is_available:
-            return f"Error: {error_msg}"
+            return ToolResult(
+                text=f"Error: {error_msg}",
+            )
 
-        if automation_type == "event":
+        if validated_type == "event":
             # Create event automation
             source_id = trigger_config.get("event_source")
             match_conditions = trigger_config.get("event_filter", {})
 
             if not source_id:
-                return "Error: 'event_source' is required in trigger_config for event automations"
+                return ToolResult(
+                    text="Error: 'event_source' is required in trigger_config for event automations",
+                )
 
             automation_id = await exec_context.db_context.events.create_event_listener(
                 name=name,
@@ -323,14 +333,24 @@ async def create_automation_tool(
                 description=description,
             )
 
-            return f"Created event automation '{name}' (ID: {automation_id}). It will trigger when '{source_id}' events occur."
+            # Return structured data with human-readable text
+            result_data = {
+                "id": automation_id,
+                "name": name,
+                "type": "event",
+                "event_source": source_id,
+            }
+            text = f"Created event automation '{name}' (ID: {automation_id}). It will trigger when '{source_id}' events occur.\n\nData: {json.dumps(result_data)}"
+            return ToolResult(text=text)
 
         else:  # schedule
             # Create schedule automation
             recurrence_rule = trigger_config.get("recurrence_rule")
 
             if not recurrence_rule:
-                return "Error: 'recurrence_rule' is required in trigger_config for schedule automations"
+                return ToolResult(
+                    text="Error: 'recurrence_rule' is required in trigger_config for schedule automations",
+                )
 
             automation_id = await exec_context.db_context.schedule_automations.create(
                 name=name,
@@ -353,21 +373,29 @@ async def create_automation_tool(
             else:
                 next_run = "unknown"
 
-            return f"Created schedule automation '{name}' (ID: {automation_id}). Next run: {next_run}"
+            # Return structured data with human-readable text
+            result_data = {
+                "id": automation_id,
+                "name": name,
+                "type": "schedule",
+                "next_run": next_run,
+            }
+            text = f"Created schedule automation '{name}' (ID: {automation_id}). Next run: {next_run}\n\nData: {json.dumps(result_data)}"
+            return ToolResult(text=text)
 
     except ValueError as e:
         logger.error(f"Validation error creating automation: {e}")
-        return f"Error: {e}"
+        return ToolResult(text=f"Error: {e}")
     except Exception as e:
         logger.error(f"Error creating automation: {e}", exc_info=True)
-        return f"Error creating automation: {e}"
+        return ToolResult(text=f"Error creating automation: {e}")
 
 
 async def list_automations_tool(
     exec_context: ToolExecutionContext,
     automation_type: str | None = None,
     enabled_only: bool = False,
-) -> str:
+) -> ToolResult:
     """
     List all automations.
 
@@ -377,7 +405,7 @@ async def list_automations_tool(
         enabled_only: Only show enabled automations
 
     Returns:
-        Formatted list of automations
+        ToolResult with structured list of automations
     """
     try:
         # Validate automation_type if provided
@@ -394,10 +422,13 @@ async def list_automations_tool(
         if not automations:
             filter_desc = f" {automation_type}" if automation_type else ""
             enabled_desc = " enabled" if enabled_only else ""
-            return f"No{enabled_desc}{filter_desc} automations found."
+            text = f"No{enabled_desc}{filter_desc} automations found.\n\nData: {json.dumps({'automations': []})}"
+            return ToolResult(text=text)
 
-        # Format results
+        # Format results for display
         lines = [f"Found {len(automations)} automation(s):\n"]
+        automation_list = []
+
         for auto in automations:
             status = "✓ enabled" if auto.get("enabled") else "✗ disabled"
             auto_type = auto.get("type", "unknown")
@@ -416,18 +447,37 @@ async def list_automations_tool(
                         f"      Next run: {next_run.strftime('%Y-%m-%d %H:%M UTC')}"
                     )
 
-        return "\n".join(lines)
+            # Build structured data
+            auto_data = {
+                "id": auto["id"],
+                "name": auto["name"],
+                "type": auto_type,
+                "enabled": auto.get("enabled", False),
+            }
+            if auto.get("description"):
+                auto_data["description"] = auto["description"]
+            if auto_type == "event":
+                auto_data["event_source"] = auto.get("event_source")
+            elif next_run:
+                auto_data["next_scheduled_at"] = next_run.strftime("%Y-%m-%d %H:%M UTC")
+            automation_list.append(auto_data)
+
+        text = (
+            "\n".join(lines)
+            + f"\n\nData: {json.dumps({'automations': automation_list})}"
+        )
+        return ToolResult(text=text)
 
     except Exception as e:
         logger.error(f"Error listing automations: {e}", exc_info=True)
-        return f"Error listing automations: {e}"
+        return ToolResult(text=f"Error listing automations: {e}")
 
 
 async def get_automation_tool(
     exec_context: ToolExecutionContext,
     automation_id: int,
     automation_type: str,
-) -> str:
+) -> ToolResult:
     """
     Get details of a specific automation.
 
@@ -437,7 +487,7 @@ async def get_automation_tool(
         automation_type: 'event' or 'schedule'
 
     Returns:
-        Formatted automation details
+        ToolResult with formatted automation details and structured data
     """
     try:
         type_param = _validate_automation_type(automation_type)
@@ -449,7 +499,7 @@ async def get_automation_tool(
         )
 
         if not automation:
-            return f"Error: Automation {automation_id} not found"
+            return ToolResult(text=f"Error: Automation {automation_id} not found")
 
         # Format details
         status = "enabled" if automation.get("enabled") else "disabled"
@@ -489,11 +539,39 @@ async def get_automation_tool(
             elif action_type == "script" and config.get("script_code"):
                 lines.append(f"Script: {config['script_code'][:100]}...")
 
-        return "\n".join(lines)
+        # Build structured data
+        result_data = {
+            "id": automation_id,
+            "name": automation["name"],
+            "type": auto_type,
+            "enabled": automation.get("enabled", False),
+            "action_type": action_type,
+        }
+        if automation.get("description"):
+            result_data["description"] = automation["description"]
+        if auto_type == "event":
+            result_data["event_source"] = automation.get("event_source")
+            if automation.get("event_filter"):
+                result_data["event_filter"] = automation["event_filter"]
+        else:  # schedule
+            result_data["recurrence_rule"] = automation.get("recurrence_rule")
+            if automation.get("next_scheduled_at"):
+                result_data["next_scheduled_at"] = automation[
+                    "next_scheduled_at"
+                ].strftime("%Y-%m-%d %H:%M UTC")
+            if automation.get("last_execution_at"):
+                result_data["last_execution_at"] = automation[
+                    "last_execution_at"
+                ].strftime("%Y-%m-%d %H:%M UTC")
+        if automation.get("action_config"):
+            result_data["action_config"] = automation["action_config"]
+
+        text = "\n".join(lines) + f"\n\nData: {json.dumps(result_data)}"
+        return ToolResult(text=text)
 
     except Exception as e:
         logger.error(f"Error getting automation: {e}", exc_info=True)
-        return f"Error getting automation: {e}"
+        return ToolResult(text=f"Error getting automation: {e}")
 
 
 async def update_automation_tool(
@@ -503,7 +581,7 @@ async def update_automation_tool(
     trigger_config: dict[str, Any] | None = None,
     action_config: dict[str, Any] | None = None,
     description: str | None = None,
-) -> str:
+) -> ToolResult:
     """
     Update an automation's configuration.
 
@@ -516,7 +594,7 @@ async def update_automation_tool(
         description: New description (optional)
 
     Returns:
-        Success or error message
+        ToolResult with success or error message and structured data
     """
     try:
         type_param = _validate_automation_type(automation_type)
@@ -529,7 +607,7 @@ async def update_automation_tool(
         )
 
         if not existing:
-            return f"Error: Automation {automation_id} not found"
+            return ToolResult(text=f"Error: Automation {automation_id} not found")
 
         if automation_type == "event":
             # Update event automation - merge with existing values
@@ -586,23 +664,27 @@ async def update_automation_tool(
             )
 
         if success:
-            return f"Successfully updated automation {automation_id}"
+            result_data = {"id": automation_id, "success": True}
+            text = f"Successfully updated automation {automation_id}\n\nData: {json.dumps(result_data)}"
+            return ToolResult(text=text)
         else:
-            return f"Error: Failed to update automation {automation_id}"
+            return ToolResult(
+                text=f"Error: Failed to update automation {automation_id}"
+            )
 
     except ValueError as e:
         logger.error(f"Validation error updating automation: {e}")
-        return f"Error: {e}"
+        return ToolResult(text=f"Error: {e}")
     except Exception as e:
         logger.error(f"Error updating automation: {e}", exc_info=True)
-        return f"Error updating automation: {e}"
+        return ToolResult(text=f"Error updating automation: {e}")
 
 
 async def enable_automation_tool(
     exec_context: ToolExecutionContext,
     automation_id: int,
     automation_type: str,
-) -> str:
+) -> ToolResult:
     """
     Enable an automation.
 
@@ -612,7 +694,7 @@ async def enable_automation_tool(
         automation_type: 'event' or 'schedule'
 
     Returns:
-        Success or error message
+        ToolResult with success or error message and structured data
     """
     try:
         type_param = _validate_automation_type(automation_type)
@@ -625,20 +707,24 @@ async def enable_automation_tool(
         )
 
         if success:
-            return f"Enabled automation {automation_id}"
+            result_data = {"id": automation_id, "success": True}
+            text = (
+                f"Enabled automation {automation_id}\n\nData: {json.dumps(result_data)}"
+            )
+            return ToolResult(text=text)
         else:
-            return f"Error: Automation {automation_id} not found"
+            return ToolResult(text=f"Error: Automation {automation_id} not found")
 
     except Exception as e:
         logger.error(f"Error enabling automation: {e}", exc_info=True)
-        return f"Error enabling automation: {e}"
+        return ToolResult(text=f"Error enabling automation: {e}")
 
 
 async def disable_automation_tool(
     exec_context: ToolExecutionContext,
     automation_id: int,
     automation_type: str,
-) -> str:
+) -> ToolResult:
     """
     Disable an automation.
 
@@ -648,7 +734,7 @@ async def disable_automation_tool(
         automation_type: 'event' or 'schedule'
 
     Returns:
-        Success or error message
+        ToolResult with success or error message and structured data
     """
     try:
         type_param = _validate_automation_type(automation_type)
@@ -661,20 +747,22 @@ async def disable_automation_tool(
         )
 
         if success:
-            return f"Disabled automation {automation_id}"
+            result_data = {"id": automation_id, "success": True}
+            text = f"Disabled automation {automation_id}\n\nData: {json.dumps(result_data)}"
+            return ToolResult(text=text)
         else:
-            return f"Error: Automation {automation_id} not found"
+            return ToolResult(text=f"Error: Automation {automation_id} not found")
 
     except Exception as e:
         logger.error(f"Error disabling automation: {e}", exc_info=True)
-        return f"Error disabling automation: {e}"
+        return ToolResult(text=f"Error disabling automation: {e}")
 
 
 async def delete_automation_tool(
     exec_context: ToolExecutionContext,
     automation_id: int,
     automation_type: str,
-) -> str:
+) -> ToolResult:
     """
     Delete an automation permanently.
 
@@ -684,7 +772,7 @@ async def delete_automation_tool(
         automation_type: 'event' or 'schedule'
 
     Returns:
-        Success or error message
+        ToolResult with success or error message and structured data
     """
     try:
         type_param = _validate_automation_type(automation_type)
@@ -696,20 +784,24 @@ async def delete_automation_tool(
         )
 
         if success:
-            return f"Deleted automation {automation_id}"
+            result_data = {"id": automation_id, "success": True}
+            text = (
+                f"Deleted automation {automation_id}\n\nData: {json.dumps(result_data)}"
+            )
+            return ToolResult(text=text)
         else:
-            return f"Error: Automation {automation_id} not found"
+            return ToolResult(text=f"Error: Automation {automation_id} not found")
 
     except Exception as e:
         logger.error(f"Error deleting automation: {e}", exc_info=True)
-        return f"Error deleting automation: {e}"
+        return ToolResult(text=f"Error deleting automation: {e}")
 
 
 async def get_automation_stats_tool(
     exec_context: ToolExecutionContext,
     automation_id: int,
     automation_type: str,
-) -> str:
+) -> ToolResult:
     """
     Get execution statistics for an automation.
 
@@ -719,7 +811,7 @@ async def get_automation_stats_tool(
         automation_type: 'event' or 'schedule'
 
     Returns:
-        Formatted statistics
+        ToolResult with formatted statistics and structured data
     """
     try:
         type_param = _validate_automation_type(automation_type)
@@ -732,7 +824,7 @@ async def get_automation_stats_tool(
         )
 
         if not automation:
-            return f"Error: Automation {automation_id} not found"
+            return ToolResult(text=f"Error: Automation {automation_id} not found")
 
         stats = await exec_context.db_context.automations.get_execution_stats(
             automation_id=automation_id,
@@ -740,36 +832,47 @@ async def get_automation_stats_tool(
         )
 
         if not stats:
-            return f"Error: No statistics found for automation {automation_id}"
+            return ToolResult(
+                text=f"Error: No statistics found for automation {automation_id}"
+            )
 
         lines = [
             f"Statistics for automation {automation_id}:",
             f"Total executions: {stats.get('total_executions', 0)}",
         ]
 
+        # Build structured stats data
+        stats_data = {
+            "automation_id": automation_id,
+            "total_executions": stats.get("total_executions", 0),
+        }
+
         if stats.get("last_execution_at"):
-            lines.append(
-                f"Last execution: {stats['last_execution_at'].strftime('%Y-%m-%d %H:%M UTC')}"
-            )
+            last_exec = stats["last_execution_at"].strftime("%Y-%m-%d %H:%M UTC")
+            lines.append(f"Last execution: {last_exec}")
+            stats_data["last_execution_at"] = last_exec
 
         if stats.get("next_scheduled_at"):
-            lines.append(
-                f"Next scheduled: {stats['next_scheduled_at'].strftime('%Y-%m-%d %H:%M UTC')}"
-            )
+            next_sched = stats["next_scheduled_at"].strftime("%Y-%m-%d %H:%M UTC")
+            lines.append(f"Next scheduled: {next_sched}")
+            stats_data["next_scheduled_at"] = next_sched
 
         recent = stats.get("recent_executions", [])
         if recent:
             lines.append(f"\nRecent executions ({len(recent)}):")
+            recent_list = []
             for execution in recent[:5]:  # Show top 5
                 status = execution.get("status", "unknown")
                 created = execution.get("created_at")
                 if created:
-                    lines.append(
-                        f"  - {created.strftime('%Y-%m-%d %H:%M UTC')}: {status}"
-                    )
+                    created_str = created.strftime("%Y-%m-%d %H:%M UTC")
+                    lines.append(f"  - {created_str}: {status}")
+                    recent_list.append({"created_at": created_str, "status": status})
+            stats_data["recent_executions"] = recent_list
 
-        return "\n".join(lines)
+        text = "\n".join(lines) + f"\n\nData: {json.dumps(stats_data)}"
+        return ToolResult(text=text)
 
     except Exception as e:
         logger.error(f"Error getting automation stats: {e}", exc_info=True)
-        return f"Error getting automation stats: {e}"
+        return ToolResult(text=f"Error getting automation stats: {e}")
