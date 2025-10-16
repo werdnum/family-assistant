@@ -223,24 +223,28 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
               <Separator orientation="vertical" className="h-6" />
 
-              {/* Automation */}
-              <NavigationMenuItem value="automation">
+              {/* Automations */}
+              <NavigationMenuItem value="automations">
                 <NavigationMenuTrigger className="submenu-trigger text-sm whitespace-nowrap">
                   <Zap className="mr-2 h-4 w-4 flex-shrink-0" />
-                  <span className="whitespace-nowrap">Automation</span>
+                  <span className="whitespace-nowrap">Automations</span>
                 </NavigationMenuTrigger>
                 <NavigationMenuContent>
                   <div className="grid gap-3 p-4 min-w-[200px] w-max">
                     <NavigationMenuLink asChild>
+                      <NavLink
+                        to="/automations"
+                        isActive={currentPage === 'automations'}
+                        className="whitespace-nowrap"
+                      >
+                        <Zap className="mr-2 h-4 w-4 flex-shrink-0" />
+                        <span>Automations</span>
+                      </NavLink>
+                    </NavigationMenuLink>
+                    <NavigationMenuLink asChild>
                       <ExternalNavLink href="/events" className="whitespace-nowrap">
                         <Calendar className="mr-2 h-4 w-4 flex-shrink-0" />
                         <span>Events</span>
-                      </ExternalNavLink>
-                    </NavigationMenuLink>
-                    <NavigationMenuLink asChild>
-                      <ExternalNavLink href="/event-listeners" className="whitespace-nowrap">
-                        <Settings className="mr-2 h-4 w-4 flex-shrink-0" />
-                        <span>Event Listeners</span>
                       </ExternalNavLink>
                     </NavigationMenuLink>
                   </div>

@@ -28,11 +28,13 @@ const NavHeader = ({ currentPage = 'chat' }) => {
         <a href="/history">History</a>
         <span className="nav-separator">|</span>
 
-        {/* Automation */}
+        {/* Automations */}
         <div className="nav-group">
-          <span className="nav-label">Automation</span>
+          <span className="nav-label">Automations</span>
+          <a href="/automations" className={currentPage === 'automations' ? 'current-page' : ''}>
+            Automations
+          </a>
           <a href="/events">Events</a>
-          <a href="/event-listeners">Event Listeners</a>
         </div>
         <span className="nav-separator">|</span>
 

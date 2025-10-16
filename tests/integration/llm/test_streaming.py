@@ -534,6 +534,7 @@ async def test_litellm_streaming_with_various_models(
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.no_vcr  # Bypass VCR for streaming compatibility
+@pytest.mark.gemini_live
 @pytest.mark.parametrize(
     "provider,model",
     [
@@ -589,6 +590,7 @@ async def test_basic_streaming_gemini(
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.no_vcr  # Bypass VCR for streaming compatibility
+@pytest.mark.gemini_live
 @pytest.mark.parametrize(
     "provider,model",
     [
@@ -644,6 +646,7 @@ async def test_streaming_with_system_message_gemini(
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.no_vcr  # Bypass VCR for streaming compatibility
+@pytest.mark.gemini_live
 @pytest.mark.parametrize(
     "provider,model",
     [
@@ -703,6 +706,7 @@ async def test_streaming_with_tool_calls_gemini(
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.no_vcr  # Bypass VCR for streaming compatibility
+@pytest.mark.gemini_live
 @pytest.mark.parametrize(
     "provider,model",
     [
@@ -747,6 +751,7 @@ async def test_streaming_error_handling_gemini(
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.no_vcr  # Bypass VCR for streaming compatibility
+@pytest.mark.gemini_live
 @pytest.mark.parametrize(
     "provider,model",
     [
@@ -794,6 +799,7 @@ async def test_streaming_with_multi_turn_conversation_gemini(
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.no_vcr  # Bypass VCR for streaming compatibility
+@pytest.mark.gemini_live
 @pytest.mark.parametrize(
     "provider,model",
     [

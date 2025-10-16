@@ -10,7 +10,6 @@ from .debug_api import debug_api_router
 from .documents_api import documents_api_router
 from .errors_api import errors_api_router
 from .events_api import events_api_router
-from .listeners_api import listeners_api_router
 from .notes_api import notes_api_router
 from .tasks_api import tasks_api_router
 from .tools_api import tools_api_router
@@ -27,9 +26,6 @@ api_router.include_router(
 api_router.include_router(errors_api_router, prefix="/errors", tags=["Error Logs"])
 api_router.include_router(
     automations_api_router, prefix="/automations", tags=["Automations"]
-)
-api_router.include_router(
-    listeners_api_router, prefix="/event-listeners", tags=["Event Listeners"]
 )
 api_router.include_router(
     chat_api_router, tags=["Chat API"]

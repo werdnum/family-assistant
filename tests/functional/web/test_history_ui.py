@@ -15,6 +15,12 @@ from .conftest import WebTestFixture
 async def wait_for_history_page_loaded(page: Page, timeout: int = 15000) -> bool:
     """Wait for the history page to load completely and return whether it succeeded."""
     try:
+        # Wait until the frontend signals it is ready
+        await page.wait_for_function(
+            "() => document.documentElement.getAttribute('data-app-ready') === 'true'",
+            timeout=timeout,
+        )
+
         # Try multiple selectors that indicate the page is loaded
         await page.wait_for_selector(
             "h1:has-text('Conversation History'), h1, main, [data-testid='history-page']",

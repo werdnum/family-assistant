@@ -4,6 +4,7 @@ import {
   MessageCircle,
   History,
   Calendar,
+  Zap,
   Cog,
   HelpCircle,
   FolderOpen,
@@ -37,8 +38,13 @@ export const getNavigationItems = (currentPage?: string): NavigationItem[] => [
   },
   { type: 'external', href: '/history', title: 'History', icon: History },
   { type: 'section', title: 'Automation' },
+  {
+    type: currentPage === 'automations' ? 'current' : 'link',
+    to: '/automations',
+    title: 'Automations',
+    icon: Zap,
+  },
   { type: 'external', href: '/events', title: 'Events', icon: Calendar },
-  { type: 'external', href: '/event-listeners', title: 'Event Listeners', icon: Settings },
   { type: 'section', title: 'Internal' },
   {
     type: currentPage === 'tools' ? 'current' : 'link',
