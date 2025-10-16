@@ -14,6 +14,9 @@ deployment.
   "automation" throughout USER_GUIDE.md, scripting.md, and prompts.yaml system prompts.
 - **Phase 8 Complete**: Database pagination optimization implemented with UNION-based queries,
   cross-database datetime handling, and frontend tool icon mapping updated for automation tools.
+- **Phase 9 Complete**: Test organization refactoring - moved repository tests to functional tests
+  directory and updated fixtures to use standard db_engine, ensuring tests run against both SQLite
+  and PostgreSQL backends.
 
 ## Progress Summary
 
@@ -69,8 +72,8 @@ deployment.
   (`tests/functional/test_unified_automations.py` - 1,250 lines)
 - Added comprehensive API endpoint tests (`tests/functional/web/test_automations_api.py` - 845
   lines)
-- Added repository unit tests for both repositories
-  (`tests/unit/storage/test_automations_repository.py` - 1,331 lines)
+- Added repository functional tests for both repositories
+  (`tests/functional/storage/test_automations_repository.py` - 1,331 lines)
 - Tests cover schedule automation lifecycle, cross-type name uniqueness, and both action types
 - All tests pass with PostgreSQL and SQLite backends
 - Refactored tools to return ToolResult with embedded JSON for robust testing
@@ -371,7 +374,8 @@ Both automation types share:
 - ✅ Wrote integration tests for automation tools (`tests/functional/test_unified_automations.py` -
   1,250 lines)
 - ✅ Wrote API endpoint tests (`tests/functional/web/test_automations_api.py` - 845 lines)
-- ✅ Wrote repository unit tests (`tests/unit/storage/test_automations_repository.py` - 1,331 lines)
+- ✅ Wrote repository functional tests (`tests/functional/storage/test_automations_repository.py` -
+  1,331 lines)
 - ✅ Replaced deleted test coverage: ~3,426 lines added vs. ~2,630 deleted
 - ✅ Tests pass with both PostgreSQL and SQLite backends
 - ✅ Refactored automation tools to return ToolResult with embedded JSON for robust testing
@@ -554,8 +558,8 @@ Test coverage implementation (~3,426 lines added to replace ~2,630 deleted):
   automation tools (1,250 lines)
 - [x] Create `tests/functional/web/test_automations_api.py` with comprehensive API endpoint tests
   (845 lines)
-- [x] Create `tests/unit/storage/test_automations_repository.py` with repository unit tests (1,331
-  lines)
+- [x] Create `tests/functional/storage/test_automations_repository.py` with repository functional
+  tests (1,331 lines)
 - [x] Test schedule automation lifecycle (create → execute → reschedule)
 - [x] Test cross-type name uniqueness enforcement
 - [x] Test both wake_llm and script action types
@@ -575,6 +579,306 @@ Test coverage implementation (~3,426 lines added to replace ~2,630 deleted):
 - [x] Implement UNION query for database-level pagination in `AutomationsRepository.list_all`
 - [x] Clean up frontend tool icon mappings and test data
 - [x] Add datetime formatting helper to handle cross-database datetime differences
+
+## Review Feedback and Action Items
+
+### Post-Implementation Review (2025-01-16)
+
+The following review feedback was received and needs to be addressed:
+
+#### 1. Test Organization - Move to Functional Tests
+
+**Issue**: `tests/unit/storage/test_automations_repository.py` uses in-memory SQLite database
+instead of the standard `db_engine` fixture used by other functional tests.
+
+**Rationale**:
+
+- The system supports both SQLite and PostgreSQL databases
+- Unit tests with in-memory SQLite may not catch PostgreSQL-specific issues
+- Other repository tests use the `db_engine` fixture which supports both backends via `--postgres`
+  flag
+- Integration tests should verify behavior against both database backends
+
+**Action Items**:
+
+- Move `tests/unit/storage/test_automations_repository.py` to
+  `tests/functional/storage/test_automations_repository.py`
+- Replace custom `db_engine` and `db_context` fixtures with the standard `db_engine` fixture from
+  `tests/conftest.py`
+- Remove comment about in-memory SQLite; add comment explaining the `db_engine` fixture supports
+  both backends
+- Verify tests pass with both SQLite (default) and PostgreSQL (`--postgres` flag)
+
+**Benefits**:
+
+- Consistent with other repository tests in the codebase
+- Tests run against both SQLite and PostgreSQL backends
+- Catches database-specific issues before production
+- Maintains test isolation with per-test database creation
+
+#### 2. Console Message Collection - Reuse Existing Fixture
+
+**Issue**: `tests/functional/web/test_automations_ui.py` duplicates console message collection
+pattern across multiple test functions.
+
+**Existing Solution**: The codebase already provides `ConsoleErrorCollector` class and
+`console_error_checker` fixture in `tests/functional/web/conftest.py`.
+
+**Action Items**:
+
+- Update `test_automations_ui.py` to use the existing `console_error_checker` fixture
+- Remove duplicated console message collection code from individual test functions
+- Consider using `web_test_with_console_check` fixture for tests that should fail on console errors
+
+**Benefits**:
+
+- Reduces code duplication
+- Consistent error collection across all web tests
+- Easier to maintain and extend
+
+#### 3. Tool Structured Data - Improve Test Data Extraction
+
+**Issue**: Tests use regex extraction to parse JSON from concatenated strings in tool results:
+`"Human readable text\n\nData: {json_here}"`
+
+**Current State**: Tools in `src/family_assistant/tools/automations.py` return `ToolResult` with
+embedded JSON in the text field. Tests extract this using `extract_data_from_result()` regex
+parsing.
+
+**Problem**: Regex extraction is fragile and adds complexity. Need to evaluate whether
+human-readable text + JSON concatenation provides enough value to justify the added complexity.
+
+**Action Items**:
+
+1. **Evaluate Current Approach**:
+
+   - Review how the human-readable text in tool results is actually used
+   - Check if LLM receives and benefits from the human-readable format
+   - Assess if tests need the structured data or if text assertions would suffice
+
+2. **Consider Alternatives**:
+
+   **Option A: Separate Fields in ToolResult**
+
+   - Extend `ToolResult` to have optional `data` field alongside `text`
+   - Tools return: `ToolResult(text="Human message", data={"id": 123, ...})`
+   - Tests access `.data` directly without parsing
+   - LLM still receives formatted text
+
+   **Option B: Return Structured ToolResult Only**
+
+   - Tools return only the structured data in a consistent format
+   - Remove human-readable wrapper entirely
+   - Simplest for tests, may impact LLM experience
+
+   **Option C: Keep Current, Improve Extraction**
+
+   - Keep dual format but make extraction more robust
+   - Use proper JSON boundaries or structured delimiters
+   - Document pattern clearly
+
+3. **Implementation**:
+
+   - Choose approach based on evaluation
+   - Update all automation tools consistently
+   - Refactor tests to use improved pattern
+   - Document chosen approach in tool development guide
+
+**Benefits**:
+
+- More robust test data extraction
+- Clearer separation of concerns
+- Easier to maintain
+- Better type safety if using separate fields
+
+**Decision**: Option A (Separate Fields) is the preferred approach. Having separate `text` and
+`data` fields provides the best flexibility:
+
+- Scripts and tests can access structured data directly via `.data` field
+- LLM receives human-readable text that's easier to work with
+- Fallback mechanism: if one field is unavailable, consumers can use the other
+- Clean separation of concerns between human-readable and machine-readable formats
+- No regex parsing needed in tests
+
+#### 4. DateTime Handling - Move to Repository Layer
+
+**Issue**: Both `automations_api.py` and `automations.py` include `_format_datetime()` helpers to
+handle inconsistent datetime types from the database layer (datetime objects from PostgreSQL, ISO
+strings from SQLite).
+
+**Root Cause**: Database layer returns different types depending on backend:
+
+- PostgreSQL: Returns `datetime` objects
+- SQLite: Returns ISO format strings
+
+**Current Workaround**: API and tools layers handle both types with `_format_datetime()` helper
+
+**Proper Solution**: Normalize datetime fields at the repository layer so consumers always receive
+consistent Python `datetime` objects.
+
+**Action Items**:
+
+1. **Repository Layer Changes**:
+
+   - Add `_normalize_datetime()` helper to
+     `src/family_assistant/storage/repositories/schedule_automations.py`
+   - Add `_normalize_datetime()` helper to `src/family_assistant/storage/repositories/events.py`
+   - Update all methods that return automation data to normalize datetime fields before returning
+   - Ensure all datetime fields are converted from ISO strings (SQLite) to Python `datetime` objects
+     (matching PostgreSQL behavior)
+   - All returned datetimes should be timezone-aware (UTC)
+
+2. **API Layer Cleanup**:
+
+   - Remove `_format_datetime()` from `src/family_assistant/web/routers/automations_api.py`
+   - Let Pydantic/FastAPI handle datetime serialization to ISO strings for JSON responses
+   - Update tests to verify consistent datetime format
+
+3. **Tools Layer Cleanup**:
+
+   - Remove `_format_datetime()` from `src/family_assistant/tools/automations.py`
+   - Use standard datetime formatting (`.strftime()` or `.isoformat()`) for human-readable output
+   - Update tests to verify consistent datetime format
+
+4. **Testing**:
+
+   - Verify tests pass with both SQLite and PostgreSQL backends
+   - Add specific tests for datetime normalization in repository tests
+   - Ensure API and tools tests handle datetime fields correctly
+
+**Benefits**:
+
+- Single source of truth for datetime normalization
+- Type safety: consumers receive proper `datetime` objects, not strings
+- Cleaner API and tools layer code
+- Easier to maintain and extend
+- Consistent behavior across database backends
+- Prevents similar issues in future code
+- FastAPI/Pydantic handle JSON serialization automatically
+
+**Design Decision**: Return Python `datetime` objects from repositories for type safety. This
+provides proper typing, allows datetime operations in consuming code, and lets serialization layers
+(FastAPI, JSON tools) handle conversion to strings as needed.
+
+### Implementation Plan
+
+The following phases address the review feedback:
+
+#### Phase 9: Test Organization ✅ Completed (Priority: High)
+
+**Effort**: Low (2-3 hours) **Risk**: Low (pure refactoring, no behavior changes)
+
+**Completed**: 2025-10-16
+
+- ✅ Moved test file from `tests/unit/storage/` to `tests/functional/storage/`
+- ✅ Updated fixtures to use standard `db_engine` from conftest.py
+- ✅ Removed custom in-memory SQLite fixture
+- ✅ Verified all 86 tests pass with both SQLite and PostgreSQL backends
+- ✅ Full test suite passes (1346 tests)
+
+**Success Criteria** (All Met):
+
+- ✅ All tests pass with SQLite backend (default)
+- ✅ All tests pass with PostgreSQL backend (`--postgres` flag)
+- ✅ Test isolation maintained (per-test database creation)
+
+#### Phase 10: Console Message Collection (Priority: Medium)
+
+**Effort**: Low (1-2 hours) **Risk**: Low (refactoring existing functionality)
+
+- Refactor `test_automations_ui.py` to use `console_error_checker` fixture
+- Remove duplicated console collection code
+- Consider using `web_test_with_console_check` for stricter error checking
+- Verify tests still catch console errors appropriately
+
+**Success Criteria**:
+
+- Console errors are still properly collected and reported
+- Code duplication eliminated
+- Tests pass as before
+
+#### Phase 11: DateTime Normalization (Priority: High)
+
+**Effort**: Medium (4-6 hours) **Risk**: Medium (touches multiple layers, requires careful testing)
+
+**Substeps**:
+
+1. Add `_normalize_datetime()` helper to schedule_automations repository
+2. Update all repository methods to normalize datetime fields
+3. Add similar normalization to events repository
+4. Remove `_format_datetime()` from API layer
+5. Remove `_format_datetime()` from tools layer
+6. Update all affected tests
+7. Run full test suite with both SQLite and PostgreSQL
+
+**Success Criteria**:
+
+- All datetime fields returned as Python `datetime` objects from repositories
+- SQLite string datetimes converted to `datetime` objects at repository boundary
+- PostgreSQL `datetime` objects passed through unchanged
+- All returned datetimes are timezone-aware (UTC)
+- API layer simplified (Pydantic/FastAPI handle serialization)
+- Tools layer simplified (standard `.isoformat()` or `.strftime()` for formatting)
+- All tests pass with both SQLite and PostgreSQL backends
+- No regressions in datetime handling
+
+#### Phase 12: Tool Structured Data Refactoring (Priority: Medium)
+
+**Effort**: Medium (3-4 hours) **Risk**: Low (additive change, backward compatible)
+
+**Substeps**:
+
+1. Add optional `data` field to `ToolResult` class in `src/family_assistant/tools/types.py`
+2. Update automation tools to populate both `text` and `data` fields
+3. Refactor tests to access `.data` field directly instead of regex parsing
+4. Remove `extract_data_from_result()` helper from tests
+5. Document pattern in tool development guide (`src/family_assistant/tools/CLAUDE.md`)
+6. Verify all tests pass
+
+**Success Criteria**:
+
+- `ToolResult` has optional `data: dict[str, Any] | None` field
+- Automation tools populate both fields
+- Tests access structured data via `.data` without parsing
+- No regex extraction in test code
+- LLM continues to receive human-readable text
+- Pattern documented for future tool development
+
+#### Phase 13: Documentation Updates (Priority: Low)
+
+**Effort**: Low (1 hour) **Risk**: None
+
+- Document datetime normalization approach in design doc
+- Update known limitations section
+- Add notes about test organization
+- Document chosen tool structured data approach
+
+**Success Criteria**:
+
+- Design document accurately reflects current implementation
+- Review feedback addressed and documented
+- Future maintainers have clear guidance
+
+### Priority Ordering
+
+**High Priority** (address first):
+
+1. Phase 9: Test Organization - Ensures consistent test infrastructure
+2. Phase 11: DateTime Normalization - Fixes design smell that could cause bugs
+
+**Medium Priority** (address next):
+
+1. Phase 10: Console Message Collection - Reduces code duplication
+2. Phase 12: Tool Structured Data Refactoring - Removes fragile regex parsing, improves test
+   robustness
+
+**Low Priority** (address when convenient):
+
+1. Phase 13: Documentation Updates - Captures decisions and rationale
+
+**Rationale**: DateTime normalization and test organization are highest priority for correctness and
+consistency. Tool structured data refactoring improves maintainability and removes brittle test
+patterns. Console collection and documentation are lower priority quality improvements.
 
 ## Future Enhancements
 
