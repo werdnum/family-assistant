@@ -142,7 +142,7 @@ async def test_calendar_tool_without_config() -> None:
 
     # Verify the tool returned an error
 
-    result_text = result.text if isinstance(result, ToolResult) else str(result)
+    result_text = result.get_text() if isinstance(result, ToolResult) else str(result)
     assert (
         "Error: Tool 'mock_calendar_tool' cannot be executed because the calendar_config is missing."
         in result_text
