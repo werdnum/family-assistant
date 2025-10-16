@@ -138,6 +138,19 @@ async def event_listeners_ui(request: Request) -> Response:
     return _serve_vite_html_file(request, "router.html")
 
 
+@vite_pages_router.get("/automations", name="automations_ui")
+@vite_pages_router.get("/automations/create/event", name="automations_create_event_ui")
+@vite_pages_router.get(
+    "/automations/create/schedule", name="automations_create_schedule_ui"
+)
+@vite_pages_router.get(
+    "/automations/{type}/{automation_id:int}", name="automation_detail_ui"
+)
+async def automations_ui(request: Request) -> Response:
+    """Serve the React automations interface via router."""
+    return _serve_vite_html_file(request, "router.html")
+
+
 @vite_pages_router.get("/history", name="history_ui")
 @vite_pages_router.get("/history/{conversation_id:str}", name="history_detail_ui")
 async def history_ui(request: Request) -> Response:

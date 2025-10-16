@@ -9,7 +9,8 @@ const ErrorsApp = lazy(() => import('../errors/ErrorsApp'));
 const ContextPage = lazy(() => import('./ContextPage.tsx'));
 const NotesApp = lazy(() => import('../notes/NotesApp'));
 const TasksApp = lazy(() => import('../tasks/TasksApp'));
-const EventListenersApp = lazy(() => import('../pages/EventListeners/EventListenersApp'));
+
+const AutomationsApp = lazy(() => import('../pages/Automations/AutomationsApp'));
 const EventsApp = lazy(() => import('../pages/Events/EventsApp'));
 const HistoryApp = lazy(() => import('../pages/History/HistoryApp'));
 const DocumentationApp = lazy(() => import('../pages/Documentation/DocumentationApp'));
@@ -84,7 +85,9 @@ const AppRouter = () => {
         <Route path="/tasks/*" element={withLayout(<TasksApp />)} />
 
         {/* Event Listeners routes */}
-        <Route path="/event-listeners/*" element={withLayout(<EventListenersApp />)} />
+
+        {/* Automations routes */}
+        <Route path="/automations/*" element={withLayout(<AutomationsApp />)} />
 
         {/* Events routes */}
         <Route path="/events/*" element={withLayout(<EventsApp />)} />
