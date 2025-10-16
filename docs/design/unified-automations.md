@@ -17,6 +17,8 @@ deployment.
 - **Phase 9 Complete**: Test organization refactoring - moved repository tests to functional tests
   directory and updated fixtures to use standard db_engine, ensuring tests run against both SQLite
   and PostgreSQL backends.
+- **Phase 10 Complete**: Console message collection refactoring - updated automations UI tests to
+  use the existing `console_error_checker` fixture instead of duplicating console collection code.
 
 ## Progress Summary
 
@@ -99,6 +101,15 @@ deployment.
 - Updated fixtures to use standard `db_engine` from conftest.py
 - Tests now run against both SQLite and PostgreSQL backends automatically
 - All 86 tests pass with both database backends
+
+**Phase 10: Console Message Collection** (Review Feedback Implementation)
+
+- Refactored `test_automations_ui.py` to use the existing `console_error_checker` fixture
+- Removed duplicated console message collection code from test functions
+- Updated `test_automations_page_basic_functionality` and `test_delete_schedule_automation` to use
+  the fixture
+- All 20 Playwright tests pass with the refactored code
+- Improved code maintainability by reusing existing infrastructure
 
 ### What's Remaining
 
@@ -795,20 +806,22 @@ The following phases address the review feedback:
 - ✅ All tests pass with PostgreSQL backend (`--postgres` flag)
 - ✅ Test isolation maintained (per-test database creation)
 
-#### Phase 10: Console Message Collection (Priority: Medium)
+#### Phase 10: Console Message Collection ✅ Completed (Priority: Medium)
 
 **Effort**: Low (1-2 hours) **Risk**: Low (refactoring existing functionality)
 
-- Refactor `test_automations_ui.py` to use `console_error_checker` fixture
-- Remove duplicated console collection code
-- Consider using `web_test_with_console_check` for stricter error checking
-- Verify tests still catch console errors appropriately
+**Completed**: 2025-10-16
 
-**Success Criteria**:
+- ✅ Refactored `test_automations_ui.py` to use `console_error_checker` fixture
+- ✅ Removed duplicated console collection code
+- ✅ Updated two test functions that were manually collecting console messages
+- ✅ Verified all 20 Playwright tests pass with the refactored code
 
-- Console errors are still properly collected and reported
-- Code duplication eliminated
-- Tests pass as before
+**Success Criteria** (All Met):
+
+- ✅ Console errors are still properly collected and reported
+- ✅ Code duplication eliminated
+- ✅ Tests pass as before (20/20 tests passing)
 
 #### Phase 11: DateTime Normalization (Priority: High)
 

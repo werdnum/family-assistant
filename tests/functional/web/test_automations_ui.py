@@ -2,21 +2,18 @@
 
 import pytest
 
-from .conftest import WebTestFixture
+from .conftest import ConsoleErrorCollector, WebTestFixture
 
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_automations_page_basic_functionality(
     web_test_fixture: WebTestFixture,
+    console_error_checker: "ConsoleErrorCollector",
 ) -> None:
     """Test basic functionality of the automations React interface."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
-
-    # Capture console logs for debugging (before navigation)
-    console_msgs = []
-    page.on("console", lambda msg: console_msgs.append(f"{msg.type}: {msg.text}"))
 
     # Navigate to automations page
     await page.goto(f"{server_url}/automations")
@@ -27,8 +24,8 @@ async def test_automations_page_basic_functionality(
     except Exception:
         # Print console logs on failure
         print("\n=== Console Logs ===")
-        for msg in console_msgs:
-            print(msg)
+        print(f"Errors: {console_error_checker.errors}")
+        print(f"Warnings: {console_error_checker.warnings}")
         print(f"\n=== Page Content ===\n{await page.content()}")
         raise
 
@@ -66,8 +63,8 @@ async def test_automations_page_basic_functionality(
         await page.screenshot(path=screenshot_path)
         print(f"\n=== Screenshot saved to {screenshot_path} ===")
         print("\n=== Console messages ===")
-        for msg in console_msgs:
-            print(msg)
+        print(f"Errors: {console_error_checker.errors}")
+        print(f"Warnings: {console_error_checker.warnings}")
         # Print a snippet of the page content
         content = await page.content()
         print(f"\n=== Page body (first 2000 chars) ===\n{content[:2000]}")
@@ -94,8 +91,8 @@ async def test_automations_page_basic_functionality(
         print(f"\n=== Error on page ===\n{error_text}")
         # Also capture console for more context
         print("\n=== Console messages ===")
-        for msg in console_msgs:
-            print(msg)
+        print(f"Errors: {console_error_checker.errors}")
+        print(f"Warnings: {console_error_checker.warnings}")
         raise AssertionError(f"Component displayed error: {error_text}")
 
 
@@ -399,12 +396,11 @@ async def test_toggle_schedule_automation_enabled(
 @pytest.mark.asyncio
 async def test_delete_schedule_automation(
     web_test_fixture: WebTestFixture,
+    console_error_checker: ConsoleErrorCollector,
 ) -> None:
     """Test deleting a schedule automation."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
-    console_msgs: list[str] = []
-    page.on("console", lambda msg: console_msgs.append(f"{msg.type}: {msg.text}"))
 
     # Create a schedule automation
     await page.goto(f"{server_url}/automations/create/schedule")
@@ -435,8 +431,8 @@ async def test_delete_schedule_automation(
         await page.wait_for_url("**/automations", timeout=10000)
     except Exception:
         print("\n=== Console messages during delete ===")
-        for msg in console_msgs:
-            print(msg)
+        print(f"Errors: {console_error_checker.errors}")
+        print(f"Warnings: {console_error_checker.warnings}")
         print("\n=== Page content ===")
         print(await page.content())
         raise
