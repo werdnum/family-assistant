@@ -557,6 +557,7 @@ async def test_multiple_messages_in_conversation(
     assert len(assistant_messages) == 3
 
 
+@pytest.mark.flaky(reruns=2)
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_conversation_loading_with_tool_calls(

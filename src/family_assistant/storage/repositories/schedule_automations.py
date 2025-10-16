@@ -17,6 +17,9 @@ from family_assistant.storage.tasks import enqueue_task, tasks_table
 # Sentinel to distinguish "not provided" from "explicitly None"
 _UNSET = object()
 
+# Valid action types for schedule automations
+VALID_ACTION_TYPES = {"wake_llm", "script"}
+
 
 class ScheduleAutomationsRepository(BaseRepository):
     """Repository for managing schedule-based automations."""
@@ -76,6 +79,12 @@ class ScheduleAutomationsRepository(BaseRepository):
             ID of the created automation
         """
         try:
+            # Validate action_type
+            if action_type not in VALID_ACTION_TYPES:
+                raise ValueError(
+                    f"Invalid action_type '{action_type}'. Must be one of: {', '.join(sorted(VALID_ACTION_TYPES))}"
+                )
+
             # Calculate first execution time
             next_scheduled_at = self._parse_rrule_and_get_next(recurrence_rule)
             if next_scheduled_at is None:
@@ -564,14 +573,8 @@ class ScheduleAutomationsRepository(BaseRepository):
                 )
                 return
 
-            # Check if still enabled
-            if not automation["enabled"]:
-                self._logger.info(
-                    f"Automation {automation_id} is disabled, not scheduling next instance"
-                )
-                return
-
-            # Update execution stats
+            # Always update execution stats, regardless of enabled status
+            # The execution happened, so it should be recorded
             stmt = (
                 update(schedule_automations_table)
                 .where(schedule_automations_table.c.id == automation_id)
@@ -581,6 +584,13 @@ class ScheduleAutomationsRepository(BaseRepository):
                 )
             )
             await self._db.execute_with_retry(stmt)
+
+            # Check if still enabled before scheduling next instance
+            if not automation["enabled"]:
+                self._logger.info(
+                    f"Automation {automation_id} is disabled, not scheduling next instance"
+                )
+                return
 
             # Calculate next execution time
             recurrence_rule = automation["recurrence_rule"]
@@ -668,9 +678,12 @@ class ScheduleAutomationsRepository(BaseRepository):
                 return {}
 
             # Query tasks table for execution history
-            # The .astext accessor works across both SQLite and PostgreSQL
+            # Use sa_cast for cross-database compatibility (SQLite and PostgreSQL)
+            payload_automation_id = sa_cast(
+                tasks_table.c.payload["automation_id"], String
+            )
             stmt = select(tasks_table).where(
-                tasks_table.c.payload["automation_id"].astext == str(automation_id)
+                payload_automation_id == str(automation_id)
             )
 
             stmt = stmt.where(tasks_table.c.status.in_(["completed", "failed"]))
