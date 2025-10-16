@@ -1077,6 +1077,7 @@ local-embeddings = [
 dev = [
     { name = "llm-fragments-github" },
     { name = "llm-fragments-reader" },
+    { name = "llm-openrouter" },
     { name = "pytest-rerunfailures" },
     { name = "pytest-xdist" },
 ]
@@ -1178,6 +1179,7 @@ provides-extras = ["dev", "local-embeddings"]
 dev = [
     { name = "llm-fragments-github", specifier = ">=0.4" },
     { name = "llm-fragments-reader", specifier = ">=0.1" },
+    { name = "llm-openrouter" },
     { name = "pytest-rerunfailures", specifier = ">=16.0.1" },
     { name = "pytest-xdist", specifier = ">=3.7.0" },
 ]
