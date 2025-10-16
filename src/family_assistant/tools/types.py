@@ -4,6 +4,7 @@ Moved here to avoid circular imports.
 """
 
 import base64
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
@@ -134,14 +135,58 @@ class ToolAttachment:
 class ToolResult:
     """Enhanced tool result supporting multimodal content"""
 
-    text: str  # Primary text response
+    text: str | None = None  # Primary text response
     attachments: list[ToolAttachment] | None = (
         None  # List of attachments (can be references or new content)
     )
+    data: dict[str, Any] | str | None = None  # Structured data for tests/scripts
+
+    def __post_init__(self) -> None:
+        """Ensure at least one of text or data is populated"""
+        if self.text is None and self.data is None:
+            raise ValueError("ToolResult must have either text or data")
+
+    def get_text(self) -> str:
+        """
+        Get text, generating from data if needed.
+
+        Returns:
+            Text representation. If no text field, serializes data as JSON.
+        """
+        if self.text is not None:
+            return self.text
+
+        # Fallback: serialize data as JSON
+        if self.data is not None:
+            if isinstance(self.data, str):
+                return self.data
+            return json.dumps(self.data, indent=2, default=str)
+
+        return ""
+
+    def get_data(self) -> dict[str, Any] | str | None:
+        """
+        Get data, parsing from text if needed.
+
+        Returns:
+            Structured data. If no data field, tries to parse text as JSON,
+            otherwise returns the text string itself.
+        """
+        if self.data is not None:
+            return self.data
+
+        # Fallback: try to parse text as JSON, else return the string
+        if self.text is not None:
+            try:
+                return json.loads(self.text)  # type: ignore[return-value]
+            except (json.JSONDecodeError, TypeError):
+                return self.text
+
+        return None
 
     def to_string(self) -> str:
         """Convert to string for backward compatibility"""
-        return self.text  # Message injection handled by providers
+        return self.get_text()  # Use fallback mechanism
 
     def to_llm_message(
         self,
@@ -152,7 +197,7 @@ class ToolResult:
         message = {
             "role": "tool",
             "tool_call_id": tool_call_id,
-            "content": self.text,
+            "content": self.get_text(),  # Use fallback mechanism
             "error_traceback": None,
             "name": function_name,  # OpenAI API compatibility
         }

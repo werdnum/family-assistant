@@ -18,8 +18,6 @@ Also tests:
 """
 
 import asyncio
-import json
-import re
 import uuid
 from collections.abc import Callable
 from unittest.mock import AsyncMock
@@ -51,31 +49,9 @@ from family_assistant.tools.automations import (
     list_automations_tool,
     update_automation_tool,
 )
-from family_assistant.tools.types import ToolExecutionContext, ToolResult
+from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
-
-
-def extract_data_from_result(result: str | ToolResult) -> dict[str, str | int | bool]:
-    """Extract structured JSON data from tool result text.
-
-    Tool results now include structured data in the format:
-    "Human readable text\n\nData: {json_here}"
-
-    Args:
-        result: Tool result (ToolResult object or string)
-
-    Returns:
-        Dict containing the structured data, or empty dict if not found
-    """
-    # Handle ToolResult objects
-    text = result.text if isinstance(result, ToolResult) else str(result)
-
-    # Extract JSON from "Data: {...}" pattern
-    match = re.search(r"Data: ({.+})", text, re.DOTALL)
-    if match:
-        return json.loads(match.group(1))  # type: ignore[no-any-return]
-    return {}
 
 
 @pytest.mark.asyncio
@@ -112,9 +88,9 @@ async def test_create_event_automation_basic(db_engine: AsyncEngine) -> None:
         )
 
     # Assert
-    assert "Created event automation 'Motion Detector'" in result.text
-    assert "ID:" in result.text
-    assert "home_assistant" in result.text
+    assert "Created event automation 'Motion Detector'" in result.get_text()
+    assert "ID:" in result.get_text()
+    assert "home_assistant" in result.get_text()
 
 
 @pytest.mark.asyncio
@@ -148,9 +124,9 @@ async def test_create_schedule_automation_basic(db_engine: AsyncEngine) -> None:
         )
 
     # Assert
-    assert "Created schedule automation 'Morning Reminder'" in result.text
-    assert "ID:" in result.text
-    assert "Next run:" in result.text
+    assert "Created schedule automation 'Morning Reminder'" in result.get_text()
+    assert "ID:" in result.get_text()
+    assert "Next run:" in result.get_text()
 
 
 @pytest.mark.asyncio
@@ -210,8 +186,8 @@ async def test_create_automation_cross_type_name_uniqueness(
         )
 
         # Assert - should fail with error
-        assert "Error:" in result.text
-        assert "already exists" in result.text.lower()
+        assert "Error:" in result.get_text()
+        assert "already exists" in result.get_text().lower()
 
 
 @pytest.mark.asyncio
@@ -250,7 +226,7 @@ log_event()
             action_config={"script_code": script_code, "task_name": "Log Event"},
         )
 
-    assert "Created event automation 'Script Automation'" in result.text
+    assert "Created event automation 'Script Automation'" in result.get_text()
 
 
 @pytest.mark.asyncio
@@ -279,8 +255,8 @@ async def test_create_automation_invalid_type(db_engine: AsyncEngine) -> None:
             action_config={"context": "Test"},
         )
 
-    assert "Error:" in result.text
-    assert "Invalid automation_type" in result.text
+    assert "Error:" in result.get_text()
+    assert "Invalid automation_type" in result.get_text()
 
 
 @pytest.mark.asyncio
@@ -310,8 +286,8 @@ async def test_create_automation_missing_trigger_config(db_engine: AsyncEngine) 
             action_config={"context": "Test"},
         )
 
-        assert "Error:" in result.text
-        assert "event_source" in result.text.lower()
+        assert "Error:" in result.get_text()
+        assert "event_source" in result.get_text().lower()
 
 
 @pytest.mark.asyncio
@@ -342,8 +318,8 @@ async def test_create_automation_missing_recurrence_rule(
             action_config={"context": "Test"},
         )
 
-        assert "Error:" in result.text
-        assert "recurrence_rule" in result.text.lower()
+        assert "Error:" in result.get_text()
+        assert "recurrence_rule" in result.get_text().lower()
 
 
 @pytest.mark.asyncio
@@ -365,7 +341,7 @@ async def test_list_automations_empty(db_engine: AsyncEngine) -> None:
 
         result = await list_automations_tool(exec_context=exec_context)
 
-    assert "No automations found" in result.text
+    assert "No automations found" in result.get_text()
 
 
 @pytest.mark.asyncio
@@ -413,11 +389,11 @@ async def test_list_automations_with_both_types(db_engine: AsyncEngine) -> None:
         exec_context.db_context = db_ctx
         result = await list_automations_tool(exec_context=exec_context)
 
-    assert "Found 2 automation(s)" in result.text
-    assert "Event Auto" in result.text
-    assert "Schedule Auto" in result.text
-    assert "(event)" in result.text
-    assert "(schedule)" in result.text
+    assert "Found 2 automation(s)" in result.get_text()
+    assert "Event Auto" in result.get_text()
+    assert "Schedule Auto" in result.get_text()
+    assert "(event)" in result.get_text()
+    assert "(schedule)" in result.get_text()
 
 
 @pytest.mark.asyncio
@@ -463,9 +439,9 @@ async def test_list_automations_filter_by_type(db_engine: AsyncEngine) -> None:
             exec_context=exec_context, automation_type="event"
         )
 
-    assert "Found 1 automation(s)" in result.text
-    assert "Event 1" in result.text
-    assert "Schedule 1" not in result.text
+    assert "Found 1 automation(s)" in result.get_text()
+    assert "Event 1" in result.get_text()
+    assert "Schedule 1" not in result.get_text()
 
     # Filter by schedule type
     async with DatabaseContext(engine=db_engine) as db_ctx:
@@ -474,9 +450,9 @@ async def test_list_automations_filter_by_type(db_engine: AsyncEngine) -> None:
             exec_context=exec_context, automation_type="schedule"
         )
 
-    assert "Found 1 automation(s)" in result.text
-    assert "Schedule 1" in result.text
-    assert "Event 1" not in result.text
+    assert "Found 1 automation(s)" in result.get_text()
+    assert "Schedule 1" in result.get_text()
+    assert "Event 1" not in result.get_text()
 
 
 @pytest.mark.asyncio
@@ -516,7 +492,9 @@ async def test_list_automations_filter_enabled_only(db_engine: AsyncEngine) -> N
         )
 
         # Extract ID from result
-        data = extract_data_from_result(result2)
+        data = result2.get_data()
+        assert isinstance(data, dict), "Expected structured data"
+        assert "id" in data, "Missing id in result data"
         auto_id = int(data["id"])
 
         # Disable one automation
@@ -533,9 +511,9 @@ async def test_list_automations_filter_enabled_only(db_engine: AsyncEngine) -> N
             exec_context=exec_context, enabled_only=True
         )
 
-    assert "Found 1 automation(s)" in result.text
-    assert "Enabled Auto" in result.text
-    assert "To Be Disabled" not in result.text
+    assert "Found 1 automation(s)" in result.get_text()
+    assert "Enabled Auto" in result.get_text()
+    assert "To Be Disabled" not in result.get_text()
 
 
 @pytest.mark.asyncio
@@ -570,7 +548,9 @@ async def test_get_automation_event_type(db_engine: AsyncEngine) -> None:
         )
 
         # Extract ID
-        data = extract_data_from_result(result)
+        data = result.get_data()
+        assert isinstance(data, dict), "Expected structured data"
+        assert "id" in data, "Missing id in result data"
         auto_id = int(data["id"])
 
     # Get automation details
@@ -582,12 +562,12 @@ async def test_get_automation_event_type(db_engine: AsyncEngine) -> None:
             automation_type="event",
         )
 
-    assert "Get Test Auto" in result.text
-    assert "Type: event" in result.text
-    assert "Status: enabled" in result.text
+    assert "Get Test Auto" in result.get_text()
+    assert "Type: event" in result.get_text()
+    assert "Status: enabled" in result.get_text()
     # Event source may be shown as "Event source: home_assistant" or similar
     # The key thing is the automation is retrieved successfully
-    assert "Test automation for get" in result.text
+    assert "Test automation for get" in result.get_text()
 
 
 @pytest.mark.asyncio
@@ -617,7 +597,9 @@ async def test_get_automation_schedule_type(db_engine: AsyncEngine) -> None:
             description="Daily morning automation",
         )
 
-        data = extract_data_from_result(result)
+        data = result.get_data()
+        assert isinstance(data, dict), "Expected structured data"
+        assert "id" in data, "Missing id in result data"
         auto_id = int(data["id"])
 
     async with DatabaseContext(engine=db_engine) as db_ctx:
@@ -628,10 +610,10 @@ async def test_get_automation_schedule_type(db_engine: AsyncEngine) -> None:
             automation_type="schedule",
         )
 
-    assert "Schedule Get Test" in result.text
-    assert "Type: schedule" in result.text
-    assert "FREQ=DAILY;BYHOUR=8" in result.text
-    assert "Next run:" in result.text
+    assert "Schedule Get Test" in result.get_text()
+    assert "Type: schedule" in result.get_text()
+    assert "FREQ=DAILY;BYHOUR=8" in result.get_text()
+    assert "Next run:" in result.get_text()
 
 
 @pytest.mark.asyncio
@@ -657,8 +639,8 @@ async def test_get_automation_not_found(db_engine: AsyncEngine) -> None:
             automation_type="event",
         )
 
-    assert "Error:" in result.text
-    assert "not found" in result.text.lower()
+    assert "Error:" in result.get_text()
+    assert "not found" in result.get_text().lower()
 
 
 @pytest.mark.asyncio
@@ -688,7 +670,9 @@ async def test_update_automation_action_config(db_engine: AsyncEngine) -> None:
             action_config={"context": "Original context"},
         )
 
-        data = extract_data_from_result(result)
+        data = result.get_data()
+        assert isinstance(data, dict), "Expected structured data"
+        assert "id" in data, "Missing id in result data"
         auto_id = int(data["id"])
 
         # Update action config
@@ -699,7 +683,9 @@ async def test_update_automation_action_config(db_engine: AsyncEngine) -> None:
             action_config={"context": "Updated context"},
         )
 
-    assert "Successfully updated" in result.text
+    data = result.get_data()
+    assert isinstance(data, dict), "Expected structured data"
+    assert data.get("success") is True, "Update should succeed"
 
     # Verify update
     async with DatabaseContext(engine=db_engine) as db_ctx:
@@ -710,7 +696,7 @@ async def test_update_automation_action_config(db_engine: AsyncEngine) -> None:
             automation_type="event",
         )
 
-    assert "Updated context" in result.text
+    assert "Updated context" in result.get_text()
 
 
 @pytest.mark.asyncio
@@ -740,7 +726,9 @@ async def test_update_automation_description(db_engine: AsyncEngine) -> None:
             description="Original description",
         )
 
-        data = extract_data_from_result(result)
+        data = result.get_data()
+        assert isinstance(data, dict), "Expected structured data"
+        assert "id" in data, "Missing id in result data"
         auto_id = int(data["id"])
 
         result = await update_automation_tool(
@@ -750,7 +738,9 @@ async def test_update_automation_description(db_engine: AsyncEngine) -> None:
             description="Updated description",
         )
 
-    assert "Successfully updated" in result.text
+    data = result.get_data()
+    assert isinstance(data, dict), "Expected structured data"
+    assert data.get("success") is True, "Update should succeed"
 
     async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context.db_context = db_ctx
@@ -760,7 +750,7 @@ async def test_update_automation_description(db_engine: AsyncEngine) -> None:
             automation_type="schedule",
         )
 
-    assert "Updated description" in result.text
+    assert "Updated description" in result.get_text()
 
 
 @pytest.mark.asyncio
@@ -791,7 +781,9 @@ async def test_update_automation_trigger_config_schedule(
             action_config={"context": "Test"},
         )
 
-        data = extract_data_from_result(result)
+        data = result.get_data()
+        assert isinstance(data, dict), "Expected structured data"
+        assert "id" in data, "Missing id in result data"
         auto_id = int(data["id"])
 
         result = await update_automation_tool(
@@ -801,7 +793,9 @@ async def test_update_automation_trigger_config_schedule(
             trigger_config={"recurrence_rule": "FREQ=WEEKLY;BYDAY=MO"},
         )
 
-    assert "Successfully updated" in result.text
+    data = result.get_data()
+    assert isinstance(data, dict), "Expected structured data"
+    assert data.get("success") is True, "Update should succeed"
 
     async with DatabaseContext(engine=db_engine) as db_ctx:
         exec_context.db_context = db_ctx
@@ -811,7 +805,7 @@ async def test_update_automation_trigger_config_schedule(
             automation_type="schedule",
         )
 
-    assert "FREQ=WEEKLY;BYDAY=MO" in result.text
+    assert "FREQ=WEEKLY;BYDAY=MO" in result.get_text()
 
 
 @pytest.mark.asyncio
@@ -838,8 +832,8 @@ async def test_update_automation_not_found(db_engine: AsyncEngine) -> None:
             description="New description",
         )
 
-    assert "Error:" in result.text
-    assert "not found" in result.text.lower()
+    assert "Error:" in result.get_text()
+    assert "not found" in result.get_text().lower()
 
 
 @pytest.mark.asyncio
@@ -868,7 +862,9 @@ async def test_enable_disable_automation(db_engine: AsyncEngine) -> None:
             action_config={"context": "Test"},
         )
 
-        data = extract_data_from_result(result)
+        data = result.get_data()
+        assert isinstance(data, dict), "Expected structured data"
+        assert "id" in data, "Missing id in result data"
         auto_id = int(data["id"])
 
         # Disable
@@ -878,7 +874,9 @@ async def test_enable_disable_automation(db_engine: AsyncEngine) -> None:
             automation_type="event",
         )
 
-    assert "Disabled automation" in result.text
+    data = result.get_data()
+    assert isinstance(data, dict), "Expected structured data"
+    assert data.get("enabled") is False, "Automation should be disabled"
 
     # Verify disabled
     async with DatabaseContext(engine=db_engine) as db_ctx:
@@ -889,7 +887,7 @@ async def test_enable_disable_automation(db_engine: AsyncEngine) -> None:
             automation_type="event",
         )
 
-    assert "Status: disabled" in result.text
+    assert "Status: disabled" in result.get_text()
 
     # Enable
     async with DatabaseContext(engine=db_engine) as db_ctx:
@@ -900,7 +898,9 @@ async def test_enable_disable_automation(db_engine: AsyncEngine) -> None:
             automation_type="event",
         )
 
-    assert "Enabled automation" in result.text
+    data = result.get_data()
+    assert isinstance(data, dict), "Expected structured data"
+    assert data.get("enabled") is True, "Automation should be enabled"
 
     # Verify enabled
     async with DatabaseContext(engine=db_engine) as db_ctx:
@@ -911,7 +911,7 @@ async def test_enable_disable_automation(db_engine: AsyncEngine) -> None:
             automation_type="event",
         )
 
-    assert "Status: enabled" in result.text
+    assert "Status: enabled" in result.get_text()
 
 
 @pytest.mark.asyncio
@@ -940,7 +940,9 @@ async def test_delete_automation(db_engine: AsyncEngine) -> None:
             action_config={"context": "Test"},
         )
 
-        data = extract_data_from_result(result)
+        data = result.get_data()
+        assert isinstance(data, dict), "Expected structured data"
+        assert "id" in data, "Missing id in result data"
         auto_id = int(data["id"])
 
         # Delete
@@ -950,7 +952,9 @@ async def test_delete_automation(db_engine: AsyncEngine) -> None:
             automation_type="event",
         )
 
-    assert "Deleted automation" in result.text
+    data = result.get_data()
+    assert isinstance(data, dict), "Expected structured data"
+    assert data.get("deleted") is True, "Automation should be deleted"
 
     # Verify deleted
     async with DatabaseContext(engine=db_engine) as db_ctx:
@@ -961,8 +965,8 @@ async def test_delete_automation(db_engine: AsyncEngine) -> None:
             automation_type="event",
         )
 
-    assert "Error:" in result.text
-    assert "not found" in result.text.lower()
+    assert "Error:" in result.get_text()
+    assert "not found" in result.get_text().lower()
 
 
 @pytest.mark.asyncio
@@ -988,8 +992,8 @@ async def test_delete_automation_not_found(db_engine: AsyncEngine) -> None:
             automation_type="schedule",
         )
 
-    assert "Error:" in result.text
-    assert "not found" in result.text.lower()
+    assert "Error:" in result.get_text()
+    assert "not found" in result.get_text().lower()
 
 
 @pytest.mark.asyncio
@@ -1018,7 +1022,9 @@ async def test_get_automation_stats_event(db_engine: AsyncEngine) -> None:
             action_config={"context": "Test"},
         )
 
-        data = extract_data_from_result(result)
+        data = result.get_data()
+        assert isinstance(data, dict), "Expected structured data"
+        assert "id" in data, "Missing id in result data"
         auto_id = int(data["id"])
 
     async with DatabaseContext(engine=db_engine) as db_ctx:
@@ -1029,8 +1035,8 @@ async def test_get_automation_stats_event(db_engine: AsyncEngine) -> None:
             automation_type="event",
         )
 
-    assert "Statistics for automation" in result.text
-    assert "Total executions: 0" in result.text
+    assert "Statistics for automation" in result.get_text()
+    assert "Total executions: 0" in result.get_text()
 
 
 @pytest.mark.asyncio
@@ -1056,8 +1062,8 @@ async def test_get_automation_stats_not_found(db_engine: AsyncEngine) -> None:
             automation_type="event",
         )
 
-    assert "Error:" in result.text
-    assert "not found" in result.text.lower()
+    assert "Error:" in result.get_text()
+    assert "not found" in result.get_text().lower()
 
 
 @pytest.mark.asyncio
@@ -1087,7 +1093,9 @@ async def test_conversation_isolation(db_engine: AsyncEngine) -> None:
             action_config={"context": "Conv1"},
         )
 
-        data = extract_data_from_result(result1)
+        data = result1.get_data()
+        assert isinstance(data, dict), "Expected structured data"
+        assert "id" in data, "Missing id in result data"
         conv1_auto_id = int(data["id"])
 
     # Create automation in conversation 2
@@ -1119,8 +1127,8 @@ async def test_conversation_isolation(db_engine: AsyncEngine) -> None:
         exec_context1.db_context = db_ctx
         result = await list_automations_tool(exec_context=exec_context1)
 
-    assert "Conv1 Auto" in result.text
-    assert "Conv2 Auto" not in result.text
+    assert "Conv1 Auto" in result.get_text()
+    assert "Conv2 Auto" not in result.get_text()
 
     # Try to get conv1's automation from conv2 - should fail
     async with DatabaseContext(engine=db_engine) as db_ctx:
@@ -1131,8 +1139,8 @@ async def test_conversation_isolation(db_engine: AsyncEngine) -> None:
             automation_type="event",
         )
 
-    assert "Error:" in result.text
-    assert "not found" in result.text.lower()
+    assert "Error:" in result.get_text()
+    assert "not found" in result.get_text().lower()
 
 
 @pytest.mark.asyncio
@@ -1198,7 +1206,7 @@ log_event()
             action_config={"script_code": script_code, "task_name": "Event Logger"},
         )
 
-        assert "Created event automation" in result.text
+        assert "Created event automation" in result.get_text()
 
     # Set up event processor and task worker
     processor = EventProcessor(

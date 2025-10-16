@@ -139,7 +139,7 @@ class TestImageGenerationTools:
         )
 
         assert isinstance(result, ToolResult)
-        assert "Generated image for: a beautiful landscape" in result.text
+        assert "Generated image for: a beautiful landscape" in result.get_text()
         assert result.attachments and len(result.attachments) > 0
         assert isinstance(result.attachments[0], ToolAttachment)
         assert result.attachments[0].mime_type == "image/png"
@@ -199,7 +199,7 @@ class TestImageGenerationTools:
         )
 
         assert isinstance(result, ToolResult)
-        assert "Transformed image: make it brighter" in result.text
+        assert "Transformed image: make it brighter" in result.get_text()
         assert result.attachments and len(result.attachments) > 0
         assert isinstance(result.attachments[0], ToolAttachment)
         assert result.attachments[0].mime_type == "image/png"
@@ -282,7 +282,7 @@ class TestImageGenerationTools:
         )
 
         assert isinstance(result, ToolResult)
-        assert "Could not access the image content" in result.text
+        assert "Could not access the image content" in result.get_text()
         assert not result.attachments or len(result.attachments) == 0
 
     @pytest.mark.asyncio
@@ -320,7 +320,7 @@ class TestImageGenerationTools:
         )
 
         assert isinstance(result, ToolResult)
-        assert "Error generating image: Test error" in result.text
+        assert "Error generating image: Test error" in result.get_text()
         assert not result.attachments or len(result.attachments) == 0
 
     @pytest.mark.asyncio
@@ -338,7 +338,7 @@ class TestImageGenerationTools:
         )
 
         assert isinstance(result, ToolResult)
-        assert "Error transforming image: Attachment error" in result.text
+        assert "Error transforming image: Attachment error" in result.get_text()
         assert not result.attachments or len(result.attachments) == 0
 
     @pytest.mark.asyncio
@@ -361,5 +361,5 @@ class TestImageGenerationTools:
         )
 
         assert isinstance(result, ToolResult)
-        assert "Error transforming image: Backend error" in result.text
+        assert "Error transforming image: Backend error" in result.get_text()
         assert not result.attachments or len(result.attachments) == 0
