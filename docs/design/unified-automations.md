@@ -12,8 +12,8 @@ deployment.
   all tests passing.
 - **Phase 7 Not Started**: Documentation updates to replace "event listener" terminology with
   "automation" and update system prompts.
-- **Phase 8 Complete**: Database pagination optimization implemented with UNION-based queries and
-  frontend tool icon mapping updated for automation tools.
+- **Phase 8 Complete**: Database pagination optimization implemented with UNION-based queries,
+  cross-database datetime handling, and frontend tool icon mapping updated for automation tools.
 
 ## Progress Summary
 
@@ -94,26 +94,12 @@ deployment.
    - Explain event vs schedule automation types
    - Remove references to removed tools
 
-**Phase 8: Technical Improvements** (not started)
-
-1. **Database pagination**:
-
-   - Implement UNION query in `AutomationsRepository.list_all`
-   - Replace in-memory slicing with database-level LIMIT/OFFSET
-   - Test with both PostgreSQL and SQLite
-   - Verify count queries remain accurate
-
-2. **Frontend cleanup**:
-
-   - Check tool icon mappings in `frontend/src/chat/toolIconMapping.ts`
-   - Update test data files to use automation terminology
-   - Remove any stale event listener references
-
 ### Known Limitations
 
 1. **Database datetime handling**: SQLite returns ISO strings for datetime columns while PostgreSQL
-   returns datetime objects. The automation tools include a `_format_datetime()` helper to handle
-   both types safely.
+   returns datetime objects. Both the automation tools (`src/family_assistant/tools/automations.py`)
+   and API router (`src/family_assistant/web/routers/automations_api.py`) include
+   `_format_datetime()` helpers to handle both types safely.
 
 2. **Disabled-only filtering gap**: `ScheduleAutomationsRepository.list_all` only understands an
    `enabled_only` flag. Getting "disabled automations" still requires loading everything and
@@ -266,8 +252,8 @@ Both automation types share:
 - Wraps `EventsRepository` and `ScheduleAutomationsRepository` so callers interact with a single
   abstraction.
 - `list_all` returns `(automations, total_count)` and accepts `automation_type`, `enabled`, `limit`,
-  and `offset` parameters. Pagination is still performed in memory, which is why database-level
-  pagination remains on the Phase 7 checklist.
+  and `offset` parameters. Implements database-level pagination using a UNION ALL query that
+  combines both tables with efficient LIMIT/OFFSET handling.
 - `get_by_id`, `update_enabled`, `delete`, and `get_execution_stats` delegate to the correct
   repository based on the type passed in. The method signatures mirror the REST path structure
   (`/api/automations/{type}/{id}`) so we avoid extra table probes.
@@ -350,8 +336,9 @@ Both automation types share:
 
 ### Pagination status
 
-- The list endpoint exposes `page`/`page_size` knobs now. Under the hood we still rely on in-memory
-  pagination (see Known Limitations) until the UNION-based query lands in Phase 7.
+- The list endpoint exposes `page`/`page_size` knobs and implements database-level pagination using
+  a UNION query that combines both event listeners and schedule automations tables with efficient
+  LIMIT/OFFSET handling.
 
 ## Migration Path
 
@@ -400,11 +387,14 @@ Both automation types share:
 - Update system prompts to reference automation tools
 - Update scripting examples
 
-### Phase 8 – Technical Improvements ❌ Not Started
+### Phase 8 – Technical Improvements ✅ Completed
 
-- Implement database-level UNION query for pagination
-- Clean up frontend references
-- Remove stale event listener terminology
+- Implemented database-level UNION query with LIMIT/OFFSET for efficient pagination in
+  `AutomationsRepository.list_all`
+- Added `_format_datetime()` helpers in both tools and API layer to handle cross-database datetime
+  differences
+- Updated frontend tool icon mappings to use automation tools instead of deprecated event listener
+  tools
 
 ## Trade-offs and Alternatives
 
