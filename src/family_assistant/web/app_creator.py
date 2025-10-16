@@ -290,6 +290,7 @@ def create_app() -> FastAPI:
 # New code should use create_app() to get isolated instances
 app = create_app()
 
+
 # --- Configure template helpers ---
 def get_dev_mode_from_request(request: Request) -> bool:
     """Get dev_mode from app config if available, otherwise from environment."""
