@@ -1,4 +1,4 @@
-"""Unit tests for automations repositories."""
+"""Functional tests for automations repositories."""
 
 import uuid
 from collections.abc import AsyncGenerator
@@ -7,34 +7,24 @@ from datetime import datetime, timezone
 import pytest
 import pytest_asyncio
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.storage.base import metadata
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.repositories.events import EventsRepository
-
-# Use an in-memory SQLite database for unit tests
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
-
-
-@pytest_asyncio.fixture(scope="function")
-async def db_engine() -> AsyncGenerator[AsyncEngine, None]:
-    """Creates an in-memory SQLite engine and sets up the schema for each test function."""
-    engine = create_async_engine(TEST_DATABASE_URL)
-    async with engine.begin() as conn:
-        await conn.run_sync(metadata.create_all)
-
-    yield engine
-
-    await engine.dispose()
 
 
 @pytest_asyncio.fixture(scope="function")
 async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext, None]:
-    """Provides an *entered* DatabaseContext instance for interacting with the test database."""
-    context_instance = get_db_context(engine=db_engine, base_delay=0.01)
-    async with context_instance as entered_context:
-        yield entered_context
+    """
+    Provides an entered DatabaseContext for repository tests.
+
+    Uses the standard db_engine fixture from conftest.py which automatically:
+    - Creates a unique database for each test
+    - Supports both SQLite and PostgreSQL via --postgres flag
+    - Ensures complete test isolation
+    """
+    async with DatabaseContext(engine=db_engine) as db_ctx:
+        yield db_ctx
 
 
 class TestScheduleAutomationsRepository:
