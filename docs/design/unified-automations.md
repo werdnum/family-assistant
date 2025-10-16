@@ -118,10 +118,6 @@ deployment.
    `enabled_only` flag. Getting "disabled automations" still requires loading everything and
    filtering in Python, which prevents efficient pagination for that slice.
 
-3. **Test coverage gap**: The unified automation tools and API lack comprehensive integration tests.
-   Approximately 2,630 lines of tests were removed with the old event listener system and need to be
-   replaced.
-
 ## Overview
 
 This document proposes unifying event listeners and recurring actions under a single "automations"
@@ -387,12 +383,15 @@ Both automation types share:
 - Added Playwright smoke tests for page load, navigation, and filter interactions.
 - Deleted the legacy Event Listeners React stack, CSS, and Playwright coverage.
 
-### Phase 6 – Test Coverage ❌ Not Started
+### Phase 6 – Test Coverage ✅ Completed
 
-- Write integration tests for automation tools (`tests/functional/test_unified_automations.py`)
-- Write API endpoint tests (`tests/functional/web/test_automations_api.py`)
-- Write repository unit tests (`tests/unit/storage/test_automations_repository.py`)
-- Replace ~2,630 lines of deleted test coverage
+- ✅ Wrote integration tests for automation tools (`tests/functional/test_unified_automations.py` -
+  1,250 lines)
+- ✅ Wrote API endpoint tests (`tests/functional/web/test_automations_api.py` - 845 lines)
+- ✅ Wrote repository unit tests (`tests/unit/storage/test_automations_repository.py` - 1,331 lines)
+- ✅ Replaced deleted test coverage: ~3,426 lines added vs. ~2,630 deleted
+- ✅ Tests pass with both PostgreSQL and SQLite backends
+- ✅ Refactored automation tools to return ToolResult with embedded JSON for robust testing
 
 ### Phase 7 – Documentation ❌ Not Started
 
@@ -559,18 +558,23 @@ operations (enable/disable multiple) ✅ Export/import automation definitions
 - [x] Add Playwright smoke coverage in `tests/functional/web/test_automations_ui.py`
 - [x] Remove legacy Event Listeners React views, CSS, and tests
 
-### Phase 6: Test Coverage ❌ Not Started
+### Phase 6: Test Coverage ✅ Completed
 
-Critical work to replace ~2,630 lines of deleted tests:
+Test coverage implementation (~3,426 lines added to replace ~2,630 deleted):
 
-- [ ] Create `tests/functional/test_unified_automations.py` with integration tests for all 8
-  automation tools
-- [ ] Create `tests/functional/web/test_automations_api.py` with comprehensive API endpoint tests
-- [ ] Create `tests/unit/storage/test_automations_repository.py` with repository unit tests
-- [ ] Test schedule automation lifecycle (create → execute → reschedule)
-- [ ] Test cross-type name uniqueness enforcement
-- [ ] Test both wake_llm and script action types
-- [ ] Verify tests pass with both PostgreSQL and SQLite
+- [x] Create `tests/functional/test_unified_automations.py` with integration tests for all 8
+  automation tools (1,250 lines)
+- [x] Create `tests/functional/web/test_automations_api.py` with comprehensive API endpoint tests
+  (845 lines)
+- [x] Create `tests/unit/storage/test_automations_repository.py` with repository unit tests (1,331
+  lines)
+- [x] Test schedule automation lifecycle (create → execute → reschedule)
+- [x] Test cross-type name uniqueness enforcement
+- [x] Test both wake_llm and script action types
+- [x] Verify tests pass with both PostgreSQL and SQLite
+- [x] Refactor automation tools to return ToolResult with structured JSON data
+- [x] Update tests to use structured data extraction instead of brittle regex parsing
+- [x] Fix action_type validation and cross-database compatibility issues
 
 ### Phase 7: Documentation ❌ Not Started
 
