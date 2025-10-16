@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# /// script
+# dependencies = [
+#   "llm>=0.27",
+#   "llm-gemini",
+#   "llm-openrouter>=0.5",
+# ]
+# ///
 """
 Enhanced code review script using LLM with tools for better context understanding.
 Replaces the bash-based review-changes.sh with Python + llm library.
@@ -9,13 +16,24 @@ The system uses a tool-based approach with a schema-based fallback for robustnes
 """
 
 import argparse
+import hashlib
 import json
+import logging
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 import llm
+
+# Configure logger
+logger = logging.getLogger(__name__)
+
+
+class ReviewSubmittedException(Exception):
+    """Raised when review is submitted to break out of tool chain."""
+
+    pass
 
 
 class CodeReviewToolbox(llm.Toolbox):
@@ -26,6 +44,30 @@ class CodeReviewToolbox(llm.Toolbox):
         self.max_file_size = max_file_size
         self.review_submitted = False
         self.review_data: dict[str, Any] = {}
+
+    def before_call(self, tool: object | None, tool_call: object) -> None:
+        """
+        Hook called before each tool execution. Logs the requested tool call.
+        """
+        requested_name = getattr(tool_call, "name", "unknown")
+        provided_tool_name = getattr(tool, "name", None)
+        arguments_repr = repr(getattr(tool_call, "arguments", {}))
+        if len(arguments_repr) > 500:
+            arguments_repr = f"{arguments_repr[:500]}...(truncated)..."
+
+        if tool is None:
+            logger.debug(
+                "before_call hook: requested tool '%s' is not provided; arguments=%s",
+                requested_name,
+                arguments_repr,
+            )
+        else:
+            logger.debug(
+                "before_call hook: calling tool '%s' (requested='%s') with arguments=%s",
+                provided_tool_name,
+                requested_name,
+                arguments_repr,
+            )
 
     def read_file(
         self, path: str, start_line: int | None = None, end_line: int | None = None
@@ -41,15 +83,21 @@ class CodeReviewToolbox(llm.Toolbox):
         Returns:
             File content or error message
         """
+        logger.debug(
+            f"Tool called: read_file(path={path}, start_line={start_line}, end_line={end_line})"
+        )
+
         full_path = (self.repo_root / path).resolve()
 
         # Security: ensure path is within repo
         try:
             full_path.relative_to(self.repo_root)
         except ValueError:
+            logger.debug(f"read_file failed: path outside repository: {path}")
             return f"ERROR: Path {path} is outside repository"
 
         if not full_path.exists():
+            logger.debug(f"read_file failed: file not found: {path}")
             return f"ERROR: File {path} does not exist"
 
         # Check if binary
@@ -85,6 +133,10 @@ class CodeReviewToolbox(llm.Toolbox):
         Returns:
             Search results in format "file:line: content" or error message
         """
+        logger.debug(
+            f"Tool called: search_pattern(pattern={pattern!r}, file_glob={file_glob}, max_results={max_results})"
+        )
+
         # SECURITY: Protect against ReDoS attacks
         MAX_PATTERN_LENGTH = 500
         if len(pattern) > MAX_PATTERN_LENGTH:
@@ -155,6 +207,10 @@ class CodeReviewToolbox(llm.Toolbox):
         Returns:
             Context with line numbers and marker for target line
         """
+        logger.debug(
+            f"Tool called: get_file_context(file={file}, line={line}, context_lines={context_lines})"
+        )
+
         start = max(1, line - context_lines)
         end = line + context_lines
         content = self.read_file(file, start_line=start, end_line=end)
@@ -193,6 +249,10 @@ class CodeReviewToolbox(llm.Toolbox):
         Returns:
             Confirmation message
         """
+        logger.debug(
+            f"Tool called: submit_review(summary={summary[:50]}..., issues={len(issues or [])}, positive_aspects={len(positive_aspects or [])})"
+        )
+
         # Prepare the review data for validation
         review_data = {
             "summary": summary,
@@ -215,6 +275,32 @@ class CodeReviewToolbox(llm.Toolbox):
 
         issue_count = len(self.review_data["issues"])
         return f"Review submitted successfully with {issue_count} issue(s) found."
+
+    def after_call(self, tool: object, tool_call: object, tool_result: object) -> None:
+        """
+        Hook called after each tool execution.
+        Raises ReviewSubmittedException when submit_review is called to exit the chain.
+        """
+        arguments_repr = repr(getattr(tool_call, "arguments", {}))
+        if len(arguments_repr) > 500:
+            arguments_repr = f"{arguments_repr[:500]}...(truncated)..."
+
+        result_output = getattr(tool_result, "output", tool_result)
+        result_output_repr = repr(result_output)
+        if len(result_output_repr) > 500:
+            result_output_repr = f"{result_output_repr[:500]}...(truncated)..."
+
+        logger.debug(
+            "after_call hook: tool=%s arguments=%s result=%s review_submitted=%s",
+            getattr(tool, "name", "unknown"),
+            arguments_repr,
+            result_output_repr,
+            self.review_submitted,
+        )
+
+        if getattr(tool, "name", None) == "submit_review" and self.review_submitted:
+            logger.debug("Raising ReviewSubmittedException to exit tool chain")
+            raise ReviewSubmittedException("Review submitted, exiting tool chain")
 
 
 def get_diff(mode: str = "staged") -> str:
@@ -413,6 +499,88 @@ def smart_truncate_diff(diff: str, max_chars: int = 50000) -> tuple[str, bool]:
     return "\n".join(result), True
 
 
+def get_baseline_commit(mode: str = "staged") -> str:
+    """Get the baseline commit for the diff."""
+    if mode == "staged":
+        # For staged changes, baseline is HEAD
+        cmd = ["git", "rev-parse", "HEAD"]
+    else:
+        # For commit mode, baseline is the parent of HEAD
+        cmd = ["git", "rev-parse", "HEAD~1"]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError:
+        return ""
+
+
+def compute_cache_key(diff: str, baseline_commit: str) -> str:
+    """
+    Compute cache key based on diff content and baseline commit.
+
+    Args:
+        diff: The git diff content
+        baseline_commit: The baseline commit hash
+
+    Returns:
+        SHA256 hash as hex string
+    """
+    cache_input = f"{baseline_commit}\n{diff}".encode()
+    return hashlib.sha256(cache_input).hexdigest()
+
+
+def get_cached_review(cache_key: str, cache_dir: Path) -> dict[str, Any] | None:
+    """
+    Read cached review if available.
+
+    Args:
+        cache_key: The cache key (hash)
+        cache_dir: Directory where cache files are stored
+
+    Returns:
+        Cached review data or None if not found/invalid
+    """
+    cache_file = cache_dir / f"{cache_key}.json"
+
+    if not cache_file.exists():
+        return None
+
+    try:
+        with open(cache_file, encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        # Invalid cache file, ignore it
+        return None
+
+
+def save_cached_review(
+    cache_key: str, review_data: dict[str, Any], cache_dir: Path
+) -> None:
+    """
+    Save review to cache.
+
+    Args:
+        cache_key: The cache key (hash)
+        review_data: The review data to cache
+        cache_dir: Directory where cache files are stored
+    """
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_dir / f"{cache_key}.json"
+
+    try:
+        with open(cache_file, "w", encoding="utf-8") as f:
+            json.dump(review_data, f, indent=2)
+    except OSError as e:
+        # Cache write failure is not critical, just log it
+        print(f"Warning: Failed to write cache: {e}", file=sys.stderr)
+
+
 def determine_exit_code(issues: list[dict[str, Any]]) -> tuple[int, str]:
     """Determine exit code and highest severity from issues."""
     exit_code = 0
@@ -519,7 +687,7 @@ def format_human_output(review_data: dict[str, Any], exit_code: int) -> None:
 
 
 def review_changes(
-    mode: str = "staged", output_json: bool = False
+    mode: str = "staged", output_json: bool = False, model_name: str | None = None
 ) -> tuple[int, dict[str, Any]]:
     """
     Main review function using LLM with tools.
@@ -527,6 +695,7 @@ def review_changes(
     Args:
         mode: "staged" or "commit"
         output_json: Whether to output JSON instead of human-readable format
+        model_name: Optional model name to use (e.g., 'gpt-4o', 'claude-3.5-sonnet')
 
     Returns:
         Tuple of (exit_code, review_data)
@@ -735,97 +904,130 @@ submit_review(
         "required": ["summary", "issues", "positive_aspects"],
     }
 
-    print("\nAnalyzing changes with LLM...", file=sys.stderr)
+    # Check cache first
+    cache_dir = repo_root / ".review_cache"
+    baseline_commit = get_baseline_commit(mode)
+    cache_key = compute_cache_key(diff, baseline_commit)
 
-    # Create toolbox with tools
-    toolbox = CodeReviewToolbox(repo_root)
-    tools = [
-        toolbox.read_file,
-        toolbox.search_pattern,
-        toolbox.get_file_context,
-        toolbox.submit_review,
-    ]
+    cached_review = get_cached_review(cache_key, cache_dir)
+    if cached_review:
+        logger.debug(f"Cache hit: {cache_key}")
+        print("Using cached review result.", file=sys.stderr)
+        review_data = cached_review
+    else:
+        logger.debug(f"Cache miss: {cache_key}")
+        print("\nAnalyzing changes with LLM...", file=sys.stderr)
 
-    # Get the default configured model
-    model = llm.get_model()
+        # Create toolbox with tools
+        toolbox = CodeReviewToolbox(repo_root)
+        tools = [
+            toolbox.read_file,
+            toolbox.search_pattern,
+            toolbox.get_file_context,
+            toolbox.submit_review,
+        ]
 
-    review_data = None
-    max_attempts = 3
+        # Get the default configured model or the specified model
+        model = llm.get_model(model_name) if model_name else llm.get_model()
 
-    # Try to get review with tools (with retries)
-    # Create a conversation object to maintain context across retries
-    conversation = model.conversation()
+        review_data = None
 
-    for attempt in range(max_attempts):
-        try:
-            if attempt == 0:
-                # First attempt: fresh prompt with system context
-                response = conversation.prompt(prompt, system=system, tools=tools)
-            else:
-                # Retry: Continue the conversation with a reminder
-                print(
-                    f"Retry {attempt}: Adding reminder to submit review...",
-                    file=sys.stderr,
+        # Create a conversation so we can send follow-up instructions if needed
+        conversation = model.conversation(
+            tools=tools,
+            before_call=toolbox.before_call,
+            after_call=toolbox.after_call,
+        )
+
+        def run_chain(message: str, label: str, include_system: bool = False) -> None:
+            nonlocal review_data
+            try:
+                logger.debug("Running conversation chain (%s)", label)
+                response = conversation.chain(
+                    message,
+                    system=system if include_system else None,
                 )
-                reminder_messages = [
-                    "Please submit your review using the submit_review() tool. "
-                    "Call submit_review() with your summary, issues list, and positive_aspects list.",
-                    "I notice you haven't called submit_review() yet. "
-                    "Please complete your review by calling:\n"
-                    "submit_review(summary='...', issues=[...], positive_aspects=[...])",
-                    "To complete the review, you MUST call the submit_review() tool. "
-                    "Example: submit_review(summary='The changes...', issues=[], positive_aspects=['Good error handling'])\n"
-                    "Please submit your review now.",
-                ]
-                reminder = reminder_messages[
-                    min(attempt - 1, len(reminder_messages) - 1)
-                ]
+                logger.debug("Fetching response text for (%s)", label)
+                response.text()
+            except ReviewSubmittedException:
+                logger.debug("Caught ReviewSubmittedException (%s)", label)
+            except Exception as e:
+                logger.error(f"Error during {label}: {e}", exc_info=True)
+                print(f"Error during review ({label}): {e}", file=sys.stderr)
+                return
+            finally:
+                if toolbox.review_submitted and not review_data:
+                    logger.debug("Review submitted via tool during %s", label)
+                    review_data = toolbox.review_data
+                    print("Review successfully submitted via tool.", file=sys.stderr)
 
-                # Continue the conversation with the reminder
-                response = conversation.prompt(reminder, tools=tools)
+        # First attempt with full prompt
+        run_chain(prompt, "initial_prompt", include_system=True)
 
-            # Check if review was submitted
-            if toolbox.review_submitted:
-                review_data = toolbox.review_data
-                print("Review successfully submitted via tool.", file=sys.stderr)
-                break
-            else:
-                print(
-                    f"Attempt {attempt + 1}: Model did not submit review.",
-                    file=sys.stderr,
-                )
-
-        except Exception as e:
-            print(f"Error on attempt {attempt + 1}: {e}", file=sys.stderr)
-
-    # Fallback: Use schema without tools if no review submitted
-    if not review_data:
-        print("\nFalling back to schema-based review (no tools)...", file=sys.stderr)
-        try:
-            response = model.prompt(prompt, system=system, schema=schema)
-            response_text = (
-                response.text() if hasattr(response, "text") else str(response)
+        # If the model did not call submit_review, try a follow-up instruction
+        if not review_data:
+            logger.debug(
+                "Model did not submit review via tool; sending follow-up instruction"
             )
+            print(
+                "Model did not submit review via tool; sending follow-up instruction...",
+                file=sys.stderr,
+            )
+            follow_up_prompt = (
+                "Reminder: You must now call the submit_review(summary, issues, positive_aspects) "
+                "tool to record your findings. Use empty lists when there are no issues or positive "
+                "aspects. Do not provide a normal reply—call submit_review immediately."
+            )
+            run_chain(follow_up_prompt, "follow_up_prompt")
 
-            if response_text:
-                review_data = json.loads(response_text)
-            else:
-                print("Error: Empty response from LLM", file=sys.stderr)
+        if not review_data:
+            logger.debug("Model still did not submit review after follow-up")
+
+        # Fallback: Use schema without tools if no review submitted
+        if not review_data:
+            logger.debug("Falling back to schema-based review (no tools)")
+            print(
+                "\nFalling back to schema-based review (no tools)...", file=sys.stderr
+            )
+            try:
+                logger.debug("Calling model.prompt() with schema")
+                response = model.prompt(prompt, system=system, schema=schema)
+                response_text = (
+                    response.text() if hasattr(response, "text") else str(response)
+                )
+
+                if response_text:
+                    logger.debug(
+                        f"Schema-based review completed, parsing JSON ({len(response_text)} chars)"
+                    )
+                    review_data = json.loads(response_text)
+                else:
+                    logger.error("Empty response from LLM with schema")
+                    print("Error: Empty response from LLM", file=sys.stderr)
+                    if output_json:
+                        sys.stdout = original_stdout
+                    return 1, {}
+
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse LLM response as JSON: {e}")
+                print(
+                    f"Error: Failed to parse LLM response as JSON: {e}", file=sys.stderr
+                )
+                print(f"Response was: {response_text[:500]}", file=sys.stderr)
+                if output_json:
+                    sys.stdout = original_stdout
+                return 1, {}
+            except Exception as e:
+                logger.error(f"Error calling LLM with schema: {e}", exc_info=True)
+                print(f"Error calling LLM: {e}", file=sys.stderr)
                 if output_json:
                     sys.stdout = original_stdout
                 return 1, {}
 
-        except json.JSONDecodeError as e:
-            print(f"Error: Failed to parse LLM response as JSON: {e}", file=sys.stderr)
-            print(f"Response was: {response_text[:500]}", file=sys.stderr)
-            if output_json:
-                sys.stdout = original_stdout
-            return 1, {}
-        except Exception as e:
-            print(f"Error calling LLM: {e}", file=sys.stderr)
-            if output_json:
-                sys.stdout = original_stdout
-            return 1, {}
+        # Save to cache if we got a review
+        if review_data:
+            logger.debug(f"Saving review to cache: {cache_key}")
+            save_cached_review(cache_key, review_data, cache_dir)
 
     # Determine exit code
     exit_code, highest_severity = determine_exit_code(review_data.get("issues", []))
@@ -867,14 +1069,40 @@ Exit codes:
         action="store_true",
         help="Output results as JSON instead of human-readable format",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging for tool calls and internal state",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        help="LLM model to use for review (e.g., 'gpt-4o', 'claude-3.5-sonnet')",
+    )
 
     args = parser.parse_args()
 
+    # Configure logging based on --debug flag
+    if args.debug:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="[%(levelname)s] %(name)s: %(message)s",
+            stream=sys.stderr,
+        )
+        logger.debug("Debug logging enabled")
+    else:
+        logging.basicConfig(
+            level=logging.WARNING,
+            format="[%(levelname)s] %(message)s",
+            stream=sys.stderr,
+        )
+
     mode = "commit" if args.commit else "staged"
     output_json = args.json
+    model_name = args.model
 
     try:
-        exit_code, _ = review_changes(mode, output_json)
+        exit_code, _ = review_changes(mode, output_json, model_name)
         sys.exit(exit_code)
     except KeyboardInterrupt:
         print("\nReview cancelled by user", file=sys.stderr)
