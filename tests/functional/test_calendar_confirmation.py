@@ -19,7 +19,7 @@ from family_assistant.calendar_integration import (
     fetch_event_details_for_confirmation,
 )
 from family_assistant.storage.context import get_db_context
-from family_assistant.telegram_bot import telegramify_markdown
+import telegramify_markdown
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
