@@ -1011,6 +1011,7 @@ dependencies = [
     { name = "python-multipart" },
     { name = "python-telegram-bot", extra = ["ext"] },
     { name = "pytz" },
+    { name = "pywebpush" },
     { name = "pyyaml" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "starlark-pyo3" },
@@ -1153,6 +1154,7 @@ requires-dist = [
     { name = "python-telegram-bot", extras = ["ext"], specifier = ">=21.0,<22.0" },
     { name = "pytype", marker = "extra == 'dev'" },
     { name = "pytz", specifier = ">=2024.1" },
+    { name = "pywebpush", specifier = ">=2.1.1" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "radicale", marker = "extra == 'dev'", specifier = ">=3" },
     { name = "ruff", marker = "extra == 'dev'" },
@@ -1455,6 +1457,15 @@ sdist = { url = "https://files.pythonhosted.org/packages/7c/eb/c615084df81706769
 wheels = [
     { url = "https://files.pythonhosted.org/packages/bc/db/932ae32199e45008c0685f0381a3c69f141f108b3a1b88b1892dd140ec81/homeassistant_api-5.0.1-py3-none-any.whl", hash = "sha256:12d0589b37385dc407552b6e66c6248d7a428cdd26b93ef1ba7739931b6bc9de", size = 45457, upload-time = "2025-09-10T14:36:40.14Z" },
 ]
+
+[[package]]
+name = "http-ece"
+version = "1.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7c/af/249d1576653b69c20b9ac30e284b63bd94af6a175d72d87813235caf2482/http_ece-1.2.1.tar.gz", hash = "sha256:8c6ab23116bbf6affda894acfd5f2ca0fb8facbcbb72121c11c75c33e7ce8cff", size = 8830, upload-time = "2024-08-08T00:10:47.301Z" }
 
 [[package]]
 name = "httpcore"
@@ -3812,6 +3823,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f8/bf/abbd3cdfb8fbc7fb3d4d38d320f2441b1e7cbe29be4f23797b4a2b5d8aac/pytz-2025.2.tar.gz", hash = "sha256:360b9e3dbb49a209c21ad61809c7fb453643e048b38924c765813546746e81c3", size = 320884, upload-time = "2025-03-25T02:25:00.538Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/81/c4/34e93fe5f5429d7570ec1fa436f1986fb1f00c3e0f43a589fe2bbcd22c3f/pytz-2025.2-py2.py3-none-any.whl", hash = "sha256:5ddf76296dd8c44c26eb8f4b6f35488f3ccbf6fbbd7adee0b7262d43f0ec2f00", size = 509225, upload-time = "2025-03-25T02:24:58.468Z" },
+]
+
+[[package]]
+name = "pywebpush"
+version = "2.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "cryptography" },
+    { name = "http-ece" },
+    { name = "py-vapid" },
+    { name = "requests" },
+    { name = "six" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9f/b8/7e9a3fb661cfd1e851d721b41c4952fc8edaa0cc657820d19170265b1a93/pywebpush-2.1.1-py3-none-any.whl", hash = "sha256:1012f4e9fae54b63d6039e15e3f3f0eb5ffaffde579bc7d9a6ab5944f2fafe0e", size = 22669, upload-time = "2025-10-14T18:18:30.704Z" },
 ]
 
 [[package]]

@@ -1,5 +1,9 @@
 """Push subscription storage models and queries."""
 
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel
 from sqlalchemy import Column, DateTime, Integer, String, Table
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import functions as func
@@ -7,6 +11,18 @@ from sqlalchemy.types import JSON
 
 from family_assistant.storage.base import metadata
 
+
+# --- Pydantic Model for type-safe data transfer ---
+class PushSubscription(BaseModel):
+    """Pydantic model for a push subscription."""
+
+    id: int
+    subscription_json: dict[str, Any]
+    user_identifier: str
+    created_at: datetime
+
+
+# --- SQLAlchemy Core Table Definition ---
 # Define the push_subscriptions table
 push_subscriptions_table = Table(
     "push_subscriptions",

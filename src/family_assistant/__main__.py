@@ -109,6 +109,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
         "pwa_config": {
             "vapid_public_key": None,  # VAPID public key for push notifications
             "vapid_private_key": None,  # VAPID private key for push notifications
+            "vapid_contact_email": None,  # Admin contact email for VAPID 'sub' claim
         },
         "llm_parameters": {},  # Global LLM parameters
         "mcp_config": {"mcpServers": {}},  # Global MCP server definitions
@@ -297,6 +298,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
     config_data.setdefault("pwa_config", {})
     config_data["pwa_config"]["vapid_public_key"] = os.getenv("VAPID_PUBLIC_KEY")
     config_data["pwa_config"]["vapid_private_key"] = os.getenv("VAPID_PRIVATE_KEY")
+    config_data["pwa_config"]["vapid_contact_email"] = os.getenv("VAPID_CONTACT_EMAIL")
 
     config_data["database_url"] = os.getenv("DATABASE_URL", config_data["database_url"])
 
