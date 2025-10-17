@@ -1,0 +1,145 @@
+"""Functional tests for push notification API endpoints."""
+
+import httpx
+import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from family_assistant.storage.push_subscription import push_subscriptions_table
+
+
+@pytest.mark.asyncio
+async def test_client_config_returns_vapid_key(
+    api_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that client config endpoint returns VAPID public key."""
+    monkeypatch.setenv("VAPID_PUBLIC_KEY", "test-public-key-123")
+
+    response = await api_client.get("/api/client_config")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["vapidPublicKey"] == "test-public-key-123"
+
+
+@pytest.mark.asyncio
+async def test_client_config_when_no_vapid_key(
+    api_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test client config returns None when VAPID key not configured."""
+    monkeypatch.delenv("VAPID_PUBLIC_KEY", raising=False)
+
+    response = await api_client.get("/api/client_config")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["vapidPublicKey"] is None
+
+
+@pytest.mark.asyncio
+async def test_subscribe_creates_subscription(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """Test POST /api/push/subscribe creates subscription in database."""
+    subscription_data = {
+        "endpoint": "https://push.example.com/abc123",
+        "keys": {"p256dh": "test-p256dh-key", "auth": "test-auth-secret"},
+    }
+
+    response = await api_client.post(
+        "/api/push/subscribe", json={"subscription": subscription_data}
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert "id" in data
+
+    # Verify in database
+    async with db_engine.begin() as conn:  # type: ignore[attr-defined]
+        result = await conn.execute(
+            select(push_subscriptions_table).where(
+                push_subscriptions_table.c.id == int(data["id"])
+            )
+        )
+        row = result.fetchone()
+        assert row is not None
+        assert row.subscription_json == subscription_data
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_removes_subscription(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """Test POST /api/push/unsubscribe removes subscription."""
+    # First create a subscription
+    subscription_data = {
+        "endpoint": "https://push.example.com/xyz789",
+        "keys": {"p256dh": "test-key", "auth": "test-secret"},
+    }
+
+    response = await api_client.post(
+        "/api/push/subscribe", json={"subscription": subscription_data}
+    )
+    assert response.status_code == 200
+
+    # Now unsubscribe
+    response = await api_client.post(
+        "/api/push/unsubscribe",
+        json={"endpoint": "https://push.example.com/xyz789"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+
+    # Verify removed from database
+    async with db_engine.begin() as conn:  # type: ignore[attr-defined]
+        result = await conn.execute(select(push_subscriptions_table))
+        rows = result.fetchall()
+        assert len(rows) == 0
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_nonexistent_returns_not_found(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """Test unsubscribe for non-existent subscription returns not_found."""
+    response = await api_client.post(
+        "/api/push/unsubscribe",
+        json={"endpoint": "https://push.example.com/nonexistent"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_multiple_subscriptions_per_user(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """Test that a user can have multiple subscriptions."""
+    sub1 = {
+        "endpoint": "https://push.example.com/device1",
+        "keys": {"p256dh": "key1", "auth": "auth1"},
+    }
+    sub2 = {
+        "endpoint": "https://push.example.com/device2",
+        "keys": {"p256dh": "key2", "auth": "auth2"},
+    }
+
+    resp1 = await api_client.post("/api/push/subscribe", json={"subscription": sub1})
+    resp2 = await api_client.post("/api/push/subscribe", json={"subscription": sub2})
+
+    assert resp1.status_code == 200
+    assert resp2.status_code == 200
+
+    # Verify both in database
+    async with db_engine.begin() as conn:  # type: ignore[attr-defined]
+        result = await conn.execute(select(push_subscriptions_table))
+        rows = result.fetchall()
+        assert len(rows) == 2

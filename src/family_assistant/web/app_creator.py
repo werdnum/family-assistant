@@ -32,10 +32,12 @@ from family_assistant.web.routers.api_documentation import (
 from family_assistant.web.routers.api_token_management import (
     router as api_token_management_router,
 )
+from family_assistant.web.routers.client_config import router as client_config_router
 from family_assistant.web.routers.context_viewer import context_viewer_router
 
 # documents_ui, vector_search, and errors routers removed - replaced with React
 from family_assistant.web.routers.health import health_router
+from family_assistant.web.routers.push import router as push_router
 from family_assistant.web.routers.vite_pages import vite_pages_router
 from family_assistant.web.routers.webhooks import webhooks_router
 from family_assistant.web.template_utils import get_static_asset
@@ -263,6 +265,10 @@ def create_app() -> FastAPI:
     new_app.include_router(webhooks_router, tags=["Webhooks"])
     new_app.include_router(context_viewer_router, tags=["Context Viewer UI"])
     new_app.include_router(health_router, tags=["Health Check"])
+
+    # Client configuration and push notification endpoints
+    new_app.include_router(client_config_router, tags=["Client Configuration"])
+    new_app.include_router(push_router, tags=["Push Notifications"])
 
     # General API endpoints (like /api/tools/execute, /api/documents/upload)
     new_app.include_router(api_router, prefix="/api", tags=["General API"])

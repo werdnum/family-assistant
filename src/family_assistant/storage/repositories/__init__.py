@@ -7,6 +7,7 @@ from .error_logs import ErrorLogsRepository
 from .events import EventsRepository
 from .message_history import MessageHistoryRepository
 from .notes import NotesRepository
+from .push_subscription import PushSubscriptionRepository
 from .schedule_automations import ScheduleAutomationsRepository
 from .tasks import TasksRepository
 from .vector import VectorRepository
@@ -19,6 +20,7 @@ __all__ = [
     "EventsRepository",
     "MessageHistoryRepository",
     "NotesRepository",
+    "PushSubscriptionRepository",
     "ScheduleAutomationsRepository",
     "TasksRepository",
     "VectorRepository",

@@ -68,26 +68,6 @@ class TestDocument:
         return self._file_path
 
 
-@pytest.fixture
-async def api_client(
-    db_engine: AsyncEngine,
-) -> AsyncGenerator[httpx.AsyncClient, None]:
-    async def override_get_db() -> AsyncGenerator[DatabaseContext, None]:
-        async with DatabaseContext(engine=db_engine) as db:
-            yield db
-
-    fastapi_app.dependency_overrides[get_db] = override_get_db
-    fastapi_app.state.embedding_generator = MockEmbeddingGenerator(
-        model_name="test", dimensions=3
-    )
-    transport = httpx.ASGITransport(app=fastapi_app)
-    async with httpx.AsyncClient(
-        transport=transport, base_url="http://testserver"
-    ) as client:
-        yield client
-    fastapi_app.dependency_overrides.clear()
-
-
 @pytest.mark.asyncio
 async def test_notes_api_crud(api_client: httpx.AsyncClient) -> None:
     resp = await api_client.post(
