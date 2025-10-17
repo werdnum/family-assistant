@@ -34,6 +34,7 @@ if TYPE_CHECKING:
         EventsRepository,
         MessageHistoryRepository,
         NotesRepository,
+        PushSubscriptionRepository,
         ScheduleAutomationsRepository,
         TasksRepository,
         VectorRepository,
@@ -93,6 +94,7 @@ class DatabaseContext:
         self._vector = None
         self._schedule_automations = None
         self._automations = None
+        self._push_subscriptions = None
 
     async def __aenter__(self) -> "DatabaseContext":
         """Enter the async context manager, starting a transaction."""
@@ -370,6 +372,17 @@ class DatabaseContext:
 
             self._automations = AutomationsRepository(self)
         return self._automations
+
+    @property
+    def push_subscriptions(self) -> "PushSubscriptionRepository":
+        """Get the push subscriptions repository instance."""
+        if self._push_subscriptions is None:
+            from family_assistant.storage.repositories import (  # noqa: PLC0415
+                PushSubscriptionRepository,
+            )
+
+            self._push_subscriptions = PushSubscriptionRepository(self)
+        return self._push_subscriptions
 
     async def init_vector_db(self) -> None:
         """Initialize vector database components."""
