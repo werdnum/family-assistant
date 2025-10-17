@@ -39,3 +39,4 @@ test-results
 .gemini/
 gha-creds-*.json
 .review_cache
+frontend/dev-dist
