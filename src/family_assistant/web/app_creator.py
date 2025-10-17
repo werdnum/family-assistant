@@ -161,7 +161,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             WebChatInterface,
         )
 
-        app.state.web_chat_interface = WebChatInterface(app.state.database_engine)
+        # Retrieve push service from app.state (injected by Assistant)
+        push_notification_service = getattr(
+            app.state, "push_notification_service", None
+        )
+
+        app.state.web_chat_interface = WebChatInterface(
+            app.state.database_engine,
+            push_notification_service=push_notification_service,
+        )
         # Register web chat interface in the registry
         if not hasattr(app.state, "chat_interfaces"):
             app.state.chat_interfaces = {}

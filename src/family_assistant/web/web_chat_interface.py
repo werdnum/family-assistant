@@ -3,6 +3,7 @@ Web ChatInterface implementation for delivering messages via Server-Sent Events.
 """
 
 import logging
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from family_assistant.interfaces import ChatInterface
@@ -11,6 +12,10 @@ from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
+
+    from family_assistant.services.push_notification import (
+        PushNotificationService,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -25,14 +30,20 @@ class WebChatInterface(ChatInterface):
     on_commit hook, which delivers the message to connected web clients.
     """
 
-    def __init__(self, database_engine: "AsyncEngine") -> None:
+    def __init__(
+        self,
+        database_engine: "AsyncEngine",
+        push_notification_service: "PushNotificationService | None" = None,
+    ) -> None:
         """
         Initialize the WebChatInterface.
 
         Args:
             database_engine: SQLAlchemy async engine for database operations
+            push_notification_service: Optional push notification service for sending notifications
         """
         self.database_engine = database_engine
+        self.push_notification_service = push_notification_service
 
     async def send_message(
         self,
@@ -90,6 +101,44 @@ class WebChatInterface(ChatInterface):
                     processing_profile_id=None,
                     attachments=attachments,
                 )
+
+                # Send push notification if enabled
+                if (
+                    saved_message
+                    and self.push_notification_service
+                    and self.push_notification_service.enabled
+                ):
+                    try:
+                        # Get user_id from saved message or find from recent user messages
+                        user_id = saved_message.get("user_id")
+                        if not user_id:
+                            # Fallback: query recent messages to find a user message
+                            # (assistant messages don't have user_id, so we look for user messages)
+                            recent = await db_context.message_history.get_recent(
+                                interface_type="web",
+                                conversation_id=conversation_id,
+                                limit=10,
+                                max_age=timedelta(days=365),
+                            )
+                            # Find the most recent user message with a user_id
+                            for message in recent:
+                                if message.get("role") == "user" and message.get(
+                                    "user_id"
+                                ):
+                                    user_id = message["user_id"]
+                                    break
+
+                        if user_id:
+                            await self.push_notification_service.send_notification(
+                                user_identifier=user_id,
+                                title="New message from Family Assistant",
+                                body=text[:100],  # Truncate long messages
+                                db_context=db_context,
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to send push notification: {e}", exc_info=True
+                        )
 
             if saved_message:
                 internal_id = saved_message.get("internal_id")
