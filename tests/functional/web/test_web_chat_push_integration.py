@@ -147,7 +147,7 @@ async def test_web_chat_handles_push_notification_error_gracefully(
         vapid_contact_email=TEST_CONTACT_EMAIL,
     )
 
-    async def failing_send(
+    async def failing_send(  # pylint: disable=broad-exception-raised
         *args: Any,  # noqa: ANN401
         **kwargs: Any,  # noqa: ANN401
     ) -> NoReturn:
