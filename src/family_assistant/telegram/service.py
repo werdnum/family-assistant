@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
-from telegram import BotCommand, BotCommandScopeAllPrivateChats
+from telegram import BotCommand, BotCommandScopeAllPrivateChats, Update
 from telegram.ext import (
-    Application,
     ApplicationBuilder,
     CallbackQueryHandler,
 )
@@ -20,6 +18,7 @@ from family_assistant.telegram.interface import TelegramChatInterface
 from family_assistant.telegram.ui import TelegramConfirmationUIManager
 
 if TYPE_CHECKING:
+    import contextlib
     from collections.abc import Callable
 
     from fastapi import FastAPI

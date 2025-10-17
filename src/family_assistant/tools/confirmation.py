@@ -9,8 +9,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from family_assistant import calendar_integration
 import telegramify_markdown
+
+from family_assistant import calendar_integration
 
 logger = logging.getLogger(__name__)
 
