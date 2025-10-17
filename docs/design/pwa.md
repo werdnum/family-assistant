@@ -371,15 +371,81 @@ in a way that is consistent with the existing architecture and best practices.
 
 ### Part 3: Backend Implementation
 
-- [ ] **Database Model:**
-- [ ] **Database Migration:**
-- [ ] **Database Repository:**
-- [ ] **Push Notification Service:**
-- [ ] **API Endpoints:**
-- [ ] **Integrate Notification Trigger:**
+- [x] **Database Model:** Created `src/family_assistant/storage/push_subscription.py` with the
+  `push_subscriptions` table definition using SQLAlchemy Core Table syntax with JSON/JSONB support.
+- [x] **Database Migration:** Generated Alembic migration
+  `2025_10_17-a7c55b979906_add_push_subscriptions_table.py` for the push_subscriptions table.
+- [x] **Database Repository:** Created `PushSubscriptionRepository` with CRUD operations and
+  integrated into `DatabaseContext`.
+- [x] **Push Notification Service:** Created basic `PushNotificationService` structure in
+  `src/family_assistant/services/push_notification.py` (actual py-vapid integration pending).
+- [x] **API Endpoints:** Implemented `GET /api/client_config` and push subscription endpoints
+  (`POST /api/push/subscribe`, `POST /api/push/unsubscribe`).
+- [ ] **Integrate Notification Trigger:** (Excluded from current scope - will be implemented when
+  needed)
 
 ### Part 4: Frontend Integration
 
 - [ ] **Custom Service Worker:**
 - [ ] **API Client:**
 - [ ] **React Component:**
+
+## 6. Testing Strategy
+
+### Backend Testing
+
+**Status: ✅ Completed**
+
+**Functional Tests in `tests/functional/test_push_api.py`:**
+
+All backend tests are functional tests using the test fixtures from `tests/functional/conftest.py`:
+
+- **Client Config Endpoint:**
+
+  - Test `GET /api/client_config` returns VAPID public key when configured
+  - Test `GET /api/client_config` behavior when VAPID key is not configured
+  - Authentication is disabled in functional tests (see conftest.py)
+
+- **Push Subscription Endpoints:**
+
+  - Test `POST /api/push/subscribe` creates subscription with valid data
+  - Test `POST /api/push/subscribe` validates subscription format
+  - Test `POST /api/push/unsubscribe` removes subscription
+  - Test `POST /api/push/unsubscribe` handles non-existent subscriptions gracefully
+  - Verify subscriptions are persisted in database (query directly via DatabaseContext)
+  - Verify multiple subscriptions can exist for same user
+  - Test that user_identifier is correctly associated with subscriptions
+
+- **Push Notification Service:**
+
+  - Test sending notifications to valid subscriptions
+  - Test handling of stale/invalid subscriptions (410 Gone responses)
+  - Test cleanup of invalid subscriptions from database
+  - Mock external push service calls using appropriate mocking library
+
+### Frontend Testing
+
+**Unit Tests:**
+
+- Test `PushNotificationButton` component:
+  - Test permission request flow
+  - Test subscription/unsubscription logic
+  - Test error handling
+  - Mock service worker and browser APIs
+
+**Integration Tests:**
+
+- Test full notification flow with MSW (Mock Service Worker):
+  - Mock `GET /api/client_config` endpoint
+  - Mock `POST /api/push/subscribe` endpoint
+  - Verify correct API calls are made
+  - Verify UI updates correctly based on subscription state
+
+### Manual Testing Checklist
+
+- [ ] Verify PWA can be installed on mobile devices
+- [ ] Verify PWA can be installed on desktop browsers
+- [ ] Test push notifications are received when app is closed
+- [ ] Test push notifications are received when app is in background
+- [ ] Test notification click behavior
+- [ ] Verify offline functionality works as expected

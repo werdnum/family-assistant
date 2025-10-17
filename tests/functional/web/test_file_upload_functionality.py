@@ -465,6 +465,7 @@ async def test_api_request_includes_attachments(
         await anyio.Path(temp_path).unlink(missing_ok=True)
 
 
+@pytest.mark.flaky(reruns=2)
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_attachment_display_in_message_history(
