@@ -1,8 +1,11 @@
 /* eslint-disable no-undef */
+import { precacheAndRoute } from 'workbox-precaching';
+
 /**
  * Custom Service Worker for Family Assistant PWA
  *
  * This service worker handles:
+ * - Precaching of app assets using Workbox
  * - Push event reception from backend
  * - Notification display with proper formatting
  * - Notification click handling for app focus/navigation
@@ -10,6 +13,9 @@
  * Note: This file runs in a Service Worker context where 'self' and 'clients'
  * are global objects provided by the browser.
  */
+
+// Precache assets injected by vite-plugin-pwa
+precacheAndRoute(self.__WB_MANIFEST || []);
 
 // Handle push events from the backend
 self.addEventListener('push', (event) => {
