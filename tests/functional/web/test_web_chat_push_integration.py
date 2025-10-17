@@ -253,7 +253,7 @@ async def test_web_chat_sends_push_notification_with_user_message(
     assert result is not None
     assert send_notification_called
     assert send_notification_args["user_identifier"] == user_id
-    assert send_notification_args["title"] == "New message from Family Assistant"
+    assert send_notification_args["title"] == "New message"
     assert send_notification_args["body"] == assistant_text
 
 

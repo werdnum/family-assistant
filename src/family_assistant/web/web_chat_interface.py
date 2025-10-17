@@ -131,7 +131,7 @@ class WebChatInterface(ChatInterface):
                         if user_id:
                             await self.push_notification_service.send_notification(
                                 user_identifier=user_id,
-                                title="New message from Family Assistant",
+                                title="New message",
                                 body=text[:100],  # Truncate long messages
                                 db_context=db_context,
                             )
