@@ -13,13 +13,13 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
+import telegramify_markdown
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.calendar_integration import (
     fetch_event_details_for_confirmation,
 )
 from family_assistant.storage.context import get_db_context
-import telegramify_markdown
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
