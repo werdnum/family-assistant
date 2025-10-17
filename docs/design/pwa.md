@@ -288,6 +288,8 @@ in a way that is consistent with the existing architecture and best practices.
 
 ### Part 3: Backend Implementation
 
+For detailed task breakdown and progress, see [docs/design/pwa_backend.md](pwa_backend.md).
+
 1. **Database Model:** ✅
 
    - Create `src/family_assistant/storage/models/push_subscription.py` and define the
@@ -326,6 +328,14 @@ in a way that is consistent with the existing architecture and best practices.
 
    - Modify existing services (e.g., `WebChatInterface`) to call the `PushNotificationService` when
      a relevant event occurs (like a new message).
+
+7. **Documentation and Configuration:** ✅
+
+   - Update `CLAUDE.md` (AGENTS.md) to document `VAPID_PRIVATE_KEY` and `VAPID_CONTACT_EMAIL`
+     environment variables.
+   - Add entry to `.claude/banned_commands.json` to prevent `DATABASE_URL` override in alembic
+     commands.
+   - Update `docs/design/pwa.md` to mark Part 3 backend as complete.
 
 ### Part 4: Frontend Integration
 
@@ -374,18 +384,20 @@ in a way that is consistent with the existing architecture and best practices.
 
 ### Part 3: Backend Implementation
 
-- [x] **Database Model:** Created `src/family_assistant/storage/push_subscription.py` with the
-  `push_subscriptions` table definition using SQLAlchemy Core Table syntax with JSON/JSONB support.
-- [x] **Database Migration:** Generated Alembic migration
-  `2025_10_17-a7c55b979906_add_push_subscriptions_table.py` for the push_subscriptions table.
-- [x] **Database Repository:** Created `PushSubscriptionRepository` with CRUD operations and
-  integrated into `DatabaseContext`.
-- [x] **Push Notification Service:** Created basic `PushNotificationService` structure in
-  `src/family_assistant/services/push_notification.py` (actual py-vapid integration pending).
-- [x] **API Endpoints:** Implemented `GET /api/client_config` and push subscription endpoints
-  (`POST /api/push/subscribe`, `POST /api/push/unsubscribe`).
-- [ ] **Integrate Notification Trigger:** (Excluded from current scope - will be implemented when
-  needed)
+For detailed task breakdown and implementation progress, see
+[docs/design/pwa_backend.md](pwa_backend.md).
+
+**Status: Tasks 1-10 ✅ Complete**
+
+- [x] **Task 1-2:** VAPID keys reading and user_id column addition
+- [x] **Task 3-4:** Message history repository and chat API user_id integration
+- [x] **Task 5-6:** PushNotificationService implementation and unit tests
+- [x] **Task 7:** PushNotificationService initialization in Assistant with proper dependency
+  injection
+- [x] **Task 8:** WebChatInterface integration with graceful error handling and fallback user lookup
+- [x] **Task 9:** Comprehensive integration tests covering all notification scenarios
+- [x] **Task 10:** Documentation updates (VAPID environment variables in CLAUDE.md,
+  banned_commands.json)
 
 ### Part 4: Frontend Integration
 
