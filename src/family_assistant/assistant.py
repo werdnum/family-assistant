@@ -40,6 +40,7 @@ from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.services.push_notification import PushNotificationService
 from family_assistant.storage import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.context import (
@@ -177,6 +178,7 @@ class Assistant:
         self.email_indexer: EmailIndexer | None = None
         self.notes_indexer: NotesIndexer | None = None
         self.telegram_service: TelegramService | None = None
+        self.push_notification_service: PushNotificationService | None = None
         self.task_worker_instance: TaskWorker | None = None
         self.task_worker_task: asyncio.Task | None = None  # Track the worker task
         self.uvicorn_server_task: asyncio.Task | None = None
@@ -420,6 +422,25 @@ class Assistant:
         self.fastapi_app.state.attachment_registry = self.attachment_registry
         logger.info(
             f"AttachmentRegistry initialized with path: {attachment_storage_path}"
+        )
+
+        # Initialize PushNotificationService
+        vapid_private_key = self.config.get("pwa_config", {}).get("vapid_private_key")
+        vapid_contact_email = self.config.get("pwa_config", {}).get(
+            "vapid_contact_email"
+        )
+
+        self.push_notification_service = PushNotificationService(
+            vapid_private_key=vapid_private_key,
+            vapid_contact_email=vapid_contact_email,
+        )
+
+        # Store in app.state for lifespan to retrieve
+        self.fastapi_app.state.push_notification_service = (
+            self.push_notification_service
+        )
+        logger.info(
+            f"PushNotificationService initialized (enabled={self.push_notification_service.enabled})"
         )
 
         # Setup error logging to database if enabled
