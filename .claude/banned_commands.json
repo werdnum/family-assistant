@@ -98,6 +98,10 @@
   {
     "regexp": "\\bcat\\s+>.*<<",
     "explanation": "Use the Write tool to create files instead of cat with heredocs. The Write tool is more reliable and doesn't require approval for each attempt."
+  },
+  {
+    "regexp": "DATABASE_URL=.*alembic",
+    "explanation": "DATABASE_URL is already correctly set in the environment. Do not override it when running alembic commands. Simply run 'alembic revision --autogenerate -m \"Description\"' without DATABASE_URL prefix."
   }
 ]
 

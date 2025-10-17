@@ -288,33 +288,33 @@ in a way that is consistent with the existing architecture and best practices.
 
 ### Part 3: Backend Implementation
 
-1. **Database Model:**
+1. **Database Model:** ✅
 
    - Create `src/family_assistant/storage/models/push_subscription.py` and define the
      `PushSubscription` SQLAlchemy model.
    - Ensure the new model is imported in `src/family_assistant/storage/models/__init__.py`.
 
-2. **Database Migration:**
+2. **Database Migration:** ✅
 
    - Run `alembic revision --autogenerate -m "Add push_subscriptions table"` to create a new
      migration script.
    - Review the generated script in `alembic/versions/`.
    - Run `alembic upgrade head` to apply the migration.
 
-3. **Database Repository:**
+3. **Database Repository:** ✅
 
    - Create `src/family_assistant/storage/repositories/push_subscription.py` to define the
      `PushSubscriptionRepository` for CRUD operations.
    - Expose the new repository in `src/family_assistant/storage/repositories/__init__.py`.
 
-4. **Push Notification Service:**
+4. **Push Notification Service:** ✅
 
    - Create `src/family_assistant/services/push_notification.py`.
    - Implement the `PushNotificationService` with methods for sending notifications and handling
      stale subscriptions, using the `py-vapid` library.
    - Integrate this service into the application's dependency injection system.
 
-5. **API Endpoints:**
+5. **API Endpoints:** ✅
 
    - Create `src/family_assistant/web/routers/client_config.py` and implement the
      `GET /api/client_config` endpoint to expose the `VAPID_PUBLIC_KEY`.
@@ -322,7 +322,7 @@ in a way that is consistent with the existing architecture and best practices.
      and `POST /api/push/unsubscribe` endpoints.
    - Mount the new routers in the main FastAPI application.
 
-6. **Integrate Notification Trigger:**
+6. **Integrate Notification Trigger:** ✅
 
    - Modify existing services (e.g., `WebChatInterface`) to call the `PushNotificationService` when
      a relevant event occurs (like a new message).
