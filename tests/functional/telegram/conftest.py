@@ -11,10 +11,10 @@ from family_assistant.assistant import Assistant
 from family_assistant.llm import LLMInterface
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
-from family_assistant.telegram_bot import (
-    TelegramChatInterface,  # For type hinting mock_confirmation_manager
-    TelegramUpdateHandler,
-)
+from family_assistant.telegram.handler import TelegramUpdateHandler
+from family_assistant.telegram.interface import (
+    TelegramChatInterface,
+)  # For type hinting mock_confirmation_manager
 from family_assistant.tools import (
     ToolsProvider,  # Changed from CompositeToolsProvider for generality
 )
