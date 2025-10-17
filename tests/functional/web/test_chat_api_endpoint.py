@@ -324,7 +324,6 @@ async def test_api_chat_add_note_tool(
     note = await db_context.notes.get_by_title(note_title)
     assert note is not None
     assert note["content"] == note_content
-    logger.info(f"Note '{note_title}' found in database with correct content.")
 
     # Assert Message History
     # Fetch history for the conversation_id from the response
@@ -584,3 +583,230 @@ async def test_api_chat_send_message_stream_with_tools(
     note = await db_context.notes.get_by_title(note_title)
     assert note is not None
     assert note["content"] == note_content
+
+
+@pytest.mark.asyncio
+async def test_api_chat_send_message_persists_user_id(
+    test_client: AsyncClient,
+    mock_llm_client: RuleBasedMockLLMClient,
+    db_context: DatabaseContext,
+) -> None:
+    """Test that user_id is correctly persisted when sending a message."""
+    # Arrange
+    user_prompt = "Does this message save my user ID?"
+    llm_response = "Yes, it should."
+    expected_user_id = "test_user"  # From get_current_user dependency when auth is off
+
+    # Configure mock LLM to give a simple response
+    mock_llm_client.rules.append((
+        lambda args: user_prompt in str(args.get("messages", [])),
+        LLMOutput(content=llm_response),
+    ))
+
+    # Act
+    response = await test_client.post(
+        "/api/v1/chat/send_message",
+        json={"prompt": user_prompt},
+    )
+
+    # Assert API Response
+    assert response.status_code == 200
+    response_data = ChatMessageResponse(**response.json())
+    conversation_id = response_data.conversation_id
+
+    # Assert Database State
+    history = await db_context.message_history.get_recent(
+        interface_type="api",
+        conversation_id=conversation_id,
+        limit=10,
+        max_age=timedelta(minutes=1),
+    )
+
+    assert len(history) == 2  # Should be user message and assistant message
+
+    # Check user message
+    user_message = next((m for m in history if m["role"] == "user"), None)
+    assert user_message is not None
+    assert user_message["content"] == user_prompt
+    assert user_message["user_id"] == expected_user_id
+
+    # Check assistant message
+    assistant_message = next((m for m in history if m["role"] == "assistant"), None)
+    assert assistant_message is not None
+    assert assistant_message["content"] == llm_response
+    assert assistant_message["user_id"] == expected_user_id
+
+    logger.info(
+        f"Successfully verified user_id '{expected_user_id}' was persisted for all messages."
+    )
+
+
+@pytest.fixture(scope="function")
+def mock_processing_service_config_no_tools() -> ProcessingServiceConfig:
+    """Provides a mock ProcessingServiceConfig for tests with no tools."""
+    return ProcessingServiceConfig(
+        prompts={
+            "system_prompt": (
+                "You are a test assistant. Current time: {current_time}. "
+                "Server URL: {server_url}. "
+                "Context: {aggregated_other_context}"
+            )
+        },
+        timezone_str="UTC",
+        max_history_messages=5,
+        history_max_age_hours=24,
+        tools_config={
+            "enable_local_tools": [],
+            "enable_mcp_server_ids": [],
+            "confirm_tools": [],
+        },
+        delegation_security_level="blocked",
+        id="chat_api_test_profile_no_tools",
+    )
+
+
+@pytest.fixture(scope="function")
+def test_processing_service_no_tools(
+    mock_llm_client: RuleBasedMockLLMClient,
+    test_tools_provider: ToolsProvider,
+    mock_processing_service_config_no_tools: ProcessingServiceConfig,
+    db_context: DatabaseContext,
+) -> ProcessingService:
+    """Creates a ProcessingService instance with mock/test components and no tools."""
+
+    captured_engine = db_context.engine
+
+    async def get_entered_db_context_for_provider() -> DatabaseContext:
+        async with get_db_context(engine=captured_engine) as new_ctx:
+            return new_ctx
+
+    notes_provider = NotesContextProvider(
+        get_db_context_func=get_entered_db_context_for_provider,
+        prompts=mock_processing_service_config_no_tools.prompts,
+    )
+    calendar_provider = CalendarContextProvider(
+        calendar_config={},
+        timezone_str=mock_processing_service_config_no_tools.timezone_str,
+        prompts=mock_processing_service_config_no_tools.prompts,
+    )
+    known_users_provider = KnownUsersContextProvider(
+        chat_id_to_name_map={}, prompts=mock_processing_service_config_no_tools.prompts
+    )
+    context_providers = [notes_provider, calendar_provider, known_users_provider]
+
+    return ProcessingService(
+        llm_client=mock_llm_client,
+        tools_provider=test_tools_provider,
+        service_config=mock_processing_service_config_no_tools,
+        context_providers=context_providers,
+        server_url="http://testserver",
+        app_config={},
+    )
+
+
+@pytest_asyncio.fixture(scope="function")
+async def app_fixture_no_tools(
+    db_engine: AsyncEngine,
+    test_processing_service_no_tools: ProcessingService,
+    test_tools_provider: ToolsProvider,
+    mock_llm_client: LLMInterface,
+) -> FastAPI:
+    """
+    Creates a FastAPI application instance for testing, with a mock
+    ProcessingService that has no tools.
+    """
+    app = FastAPI(
+        title=actual_app.title,
+        docs_url=actual_app.docs_url,
+        redoc_url=actual_app.redoc_url,
+        middleware=actual_app.user_middleware,
+    )
+    app.include_router(actual_app.router)
+
+    app.state.processing_service = test_processing_service_no_tools
+    app.state.tools_provider = test_tools_provider
+    app.state.database_engine = db_engine
+    app.state.config = {
+        "auth_enabled": False,
+        "database_url": str(db_engine.url),
+        "default_profile_settings": {
+            "chat_id_to_name_map": {},
+            "processing_config": {"prompts": {}},
+        },
+    }
+    app.state.llm_client = mock_llm_client
+    app.state.debug_mode = False
+
+    app.state.web_chat_interface = WebChatInterface(db_engine)
+
+    async with get_db_context(engine=db_engine) as temp_db_ctx:
+        await init_db(db_engine)
+        await temp_db_ctx.init_vector_db()
+
+    return app
+
+
+@pytest_asyncio.fixture(scope="function")
+async def test_client_no_tools(
+    app_fixture_no_tools: FastAPI,
+) -> AsyncGenerator[AsyncClient, None]:
+    """Provides an HTTPX AsyncClient for the test FastAPI app with no tools."""
+    transport = ASGITransport(app=app_fixture_no_tools)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        yield client
+
+
+@pytest.mark.asyncio
+async def test_api_chat_send_message_persists_user_id_no_tools(
+    test_client_no_tools: AsyncClient,
+    mock_llm_client: RuleBasedMockLLMClient,
+    db_context: DatabaseContext,
+) -> None:
+    """Test that user_id is correctly persisted when sending a message with no tools enabled."""
+    # Arrange
+    user_prompt = "Does this message save my user ID without tools?"
+    llm_response = "Yes, it should."
+    expected_user_id = "test_user"  # From get_current_user dependency when auth is off
+
+    # Configure mock LLM to give a simple response
+    mock_llm_client.rules.append((
+        lambda args: user_prompt in str(args.get("messages", [])),
+        LLMOutput(content=llm_response),
+    ))
+
+    # Act
+    response = await test_client_no_tools.post(
+        "/api/v1/chat/send_message",
+        json={"prompt": user_prompt},
+    )
+
+    # Assert API Response
+    assert response.status_code == 200
+    response_data = ChatMessageResponse(**response.json())
+    conversation_id = response_data.conversation_id
+
+    # Assert Database State
+    history = await db_context.message_history.get_recent(
+        interface_type="api",
+        conversation_id=conversation_id,
+        limit=10,
+        max_age=timedelta(minutes=1),
+    )
+
+    assert len(history) == 2  # Should be user message and assistant message
+
+    # Check user message
+    user_message = next((m for m in history if m["role"] == "user"), None)
+    assert user_message is not None
+    assert user_message["content"] == user_prompt
+    assert user_message["user_id"] == expected_user_id
+
+    # Check assistant message
+    assistant_message = next((m for m in history if m["role"] == "assistant"), None)
+    assert assistant_message is not None
+    assert assistant_message["content"] == llm_response
+    assert assistant_message["user_id"] == expected_user_id
+
+    logger.info(
+        f"Successfully verified user_id '{expected_user_id}' was persisted for all messages without tools."
+    )

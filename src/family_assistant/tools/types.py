@@ -79,6 +79,7 @@ class ToolExecutionContext:
         "AttachmentRegistry"
     ]  # NO DEFAULT - must specify explicitly
     # Optional fields with defaults (for backward compatibility and convenience)
+    user_id: str | None = None  # User identifier
     chat_interface: Optional["ChatInterface"] = None  # Replaced application
     chat_interfaces: dict[str, "ChatInterface"] | None = (
         None  # Dict of interface_type -> ChatInterface for cross-interface messaging

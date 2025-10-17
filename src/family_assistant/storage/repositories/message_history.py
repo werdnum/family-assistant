@@ -42,6 +42,7 @@ class MessageHistoryRepository(BaseRepository):
             str | None
         ) = None,  # Added: ID linking tool response to assistant request
         processing_profile_id: str | None = None,  # Added: Profile ID
+        user_id: str | None = None,  # Added: User identifier
         attachments: list[dict[str, Any]] | None = None,  # Attachment metadata
         tool_name: str | None = None,  # Added: Function/tool name for tool messages
         name: str | None = None,  # OpenAI API compatibility (mapped to tool_name)
@@ -105,6 +106,7 @@ class MessageHistoryRepository(BaseRepository):
             "attachments": attachments,
             "tool_name": tool_name,
             "provider_metadata": provider_metadata,
+            "user_id": user_id,
         }
 
         # Remove None values except for fields that explicitly allow None
@@ -126,6 +128,7 @@ class MessageHistoryRepository(BaseRepository):
                 "attachments",
                 "tool_name",
                 "provider_metadata",
+                "user_id",
             }
         }
 
