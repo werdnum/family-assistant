@@ -89,21 +89,40 @@ VAPID keys are required to securely send push notifications.
 
 #### 3.2.1. Key Generation
 
-A new script will be added to `scripts/generate_vapid_keys.py` to generate the VAPID key pair using
-the `py-vapid` library.
+A new script will be added to `scripts/generate_vapid_keys.py` to generate the VAPID key pair. This
+script will use the `py_vapid` library to generate raw keys and then encode them in a URL-safe
+base64 format without padding.
 
 ```python
+import base64
 from py_vapid import Vapid
+from cryptography.hazmat.primitives import serialization
 
-vapid = Vapid.generate()
-print(f"VAPID_PUBLIC_KEY={vapid.public_key}")
-print(f"VAPID_PRIVATE_KEY={vapid.private_key}")
+vapid = Vapid()
+vapid.generate_keys()
+
+private_key_obj = vapid.private_key
+public_key_obj = vapid.public_key
+
+raw_private_key = private_key_obj.private_numbers().private_value.to_bytes(32, 'big')
+raw_public_key_point = public_key_obj.public_bytes(
+    encoding=serialization.Encoding.X962,
+    format=serialization.PublicFormat.UncompressedPoint
+)
+
+b64_private_key = base64.urlsafe_b64encode(raw_private_key).rstrip(b'=').decode('utf-8')
+b64_public_key = base64.urlsafe_b64encode(raw_public_key_point).rstrip(b'=').decode('utf-8')
+
+print(f"VAPID_PRIVATE_KEY={b64_private_key}")
+print(f"VAPID_PUBLIC_KEY={b64_public_key}")
 ```
 
 #### 3.2.2. Configuration
 
 The generated keys will be provided to the application as environment variables: `VAPID_PUBLIC_KEY`
-and `VAPID_PRIVATE_KEY`. This will be documented in `AGENTS.md`.
+and `VAPID_PRIVATE_KEY`. The keys are the raw key bytes, encoded using URL-safe base64 without
+padding. This format is compatible with `py_vapid.Vapid02.from_raw()` and
+`py_vapid.Vapid02.from_raw_public()`. This will be documented in `AGENTS.md`.
 
 ### 3.3. Backend Implementation (Python/FastAPI)
 
@@ -254,13 +273,14 @@ in a way that is consistent with the existing architecture and best practices.
 
 2. **Create Key Generation Script:**
 
-   - Create the file `scripts/generate_vapid_keys.py` with the content from the design document.
+   - Create the file `scripts/generate_vapid_keys.py` with the content from the design document,
+     which generates raw, URL-safe base64 encoded keys.
 
 3. **Generate and Configure Keys:**
 
    - Run the script to generate the VAPID keys.
-   - Update configuration (`.env.example`, `config.yaml`, etc.) to include `VAPID_PUBLIC_KEY` and
-     `VAPID_PRIVATE_KEY`.
+   - The keys will be provided as environment variables `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY`
+     in the format specified in section 3.2.2.
    - Update `AGENTS.md` to document these new environment variables.
 
 ### Part 3: Backend Implementation
@@ -345,8 +365,9 @@ in a way that is consistent with the existing architecture and best practices.
 ### Part 2: VAPID Key Generation and Backend Configuration
 
 - [x] **Install Dependency:** `py-vapid` has been added to the backend dependencies.
-- [ ] **Create Key Generation Script:**
-- [ ] **Generate and Configure Keys:**
+- [x] **Create Key Generation Script:** The script has been created and tested.
+- [x] **Generate and Configure Keys:** Keys have been generated and the method for providing them as
+  environment variables has been determined.
 
 ### Part 3: Backend Implementation
 
