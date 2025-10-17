@@ -420,6 +420,7 @@ async def api_chat_send_message(
         trigger_content_parts=trigger_content_parts,
         trigger_interface_message_id=None,  # API prompts don't have a prior interface ID
         user_name=user_name_for_api,
+        user_id=current_user["user_identifier"],
         replied_to_interface_id=None,  # payload.replied_to_message_id is not available on ChatPromptRequest
         chat_interface=web_chat_interface,  # Use WebChatInterface for message delivery
         chat_interfaces=chat_interfaces,  # Pass all registered chat interfaces
@@ -860,6 +861,7 @@ async def api_chat_send_message_stream(
                         trigger_content_parts=trigger_content_parts,
                         trigger_interface_message_id=None,
                         user_name=user_name_for_api,
+                        user_id=current_user["user_identifier"],
                         replied_to_interface_id=None,
                         chat_interface=web_chat_interface,  # Use WebChatInterface for message delivery
                         chat_interfaces=chat_interfaces,  # Pass all registered chat interfaces

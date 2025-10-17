@@ -24,6 +24,8 @@ WebChatInterface.
 
 ### Task 1: Read VAPID Keys from Environment
 
+**Status: ✅ Completed**
+
 **File**: `src/family_assistant/__main__.py` **Delegate to**: focused-coder agent
 
 Add VAPID key reading in `load_config()` after other secrets (around line 290):
@@ -42,6 +44,8 @@ config_data["pwa_config"]["vapid_private_key"] = os.getenv("VAPID_PRIVATE_KEY")
 ______________________________________________________________________
 
 ### Task 2: Add user_id Column to message_history Table
+
+**Status: ✅ Completed**
 
 **File**: `alembic/versions/YYYYMMDD_*.py` (new migration) **Delegate to**: focused-coder agent
 
@@ -69,6 +73,8 @@ ______________________________________________________________________
 
 ### Task 3: Update Message History Repository to Store user_id
 
+**Status: ✅ Completed**
+
 **Files**:
 
 - `src/family_assistant/storage/repositories/message_history.py`
@@ -90,6 +96,8 @@ Update table definition and repository:
 ______________________________________________________________________
 
 ### Task 4: Update Chat API to Pass user_id When Saving Messages
+
+**Status: ✅ Completed**
 
 **File**: `src/family_assistant/web/routers/chat_api.py` **Delegate to**: focused-coder agent
 

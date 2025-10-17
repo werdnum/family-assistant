@@ -264,6 +264,7 @@ class ProcessingService:
         user_name: str,  # Added user_name
         turn_id: str,  # Added turn_id
         chat_interface: ChatInterface | None,  # Added chat_interface
+        user_id: str | None = None,  # Added user_id
         chat_interfaces: dict[str, ChatInterface] | None = None,
         # Callback signature updated to match ToolExecutionContext's expectation
         request_confirmation_callback: (
@@ -308,6 +309,7 @@ class ProcessingService:
             interface_type=interface_type,
             conversation_id=conversation_id,
             user_name=user_name,
+            user_id=user_id,
             turn_id=turn_id,
             chat_interface=chat_interface,
             chat_interfaces=chat_interfaces,
@@ -338,6 +340,7 @@ class ProcessingService:
         user_name: str,
         turn_id: str,
         chat_interface: ChatInterface | None,
+        user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
@@ -574,6 +577,7 @@ class ProcessingService:
                         interface_type=interface_type,
                         conversation_id=conversation_id,
                         user_name=user_name,
+                        user_id=user_id,
                         turn_id=turn_id,
                         db_context=db_context,
                         chat_interface=chat_interface,
@@ -675,6 +679,7 @@ class ProcessingService:
         turn_id: str,
         db_context: DatabaseContext,
         chat_interface: ChatInterface | None,
+        user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: Callable[
             [str, str, str | None, str, str, dict[str, Any], float],
@@ -780,6 +785,7 @@ class ProcessingService:
             interface_type=interface_type,
             conversation_id=conversation_id,
             user_name=user_name,
+            user_id=user_id,
             turn_id=turn_id,
             db_context=db_context,
             chat_interface=chat_interface,
@@ -1368,6 +1374,7 @@ class ProcessingService:
         trigger_content_parts: list[dict[str, Any]],
         trigger_interface_message_id: str | None,
         user_name: str,
+        user_id: str | None = None,
         replied_to_interface_id: str | None = None,
         chat_interface: ChatInterface | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
@@ -1477,6 +1484,7 @@ class ProcessingService:
                 attachments=trigger_attachments,
                 tool_call_id=None,
                 processing_profile_id=self.service_config.id,  # Record profile ID
+                user_id=user_id,  # Pass user_id
             )
 
             if saved_user_msg_record and not thread_root_id_for_turn:
@@ -1722,6 +1730,7 @@ class ProcessingService:
                 interface_type=interface_type,
                 conversation_id=conversation_id,
                 user_name=user_name,  # Pass user_name
+                user_id=user_id,  # Pass user_id
                 turn_id=turn_id,
                 chat_interface=chat_interface,
                 request_confirmation_callback=request_confirmation_callback,
@@ -1746,6 +1755,7 @@ class ProcessingService:
                     msg_to_save.setdefault("interface_message_id", None)
                     # Add processing_profile_id for turn messages
                     msg_to_save["processing_profile_id"] = self.service_config.id
+                    msg_to_save["user_id"] = user_id
 
                     # Remove fields that shouldn't be saved to database
                     msg_to_save.pop("_attachment", None)  # Remove raw attachment data
@@ -1827,6 +1837,7 @@ class ProcessingService:
         trigger_content_parts: list[dict[str, Any]],
         trigger_interface_message_id: str | None,
         user_name: str,
+        user_id: str | None = None,
         replied_to_interface_id: str | None = None,
         chat_interface: ChatInterface | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
@@ -1923,6 +1934,7 @@ class ProcessingService:
                     tool_call_id=None,
                     processing_profile_id=self.service_config.id,
                     attachments=trigger_attachments,
+                    user_id=user_id,  # Pass user_id
                 )
 
             if saved_user_msg_record and not thread_root_id_for_turn:
@@ -2119,6 +2131,7 @@ class ProcessingService:
                     )
                     msg_to_save.setdefault("interface_message_id", None)
                     msg_to_save["processing_profile_id"] = self.service_config.id
+                    msg_to_save["user_id"] = user_id
 
                     # Remove fields that shouldn't be saved to database
                     msg_to_save.pop("_attachment", None)  # Remove raw attachment data
