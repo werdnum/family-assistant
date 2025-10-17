@@ -5,7 +5,10 @@ from typing import Any
 
 from sqlalchemy import select
 
-from family_assistant.storage.push_subscription import push_subscriptions_table
+from family_assistant.storage.push_subscription import (
+    PushSubscription,
+    push_subscriptions_table,
+)
 
 from .base import BaseRepository
 
@@ -35,20 +38,20 @@ class PushSubscriptionRepository(BaseRepository):
             return result.inserted_primary_key[0]  # type: ignore[return-value]
         return result.lastrowid  # type: ignore[attr-defined]
 
-    async def get_by_user(self, user_identifier: str) -> list[dict[str, Any]]:
+    async def get_by_user(self, user_identifier: str) -> list[PushSubscription]:
         """Get all push subscriptions for a user.
 
         Args:
             user_identifier: The user identifier
 
         Returns:
-            List of subscription dictionaries
+            List of subscription Pydantic models
         """
         query = select(push_subscriptions_table).where(
             push_subscriptions_table.c.user_identifier == user_identifier
         )
         rows = await self._db.fetch_all(query)
-        return [dict(row) for row in rows]
+        return [PushSubscription.model_validate(row) for row in rows]
 
     async def delete(self, subscription_id: int) -> int:
         """Delete a push subscription by ID.
