@@ -36,7 +36,7 @@ from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.storage.message_history import (
     message_history_table,  # For error handling db update
 )
-from family_assistant.telegram.protocols import MessageBatcher
+from family_assistant.tools.confirmation import TOOL_CONFIRMATION_RENDERERS
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface
     from family_assistant.processing import ProcessingService
     from family_assistant.storage.context import DatabaseContext
+    from family_assistant.telegram.protocols import MessageBatcher
     from family_assistant.telegram.service import TelegramService
     from family_assistant.telegram.ui import TelegramConfirmationUIManager
 
@@ -492,10 +493,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         timeout_seconds: float,
                     ) -> bool:
                         logger.debug("confirmation_callback_wrapper called!")
-                        from family_assistant.tools.confirmation import (
-                            TOOL_CONFIRMATION_RENDERERS,
-                        )
-
                         renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
                         if renderer:
                             prompt_text = renderer(tool_args)
@@ -912,10 +909,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     tool_args_cb: dict[str, Any],
                     timeout_cb: float,
                 ) -> bool:
-                    from family_assistant.tools.confirmation import (
-                        TOOL_CONFIRMATION_RENDERERS,
-                    )
-
                     renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name_cb)
                     if renderer:
                         prompt_text_cb = renderer(tool_args_cb)

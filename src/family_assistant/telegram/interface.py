@@ -5,6 +5,7 @@ import logging
 from typing import TYPE_CHECKING
 
 import telegramify_markdown
+from PIL import Image
 from telegram import ForceReply, InputMediaPhoto
 from telegram.constants import ParseMode
 
@@ -12,8 +13,9 @@ from family_assistant.interfaces import ChatInterface
 from family_assistant.storage.context import DatabaseContext
 
 if TYPE_CHECKING:
-    from family_assistant.services.attachment_registry import AttachmentRegistry
     from telegram.ext import Application
+
+    from family_assistant.services.attachment_registry import AttachmentRegistry
 
 
 logger = logging.getLogger(__name__)
@@ -149,8 +151,6 @@ class TelegramChatInterface(ChatInterface):
         )
 
         try:
-            from PIL import Image
-
             TARGET_MEGAPIXELS = 20
 
             with Image.open(io.BytesIO(content)) as img:
