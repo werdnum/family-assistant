@@ -81,6 +81,7 @@ export default tseslint.config(
     ignores: [
       'node_modules/',
       'dist/',
+      'dev-dist/',
       '../src/family_assistant/static/dist/',
       'vite.config.js',
       '*.min.js',
