@@ -233,6 +233,44 @@ export const handlers = [
     });
   }),
 
+  // Mock client config endpoint for push notifications
+  http.get('/api/client_config', () => {
+    return HttpResponse.json({
+      vapidPublicKey:
+        'BF1GkKm7nXeKQPK8hMw-CwGlKgXUKW3lYVc5rIDKBhBgxXeVKRZKzRJ8YbGlDlm8ZH9YVGvF5JaK',
+    });
+  }),
+
+  // Mock push subscribe endpoint
+  http.post('/api/push/subscribe', async ({ request }) => {
+    const body = (await request.json()) as { subscription: Record<string, unknown> };
+
+    if (!body.subscription || !body.subscription.endpoint) {
+      return HttpResponse.json(
+        { status: 'error', message: 'Invalid subscription' },
+        { status: 400 }
+      );
+    }
+
+    return HttpResponse.json({
+      status: 'success',
+      id: `sub_${Date.now()}`,
+    });
+  }),
+
+  // Mock push unsubscribe endpoint
+  http.post('/api/push/unsubscribe', async ({ request }) => {
+    const body = (await request.json()) as { endpoint: string };
+
+    if (!body.endpoint) {
+      return HttpResponse.json({ status: 'error', message: 'Invalid endpoint' }, { status: 400 });
+    }
+
+    return HttpResponse.json({
+      status: 'success',
+    });
+  }),
+
   // Mock streaming chat endpoint - this is the key one for ChatApp
   http.post('/api/v1/chat/send_message_stream', async ({ request }) => {
     const body = (await request.json()) as {
