@@ -217,3 +217,116 @@ self.addEventListener('push', (event) => {
 
 This design provides a comprehensive plan for implementing PWA and push notification functionality
 in a way that is consistent with the existing architecture and best practices.
+
+## 4. Implementation Plan
+
+### Part 1: PWA and Frontend Setup
+
+1. **Install Dependencies:**
+
+   - Add `vite-plugin-pwa` to the `frontend`'s `package.json`.
+   - Run `npm install` in the `frontend` directory.
+
+2. **Update Vite Configuration:**
+
+   - Modify `frontend/vite.config.js` to include the `VitePWA` plugin as specified in the design
+     document.
+
+3. **Add Static Assets:**
+
+   - Create placeholder icon files in `frontend/public/`:
+     - `pwa-192x192.png`
+     - `pwa-512x512.png`
+     - `apple-touch-icon.png`
+     - `badge.png` (for notifications)
+
+4. **Update `index.html`:**
+
+   - Add the `<meta name="theme-color" ...>` and `<link rel="apple-touch-icon" ...>` tags to the
+     `<head>` of `frontend/index.html`.
+
+### Part 2: VAPID Key Generation and Backend Configuration
+
+1. **Install Dependency:**
+
+   - Add `py-vapid` to the project's Python dependencies in `pyproject.toml`.
+   - Run `uv pip install -e .` to install it.
+
+2. **Create Key Generation Script:**
+
+   - Create the file `scripts/generate_vapid_keys.py` with the content from the design document.
+
+3. **Generate and Configure Keys:**
+
+   - Run the script to generate the VAPID keys.
+   - Update configuration (`.env.example`, `config.yaml`, etc.) to include `VAPID_PUBLIC_KEY` and
+     `VAPID_PRIVATE_KEY`.
+   - Update `AGENTS.md` to document these new environment variables.
+
+### Part 3: Backend Implementation
+
+1. **Database Model:**
+
+   - Create `src/family_assistant/storage/models/push_subscription.py` and define the
+     `PushSubscription` SQLAlchemy model.
+   - Ensure the new model is imported in `src/family_assistant/storage/models/__init__.py`.
+
+2. **Database Migration:**
+
+   - Run `alembic revision --autogenerate -m "Add push_subscriptions table"` to create a new
+     migration script.
+   - Review the generated script in `alembic/versions/`.
+   - Run `alembic upgrade head` to apply the migration.
+
+3. **Database Repository:**
+
+   - Create `src/family_assistant/storage/repositories/push_subscription.py` to define the
+     `PushSubscriptionRepository` for CRUD operations.
+   - Expose the new repository in `src/family_assistant/storage/repositories/__init__.py`.
+
+4. **Push Notification Service:**
+
+   - Create `src/family_assistant/services/push_notification.py`.
+   - Implement the `PushNotificationService` with methods for sending notifications and handling
+     stale subscriptions, using the `py-vapid` library.
+   - Integrate this service into the application's dependency injection system.
+
+5. **API Endpoints:**
+
+   - Create `src/family_assistant/web/routers/client_config.py` and implement the
+     `GET /api/client_config` endpoint to expose the `VAPID_PUBLIC_KEY`.
+   - Create `src/family_assistant/web/routers/push.py` and implement the `POST /api/push/subscribe`
+     and `POST /api/push/unsubscribe` endpoints.
+   - Mount the new routers in the main FastAPI application.
+
+6. **Integrate Notification Trigger:**
+
+   - Modify existing services (e.g., `WebChatInterface`) to call the `PushNotificationService` when
+     a relevant event occurs (like a new message).
+
+### Part 4: Frontend Integration
+
+1. **Custom Service Worker:**
+
+   - Create a custom service worker file (e.g., `frontend/src/sw.js`).
+   - Add the `push` event listener logic to handle incoming notifications as described in the
+     design.
+   - Update the `VitePWA` configuration in `vite.config.js` to use this custom service worker
+     instead of generating one.
+
+2. **API Client:**
+
+   - Add new functions to the frontend API client to communicate with the new backend endpoints:
+     - `getClientConfig()`
+     - `subscribeToPush(subscription)`
+     - `unsubscribeFromPush(subscription)`
+
+3. **React Component:**
+
+   - Create a new component `frontend/src/components/PushNotificationButton.tsx`.
+   - This component will contain the logic to:
+     1. Fetch the VAPID key using `getClientConfig`.
+     2. Request user permission for notifications.
+     3. Subscribe or unsubscribe the browser's push manager.
+     4. Send the subscription details to the backend.
+   - Add this component to a suitable location in the application's UI, such as a settings page.
