@@ -10,7 +10,7 @@ import logging
 from typing import Any
 
 from family_assistant import calendar_integration
-from family_assistant.telegram_bot import telegramify_markdown
+import telegramify_markdown
 
 logger = logging.getLogger(__name__)
 

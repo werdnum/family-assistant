@@ -11,7 +11,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from family_assistant.telegram_bot import telegramify_markdown
+import telegramify_markdown
 from family_assistant.tools.types import ToolAttachment, ToolResult
 
 if TYPE_CHECKING:

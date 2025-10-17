@@ -76,7 +76,7 @@ from family_assistant.utils.scraping import PlaywrightScraper
 from family_assistant.web.app_creator import configure_app_auth, create_app
 from family_assistant.web.message_notifier import MessageNotifier
 
-from .telegram_bot import TelegramService
+from .telegram.service import TelegramService
 
 if TYPE_CHECKING:
     import socket

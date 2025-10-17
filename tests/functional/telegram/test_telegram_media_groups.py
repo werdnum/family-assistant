@@ -10,7 +10,7 @@ import pytest
 
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.telegram_bot import TelegramChatInterface
+from family_assistant.telegram.interface import TelegramChatInterface
 
 
 @pytest.mark.asyncio
