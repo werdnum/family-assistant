@@ -122,7 +122,9 @@ print(f"VAPID_PUBLIC_KEY={b64_public_key}")
 The generated keys will be provided to the application as environment variables: `VAPID_PUBLIC_KEY`
 and `VAPID_PRIVATE_KEY`. The keys are the raw key bytes, encoded using URL-safe base64 without
 padding. This format is compatible with `py_vapid.Vapid02.from_raw()` and
-`py_vapid.Vapid02.from_raw_public()`. This will be documented in `AGENTS.md`.
+`py_vapid.Vapid02.from_raw_public()`. The keys are stored in `config_data["pwa_config"]` and can be
+accessed via `config.get("pwa_config", {}).get("vapid_public_key")` and
+`config.get("pwa_config", {}).get("vapid_private_key")`. This will be documented in `AGENTS.md`.
 
 ### 3.3. Backend Implementation (Python/FastAPI)
 
@@ -162,7 +164,8 @@ to handle database operations for the `PushSubscription` model.
 A new router will be created to handle client-side configuration.
 
 - `GET /api/client_config`: Returns a JSON object with public configuration needed by the client.
-  This endpoint will require authentication. Initially, it will provide the VAPID public key:
+  This endpoint will require authentication. Initially, it will provide the VAPID public key from
+  `config["pwa_config"]["vapid_public_key"]`:
 
   ```json
   {
