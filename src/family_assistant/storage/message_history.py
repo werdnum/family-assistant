@@ -74,6 +74,7 @@ message_history_table = Table(
     Column(
         "processing_profile_id", String(255), nullable=True, index=True
     ),  # ID of the processing profile used
+    Column("user_id", String(255), nullable=True, index=True),
     Column(
         "attachments", JSON().with_variant(JSONB, "postgresql"), nullable=True
     ),  # Attachment metadata for files associated with this message
