@@ -28,6 +28,7 @@ Additional guidance is available in subdirectories:
   transformation recipes
 
 ## Style
+
 - Place all imports at the top of the file, organized by the isort rules in `pyproject.toml`.
 - Use type hints for all method parameters and return values.
 - All methods must have type hints for their parameters and return values.
@@ -148,6 +149,39 @@ alembic upgrade head
 # alembic migrations run on startup
 ```
 
+### Environment Variables for Push Notifications
+
+The following environment variables are required for PWA push notification functionality:
+
+- **`VAPID_PRIVATE_KEY`** - VAPID private key for signing push messages
+
+  - Format: Raw key bytes encoded with URL-safe base64, no padding
+  - Generate using: `python scripts/generate_vapid_keys.py`
+  - Example: `a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2`
+
+- **`VAPID_CONTACT_EMAIL`** - Admin contact email for VAPID 'sub' claim
+
+  - Format: `mailto:admin@example.com` or similar email
+  - Used for notifications when subscriptions fail
+  - Example: `mailto:admin@example.com`
+
+- **`VAPID_PUBLIC_KEY`** - (Optional) VAPID public key
+
+  - Format: Same URL-safe base64 encoding as private key
+  - Auto-derived from private key if not provided
+  - Needed if you want to explicitly provide the public key for client distribution
+
+**Key Generation**:
+
+```bash
+# Generate a new VAPID key pair
+python scripts/generate_vapid_keys.py
+
+# Output format:
+# VAPID_PRIVATE_KEY=<url-safe-base64-no-padding>
+# VAPID_PUBLIC_KEY=<url-safe-base64-no-padding>
+```
+
 ### Code Generation
 
 ```bash
@@ -257,9 +291,9 @@ overview of:
   NEVER make excuses like saying that test failures are 'unrelated' or 'separate issues'. You ALWAYS
   fix ALL test failures, even if you don't think you caused them.
 - **Assumption about test failures**: You are responsible for fixing all test failures, even if you
-  believe they are pre-existing. Since the project never commits with failing tests, any failure
-  you encounter should be treated as a result of your changes. If you suspect a test is flaky, you
-  may try re-running `poe test` to confirm, but you must ultimately resolve all failures before
+  believe they are pre-existing. Since the project never commits with failing tests, any failure you
+  encounter should be treated as a result of your changes. If you suspect a test is flaky, you may
+  try re-running `poe test` to confirm, but you must ultimately resolve all failures before
   committing.
 - **Hook bypassing**: NEVER attempt to bypass pre-commit hooks, PreToolUse hooks, or any other
   verification hooks (e.g., using `--no-verify`, `--no-gpg-sign`) without explicit permission from
