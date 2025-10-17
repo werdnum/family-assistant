@@ -44,6 +44,7 @@ repos:
         entry: bash -c 'cd frontend && files=(); for f in "$@"; do files+=("${f#frontend/}"); done && npx @biomejs/biome format --write "${files[@]}"' --
         language: system
         files: ^frontend/.*\.(js|jsx|ts|tsx|json)$
+        exclude: ^frontend/dev-dist/
         pass_filenames: true
       - id: eslint
         name: eslint

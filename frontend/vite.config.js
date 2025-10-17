@@ -2,6 +2,7 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { defineConfig } from 'vite';
+import { VitePWA } from 'vite-plugin-pwa';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -18,6 +19,47 @@ export default defineConfig(({ mode }) => ({
     include: ['vanilla-jsoneditor'],
   },
   plugins: [
+    VitePWA({
+      registerType: 'autoUpdate',
+      includeAssets: [
+        'favicon.ico',
+        'apple-touch-icon.png',
+        'pwa-192x192.png',
+        'pwa-512x512.png',
+        'badge.png',
+      ],
+      manifest: {
+        name: 'Family Assistant',
+        short_name: 'FamAssist',
+        description: 'Family Assistant PWA',
+        theme_color: '#ffffff',
+        icons: [
+          {
+            src: 'pwa-192x192.png',
+            sizes: '192x192',
+            type: 'image/png',
+          },
+          {
+            src: 'pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+          },
+          {
+            src: 'apple-touch-icon.png',
+            sizes: '180x180',
+            type: 'image/png',
+          },
+          {
+            src: 'badge.png',
+            sizes: '96x96',
+            type: 'image/png',
+          },
+        ],
+      },
+      devOptions: {
+        enabled: true,
+      },
+    }),
     react(),
     // Custom plugin to handle clean URLs (e.g., /chat -> /chat.html)
     {
@@ -52,7 +94,9 @@ export default defineConfig(({ mode }) => ({
             !url.pathname.startsWith('/@react-refresh') &&
             !url.pathname.startsWith('/src') &&
             !url.pathname.startsWith('/node_modules') &&
-            !url.pathname.includes('.html')
+            !url.pathname.includes('.html') &&
+            // Skip files with extensions (like .png, .jpg, .svg, .json, etc.)
+            !url.pathname.match(/\.\w+$/)
           ) {
             req.url = '/router.html' + url.search;
           }
