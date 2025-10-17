@@ -1005,6 +1005,7 @@ dependencies = [
     { name = "passlib", extra = ["bcrypt"] },
     { name = "pgvector" },
     { name = "playwright" },
+    { name = "py-vapid" },
     { name = "python-dateutil" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
@@ -1132,6 +1133,7 @@ requires-dist = [
     { name = "poethepoet", marker = "extra == 'dev'", specifier = ">=0.11.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.2.0" },
     { name = "psycopg-binary", marker = "extra == 'dev'", specifier = ">=3.1.0" },
+    { name = "py-vapid", specifier = ">=1.9.2" },
     { name = "pylint", marker = "extra == 'dev'", specifier = ">=3.0.0" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-alembic", marker = "extra == 'dev'", specifier = ">=0.11.0" },
@@ -3255,6 +3257,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/dd/7f/9998706bc516bdd664ccf929a1da6c6e5ee06e48f723ce45aae7cf3ff36e/puremagic-1.30.tar.gz", hash = "sha256:f9ff7ac157d54e9cf3bff1addfd97233548e75e685282d84ae11e7ffee1614c9", size = 314785, upload-time = "2025-07-04T18:48:36.061Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/91/ed/1e347d85d05b37a8b9a039ca832e5747e1e5248d0bd66042783ef48b4a37/puremagic-1.30-py3-none-any.whl", hash = "sha256:5eeeb2dd86f335b9cfe8e205346612197af3500c6872dffebf26929f56e9d3c1", size = 43304, upload-time = "2025-07-04T18:48:34.801Z" },
+]
+
+[[package]]
+name = "py-vapid"
+version = "1.9.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ff/57/5c1c61f27ce01f939443cf3f6c279a295f7ec0327b18a1cbbcfefe0b5456/py_vapid-1.9.2.tar.gz", hash = "sha256:3c8973b6cf8384ad0c9ae64d6270ccc480e0b92c702d8f5ea2cc03e6b51247f9", size = 20300, upload-time = "2024-11-19T21:55:41.859Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/73/fb/b877a221b09dabcebeb073d5e7f19244f3fa1d5aec87092c359a6049a006/py_vapid-1.9.2-py3-none-any.whl", hash = "sha256:4ccf8a00fc54f1f99f66fb543c96f2c82622508ad814b6e9225f2c26948934d7", size = 21492, upload-time = "2024-11-19T21:55:40.832Z" },
 ]
 
 [[package]]
