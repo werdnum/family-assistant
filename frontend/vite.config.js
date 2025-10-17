@@ -96,7 +96,7 @@ export default defineConfig(({ mode }) => ({
             !url.pathname.startsWith('/node_modules') &&
             !url.pathname.includes('.html') &&
             // Skip files with extensions (like .png, .jpg, .svg, .json, etc.)
-            !url.pathname.match(/\.\w+$/)
+            !url.pathname.match(/\.[a-zA-Z0-9-]+$/)
           ) {
             req.url = '/router.html' + url.search;
           }
