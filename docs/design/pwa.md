@@ -234,10 +234,10 @@ in a way that is consistent with the existing architecture and best practices.
 
 3. **Add Static Assets:**
 
-   - Create placeholder icon files in `frontend/public/`:
+   - The existing `logo.png` will be used to generate the required icons.
+   - The following icons will be generated in `frontend/public/`:
      - `pwa-192x192.png`
      - `pwa-512x512.png`
-     - `apple-touch-icon.png`
      - `badge.png` (for notifications)
 
 4. **Update `index.html`:**
@@ -330,3 +330,35 @@ in a way that is consistent with the existing architecture and best practices.
      3. Subscribe or unsubscribe the browser's push manager.
      4. Send the subscription details to the backend.
    - Add this component to a suitable location in the application's UI, such as a settings page.
+
+## 5. Progress
+
+### Part 1: PWA and Frontend Setup
+
+- [x] **Install Dependencies:** `vite-plugin-pwa` has been added to the frontend dependencies.
+- [x] **Update Vite Configuration:** `frontend/vite.config.js` has been updated with the `VitePWA`
+  plugin.
+- [x] **Add Static Assets:** PWA icons have been generated from `logo.png` and placed in
+  `frontend/public/`.
+- [x] **Update `index.html`:** The theme-color meta tag has been added to `frontend/index.html`.
+
+### Part 2: VAPID Key Generation and Backend Configuration
+
+- [x] **Install Dependency:** `py-vapid` has been added to the backend dependencies.
+- [ ] **Create Key Generation Script:**
+- [ ] **Generate and Configure Keys:**
+
+### Part 3: Backend Implementation
+
+- [ ] **Database Model:**
+- [ ] **Database Migration:**
+- [ ] **Database Repository:**
+- [ ] **Push Notification Service:**
+- [ ] **API Endpoints:**
+- [ ] **Integrate Notification Trigger:**
+
+### Part 4: Frontend Integration
+
+- [ ] **Custom Service Worker:**
+- [ ] **API Client:**
+- [ ] **React Component:**
