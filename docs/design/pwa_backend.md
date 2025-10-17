@@ -29,8 +29,10 @@ WebChatInterface.
 Add VAPID key reading in `load_config()` after other secrets (around line 290):
 
 ```python
-config_data["vapid_public_key"] = os.getenv("VAPID_PUBLIC_KEY")
-config_data["vapid_private_key"] = os.getenv("VAPID_PRIVATE_KEY")
+# PWA Configuration from Env Vars
+config_data.setdefault("pwa_config", {})
+config_data["pwa_config"]["vapid_public_key"] = os.getenv("VAPID_PUBLIC_KEY")
+config_data["pwa_config"]["vapid_private_key"] = os.getenv("VAPID_PRIVATE_KEY")
 ```
 
 **Testing**: Unit test that verifies config loads keys from environment
@@ -152,8 +154,8 @@ In `setup_dependencies()` after AttachmentRegistry (around line 423):
 
 ```python
 # Initialize PushNotificationService
-vapid_public_key = self.config.get("vapid_public_key")
-vapid_private_key = self.config.get("vapid_private_key")
+vapid_public_key = self.config.get("pwa_config", {}).get("vapid_public_key")
+vapid_private_key = self.config.get("pwa_config", {}).get("vapid_private_key")
 
 from family_assistant.services.push_notification import PushNotificationService
 self.push_notification_service = PushNotificationService(

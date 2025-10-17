@@ -106,6 +106,10 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
                 },
             }
         },  # Calendar configuration - populated from CALDAV_*/ICAL_URLS env vars + duplicate detection settings
+        "pwa_config": {
+            "vapid_public_key": None,  # VAPID public key for push notifications
+            "vapid_private_key": None,  # VAPID private key for push notifications
+        },
         "llm_parameters": {},  # Global LLM parameters
         "mcp_config": {"mcpServers": {}},  # Global MCP server definitions
         "default_service_profile_id": "default_assistant",  # Default profile ID
@@ -288,6 +292,11 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
                 f"Invalid WILLYWEATHER_LOCATION_ID: '{willyweather_loc_id_env}'. Must be an integer. Using previous value: {config_data.get('willyweather_location_id')}"
             )
     # If not set or invalid, it remains None or its previous value from YAML/defaults.
+
+    # PWA Configuration from Env Vars
+    config_data.setdefault("pwa_config", {})
+    config_data["pwa_config"]["vapid_public_key"] = os.getenv("VAPID_PUBLIC_KEY")
+    config_data["pwa_config"]["vapid_private_key"] = os.getenv("VAPID_PRIVATE_KEY")
 
     config_data["database_url"] = os.getenv("DATABASE_URL", config_data["database_url"])
 
@@ -668,6 +677,14 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
         and "caldav" in loggable_config["calendar_config"]
     ):
         loggable_config["calendar_config"]["caldav"].pop("password", None)
+
+    # Exclude VAPID private key from pwa_config
+    if "pwa_config" in loggable_config:
+        loggable_config["pwa_config"] = {
+            k: v
+            for k, v in loggable_config["pwa_config"].items()
+            if k not in {"vapid_private_key"}
+        }
 
     logger.info(
         f"Final configuration loaded (excluding secrets): {json.dumps(loggable_config, indent=2, default=str)}"
