@@ -116,45 +116,50 @@ ______________________________________________________________________
 
 ### Task 5: Complete PushNotificationService Implementation
 
+**Status: ✅ Completed**
+
 **File**: `src/family_assistant/services/push_notification.py` **Delegate to**: focused-coder agent
 
-Implement py-vapid integration:
+Implement pywebpush integration:
 
-- Import py-vapid and base64
-- Decode URL-safe base64 VAPID keys (strip padding with `.rstrip('=')`)
-- Implement `send_notification()` using py-vapid's `webpush()`
+- Import pywebpush and json
+- Build VAPID claims from contact email ("mailto:{email}")
+- Implement `send_notification()` using pywebpush's `webpush()`
 - Fetch subscriptions from database via repository for user_identifier
 - Send to all user subscriptions
 - Handle 410 Gone responses → delete stale subscriptions via repository
 - Error handling: log failures, don't raise exceptions
 - Type hints for all methods
 
-**Testing**: Unit test with mocked httpx.post responses
+**Testing**: Unit test with mocked webpush
 
-**Commit**: `feat(pwa): Implement py-vapid push notification sending`
+**Commit**: `feat(pwa): Implement web push notification sending with pywebpush`
 
 ______________________________________________________________________
 
 ### Task 6: Add PushNotificationService Tests
 
+**Status: ✅ Completed**
+
 **File**: `tests/unit/test_push_notification_service.py` (new) **Delegate to**: focused-coder agent
 
 Test in isolation:
 
-- Test sending to single subscription
-- Test sending to multiple subscriptions
+- Test disabled service (no private key or no contact email)
+- Test successful notification sending
 - Test handling 410 Gone (verify cleanup via repository)
-- Test handling other HTTP errors (4xx, 5xx)
-- Test disabled service (no VAPID keys - should not send)
-- Mock httpx.post and repository methods
+- Test handling other WebPushException errors (4xx, 5xx)
+- Mock pywebpush for all tests
 
 **Testing**: `pytest tests/unit/test_push_notification_service.py -xq`
 
-**Commit**: `test(pwa): Add unit tests for PushNotificationService`
+**Commit**: `feat(pwa): Implement web push notification sending with pywebpush`
 
 ______________________________________________________________________
 
 ### Task 7: Initialize PushNotificationService in Assistant
+
+**Status: ⏳ Pending**
 
 **File**: `src/family_assistant/assistant.py` **Delegate to**: focused-coder agent
 
@@ -162,13 +167,13 @@ In `setup_dependencies()` after AttachmentRegistry (around line 423):
 
 ```python
 # Initialize PushNotificationService
-vapid_public_key = self.config.get("pwa_config", {}).get("vapid_public_key")
 vapid_private_key = self.config.get("pwa_config", {}).get("vapid_private_key")
+vapid_contact_email = self.config.get("pwa_config", {}).get("vapid_contact_email")
 
 from family_assistant.services.push_notification import PushNotificationService
 self.push_notification_service = PushNotificationService(
     vapid_private_key=vapid_private_key,
-    vapid_public_key=vapid_public_key
+    vapid_contact_email=vapid_contact_email
 )
 # Store in app.state for lifespan to retrieve
 self.fastapi_app.state.push_notification_service = self.push_notification_service
@@ -182,6 +187,8 @@ logger.info(f"PushNotificationService initialized (enabled={self.push_notificati
 ______________________________________________________________________
 
 ### Task 8: Integrate Push Notifications in WebChatInterface
+
+**Status: ⏳ Pending**
 
 **Files**:
 
@@ -242,6 +249,8 @@ ______________________________________________________________________
 
 ### Task 9: Integration Tests
 
+**Status: ⏳ Pending**
+
 **File**: `tests/functional/web/test_web_chat_push_integration.py` (new) **Delegate to**:
 focused-coder agent
 
@@ -263,23 +272,28 @@ ______________________________________________________________________
 
 ### Task 10: Update Documentation and Add banned_commands Entry
 
+**Status: ⏳ Pending**
+
 **Files**:
 
 - `docs/design/pwa.md`
-- `AGENTS.md`
+- `CLAUDE.md` (AGENTS.md)
 - `.claude/banned_commands.json`
 
 **Delegate to**: focused-coder agent
 
 **pwa.md**: Mark Part 3 backend as ✅ complete, update notification trigger status
 
-**AGENTS.md**: Add VAPID environment variables section:
+**CLAUDE.md**: Add VAPID environment variables section in development section:
 
 ```markdown
-- `VAPID_PUBLIC_KEY` - VAPID public key for push notifications (URL-safe base64, no padding)
-- `VAPID_PRIVATE_KEY` - VAPID private key for push notifications (URL-safe base64, no padding)
-  - Generate using: `python scripts/generate_vapid_keys.py`
+## Environment Variables for Push Notifications
+
+- `VAPID_PRIVATE_KEY` - VAPID private key for signing push messages (URL-safe base64, no padding)
+- `VAPID_CONTACT_EMAIL` - Admin contact email for VAPID 'sub' claim (e.g., admin@example.com)
+  - Generate keys using: `python scripts/generate_vapid_keys.py`
   - Format: Raw key bytes encoded with `base64.urlsafe_b64encode().rstrip(b'=').decode()`
+  - Note: `VAPID_PUBLIC_KEY` is also supported but not required for sending notifications
 ```
 
 **.claude/banned_commands.json**: Add entry to prevent DATABASE_URL override:
@@ -333,12 +347,14 @@ All testing via pytest:
 ## Success Criteria
 
 ✅ user_id column added to message_history (proper DB schema) ✅ Messages saved with user_id from
-authentication context ✅ VAPID keys read from environment in config ✅ PushNotificationService sends
-notifications via py-vapid ✅ Stale subscriptions cleaned up on 410 Gone ✅ Service initialized in
-Assistant, stored in app.state ✅ WebChatInterface receives service via constructor (DI from
-lifespan) ✅ Push notifications sent on assistant message delivery ✅ User identified from database,
-not string parsing ✅ All pytest tests pass ✅ `poe test` passes ✅ Documentation complete ✅
-banned_commands.json updated to prevent DATABASE_URL override
+authentication context ✅ VAPID keys (private key + contact email) read from environment in config ✅
+PushNotificationService sends notifications via pywebpush ✅ Stale subscriptions (410 Gone) cleaned
+up automatically ✅ Comprehensive unit tests for PushNotificationService (144 lines) ⏳ Service
+initialized in Assistant, stored in app.state (Task 7) ⏳ WebChatInterface receives service via
+constructor (DI from lifespan) (Task 8) ⏳ Push notifications sent on assistant message delivery
+(Task 8) ✅ User identified from database, not string parsing ✅ All pytest tests pass (1384 passed, 2
+skipped) ✅ `poe test` passes completely ⏳ Documentation complete (Task 10) ⏳ banned_commands.json
+updated to prevent DATABASE_URL override (Task 10)
 
 ## Progress Tracking
 
