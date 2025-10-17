@@ -21,6 +21,9 @@ export default defineConfig(({ mode }) => ({
   plugins: [
     VitePWA({
       registerType: 'autoUpdate',
+      strategies: 'injectManifest', // Use custom service worker
+      srcDir: 'src', // Source directory containing sw.js
+      filename: 'sw.js', // Custom service worker filename
       includeAssets: [
         'favicon.ico',
         'apple-touch-icon.png',
@@ -55,6 +58,11 @@ export default defineConfig(({ mode }) => ({
             type: 'image/png',
           },
         ],
+      },
+      injectManifest: {
+        // Workbox configuration for manifest injection
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        globIgnores: ['**/sw.js'], // Don't precache the SW itself
       },
       devOptions: {
         enabled: true,

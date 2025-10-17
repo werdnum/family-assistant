@@ -25,6 +25,7 @@ import { ToolConfirmationProvider } from './ToolConfirmationContext';
 import ProfileSelector from './ProfileSelector';
 import { useNotifications } from './useNotifications';
 import { NotificationSettings } from './NotificationSettings';
+import { PushNotificationButton } from './PushNotificationButton';
 
 // Helper function to parse tool arguments
 const parseToolArguments = (args: unknown): Record<string, unknown> => {
@@ -878,6 +879,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               onRequestPermission={requestNotificationPermission}
               isSupported={notificationsSupported}
             />
+
+            <PushNotificationButton />
 
             {/* Main Navigation Menu */}
             <NavigationSheet currentPage="chat">

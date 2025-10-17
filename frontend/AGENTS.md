@@ -283,6 +283,43 @@ All API calls go through the backend at `/api/` endpoints. The frontend assumes:
 - Error responses with appropriate HTTP status codes
 - Streaming support for chat responses
 
+### Push Notifications
+
+The application supports Web Push API for push notifications that work even when the app is closed.
+
+#### Implementation
+
+- **Custom Service Worker** (`src/sw.js`): Handles push events and displays notifications
+- **API Client** (`src/api/pushClient.ts`): TypeScript functions for push API endpoints
+- **UI Component** (`src/chat/PushNotificationButton.tsx`): Subscribe/unsubscribe UI
+- **Vite Config**: Configured with `injectManifest` strategy for custom service worker
+
+#### Key Features
+
+- Conditional rendering based on VAPID key availability
+- Requires browser notification permissions
+- Manages multiple subscriptions per user
+- Handles subscription lifecycle
+
+#### API Endpoints
+
+- `GET /api/client_config` - Returns VAPID public key
+- `POST /api/push/subscribe` - Subscribe to push notifications
+- `POST /api/push/unsubscribe` - Unsubscribe from push notifications
+
+#### Testing
+
+Push notification functionality is tested via:
+
+- Component tests for PushNotificationButton
+- Unit tests for pushClient API functions
+- MSW handlers for backend endpoints
+
+For detailed testing patterns, see the test files:
+
+- `src/chat/__tests__/PushNotificationButton.test.tsx`
+- `src/api/__tests__/pushClient.test.ts`
+
 ## Contributing
 
 When adding new features:
