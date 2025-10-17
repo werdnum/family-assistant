@@ -401,9 +401,13 @@ For detailed task breakdown and implementation progress, see
 
 ### Part 4: Frontend Integration
 
-- [ ] **Custom Service Worker:**
-- [ ] **API Client:**
-- [ ] **React Component:**
+- [x] **Custom Service Worker:** Created `frontend/src/sw.js` with push event handling and
+  notification click support
+- [x] **API Client:** Implemented `frontend/src/api/pushClient.ts` with typed functions for push
+  endpoints
+- [x] **React Component:** Created `PushNotificationButton.tsx` and integrated into ChatApp header
+- [x] **Testing:** Added component tests and API client tests with MSW handlers
+- [x] **Documentation:** Updated frontend/CLAUDE.md with push notification implementation details
 
 ## 6. Testing Strategy
 
