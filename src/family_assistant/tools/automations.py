@@ -10,6 +10,7 @@ from family_assistant.tools.types import ToolResult
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from family_assistant.storage.context import DatabaseContext
     from family_assistant.storage.repositories.automations import AutomationType
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -281,6 +282,44 @@ For script:
 ]
 
 
+# Helper function to fetch and validate an automation exists
+async def _get_automation_or_error(
+    db_context: DatabaseContext,
+    automation_id: int,
+    automation_type: str,
+) -> tuple[dict[str, Any] | None, ToolResult | None]:
+    """
+    Fetch an automation by ID, allowing access from any conversation.
+
+    Args:
+        db_context: Database context
+        automation_id: ID of the automation to fetch
+        automation_type: Type of automation ('event' or 'schedule')
+
+    Returns:
+        Tuple of (automation dict, error ToolResult). If automation exists, returns (automation, None).
+        If not found, returns (None, error ToolResult).
+    """
+    try:
+        validated_type = _validate_automation_type(automation_type)
+        automation = await db_context.automations.get_by_id(
+            automation_id=automation_id,
+            automation_type=validated_type,
+            conversation_id=None,
+        )
+
+        if not automation:
+            error_msg = f"Automation {automation_id} not found"
+            return None, ToolResult(
+                text=f"Error: {error_msg}", data={"error": error_msg}
+            )
+
+        return automation, None
+    except ValueError as e:
+        logger.error(f"Validation error: {e}")
+        return None, ToolResult(text=f"Error: {str(e)}", data={"error": str(e)})
+
+
 # Helper function for type-safe automation type casting
 def _validate_automation_type(automation_type: str) -> AutomationType:
     """
@@ -444,7 +483,7 @@ async def list_automations_tool(
         )
 
         automations, _total_count = await exec_context.db_context.automations.list_all(
-            conversation_id=exec_context.conversation_id,
+            conversation_id=None,
             automation_type=type_filter,
             enabled=True if enabled_only else None,
         )
@@ -521,7 +560,7 @@ async def get_automation_tool(
         automation = await exec_context.db_context.automations.get_by_id(
             automation_id=automation_id,
             automation_type=type_param,
-            conversation_id=exec_context.conversation_id,
+            conversation_id=None,
         )
 
         if not automation:
@@ -627,7 +666,7 @@ async def update_automation_tool(
         existing = await exec_context.db_context.automations.get_by_id(
             automation_id=automation_id,
             automation_type=type_param,
-            conversation_id=exec_context.conversation_id,
+            conversation_id=None,
         )
 
         if not existing:
@@ -653,7 +692,7 @@ async def update_automation_tool(
 
             success = await exec_context.db_context.events.update_event_listener(
                 listener_id=automation_id,
-                conversation_id=exec_context.conversation_id,
+                conversation_id=existing["conversation_id"],
                 name=existing["name"],  # Keep existing name
                 description=description
                 if description is not None
@@ -675,7 +714,7 @@ async def update_automation_tool(
             # Only pass parameters that were actually provided (not None)
             update_kwargs: dict[str, Any] = {
                 "automation_id": automation_id,
-                "conversation_id": exec_context.conversation_id,
+                "conversation_id": existing["conversation_id"],
             }
             if recurrence_rule is not None:
                 update_kwargs["recurrence_rule"] = recurrence_rule
@@ -723,10 +762,19 @@ async def enable_automation_tool(
     try:
         type_param = _validate_automation_type(automation_type)
 
+        # Get the automation to retrieve its conversation_id
+        automation, error_result = await _get_automation_or_error(
+            exec_context.db_context, automation_id, automation_type
+        )
+        if error_result:
+            return error_result
+
+        assert automation is not None
+
         success = await exec_context.db_context.automations.update_enabled(
             automation_id=automation_id,
             automation_type=type_param,
-            conversation_id=exec_context.conversation_id,
+            conversation_id=automation["conversation_id"],
             enabled=True,
         )
 
@@ -761,10 +809,19 @@ async def disable_automation_tool(
     try:
         type_param = _validate_automation_type(automation_type)
 
+        # Get the automation to retrieve its conversation_id
+        automation, error_result = await _get_automation_or_error(
+            exec_context.db_context, automation_id, automation_type
+        )
+        if error_result:
+            return error_result
+
+        assert automation is not None
+
         success = await exec_context.db_context.automations.update_enabled(
             automation_id=automation_id,
             automation_type=type_param,
-            conversation_id=exec_context.conversation_id,
+            conversation_id=automation["conversation_id"],
             enabled=False,
         )
 
@@ -799,10 +856,19 @@ async def delete_automation_tool(
     try:
         type_param = _validate_automation_type(automation_type)
 
+        # Get the automation to retrieve its conversation_id
+        automation, error_result = await _get_automation_or_error(
+            exec_context.db_context, automation_id, automation_type
+        )
+        if error_result:
+            return error_result
+
+        assert automation is not None
+
         success = await exec_context.db_context.automations.delete(
             automation_id=automation_id,
             automation_type=type_param,
-            conversation_id=exec_context.conversation_id,
+            conversation_id=automation["conversation_id"],
         )
 
         if success:
@@ -836,11 +902,11 @@ async def get_automation_stats_tool(
     try:
         type_param = _validate_automation_type(automation_type)
 
-        # First verify the automation belongs to this conversation
+        # First verify the automation exists
         automation = await exec_context.db_context.automations.get_by_id(
             automation_id=automation_id,
             automation_type=type_param,
-            conversation_id=exec_context.conversation_id,
+            conversation_id=None,
         )
 
         if not automation:
