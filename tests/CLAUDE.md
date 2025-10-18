@@ -67,19 +67,6 @@ pytest tests/path/to/test.py --flake-finder --flake-runs=100 -x
 This is much more efficient than running tests in a loop. The `-x` flag stops on first failure.
 Never use manual loops or shell scripts to repeatedly run tests.
 
-## Known Flaky Tests
-
-This section documents tests that are known to be flaky and their causes:
-
-### `test_generate_image_with_real_api`
-
-- **File**: `tests/functional/test_image_generation_integration.py`
-- **Issue**: Intermittently fails with "No image data found in Gemini API response"
-- **Cause**: Gemini's image generation API can return valid responses but without the expected
-  `inline_data` field, possibly due to API rate limiting or transient service issues
-- **Resolution**: Test passes when run individually. If this fails in CI, re-run the workflow to
-  verify it's not a regression
-
 ## Running Tests
 
 ```bash

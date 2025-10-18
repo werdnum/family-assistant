@@ -16,6 +16,10 @@ from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 from .conftest import WebTestFixture
 
 
+@pytest.mark.flaky(
+    reruns=2,
+    reason="Timing issue in SQLite CI environment - 404 on attachment retrieval or Failed to process attachment errors",
+)
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_image_upload_basic_functionality(
