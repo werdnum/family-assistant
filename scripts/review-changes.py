@@ -687,7 +687,10 @@ def format_human_output(review_data: dict[str, Any], exit_code: int) -> None:
 
 
 def review_changes(
-    mode: str = "staged", output_json: bool = False, model_name: str | None = None
+    mode: str = "staged",
+    output_json: bool = False,
+    model_name: str | None = None,
+    command: str | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """
     Main review function using LLM with tools.
@@ -696,6 +699,7 @@ def review_changes(
         mode: "staged" or "commit"
         output_json: Whether to output JSON instead of human-readable format
         model_name: Optional model name to use (e.g., 'gpt-4o', 'claude-3.5-sonnet')
+        command: Optional git command being executed (for context)
 
     Returns:
         Tuple of (exit_code, review_data)
@@ -783,6 +787,12 @@ def review_changes(
         "- positive_aspects: A list of strings describing good practices (or empty list)\n"
     )
 
+    if command:
+        prompt_parts.append(f"\nGit Command:\n{command}")
+        prompt_parts.append(
+            "\nThis shows the git command being executed, which includes the commit message and any flags."
+        )
+
     if was_truncated:
         prompt_parts.append("\nNOTE: The diff has been truncated to fit size limits.")
         prompt_parts.append(f"Changed files: {', '.join(changed_files)}")
@@ -824,6 +834,8 @@ Key points to remember:
 - Code prepared for future use with clear documentation is intentional, not a flaw
 - Path validation using relative_to() or similar IS proper validation
 - subprocess.run() with list arguments (not shell=True) is safe from injection
+- If a git command is provided, use it to understand the developer's stated intent in the commit message
+- Check if changes align with what the commit message describes
 
 TOOLS AVAILABLE:
 - read_file(path, start_line, end_line): Read file contents or specific lines
@@ -1080,6 +1092,11 @@ Exit codes:
         type=str,
         help="LLM model to use for review (e.g., 'gpt-4o', 'claude-3.5-sonnet')",
     )
+    parser.add_argument(
+        "--command",
+        type=str,
+        help="Git command being executed (for context, typically includes commit message)",
+    )
 
     args = parser.parse_args()
 
@@ -1101,9 +1118,10 @@ Exit codes:
     mode = "commit" if args.commit else "staged"
     output_json = args.json
     model_name = args.model
+    command = args.command
 
     try:
-        exit_code, _ = review_changes(mode, output_json, model_name)
+        exit_code, _ = review_changes(mode, output_json, model_name, command)
         sys.exit(exit_code)
     except KeyboardInterrupt:
         print("\nReview cancelled by user", file=sys.stderr)
