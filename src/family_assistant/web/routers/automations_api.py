@@ -8,6 +8,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.models import Automation
 from family_assistant.web.dependencies import get_db
 
 logger = logging.getLogger(__name__)
@@ -115,42 +116,29 @@ class UpdateScheduleAutomationRequest(BaseModel):
     enabled: bool | None | object = _UNSET
 
 
-def _format_automation_response(automation: dict[str, Any]) -> AutomationResponse:
-    """Format automation dict into response model."""
-    automation_type = automation["type"]
-
-    # Common fields
-    response_data = {
-        "id": automation["id"],
-        "type": automation_type,
-        "name": automation["name"],
-        "description": automation.get("description"),
-        "conversation_id": automation["conversation_id"],
-        "interface_type": automation["interface_type"],
-        "action_type": automation["action_type"],
-        "action_config": automation["action_config"],
-        "enabled": automation["enabled"],
-        "created_at": automation["created_at"],
-        "last_execution_at": automation.get("last_execution_at"),
-    }
-
-    # Type-specific fields
-    if automation_type == "event":
-        response_data.update({
-            "source_id": automation["source_id"],
-            "match_conditions": automation["match_conditions"],
-            "condition_script": automation.get("condition_script"),
-            "one_time": automation["one_time"],
-            "daily_executions": automation.get("daily_executions", 0),
-        })
-    else:  # schedule
-        response_data.update({
-            "recurrence_rule": automation["recurrence_rule"],
-            "next_scheduled_at": automation.get("next_scheduled_at"),
-            "execution_count": automation.get("execution_count", 0),
-        })
-
-    return AutomationResponse(**response_data)
+def _format_automation_response(automation: Automation) -> AutomationResponse:
+    """Format automation model into response model."""
+    return AutomationResponse(
+        id=automation.id,
+        type=automation.type,
+        name=automation.name,
+        description=automation.description,
+        conversation_id=automation.conversation_id,
+        interface_type=automation.interface_type,
+        action_type=automation.action_type,
+        action_config=automation.action_config,
+        enabled=automation.enabled,
+        created_at=automation.created_at,
+        last_execution_at=automation.last_execution_at,
+        source_id=automation.source_id,
+        match_conditions=automation.match_conditions,
+        condition_script=automation.condition_script,
+        one_time=automation.one_time,
+        daily_executions=automation.daily_executions,
+        recurrence_rule=automation.recurrence_rule,
+        next_scheduled_at=automation.next_scheduled_at,
+        execution_count=automation.execution_count,
+    )
 
 
 @automations_api_router.get("")
@@ -414,14 +402,14 @@ async def update_automation(
         raise HTTPException(status_code=404, detail="Automation not found")
 
     # Verify conversation_id matches for security
-    if existing["conversation_id"] != conversation_id:
+    if existing.conversation_id != conversation_id:
         raise HTTPException(status_code=403, detail="Access denied")
 
     # Check name uniqueness if name is being changed
     if (
         request.name is not _UNSET
         and request.name is not None
-        and request.name != existing["name"]
+        and request.name != existing.name
     ):
         is_available, error_msg = await db.automations.check_name_available(
             name=cast("str", request.name),
@@ -443,46 +431,46 @@ async def update_automation(
 
             success = await db.events.update_event_listener(
                 listener_id=automation_id,
-                conversation_id=existing["conversation_id"],
+                conversation_id=existing.conversation_id,
                 name=cast(
                     "str",
-                    request.name if request.name is not _UNSET else existing["name"],
+                    request.name if request.name is not _UNSET else existing.name,
                 ),
                 description=cast(
                     "str | None",
                     request.description
                     if request.description is not _UNSET
-                    else existing["description"],
+                    else existing.description,
                 ),
                 match_conditions=cast(
                     "dict[str, Any]",
                     request.match_conditions
                     if request.match_conditions is not _UNSET
-                    else existing["match_conditions"],
+                    else existing.match_conditions,
                 ),
                 action_config=cast(
                     "dict[str, Any] | None",
                     request.action_config
                     if request.action_config is not _UNSET
-                    else existing["action_config"],
+                    else existing.action_config,
                 ),
                 one_time=cast(
                     "bool",
                     request.one_time
                     if request.one_time is not _UNSET
-                    else existing["one_time"],
+                    else existing.one_time,
                 ),
                 enabled=cast(
                     "bool",
                     request.enabled
                     if request.enabled is not _UNSET
-                    else existing["enabled"],
+                    else existing.enabled,
                 ),
                 condition_script=cast(
                     "str | None",
                     request.condition_script
                     if request.condition_script is not _UNSET
-                    else existing.get("condition_script"),
+                    else existing.condition_script,
                 ),
             )
         else:  # schedule
@@ -495,7 +483,7 @@ async def update_automation(
 
             success = await db.schedule_automations.update(
                 automation_id=automation_id,
-                conversation_id=existing["conversation_id"],
+                conversation_id=existing.conversation_id,
                 name=request.name,  # Pass _UNSET through for proper sentinel handling
                 description=request.description,
                 recurrence_rule=request.recurrence_rule,
@@ -595,7 +583,7 @@ async def delete_automation(
         raise HTTPException(status_code=404, detail="Automation not found")
 
     # Verify conversation_id matches for security
-    if automation["conversation_id"] != conversation_id:
+    if automation.conversation_id != conversation_id:
         raise HTTPException(status_code=403, detail="Access denied")
 
     success = await db.automations.delete(
@@ -607,7 +595,7 @@ async def delete_automation(
     if not success:
         raise HTTPException(status_code=500, detail="Failed to delete automation")
 
-    return {"message": f"Automation '{automation['name']}' deleted successfully"}
+    return {"message": f"Automation '{automation.name}' deleted successfully"}
 
 
 @automations_api_router.get("/{automation_type}/{automation_id}/stats")
@@ -637,7 +625,7 @@ async def get_automation_stats(
         raise HTTPException(status_code=404, detail="Automation not found")
 
     # Verify conversation_id matches for security
-    if automation["conversation_id"] != conversation_id:
+    if automation.conversation_id != conversation_id:
         raise HTTPException(status_code=403, detail="Access denied")
 
     stats = await db.automations.get_execution_stats(

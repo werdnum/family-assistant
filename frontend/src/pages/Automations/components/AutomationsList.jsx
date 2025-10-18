@@ -40,6 +40,7 @@ const ACTION_METADATA = {
 const AutomationsList = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [automations, setAutomations] = useState([]);
+  const [allAutomations, setAllAutomations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isFiltersOpen, setIsFiltersOpen] = useState(true);
@@ -105,6 +106,26 @@ const AutomationsList = () => {
     }
   };
 
+  // Fetch all automations for the filter dropdown on component mount
+  useEffect(() => {
+    const fetchAllAutomations = async () => {
+      try {
+        const response = await fetch('/api/automations');
+        if (!response.ok) {
+          throw new Error(`Failed to fetch automations: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        setAllAutomations(data.automations || []);
+      } catch (_err) {
+        // Silently handle errors for the all automations fetch
+        // This is only for the filter dropdown, not critical
+      }
+    };
+
+    fetchAllAutomations();
+  }, []);
+
   // Fetch data when filters change
   useEffect(() => {
     fetchAutomations(currentType, currentEnabled, currentConversation);
@@ -167,8 +188,13 @@ const AutomationsList = () => {
   const filtersActive =
     currentType !== 'all' || currentEnabled !== '' || currentConversation !== 'all';
 
-  // Extract unique conversation IDs from automations
-  const uniqueConversations = Array.from(new Set(automations.map((a) => a.conversation_id))).sort();
+  // Extract unique conversation IDs from all automations (not filtered)
+  // Filter out null/undefined and sort
+  const uniqueConversations = Array.from(
+    new Set(
+      allAutomations.map((a) => a.conversation_id).filter((id) => id !== null && id !== undefined)
+    )
+  ).sort();
 
   useEffect(() => {
     if (filtersActive) {
