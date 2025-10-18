@@ -542,45 +542,103 @@ class ChatPage(BasePage):
             return None
 
     async def wait_for_assistant_response(self, timeout: int = 30000) -> None:
-        """Wait for assistant to complete responding.
+        """Wait for the assistant to finish rendering its latest response."""
 
-        Args:
-            timeout: Maximum time to wait in milliseconds
-        """
-        # Wait for at least one assistant message to appear
-        try:
-            await self.page.wait_for_selector(
-                self.MESSAGE_ASSISTANT, state="visible", timeout=timeout
-            )
-        except Exception:
-            # Fallback: wait for any assistant message element
-            await self.page.wait_for_selector(
-                "div[data-testid='assistant-message'], div.flex.items-start.gap-3",
-                state="visible",
-                timeout=timeout,
-            )
+        selectors = {
+            "assistant": self.MESSAGE_ASSISTANT,
+            "assistantContent": self.MESSAGE_ASSISTANT_CONTENT,
+            "chatInput": self.CHAT_INPUT,
+        }
 
-        # Wait for streaming to complete by checking for stable message count
-        # This waits until no new messages are being added to the DOM
-        await self.page.wait_for_function(
-            """() => {
-                const messages = document.querySelectorAll('[data-testid="assistant-message"]');
-                if (messages.length === 0) return false;
-                const lastMessage = messages[messages.length - 1];
-                // Check if last message has content (not just loading)
-                const hasContent = lastMessage.textContent && lastMessage.textContent.trim().length > 0;
-                // Check if there's no typing indicator
-                const noTyping = !document.querySelector('.typing-indicator');
-                return hasContent && noTyping;
+        initial_state = await self.page.evaluate(
+            """(selectors) => {
+                const assistantNodes = document.querySelectorAll(selectors.assistant);
+                const lastNode = assistantNodes.length
+                    ? assistantNodes[assistantNodes.length - 1]
+                    : null;
+
+                const contentNode = lastNode
+                    ? lastNode.querySelector(selectors.assistantContent) || lastNode
+                    : null;
+                const markdownNode = contentNode
+                    ? contentNode.querySelector('.markdown-text')
+                    : null;
+
+                const extractText = (node) => {
+                    if (!node) {
+                        return '';
+                    }
+                    const text = node.innerText ?? node.textContent ?? '';
+                    return text.trim();
+                };
+
+                const text = extractText(markdownNode ?? contentNode);
+                const typingIndicator = Boolean(
+                    (lastNode && lastNode.querySelector('.typing-indicator'))
+                        || document.querySelector('.typing-indicator')
+                );
+                const chatInput = document.querySelector(selectors.chatInput);
+
+                return {
+                    assistantCount: assistantNodes.length,
+                    lastText: text,
+                    hadTyping: typingIndicator,
+                    inputDisabled: chatInput ? Boolean(chatInput.disabled) : false,
+                };
             }""",
+            selectors,
+        )
+
+        await self.page.wait_for_function(
+            """({ initial, selectors }) => {
+                const assistantNodes = document.querySelectorAll(selectors.assistant);
+                const lastNode = assistantNodes.length
+                    ? assistantNodes[assistantNodes.length - 1]
+                    : null;
+
+                if (!lastNode) {
+                    return false;
+                }
+
+                const contentNode = lastNode.querySelector(selectors.assistantContent) || lastNode;
+                const markdownNode = contentNode.querySelector('.markdown-text');
+                const textSource = markdownNode || contentNode;
+                const text = textSource ? (textSource.textContent || '').trim() : '';
+                const typingIndicator = Boolean(
+                    lastNode.querySelector('.typing-indicator')
+                        || document.querySelector('.typing-indicator')
+                );
+
+                if (
+                    initial.inputDisabled === false
+                    && !initial.hadTyping
+                    && initial.assistantCount > 0
+                    && initial.lastText
+                ) {
+                    return true;
+                }
+
+                if (typingIndicator || !text) {
+                    return false;
+                }
+
+                const hasNewMessage = assistantNodes.length > initial.assistantCount;
+                const contentChanged = text !== (initial.lastText || '');
+
+                return hasNewMessage || contentChanged;
+            }""",
+            arg={"initial": initial_state, "selectors": selectors},
             timeout=timeout,
         )
 
-        # Also, wait for any loading indicators to disappear
         with contextlib.suppress(Exception):
             await self.page.wait_for_selector(
                 self.LOADING_INDICATOR, state="hidden", timeout=1000
             )
+
+        with contextlib.suppress(Exception):
+            chat_input = self.page.locator(self.CHAT_INPUT)
+            await expect(chat_input).to_be_enabled(timeout=timeout)
 
     async def wait_for_streaming_complete(self, timeout: int = 10000) -> None:
         """Wait for any active streaming response to complete.
