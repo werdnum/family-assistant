@@ -47,14 +47,16 @@ const AutomationsList = () => {
   // Get current filter values from URL params
   const currentType = searchParams.get('type') || 'all';
   const currentEnabled = searchParams.get('enabled') || '';
+  const currentConversation = searchParams.get('conversation') || 'all';
 
   // Form state for filters
   const [filters, setFilters] = useState({
     type: currentType,
     enabled: currentEnabled,
+    conversation: currentConversation,
   });
 
-  const updateSearchParams = (typeValue, enabledValue) => {
+  const updateSearchParams = (typeValue, enabledValue, conversationValue) => {
     const newParams = new URLSearchParams();
     if (typeValue && typeValue !== 'all') {
       newParams.set('type', typeValue);
@@ -62,14 +64,17 @@ const AutomationsList = () => {
     if (enabledValue) {
       newParams.set('enabled', enabledValue);
     }
+    if (conversationValue && conversationValue !== 'all') {
+      newParams.set('conversation', conversationValue);
+    }
     setSearchParams(newParams);
   };
 
   useEffect(() => {
-    setFilters({ type: currentType, enabled: currentEnabled });
-  }, [currentType, currentEnabled]);
+    setFilters({ type: currentType, enabled: currentEnabled, conversation: currentConversation });
+  }, [currentType, currentEnabled, currentConversation]);
 
-  const fetchAutomations = async (type, enabled) => {
+  const fetchAutomations = async (type, enabled, conversation) => {
     setLoading(true);
     setError(null);
 
@@ -82,8 +87,10 @@ const AutomationsList = () => {
       if (enabled) {
         params.append('enabled', enabled);
       }
+      if (conversation && conversation !== 'all') {
+        params.append('conversation_id', conversation);
+      }
 
-      params.append('conversation_id', 'web');
       const response = await fetch(`/api/automations?${params}`);
       if (!response.ok) {
         throw new Error(`Failed to fetch automations: ${response.statusText}`);
@@ -100,39 +107,36 @@ const AutomationsList = () => {
 
   // Fetch data when filters change
   useEffect(() => {
-    fetchAutomations(currentType, currentEnabled);
-  }, [currentType, currentEnabled]);
+    fetchAutomations(currentType, currentEnabled, currentConversation);
+  }, [currentType, currentEnabled, currentConversation]);
 
   const handleFiltersSubmit = (e) => {
     e.preventDefault();
 
-    updateSearchParams(filters.type, filters.enabled);
+    updateSearchParams(filters.type, filters.enabled, filters.conversation);
   };
 
   const clearFilters = () => {
-    setFilters({ type: 'all', enabled: '' });
+    setFilters({ type: 'all', enabled: '', conversation: 'all' });
     setSearchParams({});
   };
 
   const toggleEnabled = async (automationType, automationId, currentEnabled) => {
     try {
-      const response = await fetch(
-        `/api/automations/${automationType}/${automationId}?conversation_id=web`,
-        {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ enabled: !currentEnabled }),
-        }
-      );
+      const response = await fetch(`/api/automations/${automationType}/${automationId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ enabled: !currentEnabled }),
+      });
 
       if (!response.ok) {
         throw new Error('Failed to update automation');
       }
 
       // Refresh the list
-      fetchAutomations(currentType, currentEnabled);
+      fetchAutomations(currentType, currentEnabled, currentConversation);
     } catch (err) {
       setError(err.message);
     }
@@ -160,7 +164,11 @@ const AutomationsList = () => {
   };
 
   const hasAutomations = automations.length > 0;
-  const filtersActive = currentType !== 'all' || currentEnabled !== '';
+  const filtersActive =
+    currentType !== 'all' || currentEnabled !== '' || currentConversation !== 'all';
+
+  // Extract unique conversation IDs from automations
+  const uniqueConversations = Array.from(new Set(automations.map((a) => a.conversation_id))).sort();
 
   useEffect(() => {
     if (filtersActive) {
@@ -260,7 +268,7 @@ const AutomationsList = () => {
                       onChange={(e) => {
                         const nextType = e.target.value;
                         setFilters((prev) => ({ ...prev, type: nextType }));
-                        updateSearchParams(nextType, filters.enabled);
+                        updateSearchParams(nextType, filters.enabled, filters.conversation);
                       }}
                     >
                       <option value="all">All Types</option>
@@ -280,7 +288,7 @@ const AutomationsList = () => {
                       onChange={(e) => {
                         const nextEnabled = e.target.value;
                         setFilters((prev) => ({ ...prev, enabled: nextEnabled }));
-                        updateSearchParams(filters.type, nextEnabled);
+                        updateSearchParams(filters.type, nextEnabled, filters.conversation);
                       }}
                     >
                       <option value="">All</option>
@@ -288,6 +296,31 @@ const AutomationsList = () => {
                       <option value="false">Disabled Only</option>
                     </select>
                   </div>
+
+                  {uniqueConversations.length > 0 && (
+                    <div className={styles.fieldGroup}>
+                      <label htmlFor="conversation" className={styles.fieldLabel}>
+                        Conversation
+                      </label>
+                      <select
+                        name="conversation"
+                        id="conversation"
+                        value={filters.conversation}
+                        onChange={(e) => {
+                          const nextConversation = e.target.value;
+                          setFilters((prev) => ({ ...prev, conversation: nextConversation }));
+                          updateSearchParams(filters.type, filters.enabled, nextConversation);
+                        }}
+                      >
+                        <option value="all">All Conversations</option>
+                        {uniqueConversations.map((conv) => (
+                          <option key={conv} value={conv}>
+                            {conv}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
 
                 <div className={styles.filtersActions}>

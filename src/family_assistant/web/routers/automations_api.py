@@ -157,8 +157,11 @@ def _format_automation_response(automation: dict[str, Any]) -> AutomationRespons
 async def list_automations(
     db: Annotated[DatabaseContext, Depends(get_db)],
     conversation_id: Annotated[
-        str, Query(description="Conversation ID to list automations for")
-    ],
+        str | None,
+        Query(
+            description="Conversation ID to filter by (optional, returns all if not provided)"
+        ),
+    ] = None,
     automation_type: Annotated[
         str | None, Query(description="Filter by automation type (event or schedule)")
     ] = None,
