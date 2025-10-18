@@ -483,6 +483,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     )
 
                 async with self._typing_notifications(context, chat_id):
+
                     async def confirmation_callback_wrapper(
                         interface_type: str,
                         conversation_id: str,
@@ -642,9 +643,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             if not processing_error_traceback:
                 processing_error_traceback = traceback.format_exc()
             if reply_target_message_id:
-                with contextlib.suppress(
-                    Exception
-                ):
+                with contextlib.suppress(Exception):
                     error_text_to_send_unhandled = (
                         f"An unexpected error occurred \\(debug mode\\):\n<pre>{html.escape(processing_error_traceback)}</pre>"
                         if self.debug_mode and processing_error_traceback
@@ -729,9 +728,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             tb_string = "No exception context available."
 
         update_repr = self._serialize_update_for_error_log(update)
-        logger.debug(
-            f"Error details for update {update_repr}: {tb_string}"
-        )
+        logger.debug(f"Error details for update {update_repr}: {tb_string}")
         logger.warning("Error notification to developer has been removed.")
 
     async def handle_unknown_command(
@@ -900,6 +897,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             last_assistant_internal_id: int | None = None
 
             try:
+
                 async def confirmation_callback_wrapper(
                     interface_type_cb: str,
                     conversation_id_cb: str,

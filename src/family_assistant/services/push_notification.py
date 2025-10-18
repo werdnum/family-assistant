@@ -1,5 +1,6 @@
 """Push notification service for sending web push notifications."""
 
+import asyncio
 import json
 import logging
 
@@ -65,7 +66,8 @@ class PushNotificationService:
 
         for sub in subscriptions:
             try:
-                webpush(
+                await asyncio.to_thread(
+                    webpush,
                     subscription_info=sub.subscription_json,
                     data=payload,
                     vapid_private_key=self.vapid_private_key,

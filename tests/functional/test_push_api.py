@@ -6,34 +6,57 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.push_subscription import push_subscriptions_table
+from family_assistant.web.app_creator import app as fastapi_app
 
 
 @pytest.mark.asyncio
 async def test_client_config_returns_vapid_key(
-    api_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    api_client: httpx.AsyncClient,
 ) -> None:
     """Test that client config endpoint returns VAPID public key."""
-    monkeypatch.setenv("VAPID_PUBLIC_KEY", "test-public-key-123")
+    # Set up app.state.config with pwa_config
+    original_config = getattr(fastapi_app.state, "config", None)
+    fastapi_app.state.config = {
+        "pwa_config": {
+            "vapid_public_key": "test-public-key-123",
+        }
+    }
 
-    response = await api_client.get("/api/client_config")
+    try:
+        response = await api_client.get("/api/client_config")
 
-    assert response.status_code == 200
-    data = response.json()
-    assert data["vapidPublicKey"] == "test-public-key-123"
+        assert response.status_code == 200
+        data = response.json()
+        assert data["vapidPublicKey"] == "test-public-key-123"
+    finally:
+        # Restore original config
+        if original_config is not None:
+            fastapi_app.state.config = original_config
+        else:
+            delattr(fastapi_app.state, "config")
 
 
 @pytest.mark.asyncio
 async def test_client_config_when_no_vapid_key(
-    api_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    api_client: httpx.AsyncClient,
 ) -> None:
     """Test client config returns None when VAPID key not configured."""
-    monkeypatch.delenv("VAPID_PUBLIC_KEY", raising=False)
+    # Set up app.state.config with empty pwa_config
+    original_config = getattr(fastapi_app.state, "config", None)
+    fastapi_app.state.config = {"pwa_config": {}}
 
-    response = await api_client.get("/api/client_config")
+    try:
+        response = await api_client.get("/api/client_config")
 
-    assert response.status_code == 200
-    data = response.json()
-    assert data["vapidPublicKey"] is None
+        assert response.status_code == 200
+        data = response.json()
+        assert data["vapidPublicKey"] is None
+    finally:
+        # Restore original config
+        if original_config is not None:
+            fastapi_app.state.config = original_config
+        else:
+            delattr(fastapi_app.state, "config")
 
 
 @pytest.mark.asyncio
