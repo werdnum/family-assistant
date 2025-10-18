@@ -27,7 +27,12 @@ class PushNotificationService:
         self.vapid_private_key = vapid_private_key
         self.vapid_claims: dict[str, str | int] = {}
         if vapid_contact_email:
-            self.vapid_claims = {"sub": f"mailto:{vapid_contact_email}"}
+            # Normalize to ensure only a single 'mailto:' prefix
+            if vapid_contact_email.lower().startswith("mailto:"):
+                sub_claim = vapid_contact_email
+            else:
+                sub_claim = f"mailto:{vapid_contact_email}"
+            self.vapid_claims = {"sub": sub_claim}
 
         self.enabled = bool(vapid_private_key and vapid_contact_email)
 
