@@ -35,17 +35,17 @@ class AutomationsRepository(BaseRepository):
 
     async def list_all(
         self,
-        conversation_id: str,
+        conversation_id: str | None = None,
         automation_type: AutomationType | None = None,
         enabled: bool | None = None,
         limit: int | None = None,
         offset: int | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """
-        List automations for a conversation with pagination.
+        List automations with optional filtering.
 
         Args:
-            conversation_id: Conversation ID
+            conversation_id: Optional conversation ID to filter by. If None, returns automations from all conversations.
             automation_type: Filter by type (event, schedule) or None for all
             enabled: Filter by enabled status (True, False, or None for all)
             limit: Maximum number of results to return
@@ -80,7 +80,12 @@ class AutomationsRepository(BaseRepository):
                 literal(None).label("recurrence_rule"),
                 literal(None).label("next_scheduled_at"),
                 literal(None).label("execution_count"),
-            ).where(event_listeners_table.c.conversation_id == conversation_id)
+            )
+
+            if conversation_id is not None:
+                event_query = event_query.where(
+                    event_listeners_table.c.conversation_id == conversation_id
+                )
 
             if enabled is not None:
                 event_query = event_query.where(
@@ -112,7 +117,12 @@ class AutomationsRepository(BaseRepository):
                 schedule_automations_table.c.recurrence_rule,
                 schedule_automations_table.c.next_scheduled_at,
                 schedule_automations_table.c.execution_count,
-            ).where(schedule_automations_table.c.conversation_id == conversation_id)
+            )
+
+            if conversation_id is not None:
+                schedule_query = schedule_query.where(
+                    schedule_automations_table.c.conversation_id == conversation_id
+                )
 
             if enabled is not None:
                 schedule_query = schedule_query.where(
