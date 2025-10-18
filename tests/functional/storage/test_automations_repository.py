@@ -780,7 +780,7 @@ class TestAutomationsRepository:
         assert len(automations) == 2
 
         # Verify both types are present
-        types = {a["type"] for a in automations}
+        types = {a.type for a in automations}
         assert types == {"schedule", "event"}
 
     @pytest.mark.asyncio
@@ -817,8 +817,8 @@ class TestAutomationsRepository:
         )
         assert total == 1
         assert len(automations) == 1
-        assert automations[0]["type"] == "schedule"
-        assert automations[0]["name"] == "Schedule Auto"
+        assert automations[0].type == "schedule"
+        assert automations[0].name == "Schedule Auto"
 
         # List only event automations
         automations, total = await db_context.automations.list_all(
@@ -826,8 +826,8 @@ class TestAutomationsRepository:
         )
         assert total == 1
         assert len(automations) == 1
-        assert automations[0]["type"] == "event"
-        assert automations[0]["name"] == "Event Auto"
+        assert automations[0].type == "event"
+        assert automations[0].name == "Event Auto"
 
     @pytest.mark.asyncio
     async def test_list_all_filter_by_enabled(
@@ -880,7 +880,7 @@ class TestAutomationsRepository:
             conversation_id, enabled=True
         )
         assert total == 2
-        names = {a["name"] for a in automations}
+        names = {a.name for a in automations}
         assert names == {"Enabled Schedule", "Enabled Event"}
 
         # List only disabled
@@ -888,7 +888,7 @@ class TestAutomationsRepository:
             conversation_id, enabled=False
         )
         assert total == 1
-        assert automations[0]["name"] == "Disabled Schedule"
+        assert automations[0].name == "Disabled Schedule"
 
     @pytest.mark.asyncio
     async def test_list_all_pagination(self, db_context: DatabaseContext) -> None:
@@ -949,8 +949,8 @@ class TestAutomationsRepository:
             automation_id, "schedule", conversation_id
         )
         assert automation is not None
-        assert automation["type"] == "schedule"
-        assert automation["name"] == "Test Schedule"
+        assert automation.type == "schedule"
+        assert automation.name == "Test Schedule"
 
     @pytest.mark.asyncio
     async def test_get_by_id_event(self, db_context: DatabaseContext) -> None:
@@ -976,8 +976,8 @@ class TestAutomationsRepository:
             event_id, "event", conversation_id
         )
         assert automation is not None
-        assert automation["type"] == "event"
-        assert automation["name"] == "Test Event"
+        assert automation.type == "event"
+        assert automation.name == "Test Event"
 
     @pytest.mark.asyncio
     async def test_get_by_name(self, db_context: DatabaseContext) -> None:
@@ -998,8 +998,8 @@ class TestAutomationsRepository:
             "Unique Schedule Name", conversation_id
         )
         assert automation is not None
-        assert automation["type"] == "schedule"
-        assert automation["name"] == "Unique Schedule Name"
+        assert automation.type == "schedule"
+        assert automation.name == "Unique Schedule Name"
 
         # Create event listener
 
@@ -1020,8 +1020,8 @@ class TestAutomationsRepository:
             "Unique Event Name", conversation_id
         )
         assert automation is not None
-        assert automation["type"] == "event"
-        assert automation["name"] == "Unique Event Name"
+        assert automation.type == "event"
+        assert automation.name == "Unique Event Name"
 
     @pytest.mark.asyncio
     async def test_check_name_available_both_empty(

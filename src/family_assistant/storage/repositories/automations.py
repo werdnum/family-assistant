@@ -8,6 +8,7 @@ from sqlalchemy.sql import functions as func
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.events import event_listeners_table
+from family_assistant.storage.models import Automation
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.repositories.events import EventsRepository
 from family_assistant.storage.repositories.schedule_automations import (
@@ -40,7 +41,7 @@ class AutomationsRepository(BaseRepository):
         enabled: bool | None = None,
         limit: int | None = None,
         offset: int | None = None,
-    ) -> tuple[list[dict[str, Any]], int]:
+    ) -> tuple[list[Automation], int]:
         """
         List automations with optional filtering.
 
@@ -152,21 +153,25 @@ class AutomationsRepository(BaseRepository):
         if offset is not None:
             combined_query = combined_query.offset(offset)
 
-        # Execute and convert to dictionaries, normalizing datetime fields
+        # Execute and convert to Automation models, normalizing datetime fields
         rows = await self._db.fetch_all(combined_query)
         automations = []
         for row in rows:
-            auto = dict(row)
+            auto: dict[str, Any] = dict(row)
             # Normalize datetime fields
-            auto["created_at"] = normalize_datetime(auto.get("created_at"))
+            auto["created_at"] = normalize_datetime(
+                auto.get("created_at")  # type: ignore[arg-type]
+            )
             auto["last_execution_at"] = normalize_datetime(
-                auto.get("last_execution_at")
+                auto.get("last_execution_at")  # type: ignore[arg-type]
             )
             auto["next_scheduled_at"] = normalize_datetime(
-                auto.get("next_scheduled_at")
+                auto.get("next_scheduled_at")  # type: ignore[arg-type]
             )
-            auto["daily_reset_at"] = normalize_datetime(auto.get("daily_reset_at"))
-            automations.append(auto)
+            auto["daily_reset_at"] = normalize_datetime(
+                auto.get("daily_reset_at")  # type: ignore[arg-type]
+            )
+            automations.append(Automation(**auto))  # type: ignore[arg-type]
 
         return automations, total_count
 
@@ -175,7 +180,7 @@ class AutomationsRepository(BaseRepository):
         automation_id: int,
         automation_type: AutomationType,
         conversation_id: str | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> Automation | None:
         """
         Get automation by ID and type.
 
@@ -185,7 +190,7 @@ class AutomationsRepository(BaseRepository):
             conversation_id: Optional conversation ID for verification
 
         Returns:
-            Automation dict with "type" field or None if not found
+            Automation model or None if not found
         """
         if automation_type == "event":
             automation = await self._events_repo.get_event_listener_by_id(
@@ -193,18 +198,38 @@ class AutomationsRepository(BaseRepository):
                 conversation_id=conversation_id,
             )
             if automation:
-                automation_dict: dict[str, Any] = dict(automation)
-                automation_dict["type"] = "event"
-                return automation_dict
+                event_dict: dict[str, Any] = dict(automation)
+                event_dict["type"] = "event"
+                # Normalize datetime fields
+                event_dict["created_at"] = normalize_datetime(
+                    event_dict.get("created_at")  # type: ignore[arg-type]
+                )
+                event_dict["last_execution_at"] = normalize_datetime(
+                    event_dict.get("last_execution_at")  # type: ignore[arg-type]
+                )
+                event_dict["daily_reset_at"] = normalize_datetime(
+                    event_dict.get("daily_reset_at")  # type: ignore[arg-type]
+                )
+                return Automation(**event_dict)  # type: ignore[arg-type]
         else:  # schedule
             automation = await self._schedule_repo.get_by_id(
                 automation_id=automation_id,
                 conversation_id=conversation_id,
             )
             if automation:
-                automation_dict = dict(automation)
-                automation_dict["type"] = "schedule"
-                return automation_dict
+                schedule_dict: dict[str, Any] = dict(automation)
+                schedule_dict["type"] = "schedule"
+                # Normalize datetime fields
+                schedule_dict["created_at"] = normalize_datetime(
+                    schedule_dict.get("created_at")  # type: ignore[arg-type]
+                )
+                schedule_dict["last_execution_at"] = normalize_datetime(
+                    schedule_dict.get("last_execution_at")  # type: ignore[arg-type]
+                )
+                schedule_dict["next_scheduled_at"] = normalize_datetime(
+                    schedule_dict.get("next_scheduled_at")  # type: ignore[arg-type]
+                )
+                return Automation(**schedule_dict)  # type: ignore[arg-type]
 
         return None
 
@@ -212,7 +237,7 @@ class AutomationsRepository(BaseRepository):
         self,
         name: str,
         conversation_id: str,
-    ) -> dict[str, Any] | None:
+    ) -> Automation | None:
         """
         Get automation by name (searches both types).
 
@@ -221,7 +246,7 @@ class AutomationsRepository(BaseRepository):
             conversation_id: Conversation ID
 
         Returns:
-            Automation dict with "type" field or None if not found
+            Automation model or None if not found
         """
         # Check event listeners first with efficient query
         stmt = select(event_listeners_table).where(
@@ -230,19 +255,19 @@ class AutomationsRepository(BaseRepository):
         )
         row = await self._events_repo._db.fetch_one(stmt)
         if row:
-            event_listener = dict(row)
+            event_listener: dict[str, Any] = dict(row)
             # Normalize datetime fields
             event_listener["created_at"] = normalize_datetime(
-                event_listener.get("created_at")
+                event_listener.get("created_at")  # type: ignore[arg-type]
             )
             event_listener["last_execution_at"] = normalize_datetime(
-                event_listener.get("last_execution_at")
+                event_listener.get("last_execution_at")  # type: ignore[arg-type]
             )
             event_listener["daily_reset_at"] = normalize_datetime(
-                event_listener.get("daily_reset_at")
+                event_listener.get("daily_reset_at")  # type: ignore[arg-type]
             )
             event_listener["type"] = "event"
-            return event_listener
+            return Automation(**event_listener)  # type: ignore[arg-type]
 
         # Check schedule automations
         schedule_automation = await self._schedule_repo.get_by_name(
@@ -250,9 +275,19 @@ class AutomationsRepository(BaseRepository):
             conversation_id=conversation_id,
         )
         if schedule_automation:
-            automation_dict = dict(schedule_automation)
-            automation_dict["type"] = "schedule"
-            return automation_dict
+            schedule_dict: dict[str, Any] = dict(schedule_automation)
+            schedule_dict["type"] = "schedule"
+            # Normalize datetime fields
+            schedule_dict["created_at"] = normalize_datetime(
+                schedule_dict.get("created_at")  # type: ignore[arg-type]
+            )
+            schedule_dict["last_execution_at"] = normalize_datetime(
+                schedule_dict.get("last_execution_at")  # type: ignore[arg-type]
+            )
+            schedule_dict["next_scheduled_at"] = normalize_datetime(
+                schedule_dict.get("next_scheduled_at")  # type: ignore[arg-type]
+            )
+            return Automation(**schedule_dict)  # type: ignore[arg-type]
 
         return None
 
@@ -285,17 +320,17 @@ class AutomationsRepository(BaseRepository):
         if (
             exclude_id is not None
             and exclude_type is not None
-            and existing["id"] == exclude_id
-            and existing["type"] == exclude_type
+            and existing.id == exclude_id
+            and existing.type == exclude_type
         ):
             return True, None
 
         # Name is taken
-        existing_type = existing["type"]
+        existing_type = existing.type
         return (
             False,
             f"An automation named '{name}' already exists "
-            f"({existing_type} automation ID: {existing['id']})",
+            f"({existing_type} automation ID: {existing.id})",
         )
 
     async def update_enabled(
