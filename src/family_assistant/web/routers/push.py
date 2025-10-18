@@ -14,10 +14,25 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+class PushSubscriptionKeys(BaseModel):
+    """Encryption keys for push subscription."""
+
+    p256dh: str
+    auth: str
+
+
+class PushSubscriptionData(BaseModel):
+    """Typed push subscription data from client."""
+
+    endpoint: str
+    keys: PushSubscriptionKeys
+    expirationTime: int | None = None
+
+
 class PushSubscriptionRequest(BaseModel):
     """Request model for push subscription."""
 
-    subscription: dict[str, Any]
+    subscription: PushSubscriptionData
 
 
 class UnsubscribeRequest(BaseModel):
@@ -45,7 +60,7 @@ async def subscribe(
     try:
         subscription_id = await db.push_subscriptions.add(
             user_identifier=user["user_identifier"],
-            subscription_json=request.subscription,
+            subscription_json=request.subscription.model_dump(exclude_none=True),
         )
         logger.info(
             f"Created push subscription {subscription_id} for user {user['user_identifier']}"

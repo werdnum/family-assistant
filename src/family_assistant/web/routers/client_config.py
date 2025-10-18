@@ -19,7 +19,7 @@ async def get_client_config(
     Returns:
         Dictionary containing client configuration like VAPID public key
     """
-    pwa_config = request.app.state.config.get("pwa_config", {})
+    pwa_config = getattr(request.app.state, "config", {}).get("pwa_config", {})
     return {
         "vapidPublicKey": pwa_config.get("vapid_public_key"),
     }
