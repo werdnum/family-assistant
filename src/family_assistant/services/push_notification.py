@@ -7,6 +7,9 @@ import logging
 from pywebpush import WebPushException, webpush
 
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.push_subscription import (
+    PushSubscription as PushSubscriptionModel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +67,9 @@ class PushNotificationService:
 
         payload = json.dumps({"title": title, "body": body})
 
-        for sub in subscriptions:
+        # Send notifications concurrently to reduce latency for users with multiple subscriptions
+        async def send_to_subscription(sub: PushSubscriptionModel) -> int | None:
+            """Send notification to a single subscription, returning subscription id if 410."""
             try:
                 await asyncio.to_thread(
                     webpush,
@@ -74,6 +79,7 @@ class PushNotificationService:
                     vapid_claims=self.vapid_claims,
                 )
                 logger.info(f"Sent push notification to user {user_identifier}")
+                return None
             except WebPushException as e:
                 # The pywebpush library automatically handles JSON responses
                 # and raises exceptions with response objects.
@@ -81,13 +87,25 @@ class PushNotificationService:
                     logger.info(
                         f"Subscription for user {user_identifier} is stale (410 Gone). Deleting."
                     )
-                    await db_context.push_subscriptions.delete(sub.id)
+                    return sub.id
                 else:
                     logger.warning(
                         f"Failed to send push notification to user {user_identifier}: {e}",
                     )
+                    return None
             except Exception as e:
                 logger.error(
                     f"An unexpected error occurred while sending push notification to user {user_identifier}: {e}",
                     exc_info=True,
                 )
+                return None
+
+        # Run all sends concurrently
+        stale_subscription_ids = await asyncio.gather(
+            *(send_to_subscription(sub) for sub in subscriptions)
+        )
+
+        # Handle 410 (stale) subscriptions sequentially to avoid concurrent DB writes
+        for sub_id in stale_subscription_ids:
+            if sub_id is not None:
+                await db_context.push_subscriptions.delete(sub_id)
