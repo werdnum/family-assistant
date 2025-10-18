@@ -34,7 +34,9 @@ push_subscriptions_table = Table(
         nullable=False,
     ),
     Column("user_identifier", String(255), nullable=False, index=True),
-    Column("created_at", DateTime, nullable=False, default=func.now()),
+    Column(
+        "created_at", DateTime(timezone=True), nullable=False, server_default=func.now()
+    ),
 )
 
 # Note: A traditional foreign key is not used for `user_identifier` because the application
