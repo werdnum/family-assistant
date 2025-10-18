@@ -248,8 +248,11 @@ class ReviewHook:
 
         return True, ""
 
-    def _run_review(self) -> tuple[int, dict[str, Any], str]:
+    def _run_review(self, command: str) -> tuple[int, dict[str, Any], str]:
         """Run the review script and get JSON output.
+
+        Args:
+            command: The git command being executed (for context)
 
         Returns:
             Tuple of (exit_code, review_data, cache_key)
@@ -260,8 +263,11 @@ class ReviewHook:
             return 0, {}, ""
 
         print("\nAnalyzing staged changes for issues...", file=sys.stderr)
+        cmd = [sys.executable, str(review_script), "--json"]
+        if command:
+            cmd.extend(["--command", command])
         result = subprocess.run(
-            [sys.executable, str(review_script), "--json"],
+            cmd,
             capture_output=True,
             text=True,
             check=False,
@@ -363,58 +369,35 @@ class ReviewHook:
 
             # Step 3: Run formatters and linters
             if not self._run_formatters_and_linters():
-                self._output_json_response(
-                    "deny",
-                    "Formatting/linting failed. Please fix the issues before committing.",
-                )
-                return
+                sys.exit(2)
 
             # Step 4: Run pre-commit hooks
             success, error_msg = self._run_precommit_hooks()
             if not success:
-                self._output_json_response(
-                    "deny",
-                    f"Pre-commit hooks failed. Please fix the issues before committing.\n\n{error_msg}",
-                )
-                return
+                sys.exit(2)
 
             # Step 5: Run code review
-            exit_code, review_data, cache_key = self._run_review()
+            exit_code, review_data, cache_key = self._run_review(command)
 
             # Check for sentinel phrases
             has_reviewed, has_bypass, bypass_reason, cache_key_prefix = (
                 self._check_for_sentinel(command, cache_key)
             )
 
-            # Get issues and severity
-            issues = review_data.get("issues", [])
-            review_data.get("highest_severity", "")
-
             # Process based on exit code and sentinels
             if exit_code == 0:
-                self._output_json_response("allow", "All checks passed")
+                sys.exit(0)
             elif exit_code == 1:
                 # Minor issues
                 if has_reviewed:
-                    self._output_json_response(
-                        "allow",
-                        f"Minor issues acknowledged with Reviewed: cache-{cache_key_prefix}",
-                    )
+                    sys.exit(0)
                 elif has_bypass:
                     self._output_json_response(
                         "ask",
                         f"Minor issues found. Bypass requested: {bypass_reason}\n\nDo you want to proceed?",
                     )
                 else:
-                    formatted_issues = self._format_issues(issues)
-                    self._output_json_response(
-                        "deny",
-                        f"Code review found minor issues:\n\n{formatted_issues}\n\n"
-                        f"These issues should be fixed before committing.\n"
-                        f"If you have a specific reason not to fix them, you may acknowledge them by adding:\n"
-                        f"• Reviewed: cache-{cache_key_prefix}\n\n"
-                        f"However, fixing the issues is strongly preferred over acknowledgment.",
-                    )
+                    sys.exit(2)
             elif has_bypass:
                 # Major issues (exit code 2) with bypass request - escalate to user
                 self._output_json_response(
@@ -425,26 +408,8 @@ class ReviewHook:
                     "You may proceed if the review is incorrect or contradicts the user's explicit instructions. "
                     "Do you want to proceed?",
                 )
-            elif has_reviewed:
-                formatted_issues = self._format_issues(issues)
-                self._output_json_response(
-                    "deny",
-                    f"BLOCKING issues found that cannot be bypassed with 'Reviewed' acknowledgment:\n\n"
-                    f"{formatted_issues}\n\n"
-                    "These serious issues must be fixed before committing.\n"
-                    "'Reviewed' acknowledgment is only for minor issues.\n\n"
-                    "If you believe the review is incorrect or contradicts the user's explicit instructions, "
-                    "escalate for manual decision: Bypass-Review: <why the review is incorrect>",
-                )
             else:
-                formatted_issues = self._format_issues(issues)
-                self._output_json_response(
-                    "deny",
-                    f"Code review found BLOCKING issues:\n\n{formatted_issues}\n\n"
-                    "These serious issues must be fixed before committing.\n\n"
-                    "If you believe the review is incorrect or contradicts the user's explicit instructions, "
-                    "you may escalate for manual decision: Bypass-Review: <why the review is incorrect>",
-                )
+                sys.exit(2)
 
         finally:
             # Always restore stash on exit
