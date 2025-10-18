@@ -133,18 +133,29 @@ The backend will be responsible for storing push subscriptions and sending notif
 #### 3.3.1. Database Model
 
 A new SQLAlchemy model will be created to store push subscriptions. A new file
-`src/family_assistant/storage/models/push_subscription.py` will be created:
+`src/family_assistant/storage/push_subscription.py` will be created:
 
 ```python
 from sqlalchemy import Column, Integer, String, Text
-from family_assistant.storage.models.base import Base
+from family_assistant.storage.base import metadata
 
-class PushSubscription(Base):
-    __tablename__ = 'push_subscriptions'
+class PushSubscription(BaseModel):
+    """Pydantic model for a push subscription."""
 
-    id = Column(Integer, primary_key=True)
-    subscription_json = Column(Text, nullable=False)
-    user_identifier = Column(String, nullable=False, index=True)
+    id: int
+    subscription_json: dict[str, Any]
+    user_identifier: str
+    created_at: datetime
+
+# SQLAlchemy Core Table Definition
+push_subscriptions_table = Table(
+    "push_subscriptions",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("subscription_json", JSON().with_variant(JSONB, "postgresql"), nullable=False),
+    Column("user_identifier", String(255), nullable=False, index=True),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
 
 # Note: A traditional foreign key is not used for `user_identifier` because the application
 # manages users through a session-based and token-based authentication system that does not
