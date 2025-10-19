@@ -41,6 +41,7 @@ class BaseEventSource:
     async def validate_match_conditions(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         match_conditions: dict[str, Any],
     ) -> ValidationResult:
         """

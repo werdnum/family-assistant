@@ -220,6 +220,7 @@ class DatabaseContext:
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         query: Select | TextClause,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         params: dict[str, Any] | None = None,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
@@ -241,6 +242,7 @@ class DatabaseContext:
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         query: Select | TextClause,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         params: dict[str, Any] | None = None,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any] | None:

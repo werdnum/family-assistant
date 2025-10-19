@@ -164,6 +164,7 @@ new_task_event = asyncio.Event()  # Event to notify worker of immediate tasks
 async def handle_log_message(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     db_context: DatabaseContext,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     payload: dict[str, Any],
 ) -> None:
     """Simple task handler that logs the received payload."""
@@ -774,6 +775,7 @@ class TaskWorker:
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         db_context: DatabaseContext,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         task: dict[str, Any],
         handler_exc: Exception,
     ) -> None:

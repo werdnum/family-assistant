@@ -21,6 +21,7 @@ class MockToolsProvider(ToolsProvider):
         self,
         name: str,
         func: Callable,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tool_def: dict[str, Any] | None = None,
     ) -> None:
         """Add a tool to the mock provider."""

@@ -628,6 +628,7 @@ class ConfirmingToolsProvider(ToolsProvider):
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         tool_name: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         args: dict[str, Any],
         context: ToolExecutionContext,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types

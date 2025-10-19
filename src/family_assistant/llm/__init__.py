@@ -75,6 +75,7 @@ class BaseLLMClient:
     def _process_tool_messages(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
@@ -497,6 +498,7 @@ class LiteLLMClient(BaseLLMClient):
     def _process_tool_messages(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
@@ -1456,6 +1458,7 @@ class PlaybackLLMClient:
     async def _find_and_playback_llm_output(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         current_input_args: dict[str, Any],
     ) -> LLMOutput:
         """Helper to find and playback interactions that return LLMOutput."""
@@ -1523,6 +1526,7 @@ class PlaybackLLMClient:
     async def _find_and_playback_dict(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         current_input_args: dict[str, Any],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:

@@ -252,7 +252,9 @@ class EventProcessor:
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         listener: dict[str, Any],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         event_data: dict[str, Any],
     ) -> None:
         """Execute the action defined in the listener (opens new DB context)."""
