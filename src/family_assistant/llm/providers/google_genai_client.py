@@ -212,6 +212,7 @@ class GoogleGenAIClient(BaseLLMClient):
     def _convert_messages_to_genai_format(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
     ) -> list[Any]:
         """Convert OpenAI-style messages to Gemini format."""
@@ -438,6 +439,7 @@ class GoogleGenAIClient(BaseLLMClient):
     def _prepare_all_tools(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
     ) -> list[Any]:
         """Prepare all tools including function tools and grounding tools."""

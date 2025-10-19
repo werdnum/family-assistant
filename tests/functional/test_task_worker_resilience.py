@@ -50,6 +50,7 @@ async def test_task_handler_timeout(
     async def hanging_handler(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         exec_context: ToolExecutionContext,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         payload: dict[str, Any],
     ) -> None:
         logger.info(
@@ -137,6 +138,7 @@ async def test_successful_handler_completes(
     async def quick_handler(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         exec_context: ToolExecutionContext,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         payload: dict[str, Any],
     ) -> None:
         logger.info("Quick handler executed")
@@ -193,6 +195,7 @@ async def test_retry_exhaustion_leads_to_failure(
     async def timeout_handler(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         exec_context: ToolExecutionContext,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         payload: dict[str, Any],
     ) -> None:
         await asyncio.sleep(1.0)  # Longer than the 0.1s timeout
@@ -270,6 +273,7 @@ async def test_worker_activity_tracking(db_engine: AsyncEngine) -> None:
     async def simple_handler(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         exec_context: ToolExecutionContext,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         payload: dict[str, Any],
     ) -> None:
         pass

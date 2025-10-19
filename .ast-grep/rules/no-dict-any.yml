@@ -1,6 +1,6 @@
 id: no-dict-any
 language: python
-severity: warning
+severity: error
 message: "Avoid dict[str, Any] annotations; define a specific typed structure instead"
 note: |
   Using dict[str, Any] (or typing.Dict[str, Any]) loses type information and makes
@@ -57,3 +57,4 @@ rule:
     - pattern: '$NAME = Dict[str, Any]'
     - pattern: '$NAME: TypeAlias = dict[str, Any]'
     - pattern: '$NAME: TypeAlias = Dict[str, Any]'
+

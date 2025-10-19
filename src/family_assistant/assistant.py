@@ -132,6 +132,7 @@ class NullChatInterface:
 async def task_wrapper_handle_log_message(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     payload: dict[str, Any],
 ) -> None:
     """
@@ -1403,6 +1404,7 @@ class Assistant:
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         exec_context: ToolExecutionContext,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         payload: dict[str, Any],
     ) -> None:
         await handle_reindex_document(exec_context, payload)

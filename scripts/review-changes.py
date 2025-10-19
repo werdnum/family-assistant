@@ -565,6 +565,7 @@ def get_cached_review(cache_key: str, cache_dir: Path) -> dict[str, Any] | None:
 def save_cached_review(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     cache_key: str,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     review_data: dict[str, Any],
     cache_dir: Path,
 ) -> None:

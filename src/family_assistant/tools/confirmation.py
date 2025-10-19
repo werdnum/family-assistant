@@ -54,6 +54,7 @@ def render_delete_calendar_event_confirmation(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     args: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     event_details: dict[str, Any] | None,
     timezone_str: str,
 ) -> str:
@@ -74,6 +75,7 @@ def render_modify_calendar_event_confirmation(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     args: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     event_details: dict[str, Any] | None,
     timezone_str: str,
 ) -> str:

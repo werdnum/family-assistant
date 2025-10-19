@@ -113,6 +113,7 @@ async def mock_embedding_generator_notes() -> MockEmbeddingGenerator:
 async def _helper_handle_embed_and_store_batch_notes(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     payload: dict[str, Any],
 ) -> None:
     """Helper task handler for embedding and storing batches during notes testing."""

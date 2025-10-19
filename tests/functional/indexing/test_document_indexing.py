@@ -227,6 +227,7 @@ async def http_client(
 async def _helper_handle_embed_and_store_batch(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     payload: dict[str, Any],
 ) -> None:
     logger.info(

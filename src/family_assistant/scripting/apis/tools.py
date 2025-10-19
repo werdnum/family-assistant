@@ -275,6 +275,7 @@ class ToolsAPI:
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         tool_name: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         kwargs: dict[str, Any],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:

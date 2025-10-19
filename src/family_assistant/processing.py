@@ -1070,6 +1070,7 @@ class ProcessingService:
     async def _convert_attachment_urls_to_data_uris(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         content_parts: list[dict[str, Any]],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
@@ -1239,6 +1240,7 @@ class ProcessingService:
     async def _format_history_for_llm(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         history_messages: list[dict[str, Any]],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
@@ -2183,6 +2185,7 @@ class ProcessingService:
     def _generate_attachment_metadata_lines(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         attachments: list[dict[str, Any]],
     ) -> list[str]:
         """

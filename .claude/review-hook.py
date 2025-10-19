@@ -17,6 +17,7 @@ class ReviewHook:
 
     def __init__(self) -> None:
         self.repo_root = self._get_repo_root()
+        # ast-grep-ignore: no-dict-any - Hook configuration uses generic dict for flexibility
         self.stash_ref: str | None = None
         self.has_stashed = False
 
@@ -33,6 +34,7 @@ class ReviewHook:
             sys.exit(0)
         return Path(result.stdout.strip())
 
+    # ast-grep-ignore: no-dict-any - JSON parsing requires generic dict
     def _parse_input(self) -> dict[str, Any]:
         """Parse the JSON input from stdin."""
         try:
@@ -41,6 +43,7 @@ class ReviewHook:
             # Invalid input, allow the command
             sys.exit(0)
 
+    # ast-grep-ignore: no-dict-any - JSON input is genuinely arbitrary hook data
     def _extract_command(self, json_input: dict[str, Any]) -> str:
         """Extract the bash command from the JSON input."""
         return json_input.get("tool_input", {}).get("command", "")
@@ -248,6 +251,7 @@ class ReviewHook:
 
         return True, ""
 
+    # ast-grep-ignore: no-dict-any - Review data returned by script is genuinely arbitrary
     def _run_review(self, command: str) -> tuple[int, dict[str, Any], str]:
         """Run the review script and get JSON output.
 
@@ -286,6 +290,7 @@ class ReviewHook:
 
         return result.returncode, review_data, cache_key
 
+    # ast-grep-ignore: no-dict-any - Issues contain arbitrary JSON data from review script
     def _format_issues(self, issues: list[dict[str, Any]]) -> str:
         """Format issues from JSON for display."""
         if not issues:
@@ -369,11 +374,19 @@ class ReviewHook:
 
             # Step 3: Run formatters and linters
             if not self._run_formatters_and_linters():
+                print(
+                    "Formatting/linting failed. Please fix the issues before committing.",
+                    file=sys.stderr,
+                )
                 sys.exit(2)
 
             # Step 4: Run pre-commit hooks
             success, error_msg = self._run_precommit_hooks()
             if not success:
+                print(
+                    "Pre-commit hooks failed. Please fix the issues before committing.",
+                    file=sys.stderr,
+                )
                 sys.exit(2)
 
             # Step 5: Run code review
@@ -397,6 +410,16 @@ class ReviewHook:
                         f"Minor issues found. Bypass requested: {bypass_reason}\n\nDo you want to proceed?",
                     )
                 else:
+                    issues = review_data.get("issues", [])
+                    formatted_issues = self._format_issues(issues)
+                    print(
+                        f"Code review found minor issues:\n\n{formatted_issues}\n\n"
+                        f"These issues should be fixed before committing.\n"
+                        f"If you have a specific reason not to fix them, you may acknowledge them by adding:\n"
+                        f"• Reviewed: cache-{cache_key_prefix}\n\n"
+                        f"However, fixing the issues is strongly preferred over acknowledgment.",
+                        file=sys.stderr,
+                    )
                     sys.exit(2)
             elif has_bypass:
                 # Major issues (exit code 2) with bypass request - escalate to user
@@ -408,7 +431,31 @@ class ReviewHook:
                     "You may proceed if the review is incorrect or contradicts the user's explicit instructions. "
                     "Do you want to proceed?",
                 )
+            elif has_reviewed:
+                # Blocking issues with has_reviewed - can't bypass with Reviewed
+                issues = review_data.get("issues", [])
+                formatted_issues = self._format_issues(issues)
+                print(
+                    f"BLOCKING issues found that cannot be bypassed with 'Reviewed' acknowledgment:\n\n"
+                    f"{formatted_issues}\n\n"
+                    "These serious issues must be fixed before committing.\n"
+                    "'Reviewed' acknowledgment is only for minor issues.\n\n"
+                    "If you believe the review is incorrect or contradicts the user's explicit instructions, "
+                    "escalate for manual decision: Bypass-Review: <why the review is incorrect>",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
             else:
+                # Blocking issues without bypass - exit with error message
+                issues = review_data.get("issues", [])
+                formatted_issues = self._format_issues(issues)
+                print(
+                    f"Code review found BLOCKING issues:\n\n{formatted_issues}\n\n"
+                    "These serious issues must be fixed before committing.\n\n"
+                    "If you believe the review is incorrect or contradicts the user's explicit instructions, "
+                    "you may escalate for manual decision: Bypass-Review: <why the review is incorrect>",
+                    file=sys.stderr,
+                )
                 sys.exit(2)
 
         finally:

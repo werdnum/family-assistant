@@ -108,6 +108,7 @@ class MCPToolsProvider:
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         server_id: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         server_conf: dict[str, Any],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> tuple["ClientSession | None", list[dict[str, Any]], dict[str, str]]:
