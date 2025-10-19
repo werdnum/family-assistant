@@ -1012,6 +1012,50 @@ scripts/check-conformance.sh [files...]
 
 Changes to repo root before running.
 
+### add-exemptions.py
+
+**Purpose**: Automatically add inline ast-grep-ignore comments for rule violations
+
+**Usage**:
+
+```bash
+# Add exemptions for all violations of a rule
+.ast-grep/add-exemptions.py no-dict-any
+
+# Add to specific files only
+.ast-grep/add-exemptions.py no-dict-any src/file1.py src/file2.py
+
+# Add to only changed files
+.ast-grep/add-exemptions.py no-dict-any $(git diff --name-only)
+
+# Preview without modifying
+.ast-grep/add-exemptions.py no-dict-any --dry-run
+
+# Custom exemption reason
+.ast-grep/add-exemptions.py no-dict-any --reason "Legacy API requires untyped dict"
+```
+
+**Features**:
+
+- Automatically finds violations using ast-grep scan
+- Adds properly indented inline comments
+- Skips violations that already have exemptions
+- Supports dry-run mode for previewing changes
+- Works with git to add exemptions only to changed files
+
+**When to use**:
+
+- After adding a new conformance rule with many existing violations
+- When refactoring would take too long but you want to enforce the rule going forward
+- To quickly exempt legacy code while planning proper fixes
+
+**Important notes**:
+
+- Always review changes before committing
+- Ensure exemptions have meaningful reasons
+- Use `--dry-run` first to preview what will change
+- Run this on a clean working directory to avoid processing merge conflicts
+
 ### Integration with lint-hook.py
 
 The `.claude/lint-hook.py` runs after Claude edits files:
