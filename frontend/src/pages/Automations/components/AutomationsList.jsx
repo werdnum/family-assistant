@@ -392,7 +392,14 @@ const AutomationsList = () => {
                   <div className={styles.automationHeader}>
                     <div className={styles.automationTitle}>
                       <h3>
-                        <Link to={`/automations/${automation.type}/${automation.id}`}>
+                        <Link
+                          to={{
+                            pathname: `/automations/${automation.type}/${automation.id}`,
+                            search: `?conversation_id=${encodeURIComponent(
+                              automation.conversation_id
+                            )}`,
+                          }}
+                        >
                           {automation.name}
                         </Link>
                       </h3>
@@ -475,7 +482,12 @@ const AutomationsList = () => {
                       </span>
                     </div>
                     <Link
-                      to={`/automations/${automation.type}/${automation.id}`}
+                      to={{
+                        pathname: `/automations/${automation.type}/${automation.id}`,
+                        search: `?conversation_id=${encodeURIComponent(
+                          automation.conversation_id
+                        )}`,
+                      }}
                       className={styles.viewLink}
                     >
                       View Details
