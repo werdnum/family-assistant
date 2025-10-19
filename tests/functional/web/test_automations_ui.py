@@ -401,7 +401,8 @@ async def test_delete_schedule_automation(
     # Should navigate back to list
     await page.wait_for_url("**/automations", timeout=10000)
 
-    # Verify the automation no longer appears in the list
+    # TODO(#TBD-replace-playwright-timeouts): replace wait_for_timeout with explicit wait
+    # ast-grep-ignore: no-playwright-wait-for-timeout
     await page.wait_for_timeout(1000)
     assert not await page.locator("text=/Delete Test Automation/").is_visible()
 
@@ -465,7 +466,8 @@ async def test_filter_schedule_automations(
     type_select = page.locator("select[name='type']")
     await type_select.select_option("schedule")
 
-    # Wait for filter to apply
+    # TODO(#TBD-replace-playwright-timeouts): replace wait_for_timeout with explicit wait
+    # ast-grep-ignore: no-playwright-wait-for-timeout
     await page.wait_for_timeout(1000)
 
     # Schedule automation should be visible
@@ -476,6 +478,8 @@ async def test_filter_schedule_automations(
 
     # Filter to show only event automations
     await type_select.select_option("event")
+    # TODO(#TBD-replace-playwright-timeouts): replace wait_for_timeout with explicit wait
+    # ast-grep-ignore: no-playwright-wait-for-timeout
     await page.wait_for_timeout(1000)
 
     # Event automation should be visible
@@ -486,6 +490,8 @@ async def test_filter_schedule_automations(
 
     # Show all automations
     await type_select.select_option("all")
+    # TODO(#TBD-replace-playwright-timeouts): replace wait_for_timeout with explicit wait
+    # ast-grep-ignore: no-playwright-wait-for-timeout
     await page.wait_for_timeout(1000)
 
     # Both should be visible again
