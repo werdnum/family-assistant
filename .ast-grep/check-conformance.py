@@ -187,15 +187,22 @@ def run_ast_grep(files: list[str]) -> list[Violation]:
             file_path = item.get("file", "")
             rule_id = item.get("ruleId", "unknown")
 
+            # Ignore ast-grep's builtin unused-suppression diagnostics because we
+            # implement exemption tracking ourselves.
+            if rule_id == "unused-suppression":
+                continue
+
             # Skip test-only rules for non-test files
             if rule_id in test_only_rules and not file_path.startswith("tests/"):
                 continue
 
+            start_line = item.get("range", {}).get("start", {}).get("line", 0)
+            # ast-grep's JSON output reports zero-based line numbers; convert to 1-based
             violations.append(
                 Violation(
                     rule_id=rule_id,
                     file_path=file_path,
-                    line_number=item.get("range", {}).get("start", {}).get("line", 0),
+                    line_number=start_line + 1,
                     message=item.get("message", ""),
                     raw_data=item,
                 )
