@@ -28,5 +28,4 @@ rule:
     - pattern: asyncio.sleep($$$)
     - not:
         inside:
-          kind: while
-
+          kind: while_statement
