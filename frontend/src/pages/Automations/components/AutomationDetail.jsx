@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 
 const logDev = (...args) => {
@@ -11,6 +11,8 @@ const logDev = (...args) => {
 const AutomationDetail = () => {
   const { type, id } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const conversationId = searchParams.get('conversation_id') || 'web';
   const [automation, setAutomation] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -19,15 +21,22 @@ const AutomationDetail = () => {
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
+      setError(null);
       try {
-        const response = await fetch(`/api/automations/${type}/${id}?conversation_id=web`);
+        const response = await fetch(
+          `/api/automations/${type}/${id}?conversation_id=${encodeURIComponent(conversationId)}`
+        );
         logDev('[Automations] Fetch automation detail', type, id, response.status);
-        if (!response.ok) {
+
+        if (response.status === 404) {
+          setAutomation(null);
+        } else if (!response.ok) {
           throw new Error(`Failed to fetch automation: ${response.statusText}`);
+        } else {
+          const data = await response.json();
+          logDev('[Automations] Automation detail loaded', data);
+          setAutomation(data);
         }
-        const data = await response.json();
-        logDev('[Automations] Automation detail loaded', data);
-        setAutomation(data);
       } catch (err) {
         setError(err.message);
       } finally {
@@ -47,9 +56,11 @@ const AutomationDetail = () => {
 
     setUpdating(true);
     try {
-      const response = await fetch(`/api/automations/${type}/${id}?conversation_id=web`, {
-        method: 'PATCH',
-        headers: {
+      const response = await fetch(
+        `/api/automations/${type}/${id}?conversation_id=${encodeURIComponent(conversationId)}`,
+        {
+          method: 'PATCH',
+          headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -90,9 +101,12 @@ const AutomationDetail = () => {
     }
 
     try {
-      const response = await fetch(`/api/automations/${type}/${id}?conversation_id=web`, {
-        method: 'DELETE',
-      });
+      const response = await fetch(
+        `/api/automations/${type}/${id}?conversation_id=${encodeURIComponent(conversationId)}`,
+        {
+          method: 'DELETE',
+        }
+      );
 
       logDev('[Automations] Delete response', response.status);
       if (!response.ok) {
