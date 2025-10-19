@@ -162,14 +162,15 @@ Examples:
 
 **Exit Code Impact: 1 (warning)**
 
-This applies when a small part of a task is deliberately left unfinished, as opposed to a larger feature that is still under development.
+This applies when a small part of a task is deliberately left unfinished, as opposed to a larger
+feature that is still under development.
 
 Examples:
 
--   A migration to support multiple items finds another area that needs to be updated, but the code is
-    updated to just take the first item from a list for now.
--   A linter warning is disabled without a good reason, simply to make the linter pass.
--   A TODO comment is added for something that should be handled in the current change.
+- A migration to support multiple items finds another area that needs to be updated, but the code is
+  updated to just take the first item from a list for now.
+- A linter warning is disabled without a good reason, simply to make the linter pass.
+- A TODO comment is added for something that should be handled in the current change.
 
 ### BEST_PRACTICE
 
@@ -301,23 +302,34 @@ Given the auto-formatting tools in place, the reviewer should focus on:
 
 #### Testing Philosophy: Prefer Real/Fake Dependencies Over Mocks
 
-To ensure our tests are realistic and maintainable, we follow a principle of using real or fake dependencies wherever possible, especially in functional and integration tests. Mocks should be used sparingly.
+To ensure our tests are realistic and maintainable, we follow a principle of using real or fake
+dependencies wherever possible, especially in functional and integration tests. Mocks should be used
+sparingly.
 
--   **Real Dependencies**: Use real components like a test database (e.g., via `test_db_engine`) for the most accurate testing.
--   **Fake Dependencies**: When a real service is not practical (e.g., it's slow or complex to set up), use a high-fidelity "fake" implementation that mimics the real API and behavior.
--   **Mocks**: Reserve mocks for isolating a specific unit of code (in unit tests) or for external services that are difficult to fake and control (e.g., Telegram, Home Assistant APIs).
+- **Real Dependencies**: Use real components like a test database (e.g., via `test_db_engine`) for
+  the most accurate testing.
+- **Fake Dependencies**: When a real service is not practical (e.g., it's slow or complex to set
+  up), use a high-fidelity "fake" implementation that mimics the real API and behavior.
+- **Mocks**: Reserve mocks for isolating a specific unit of code (in unit tests) or for external
+  services that are difficult to fake and control (e.g., Telegram, Home Assistant APIs).
 
 **Rationale**:
 
--   **Realism**: Tests that use real or fake dependencies provide higher confidence that the system works as a whole.
--   **Maintainability**: Mocks are often brittle and require updates when the mocked component's API changes. Fakes, while requiring initial effort, are generally more robust.
--   **Fewer Bugs**: Real integration points are where bugs often hide. Mocks can conceal these integration issues.
+- **Realism**: Tests that use real or fake dependencies provide higher confidence that the system
+  works as a whole.
+- **Maintainability**: Mocks are often brittle and require updates when the mocked component's API
+  changes. Fakes, while requiring initial effort, are generally more robust.
+- **Fewer Bugs**: Real integration points are where bugs often hide. Mocks can conceal these
+  integration issues.
 
 **Review Guidelines**:
 
--   **Block** changes that introduce mocks for components that already have fake implementations or are easily testable with real instances (e.g., mocking the database). This is a **DESIGN_FLAW_MAJOR**.
--   **Question** the use of new mocks for internal components. Encourage the creation of a fake dependency instead.
--   **Accept** mocks for external, third-party services where creating a fake is impractical.
+- **Block** changes that introduce mocks for components that already have fake implementations or
+  are easily testable with real instances (e.g., mocking the database). This is a
+  **DESIGN_FLAW_MAJOR**.
+- **Question** the use of new mocks for internal components. Encourage the creation of a fake
+  dependency instead.
+- **Accept** mocks for external, third-party services where creating a fake is impractical.
 
 #### Time-Based Waits
 
