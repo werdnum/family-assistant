@@ -505,7 +505,12 @@ class TestProcessingServiceMultimodal:
         mock_tools_provider = AsyncMock()
 
         def mock_execute_tool(
-            name: str, args: dict[str, Any], context: dict[str, Any], call_id: str
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            name: str,
+            args: dict[str, Any],
+            context: dict[str, Any],
+            call_id: str,
         ) -> ToolReturnType:
             if name == "generate_image":
                 return image_result
@@ -573,7 +578,12 @@ class TestProcessingServiceMultimodal:
         call_count = 0
 
         def mock_attach_response(
-            name: str, args: dict[str, Any], context: dict[str, Any], call_id: str
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            name: str,
+            args: dict[str, Any],
+            context: dict[str, Any],
+            call_id: str,
         ) -> str:
             nonlocal call_count
             call_count += 1
@@ -677,7 +687,12 @@ class TestProcessingServiceMultimodal:
         mock_tools_provider = AsyncMock()
 
         def mock_execute_tool(
-            name: str, args: dict[str, Any], context: dict[str, Any], call_id: str
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            name: str,
+            args: dict[str, Any],
+            context: dict[str, Any],
+            call_id: str,
         ) -> ToolReturnType:
             if name == "attach_to_response":
                 return '{"status": "attachments_queued", "attachment_ids": ["explicit_attachment"], "count": 1, "message": "Explicit control established"}'

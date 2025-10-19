@@ -53,6 +53,7 @@ PUBLIC_PATHS = [
 
 
 # --- User type and dependency ---
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 User = dict[str, Any]  # User information stored in session is a dictionary
 
 

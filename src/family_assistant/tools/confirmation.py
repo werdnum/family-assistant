@@ -17,7 +17,9 @@ logger = logging.getLogger(__name__)
 
 
 def _format_event_details_for_confirmation(
-    details: dict[str, Any] | None, timezone_str: str
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    details: dict[str, Any] | None,
+    timezone_str: str,
 ) -> str:
     """Formats fetched event details for inclusion in confirmation prompts."""
     if not details:
@@ -49,7 +51,11 @@ def _format_event_details_for_confirmation(
 
 
 def render_delete_calendar_event_confirmation(
-    args: dict[str, Any], event_details: dict[str, Any] | None, timezone_str: str
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    args: dict[str, Any],
+    event_details: dict[str, Any] | None,
+    timezone_str: str,
 ) -> str:
     """Renders the confirmation message for deleting a calendar event."""
     event_desc = _format_event_details_for_confirmation(
@@ -65,7 +71,11 @@ def render_delete_calendar_event_confirmation(
 
 
 def render_modify_calendar_event_confirmation(
-    args: dict[str, Any], event_details: dict[str, Any] | None, timezone_str: str
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    args: dict[str, Any],
+    event_details: dict[str, Any] | None,
+    timezone_str: str,
 ) -> str:
     """Renders the confirmation message for modifying a calendar event."""
     event_desc = _format_event_details_for_confirmation(

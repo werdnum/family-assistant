@@ -49,6 +49,7 @@ class GoogleGenAIClient(BaseLLMClient):
         self,
         api_key: str,
         model: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         model_parameters: dict[str, dict[str, Any]] | None = None,
         api_base: str | None = None,
         enable_url_context: bool = False,
@@ -109,6 +110,7 @@ class GoogleGenAIClient(BaseLLMClient):
         """Whether to log detailed message debugging information."""
         return self._debug_messages
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _get_model_specific_params(self, model: str) -> dict[str, Any]:
         """Get parameters for a specific model based on pattern matching."""
         params = {}
@@ -125,9 +127,12 @@ class GoogleGenAIClient(BaseLLMClient):
         return False
 
     def _create_attachment_injection(
-        self, attachment: "ToolAttachment"
+        self,
+        attachment: "ToolAttachment",
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """Create user message with attachment for Gemini"""
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         parts: list[dict[str, Any] | types.Part] = [
             {"text": "[System: File from previous tool response]"}
         ]
@@ -205,7 +210,9 @@ class GoogleGenAIClient(BaseLLMClient):
         return {"role": "user", "parts": parts}
 
     def _convert_messages_to_genai_format(
-        self, messages: list[dict[str, Any]]
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        messages: list[dict[str, Any]],
     ) -> list[Any]:
         """Convert OpenAI-style messages to Gemini format."""
         # First process any tool attachments
@@ -351,6 +358,7 @@ class GoogleGenAIClient(BaseLLMClient):
 
         return contents
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _convert_tools_to_genai_format(self, tools: list[dict[str, Any]]) -> list[Any]:
         """Convert OpenAI-style tools to Gemini format."""
 
@@ -428,7 +436,9 @@ class GoogleGenAIClient(BaseLLMClient):
         return grounding_tools
 
     def _prepare_all_tools(
-        self, tools: list[dict[str, Any]] | None = None
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        tools: list[dict[str, Any]] | None = None,
     ) -> list[Any]:
         """Prepare all tools including function tools and grounding tools."""
         all_tools = []
@@ -446,7 +456,9 @@ class GoogleGenAIClient(BaseLLMClient):
 
     async def generate_response(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
@@ -644,6 +656,7 @@ class GoogleGenAIClient(BaseLLMClient):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """
         Format user message with optional file content.
@@ -681,7 +694,9 @@ class GoogleGenAIClient(BaseLLMClient):
 
     def generate_response_stream(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
@@ -690,7 +705,9 @@ class GoogleGenAIClient(BaseLLMClient):
 
     async def _generate_response_stream(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:

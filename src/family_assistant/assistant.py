@@ -130,7 +130,9 @@ class NullChatInterface:
 
 
 async def task_wrapper_handle_log_message(
-    exec_context: ToolExecutionContext, payload: dict[str, Any]
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    exec_context: ToolExecutionContext,
+    payload: dict[str, Any],
 ) -> None:
     """
     Wrapper for the original handle_log_message to match TaskWorker's expected handler signature.
@@ -152,6 +154,7 @@ class Assistant:
 
     def __init__(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         config: dict[str, Any],
         llm_client_overrides: dict[str, LLMInterface] | None = None,
         database_engine: AsyncEngine | None = None,
@@ -188,6 +191,7 @@ class Assistant:
 
         # Event system
         self.event_processor: EventProcessor | None = None
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self.home_assistant_clients: dict[str, Any] = {}  # profile_id -> HA client
 
         # Logging handler
@@ -1396,6 +1400,9 @@ class Assistant:
         return self._is_shutdown_complete
 
     async def handle_reindex_document(
-        self, exec_context: ToolExecutionContext, payload: dict[str, Any]
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        exec_context: ToolExecutionContext,
+        payload: dict[str, Any],
     ) -> None:
         await handle_reindex_document(exec_context, payload)

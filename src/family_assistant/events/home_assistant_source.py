@@ -74,6 +74,7 @@ class HomeAssistantSource(BaseEventSource, EventSource):
         self._connection_healthy = False
 
         # Janus queue for thread-to-asyncio communication
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self._event_queue: janus.Queue[dict[str, Any]] | None = None
         self._processor_task: asyncio.Task | None = None
 
@@ -209,7 +210,10 @@ class HomeAssistantSource(BaseEventSource, EventSource):
             raise
 
     def _handle_event_sync(
-        self, event_type: str, event: dict[str, Any] | HasDataAttr
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        event_type: str,
+        event: dict[str, Any] | HasDataAttr,
     ) -> None:
         """Handle an event synchronously from the thread."""
         try:
@@ -237,6 +241,7 @@ class HomeAssistantSource(BaseEventSource, EventSource):
                 event_data = event_dict
 
             # Process based on event type
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             processed_event: dict[str, Any] = {"event_type": event_type}
 
             if event_type == "state_changed":
@@ -250,7 +255,9 @@ class HomeAssistantSource(BaseEventSource, EventSource):
 
                 # Helper function to extract state info from dict or object
                 def extract_state_info(
+                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
                     state_obj: dict[str, Any] | object | None,
+                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
                 ) -> dict[str, Any] | None:
                     if not state_obj:
                         return None
@@ -388,7 +395,9 @@ class HomeAssistantSource(BaseEventSource, EventSource):
             return False
 
     async def validate_match_conditions(
-        self, match_conditions: dict[str, Any]
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        match_conditions: dict[str, Any],
     ) -> ValidationResult:
         """
         Validate match conditions for Home Assistant events.

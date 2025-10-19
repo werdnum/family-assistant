@@ -11,8 +11,10 @@ class EventListenerDict(TypedDict):
     name: str
     description: str | None
     source_id: str  # EventSourceType value
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     match_conditions: dict[str, Any]
     action_type: str  # EventActionType value
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     action_config: dict[str, Any] | None
     condition_script: str | None
     conversation_id: str
@@ -36,6 +38,7 @@ class ScheduleAutomationDict(TypedDict):
     recurrence_rule: str
     next_scheduled_at: datetime | None
     action_type: str  # EventActionType value
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     action_config: dict[str, Any]
     enabled: bool
     created_at: datetime
@@ -49,6 +52,7 @@ class RecentEventDict(TypedDict):
     id: int
     event_id: str
     source_id: str  # EventSourceType value
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     event_data: dict[str, Any]
     triggered_listener_ids: list[int] | None
     timestamp: datetime

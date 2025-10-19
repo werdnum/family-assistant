@@ -35,6 +35,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
         turn_id: str | None,
         prompt_text: str,
         tool_name: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tool_args: dict[str, Any],
         timeout: float,
     ) -> bool:

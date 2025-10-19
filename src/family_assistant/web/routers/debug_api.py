@@ -29,6 +29,7 @@ def is_debug_authorized(request: Request) -> bool:
 
 
 @debug_api_router.get("/routes")
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 async def dump_routes(request: Request) -> dict[str, Any]:
     """
     Dump all registered routes in the application.
@@ -99,6 +100,7 @@ async def dump_routes(request: Request) -> dict[str, Any]:
 
 
 @debug_api_router.get("/auth-state")
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 async def dump_auth_state(request: Request) -> dict[str, Any]:
     """
     Dump the current authentication state and configuration.

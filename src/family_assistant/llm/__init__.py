@@ -54,7 +54,9 @@ class BaseLLMClient:
         return False
 
     def _create_attachment_injection(
-        self, attachment: "ToolAttachment"
+        self,
+        attachment: "ToolAttachment",
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """Create a message to inject attachment content after tool response
 
@@ -71,7 +73,10 @@ class BaseLLMClient:
         }
 
     def _process_tool_messages(
-        self, messages: list[dict[str, Any]]
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """Process messages, handling tool attachments"""
         processed = []
@@ -170,7 +175,9 @@ def _format_tool_calls_for_debug(tool_calls: list | None) -> str:
 
 
 def _format_messages_for_debug(
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     messages: list[dict[str, Any]],
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | None = None,
 ) -> str:
@@ -285,6 +292,7 @@ class ToolCallItem:
     id: str
     type: str  # Usually "function"
     function: ToolCallFunction
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     provider_metadata: dict[str, Any] | None = (
         None  # Provider-specific metadata (e.g., thought signatures)
     )
@@ -296,9 +304,11 @@ class LLMOutput:
 
     content: str | None = None
     tool_calls: list[ToolCallItem] | None = field(default=None)
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     reasoning_info: dict[str, Any] | None = field(
         default=None
     )  # Store reasoning/usage data
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     provider_metadata: dict[str, Any] | None = field(
         default=None
     )  # Provider-specific metadata (e.g., thought signatures)
@@ -314,9 +324,12 @@ class LLMStreamEvent:
     tool_call_id: str | None = None  # For correlating tool results
     tool_result: str | None = None  # For tool execution results
     error: str | None = None  # For error messages
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     metadata: dict[str, Any] | None = None  # Additional event metadata
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def _sanitize_tools_for_litellm(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Removes unsupported 'format' fields from string parameters in tool definitions
@@ -375,7 +388,9 @@ class LLMInterface(Protocol):
 
     async def generate_response(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
@@ -387,7 +402,9 @@ class LLMInterface(Protocol):
 
     def generate_response_stream(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
@@ -408,6 +425,7 @@ class LLMInterface(Protocol):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """
         Formats a user message, potentially including file content.
@@ -432,10 +450,13 @@ class LiteLLMClient(BaseLLMClient):
     def __init__(
         self,
         model: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         model_parameters: dict[str, dict[str, Any]] | None = None,  # Corrected type
         fallback_model_id: str | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         fallback_model_parameters: dict[str, dict[str, Any]]
         | None = None,  # Corrected type
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         **kwargs: dict[str, Any],
     ) -> None:
         """
@@ -452,10 +473,12 @@ class LiteLLMClient(BaseLLMClient):
             raise ValueError("LLM model identifier cannot be empty.")
         self.model = model
         self.default_kwargs = kwargs
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self.model_parameters: dict[str, dict[str, Any]] = (
             model_parameters or {}
         )  # Ensure correct type for self
         self.fallback_model_id = fallback_model_id
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self.fallback_model_parameters: dict[str, dict[str, Any]] = (
             fallback_model_parameters or {}
         )  # Ensure correct type for self
@@ -472,7 +495,10 @@ class LiteLLMClient(BaseLLMClient):
         return self.model.startswith("claude")
 
     def _process_tool_messages(
-        self, messages: list[dict[str, Any]]
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """Process messages, using native support when available"""
         if not self._supports_multimodal_tools():
@@ -543,9 +569,12 @@ class LiteLLMClient(BaseLLMClient):
     async def _attempt_completion(
         self,
         model_id: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None,
         tool_choice: str | None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         specific_model_params: dict[str, dict[str, Any]],  # Corrected type
     ) -> LLMOutput:
         """Internal method to make a single attempt at LLM completion."""
@@ -699,7 +728,9 @@ class LiteLLMClient(BaseLLMClient):
 
     async def generate_response(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
@@ -828,7 +859,9 @@ class LiteLLMClient(BaseLLMClient):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         user_content_parts: list[dict[str, Any]] = []
         actual_prompt_text = prompt_text or "Process the provided file."
 
@@ -981,6 +1014,7 @@ class LiteLLMClient(BaseLLMClient):
             raise ValueError("Cannot format user message with no input (file or text).")
 
         # Determine final content structure for the user message
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         final_user_content: str | list[dict[str, Any]]
         if len(user_content_parts) == 1 and user_content_parts[0]["type"] == "text":
             final_user_content = user_content_parts[0]["text"]
@@ -991,7 +1025,9 @@ class LiteLLMClient(BaseLLMClient):
 
     def generate_response_stream(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
@@ -1000,7 +1036,9 @@ class LiteLLMClient(BaseLLMClient):
 
     async def _generate_response_stream(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
@@ -1057,6 +1095,7 @@ class LiteLLMClient(BaseLLMClient):
             stream = await acompletion(**stream_params)
 
             # Track current tool calls being built
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             current_tool_calls: dict[int, dict[str, Any]] = {}
             chunk = None  # Initialize for pylint
 
@@ -1188,7 +1227,9 @@ class RecordingLLMClient:
 
     async def generate_response(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
@@ -1220,6 +1261,7 @@ class RecordingLLMClient:
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """Calls the wrapped client's format_user_message_with_file, records, and returns."""
         input_data = {
@@ -1252,7 +1294,9 @@ class RecordingLLMClient:
 
     async def generate_response_stream(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
@@ -1268,6 +1312,7 @@ class RecordingLLMClient:
 
     async def _record_interaction(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         input_data: dict[str, Any],
         output_data: LLMOutput,  # This is for generate_response
     ) -> None:
@@ -1277,6 +1322,7 @@ class RecordingLLMClient:
         record = {"input": input_data, "output": output_dict}
         await self._write_record_to_file(record)
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def _write_record_to_file(self, record: dict[str, Any]) -> None:
         """Helper method to write a generic record to the recording file."""
         try:
@@ -1312,6 +1358,7 @@ class PlaybackLLMClient:
             ValueError: If the recording file is empty or contains invalid JSON.
         """
         self.recording_path = recording_path
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self.recorded_interactions: list[dict[str, Any]] = []
         logger.info(
             f"PlaybackLLMClient initializing. Reading from: {self.recording_path}"
@@ -1372,7 +1419,9 @@ class PlaybackLLMClient:
 
     async def generate_response(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
@@ -1391,6 +1440,7 @@ class PlaybackLLMClient:
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """Plays back for the format_user_message_with_file method."""
         current_input_args = {
@@ -1404,7 +1454,9 @@ class PlaybackLLMClient:
         return await self._find_and_playback_dict(current_input_args)
 
     async def _find_and_playback_llm_output(
-        self, current_input_args: dict[str, Any]
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        current_input_args: dict[str, Any],
     ) -> LLMOutput:
         """Helper to find and playback interactions that return LLMOutput."""
         logger.debug(
@@ -1469,7 +1521,10 @@ class PlaybackLLMClient:
         )
 
     async def _find_and_playback_dict(
-        self, current_input_args: dict[str, Any]
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        current_input_args: dict[str, Any],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """Helper to find and playback interactions that return a simple dict."""
         logger.debug(
@@ -1494,7 +1549,9 @@ class PlaybackLLMClient:
 
     async def generate_response_stream(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
@@ -1516,6 +1573,7 @@ class PlaybackLLMClient:
 
         yield LLMStreamEvent(type="done", metadata=response.reasoning_info)
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def _log_no_match_error(self, current_input_args: dict[str, Any]) -> None:
         """Logs an error when no matching interaction is found."""
         logger.error(

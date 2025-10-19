@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 
 # Tool Definitions
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 MOCK_IMAGE_TOOLS_DEFINITION: list[dict[str, Any]] = [
     {
         "type": "function",

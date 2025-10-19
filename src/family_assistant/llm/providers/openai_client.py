@@ -42,6 +42,7 @@ class OpenAIClient(BaseLLMClient):
         self,
         api_key: str,
         model: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         model_parameters: dict[str, dict[str, Any]] | None = None,
         **kwargs: Any,  # noqa: ANN401 # Accepts arbitrary OpenAI API parameters
     ) -> None:
@@ -68,9 +69,12 @@ class OpenAIClient(BaseLLMClient):
         return False
 
     def _create_attachment_injection(
-        self, attachment: "ToolAttachment"
+        self,
+        attachment: "ToolAttachment",
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """Create user message with attachment for OpenAI"""
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         content: list[dict[str, Any]] = [
             {"type": "text", "text": "[System: File from previous tool response]"}
         ]
@@ -111,6 +115,7 @@ class OpenAIClient(BaseLLMClient):
 
         return {"role": "user", "content": content}
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _get_model_specific_params(self, model: str) -> dict[str, Any]:
         """Get parameters for a specific model based on pattern matching."""
         params = {}
@@ -124,7 +129,9 @@ class OpenAIClient(BaseLLMClient):
 
     async def generate_response(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
@@ -239,6 +246,7 @@ class OpenAIClient(BaseLLMClient):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """
         Format user message with optional file content.
@@ -290,7 +298,9 @@ class OpenAIClient(BaseLLMClient):
 
     def generate_response_stream(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
@@ -299,7 +309,9 @@ class OpenAIClient(BaseLLMClient):
 
     async def _generate_response_stream(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
@@ -326,6 +338,7 @@ class OpenAIClient(BaseLLMClient):
             stream = await self.client.chat.completions.create(**params)
 
             # Track current tool call being built
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             current_tool_calls: dict[int, dict[str, Any]] = {}
             chunk = None  # Initialize for pylint
 

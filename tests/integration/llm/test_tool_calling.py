@@ -71,6 +71,7 @@ async def llm_client_with_tools() -> Callable[[str, str], Awaitable[LLMInterface
     return _create_client
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def get_weather_tool() -> dict[str, Any]:
     """Get a sample weather tool definition."""
     return {
@@ -97,6 +98,7 @@ def get_weather_tool() -> dict[str, Any]:
     }
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def calculate_tool() -> dict[str, Any]:
     """Get a sample calculation tool definition."""
     return {
@@ -386,6 +388,7 @@ async def test_tool_response_handling(
     }
 
     # Continue conversation with tool response
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     assistant_msg: dict[str, Any] = {
         "role": "assistant",
         "content": response1.content,

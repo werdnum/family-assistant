@@ -69,6 +69,20 @@ await expect(page.locator("#status")).to_have_text("Complete")
 await page.wait_for_load_state("networkidle")
 ```
 
+### Type Annotation Quality
+
+#### `no-dict-any`
+
+**Pattern**: Type annotations that include `dict[str, Any]` (or `Dict[str, Any]`)
+
+**Why it's flagged**: These annotations effectively disable static typing for the structure. They
+encourage "JSON blob" dictionaries whose shape is unclear and makes downstream logic rely on runtime
+`dict` probing.
+
+**Replacement**: Define a structured type (e.g., `TypedDict`, dataclass, or `Protocol`) that
+documents the expected keys and value types. Only use `dict[str, Any]` if the data is legitimately
+arbitrary.
+
 ## Adding Exemptions
 
 Sometimes you legitimately need to use a banned pattern. There are three ways to add exemptions:

@@ -43,6 +43,7 @@ class TelegramService:
         processing_services_registry: dict[
             str, ProcessingService
         ],  # Registry of all services
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         app_config: dict[str, Any],  # Main application config
         attachment_registry: AttachmentRegistry,  # Changed from AttachmentService
         get_db_context_func: Callable[
@@ -169,6 +170,7 @@ class TelegramService:
         turn_id: str | None,
         prompt_text: str,
         tool_name: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tool_args: dict[str, Any],
         timeout: float,
     ) -> bool:

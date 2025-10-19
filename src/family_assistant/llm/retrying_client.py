@@ -60,7 +60,9 @@ class RetryingLLMClient:
 
     async def generate_response(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> "LLMOutput":
@@ -181,7 +183,9 @@ class RetryingLLMClient:
 
     async def generate_response_stream(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
@@ -213,6 +217,7 @@ class RetryingLLMClient:
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """Format user message with file - delegates to primary client."""
         return await self.primary_client.format_user_message_with_file(

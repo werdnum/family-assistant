@@ -49,6 +49,7 @@ def _to_isoformat(dt: datetime | None) -> str | None:
 
 
 # Tool Definitions
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 AUTOMATIONS_TOOLS_DEFINITION: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -342,8 +343,10 @@ async def create_automation_tool(
     exec_context: ToolExecutionContext,
     name: str,
     automation_type: str,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     trigger_config: dict[str, Any],
     action_type: str,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     action_config: dict[str, Any],
     description: str | None = None,
 ) -> ToolResult:
@@ -637,7 +640,9 @@ async def update_automation_tool(
     exec_context: ToolExecutionContext,
     automation_id: int,
     automation_type: str,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     trigger_config: dict[str, Any] | None = None,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     action_config: dict[str, Any] | None = None,
     description: str | None = None,
 ) -> ToolResult:
@@ -706,6 +711,7 @@ async def update_automation_tool(
             )
 
             # Only pass parameters that were actually provided (not None)
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             update_kwargs: dict[str, Any] = {
                 "automation_id": automation_id,
                 "conversation_id": existing.conversation_id,

@@ -177,6 +177,7 @@ async def get_document(
 async def reindex_document(
     document_id: int,
     db_context: Annotated[DatabaseContext, Depends(get_db)],
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> dict[str, Any]:
     """
     API endpoint to re-index a document.
@@ -291,6 +292,7 @@ async def upload_document(
 
     # --- 2. Parse and Prepare Inputs for Service Function ---
     content_parts: dict[str, str] | None = None
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     doc_metadata: dict[str, Any] = {}
     created_at_dt: datetime | None = None
     uploaded_file_content_bytes: bytes | None = None

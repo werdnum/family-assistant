@@ -195,6 +195,7 @@ class TestStarlarkEngineIntegration:
         )
 
         # Test function that returns complex data
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         def get_data() -> dict[str, Any]:
             return {"status": "ok", "count": 3}
 

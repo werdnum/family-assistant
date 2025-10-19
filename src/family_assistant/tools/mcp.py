@@ -32,6 +32,7 @@ class MCPToolsProvider:
 
     def __init__(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         mcp_server_configs: dict[str, dict[str, Any]],
         initialization_timeout_seconds: int = 60,  # Default 1 minute
         health_check_interval_seconds: int = 30,  # Default 30 seconds
@@ -41,6 +42,7 @@ class MCPToolsProvider:
         self._health_check_interval_seconds = health_check_interval_seconds
         self._sessions: dict[str, ClientSession] = {}
         self._tool_map: dict[str, str] = {}  # Map tool name -> server_id
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self._definitions: list[dict[str, Any]] = []
         self._initialized = False
         self._connection_contexts: dict[str, contextlib.AsyncExitStack] = {}
@@ -103,7 +105,11 @@ class MCPToolsProvider:
             logger.debug("MCP initialization logging task finished.")
 
     async def _connect_and_discover_mcp(
-        self, server_id: str, server_conf: dict[str, Any]
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        server_id: str,
+        server_conf: dict[str, Any],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> tuple["ClientSession | None", list[dict[str, Any]], dict[str, str]]:
         """Connects to a single MCP server, discovers tools, and returns results."""
         self._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTING
@@ -474,6 +480,7 @@ class MCPToolsProvider:
         # self, definitions: List[Dict[str, Any]] # Original signature
         self,
         definitions: list[Any],  # MCP list_tools returns list of Tool objects
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """
         Accepts a list of MCP Tool objects.
@@ -510,6 +517,7 @@ class MCPToolsProvider:
 
     async def get_tool_definitions(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:  # Return type is still dict
         """Returns the aggregated and sanitized tool definitions from all connected servers."""
         if not self._initialized:
@@ -656,6 +664,7 @@ class MCPToolsProvider:
     async def execute_tool(
         self,
         name: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         arguments: dict[str, Any],
         context: ToolExecutionContext,
         call_id: str | None = None,

@@ -45,6 +45,7 @@ class VectorRepository(BaseRepository):
     async def add_document(
         self,
         doc: "Document",
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         enriched_doc_metadata: dict[str, Any] | None = None,
     ) -> int:
         """
@@ -165,6 +166,7 @@ class VectorRepository(BaseRepository):
         embedding_model: str,
         content: str | None = None,
         content_hash: str | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         embedding_doc_metadata: dict[str, Any] | None = None,
     ) -> None:
         """
@@ -204,9 +206,11 @@ class VectorRepository(BaseRepository):
         query_embedding: list[float],
         embedding_model: str,
         keywords: str | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         filters: dict[str, Any] | None = None,
         embedding_type_filter: list[str] | None = None,
         limit: int = 10,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """
         Query vectors by similarity.

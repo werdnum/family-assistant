@@ -132,6 +132,7 @@ class DatabaseContext:
     async def execute_with_retry(
         self,
         query: Select | Insert | Update | Delete | TextClause,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         params: dict[str, Any] | None = None,
     ) -> CursorResult:
         """
@@ -216,7 +217,11 @@ class DatabaseContext:
         raise RuntimeError("Database operation failed after multiple retries")
 
     async def fetch_all(
-        self, query: Select | TextClause, params: dict[str, Any] | None = None
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        query: Select | TextClause,
+        params: dict[str, Any] | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """
         Execute a query and fetch all results as dictionaries.
@@ -233,7 +238,11 @@ class DatabaseContext:
         return [dict(row_mapping) for row_mapping in result.mappings().all()]
 
     async def fetch_one(
-        self, query: Select | TextClause, params: dict[str, Any] | None = None
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        query: Select | TextClause,
+        params: dict[str, Any] | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any] | None:
         """
         Execute a query and fetch one result as a dictionary.

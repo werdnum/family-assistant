@@ -735,6 +735,7 @@ async def test_end_to_end_event_listener_wakes_llm(
     # Step 6: Start a task worker that will process the callback task
 
     # Setup mock LLM that will handle the callback
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def callback_matcher(kwargs: dict[str, Any]) -> bool:
         messages = kwargs.get("messages", [])
         if not messages:

@@ -1,0 +1,59 @@
+id: no-dict-any
+language: python
+severity: warning
+message: "Avoid dict[str, Any] annotations; define a specific typed structure instead"
+note: |
+  Using dict[str, Any] (or typing.Dict[str, Any]) loses type information and makes
+  downstream code rely on loosely typed "JSON blobs". Prefer defining a TypedDict,
+  dataclass, or dedicated Protocol that describes the expected fields. Only use
+  dict[str, Any] when the data is genuinely arbitrary.
+rule:
+  any:
+    # Direct annotations
+    - pattern:
+        context: '$TARGET: dict[str, Any]'
+        selector: type
+    - pattern:
+        context: '$TARGET: Dict[str, Any]'
+        selector: type
+    # Nested annotations (e.g. list[dict[str, Any]] | None)
+    - all:
+        - pattern: dict[str, Any]
+        - inside:
+            stopBy: end
+            pattern:
+              context: '$TARGET: $TYPE'
+              selector: type
+    - all:
+        - pattern: Dict[str, Any]
+        - inside:
+            stopBy: end
+            pattern:
+              context: '$TARGET: $TYPE'
+              selector: type
+    # Function return annotations
+    - pattern:
+        context: 'def $FUNC($$$ARGS) -> dict[str, Any]: $$$BODY'
+        selector: type
+    - pattern:
+        context: 'def $FUNC($$$ARGS) -> Dict[str, Any]: $$$BODY'
+        selector: type
+    - all:
+        - pattern: dict[str, Any]
+        - inside:
+            stopBy: end
+            pattern:
+              context: 'def $FUNC($$$ARGS) -> $RETURN: $$$BODY'
+              selector: type
+    - all:
+        - pattern: Dict[str, Any]
+        - inside:
+            stopBy: end
+            pattern:
+              context: 'def $FUNC($$$ARGS) -> $RETURN: $$$BODY'
+              selector: type
+    # Type aliases (with or without TypeAlias helper)
+    - pattern: '$NAME = dict[str, Any]'
+    - pattern: '$NAME = Dict[str, Any]'
+    - pattern: '$NAME: TypeAlias = dict[str, Any]'
+    - pattern: '$NAME: TypeAlias = Dict[str, Any]'

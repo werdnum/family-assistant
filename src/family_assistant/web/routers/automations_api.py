@@ -29,6 +29,7 @@ class AutomationResponse(BaseModel):
     conversation_id: str
     interface_type: str
     action_type: str
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     action_config: dict[str, Any]
     enabled: bool
     created_at: datetime
@@ -36,6 +37,7 @@ class AutomationResponse(BaseModel):
 
     # Event-specific fields (null for schedule automations)
     source_id: str | None = None
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     match_conditions: dict[str, Any] | None = None
     condition_script: str | None = None
     one_time: bool | None = None
@@ -64,9 +66,11 @@ class CreateEventAutomationRequest(BaseModel):
         ..., description="Event source: home_assistant, indexing, or webhook"
     )
     action_type: str = Field(..., description="Action type: wake_llm or script")
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     match_conditions: dict[str, Any] = Field(
         ..., description="Conditions to match events"
     )
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     action_config: dict[str, Any] = Field(
         default_factory=dict, description="Configuration for the action"
     )
@@ -86,6 +90,7 @@ class CreateScheduleAutomationRequest(BaseModel):
     name: str = Field(..., description="Unique name for the automation")
     recurrence_rule: str = Field(..., description="RRULE string defining the schedule")
     action_type: str = Field(..., description="Action type: wake_llm or script")
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     action_config: dict[str, Any] = Field(
         default_factory=dict, description="Configuration for the action"
     )
@@ -98,7 +103,9 @@ class UpdateEventAutomationRequest(BaseModel):
     """Request model for updating an event automation."""
 
     name: str | None | object = _UNSET
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     match_conditions: dict[str, Any] | None | object = _UNSET
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     action_config: dict[str, Any] | None | object = _UNSET
     description: str | None | object = _UNSET
     enabled: bool | None | object = _UNSET
@@ -111,6 +118,7 @@ class UpdateScheduleAutomationRequest(BaseModel):
 
     name: str | None | object = _UNSET
     recurrence_rule: str | None | object = _UNSET
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     action_config: dict[str, Any] | None | object = _UNSET
     description: str | None | object = _UNSET
     enabled: bool | None | object = _UNSET
@@ -366,6 +374,7 @@ async def create_schedule_automation(
 async def update_automation(
     automation_type: str,
     automation_id: int,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     request_body: Annotated[dict[str, Any], Body(...)],
     conversation_id: Annotated[
         str, Query(description="Conversation ID for permission check")
@@ -606,6 +615,7 @@ async def get_automation_stats(
         str, Query(description="Conversation ID for permission check")
     ],
     db: Annotated[DatabaseContext, Depends(get_db)],
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> dict[str, Any]:
     """Get execution statistics for an automation."""
     # Validate automation_type

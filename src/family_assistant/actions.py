@@ -24,9 +24,11 @@ class ActionType(str, Enum):
 async def execute_action(
     db_ctx: DatabaseContext,
     action_type: ActionType,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     action_config: dict[str, Any],
     conversation_id: str,
     interface_type: str = "telegram",
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     context: dict[str, Any] | None = None,
     scheduled_at: datetime | None = None,
     recurrence_rule: str | None = None,

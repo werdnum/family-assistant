@@ -42,6 +42,7 @@ class TasksRepository(BaseRepository):
         self,
         task_id: str,
         task_type: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         payload: dict[str, Any] | None = None,
         scheduled_at: datetime | None = None,
         max_retries_override: int | None = None,
@@ -175,6 +176,7 @@ class TasksRepository(BaseRepository):
         worker_id: str,
         task_types: list[str],
         current_time: datetime,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any] | None:
         """
         Atomically dequeues the next available task for a worker.
@@ -407,6 +409,7 @@ class TasksRepository(BaseRepository):
         date_to: datetime | None = None,
         sort_order: str = "asc",
         limit: int = 100,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """
         Retrieves tasks from the queue with optional filtering.

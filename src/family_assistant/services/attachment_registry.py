@@ -60,6 +60,7 @@ class AttachmentMetadata:
         message_id: int | None = None,
         created_at: datetime | None = None,
         accessed_at: datetime | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         metadata: dict[str, Any] | None = None,
     ) -> None:
         self.attachment_id = attachment_id
@@ -76,6 +77,7 @@ class AttachmentMetadata:
         self.accessed_at = accessed_at
         self.metadata = metadata or {}
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
@@ -95,6 +97,7 @@ class AttachmentMetadata:
         }
 
     @classmethod
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def from_row(cls, row: dict[str, Any]) -> AttachmentMetadata:
         """Create from database row."""
         return cls(
@@ -121,6 +124,7 @@ class AttachmentRegistry:
         self,
         storage_path: str,
         db_engine: AsyncEngine,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         config: dict[str, Any] | None = None,
     ) -> None:
         """
@@ -172,6 +176,7 @@ class AttachmentRegistry:
         storage_path: str | None = None,
         conversation_id: str | None = None,
         message_id: int | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         metadata: dict[str, Any] | None = None,
     ) -> AttachmentMetadata:
         """
@@ -381,6 +386,7 @@ class AttachmentRegistry:
         storage_path: str | None = None,
         conversation_id: str | None = None,
         message_id: int | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         metadata: dict[str, Any] | None = None,
     ) -> AttachmentMetadata:
         """
@@ -691,6 +697,7 @@ class AttachmentRegistry:
         storage_path: str | None = None,
         conversation_id: str | None = None,
         message_id: int | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         metadata: dict[str, Any] | None = None,
     ) -> AttachmentMetadata:
         """
@@ -734,6 +741,7 @@ class AttachmentRegistry:
         description: str | None = None,
         conversation_id: str | None = None,
         message_id: int | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         metadata: dict[str, Any] | None = None,
     ) -> AttachmentMetadata:
         """

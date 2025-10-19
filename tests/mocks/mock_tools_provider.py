@@ -17,7 +17,11 @@ class MockToolsProvider(ToolsProvider):
         self.tool_definitions = []
 
     def add_tool(
-        self, name: str, func: Callable, tool_def: dict[str, Any] | None = None
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        name: str,
+        func: Callable,
+        tool_def: dict[str, Any] | None = None,
     ) -> None:
         """Add a tool to the mock provider."""
         self.tools[name] = func
@@ -60,6 +64,7 @@ class MockToolsProvider(ToolsProvider):
     async def execute_tool(
         self,
         name: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         arguments: dict[str, Any],
         context: ToolExecutionContext | None = None,  # noqa: ANN401 # Mock needs to be flexible
     ) -> Any:  # noqa: ANN401 # Mock tool can return anything
@@ -85,10 +90,12 @@ class MockToolsProvider(ToolsProvider):
         else:
             return func(**call_args)
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def get_tools_definition(self) -> list[dict[str, Any]]:
         """Get the list of available tool definitions."""
         return self.tool_definitions
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def get_tool_definitions(self) -> list[dict[str, Any]]:
         """Get tool definitions asynchronously."""
         return self.tool_definitions

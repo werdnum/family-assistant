@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
 
 # Tool Definitions
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 IMAGE_TOOLS_DEFINITION: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -118,6 +119,7 @@ COLOR_MAP = {
 async def highlight_image_tool(
     exec_context: ToolExecutionContext,
     image_attachment_id: ScriptAttachment,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     regions: list[dict[str, Any]],
 ) -> ToolResult:
     """

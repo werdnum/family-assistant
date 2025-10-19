@@ -329,6 +329,7 @@ async def test_confirming_tools_provider_with_calendar_events(
         turn_id: str | None,
         tool_name: str,
         call_id: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tool_args: dict[str, Any],
         timeout_seconds: float,
     ) -> bool:

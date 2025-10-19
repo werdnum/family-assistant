@@ -96,6 +96,7 @@ class ToolExecutionContext:
                 str | None,
                 str,
                 str,
+                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
                 dict[str, Any],
                 float,
             ],  # Changed chat_id to str
@@ -140,6 +141,7 @@ class ToolResult:
     attachments: list[ToolAttachment] | None = (
         None  # List of attachments (can be references or new content)
     )
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     data: dict[str, Any] | str | None = None  # Structured data for tests/scripts
 
     def __post_init__(self) -> None:
@@ -165,6 +167,7 @@ class ToolResult:
 
         return ""
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def get_data(self) -> dict[str, Any] | str | None:
         """
         Get data, parsing from text if needed.
@@ -193,6 +196,7 @@ class ToolResult:
         self,
         tool_call_id: str,
         function_name: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """Convert to message format for LLM (includes _attachment for provider handling)"""
         message = {
@@ -224,6 +228,7 @@ class ToolResult:
         self,
         tool_call_id: str,
         function_name: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """Convert to message format for database history (excludes raw attachment data)"""
         llm_message = self.to_llm_message(tool_call_id, function_name)

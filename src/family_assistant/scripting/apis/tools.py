@@ -45,6 +45,7 @@ class ToolInfo:
 
     name: str
     description: str
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     parameters: dict[str, Any]
 
 
@@ -96,7 +97,9 @@ class ToolsAPI:
         self._executor = ThreadPoolExecutor(max_workers=1)
 
         # Cache tool definitions
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self._tool_definitions: list[dict[str, Any]] | None = None
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self._raw_tool_definitions: list[dict[str, Any]] | None = None
 
         logger.info(
@@ -224,6 +227,7 @@ class ToolsAPI:
 
         return await fetch_attachment_object(attachment_id, self.execution_context)
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _get_raw_tool_definitions(self) -> list[dict[str, Any]]:
         """Get raw tool definitions for internal schema analysis.
 
@@ -268,7 +272,11 @@ class ToolsAPI:
         return self._raw_tool_definitions or []
 
     async def _process_attachment_arguments(
-        self, tool_name: str, kwargs: dict[str, Any]
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        tool_name: str,
+        kwargs: dict[str, Any],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """
         Process tool arguments to replace attachment IDs with actual content.
@@ -358,6 +366,7 @@ class ToolsAPI:
         tool_name: str,
         *args: Any,  # noqa: ANN401
         **kwargs: Any,  # noqa: ANN401
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> str | dict[str, Any]:
         """
         Execute a tool with the given arguments.
@@ -527,6 +536,7 @@ class ToolsAPI:
             logger.error(error_msg, exc_info=True)
             raise RuntimeError(error_msg) from e
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def execute_json(self, tool_name: str, args_json: str) -> str | dict[str, Any]:
         """
         Execute a tool with JSON-encoded arguments.
@@ -570,6 +580,7 @@ class StarlarkToolsAPI:
         """Initialize the Starlark-compatible wrapper."""
         self._api = api
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def list(self) -> list[dict[str, Any]]:
         """List available tools."""
         tools = self._api.list_tools()
@@ -583,6 +594,7 @@ class StarlarkToolsAPI:
             for tool in tools
         ]
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def get(self, name: str) -> dict[str, Any] | None:
         """Get tool information."""
         tool = self._api.get_tool(name)
@@ -599,10 +611,12 @@ class StarlarkToolsAPI:
         tool_name: str,
         *args: Any,  # noqa: ANN401
         **kwargs: Any,  # noqa: ANN401
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> str | dict[str, Any]:
         """Execute a tool."""
         return self._api.execute(tool_name, *args, **kwargs)
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def execute_json(self, tool_name: str, args_json: str) -> str | dict[str, Any]:
         """Execute a tool with JSON arguments."""
         return self._api.execute_json(tool_name, args_json)

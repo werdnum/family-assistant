@@ -24,6 +24,7 @@ from family_assistant.storage.types import EventListenerDict, RecentEventDict
 class EventsRepository(BaseRepository):
     """Repository for managing events and rate limiting in the database."""
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _normalize_event_listener(self, row: dict[str, Any]) -> EventListenerDict:
         """
         Normalize event listener row from database.
@@ -45,6 +46,7 @@ class EventsRepository(BaseRepository):
 
         return listener  # type: ignore[return-value]
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _normalize_event(self, row: dict[str, Any]) -> RecentEventDict:
         """
         Normalize recent event row from database.
@@ -452,6 +454,7 @@ class EventsRepository(BaseRepository):
     async def record_event(
         self,
         source_type: EventSourceType,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         metadata: dict[str, Any],
     ) -> int:
         """
@@ -486,6 +489,7 @@ class EventsRepository(BaseRepository):
         source_type: EventSourceType | None = None,
         hours: int = 24,
         limit: int = 100,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """
         Get recent events.
@@ -515,6 +519,7 @@ class EventsRepository(BaseRepository):
     async def store_event(
         self,
         source_id: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         event_data: dict[str, Any],
         triggered_listener_ids: list[int] | None = None,
         timestamp: datetime | None = None,
@@ -555,6 +560,7 @@ class EventsRepository(BaseRepository):
         source_id: str | None = None,
         hours: int = 24,
         limit: int = 100,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """
         Query recent events with optional filters.
@@ -630,6 +636,8 @@ class EventsRepository(BaseRepository):
             )
             raise
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _process_listener_row(self, row: dict[str, Any]) -> dict[str, Any]:
         """Process a listener row from the database."""
         listener = dict(row)
@@ -655,6 +663,8 @@ class EventsRepository(BaseRepository):
 
         return listener
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _process_event_row(self, row: dict[str, Any]) -> dict[str, Any]:
         """Process an event row from the database."""
         event = dict(row)
@@ -815,6 +825,7 @@ class EventsRepository(BaseRepository):
             )
             raise
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def get_event_by_id(self, event_id: str) -> dict[str, Any] | None:
         """Get a specific event by ID."""
         try:

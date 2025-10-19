@@ -33,7 +33,10 @@ class NotesIndexer:
         logger.info("NotesIndexer initialized with an IndexingPipeline instance.")
 
     async def handle_index_note(
-        self, exec_context: ToolExecutionContext, payload: dict[str, Any]
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        exec_context: ToolExecutionContext,
+        payload: dict[str, Any],
     ) -> None:
         """
         Task handler to index a specific note from the notes table.

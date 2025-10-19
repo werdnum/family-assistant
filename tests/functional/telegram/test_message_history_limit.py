@@ -77,6 +77,7 @@ async def test_message_history_includes_most_recent_when_limited(
 
     # Set up LLM responses for the conversation
     # We'll use a single rule that responds differently based on the conversation state
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def dynamic_response(messages: list[dict[str, Any]]) -> LLMOutput | bool:
         # Get the last user message
         user_messages = [msg for msg in messages if msg.get("role") == "user"]
@@ -114,16 +115,20 @@ async def test_message_history_includes_most_recent_when_limited(
         return False
 
     # Create matcher function that always returns True
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def always_match(messages: list[dict[str, Any]], **kwargs: Any) -> bool:  # noqa: ANN401  # Mock kwargs
         return True
 
     # Create rule function that returns the dynamic response
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def get_response(messages: list[dict[str, Any]], **kwargs: Any) -> LLMOutput | bool:  # noqa: ANN401  # Mock kwargs
         return dynamic_response(messages)
 
     # Set up the mock LLM with a custom generate_response method
     async def mock_generate_response(
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
@@ -202,6 +207,7 @@ async def test_reminder_after_completed_conversation(
     fixture.mock_bot.send_message.side_effect = mock_send_message
 
     # Set up dynamic LLM response
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def dynamic_response(messages: list[dict[str, Any]]) -> LLMOutput | bool:
         user_messages = [msg for msg in messages if msg.get("role") == "user"]
         if not user_messages:
@@ -232,7 +238,9 @@ async def test_reminder_after_completed_conversation(
 
     # Set up the mock LLM with a custom generate_response method
     async def mock_generate_response(
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
