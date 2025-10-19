@@ -322,11 +322,14 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         logger.debug(f"Combined text: '{combined_text[:100]}...'")
 
         formatted_user_text_content = f"{forward_context}{combined_text}".strip()
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         text_content_part: dict[str, Any] = {
             "type": "text",
             "text": formatted_user_text_content,
         }
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         trigger_content_parts: list[dict[str, Any]] = [text_content_part]
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         trigger_attachments: list[dict[str, Any]] | None = None
 
         if first_photo_bytes:
@@ -490,6 +493,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         turn_id: str | None,
                         tool_name: str,
                         call_id: str,
+                        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
                         tool_args: dict[str, Any],
                         timeout_seconds: float,
                     ) -> bool:
@@ -699,7 +703,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             raise e
 
     def _serialize_update_for_error_log(
-        self, update_obj: object
+        self,
+        update_obj: object,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> str | dict[str, Any]:
         """
         Serializes the update object for error logging.
@@ -870,6 +876,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 return
 
         text_part = {"type": "text", "text": user_input_for_profile}
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         trigger_content_parts_for_profile: list[dict[str, Any]] = [text_part]
         if photo_bytes:
             try:
@@ -904,6 +911,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     turn_id_cb: str | None,
                     tool_name_cb: str,
                     call_id_cb: str,
+                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
                     tool_args_cb: dict[str, Any],
                     timeout_cb: float,
                 ) -> bool:

@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 class SimpleToolsProvider:
     """Simple tools provider with a few example tools."""
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def get_tool_definitions(self) -> list[dict[str, Any]]:
         """Return tool definitions."""
         return [
@@ -70,6 +71,7 @@ class SimpleToolsProvider:
     async def execute_tool(
         self,
         name: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         arguments: dict[str, Any],
         context: ToolExecutionContext,
         call_id: str | None = None,

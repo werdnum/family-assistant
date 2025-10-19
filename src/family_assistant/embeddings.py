@@ -269,6 +269,7 @@ class SentenceTransformerEmbeddingGenerator:
 
     _model_name: str  # Instance variable for the model name/path
     model: Any  # Instance variable for the loaded SentenceTransformer model
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     model_kwargs: dict[str, Any]  # Instance variable for model kwargs
 
     def __init__(

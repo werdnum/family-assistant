@@ -44,6 +44,7 @@ class MockLLMClient:
         max_text_length: int | None,
         # Add any other params from the protocol if necessary, though not used here
         **_kwargs: Any,  # noqa: ANN401 # Capture other potential arguments from protocol
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         # Return a simple dict structure, content not important for these tests
         return {"role": "user", "content": prompt_text or ""}
@@ -54,12 +55,14 @@ class MockToolsProvider:
         self,
         *args: Any,  # noqa: ANN401  # Mock needs flexibility
         **kwargs: Any,  # noqa: ANN401 # Mock needs flexibility
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         return []  # Not used
 
     async def execute_tool(
         self,
         name: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         arguments: dict[str, Any],
         context: ToolExecutionContext,
         call_id: str | None = None,

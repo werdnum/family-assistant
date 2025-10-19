@@ -39,7 +39,9 @@ class BaseEventSource:
     """Base class for event sources with default implementations."""
 
     async def validate_match_conditions(
-        self, match_conditions: dict[str, Any]
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        match_conditions: dict[str, Any],
     ) -> ValidationResult:
         """
         Validate match conditions for this source type.

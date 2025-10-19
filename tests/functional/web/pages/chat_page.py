@@ -388,6 +388,7 @@ class ChatPage(BasePage):
             self.CHAT_INPUT, state="visible", timeout=5000
         )
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def get_conversation_list(self) -> list[dict[str, Any]]:
         """Get the list of conversations from the sidebar.
 
@@ -497,6 +498,7 @@ class ChatPage(BasePage):
                         "No tool container found - tool execution may have failed"
                     ) from None
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def get_tool_calls(self) -> list[dict[str, Any]]:
         """Get information about tool calls displayed in the conversation.
 
@@ -610,6 +612,8 @@ class ChatPage(BasePage):
                     f"Last content: {last_content}"
                 )
 
+            # TODO(#TBD-replace-playwright-timeouts): replace wait_for_timeout with explicit wait
+            # ast-grep-ignore: no-playwright-wait-for-timeout
             await self.page.wait_for_timeout(200)
             messages = await self.get_all_messages()
             if messages and messages[-1]["role"] == "assistant":
@@ -642,6 +646,8 @@ class ChatPage(BasePage):
             except Exception:
                 pass  # Continue polling on errors
 
+            # TODO(#TBD-replace-playwright-timeouts): replace wait_for_timeout with explicit wait
+            # ast-grep-ignore: no-playwright-wait-for-timeout
             await self.page.wait_for_timeout(200)  # Poll every 200ms
 
         raise TimeoutError(
@@ -769,6 +775,8 @@ class ChatPage(BasePage):
                 return  # Success!
 
             # Wait a bit before next check
+            # TODO(#TBD-replace-playwright-timeouts): replace wait_for_timeout with explicit wait
+            # ast-grep-ignore: no-playwright-wait-for-timeout
             await self.page.wait_for_timeout(100)
 
         # If we get here, timeout occurred

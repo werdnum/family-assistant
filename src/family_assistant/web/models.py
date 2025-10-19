@@ -16,6 +16,7 @@ class SearchResultItem(BaseModel):
     embedding_type: str
     embedding_source_content: str | None
     chunk_index: int | None = None
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     doc_metadata: dict[str, Any] | None = None
     distance: float | None = None
     fts_score: float | None = None
@@ -58,6 +59,7 @@ class ChatPromptRequest(BaseModel):
     conversation_id: str | None = None
     profile_id: str | None = None  # Added to specify processing profile
     interface_type: str | None = None  # Interface type (e.g., 'web', 'api', 'mobile')
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     attachments: list[dict[str, Any]] | None = None  # File attachments (base64 encoded)
 
 
@@ -65,4 +67,5 @@ class ChatMessageResponse(BaseModel):
     reply: str  # Back to original field name to minimize disruption
     conversation_id: str
     turn_id: str
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     attachments: list[dict[str, Any]] | None = None  # Add attachments field

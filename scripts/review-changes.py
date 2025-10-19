@@ -43,6 +43,7 @@ class CodeReviewToolbox(llm.Toolbox):
         self.repo_root = repo_root.resolve()
         self.max_file_size = max_file_size
         self.review_submitted = False
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self.review_data: dict[str, Any] = {}
 
     def before_call(self, tool: object | None, tool_call: object) -> None:
@@ -228,6 +229,7 @@ class CodeReviewToolbox(llm.Toolbox):
     def submit_review(
         self,
         summary: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         issues: list[dict[str, Any]] | None = None,
         positive_aspects: list[str] | None = None,
     ) -> str:
@@ -535,6 +537,7 @@ def compute_cache_key(diff: str, baseline_commit: str) -> str:
     return hashlib.sha256(cache_input).hexdigest()
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def get_cached_review(cache_key: str, cache_dir: Path) -> dict[str, Any] | None:
     """
     Read cached review if available.
@@ -560,7 +563,10 @@ def get_cached_review(cache_key: str, cache_dir: Path) -> dict[str, Any] | None:
 
 
 def save_cached_review(
-    cache_key: str, review_data: dict[str, Any], cache_dir: Path
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    cache_key: str,
+    review_data: dict[str, Any],
+    cache_dir: Path,
 ) -> None:
     """
     Save review to cache.
@@ -581,6 +587,7 @@ def save_cached_review(
         print(f"Warning: Failed to write cache: {e}", file=sys.stderr)
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def determine_exit_code(issues: list[dict[str, Any]]) -> tuple[int, str]:
     """Determine exit code and highest severity from issues."""
     exit_code = 0
@@ -608,6 +615,7 @@ def determine_exit_code(issues: list[dict[str, Any]]) -> tuple[int, str]:
     return exit_code, highest_severity
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def format_human_output(review_data: dict[str, Any], exit_code: int) -> None:
     """Format and print human-readable output."""
     # Colors
@@ -691,6 +699,7 @@ def review_changes(
     output_json: bool = False,
     model_name: str | None = None,
     command: str | None = None,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> tuple[int, dict[str, Any]]:
     """
     Main review function using LLM with tools.

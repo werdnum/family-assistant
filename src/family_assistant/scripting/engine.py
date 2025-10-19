@@ -82,6 +82,7 @@ class StarlarkEngine:
     def evaluate(
         self,
         script: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         globals_dict: dict[str, Any] | None = None,
         execution_context: "ToolExecutionContext | None" = None,
     ) -> Any:  # noqa: ANN401 # Starlark scripts can return any type
@@ -180,6 +181,7 @@ class StarlarkEngine:
                 module.add_callable("print", self._create_print_function())
 
             # Initialize wake_llm accumulator and store globals for later access
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             self._wake_llm_contexts: list[dict[str, Any]] = []
             self._script_globals = globals_dict or {}
 
@@ -239,10 +241,12 @@ class StarlarkEngine:
                     # Create a closure to capture the tool name
                     def make_tool_wrapper(
                         name: str,
+                        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
                     ) -> Callable[..., str | dict[str, Any]]:
                         def tool_wrapper(
                             *args: Any,  # noqa: ANN401 # Tool args can be any type
                             **kwargs: Any,  # noqa: ANN401
+                            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
                         ) -> str | dict[str, Any]:
                             """Execute the tool with the given arguments."""
                             # If positional args are provided, we need to map them to kwargs
@@ -319,6 +323,7 @@ class StarlarkEngine:
     async def evaluate_async(
         self,
         script: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         globals_dict: dict[str, Any] | None = None,
         execution_context: "ToolExecutionContext | None" = None,
     ) -> Any:  # noqa: ANN401 # Starlark scripts can return any type
@@ -376,6 +381,7 @@ class StarlarkEngine:
     def _create_wake_llm_function(self) -> Callable[..., None]:
         """Create a wake_llm function for scripts."""
 
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         def wake_llm(context: dict[str, Any] | str, include_event: bool = True) -> None:
             """Request to wake the LLM with context.
 
@@ -422,6 +428,7 @@ class StarlarkEngine:
 
         return wake_llm
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def get_pending_wake_contexts(self) -> list[dict[str, Any]]:
         """Get any pending wake_llm contexts from the last script execution."""
         return getattr(self, "_pending_wake_contexts", [])

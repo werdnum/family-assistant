@@ -24,6 +24,7 @@ class PendingConfirmation:
 
     request_id: str
     tool_name: str
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     tool_args: dict[str, Any]
     confirmation_prompt: str
     future: asyncio.Future[bool]
@@ -97,6 +98,7 @@ class WebConfirmationManager:
         conversation_id: str,
         interface_type: str,
         tool_name: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tool_args: dict[str, Any],
         confirmation_prompt: str,
         timeout_seconds: float = 3600.0,
@@ -183,7 +185,9 @@ class WebConfirmationManager:
             return False
 
     def get_pending_confirmations(
-        self, conversation_id: str | None = None
+        self,
+        conversation_id: str | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """Get list of pending confirmations, optionally filtered by conversation.
 

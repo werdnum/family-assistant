@@ -18,6 +18,7 @@ from family_assistant.tools.types import ToolExecutionContext
 class MockToolsProvider:
     """Mock tools provider for testing direct callables."""
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def get_tool_definitions(self) -> list[dict[str, Any]]:
         """Return mock tool definitions."""
         return [
@@ -86,6 +87,7 @@ class MockToolsProvider:
     async def execute_tool(
         self,
         name: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         arguments: dict[str, Any],
         context: ToolExecutionContext,
         call_id: str | None = None,
@@ -107,6 +109,7 @@ class MockToolsProvider:
         else:
             raise ValueError(f"Unknown tool: {name}")
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def get_raw_tool_definitions(self) -> list[dict[str, Any]]:
         """Return raw tool definitions (same as translated for mock)."""
         # For the mock, raw and translated definitions are the same
@@ -348,6 +351,7 @@ async def test_direct_callable_validates_parameters(db_engine: AsyncEngine) -> N
         async def execute_tool(
             self,
             name: str,
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             arguments: dict[str, Any],
             context: ToolExecutionContext,
             call_id: str | None = None,

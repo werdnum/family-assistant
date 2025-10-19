@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 async def _handle_schedule_automation_recurrence(
     exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     payload: dict[str, Any],
 ) -> None:
     """
@@ -161,7 +162,9 @@ new_task_event = asyncio.Event()  # Event to notify worker of immediate tasks
 
 # Example Task Handler (no external dependencies)
 async def handle_log_message(
-    db_context: DatabaseContext, payload: dict[str, Any]
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    db_context: DatabaseContext,
+    payload: dict[str, Any],
 ) -> None:
     """Simple task handler that logs the received payload."""
     logger.info(
@@ -178,6 +181,7 @@ async def handle_log_message(
 
 async def handle_llm_callback(
     exec_context: ToolExecutionContext,  # Accept execution context
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     payload: dict[str, Any],  # Payload from the task queue
 ) -> None:
     """
@@ -472,6 +476,7 @@ class TaskWorker:
         self,
         processing_service: ProcessingService,
         chat_interface: ChatInterface,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         calendar_config: dict[str, Any],
         timezone_str: str,
         embedding_generator: EmbeddingGenerator,
@@ -480,6 +485,7 @@ class TaskWorker:
         indexing_source: "IndexingSource | None" = None,
         engine: AsyncEngine
         | None = None,  # Add engine parameter for dependency injection
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         event_sources: dict[str, Any] | None = None,  # Add event sources
         handler_timeout: float = TASK_HANDLER_TIMEOUT,  # Configurable timeout per instance
     ) -> None:
@@ -539,6 +545,7 @@ class TaskWorker:
     async def _process_task(
         self,
         db_context: DatabaseContext,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         task: dict[str, Any],
         wake_up_event: asyncio.Event,
     ) -> None:
@@ -764,7 +771,11 @@ class TaskWorker:
             await self._handle_task_failure(db_context, task, handler_exc)
 
     async def _handle_task_failure(
-        self, db_context: DatabaseContext, task: dict[str, Any], handler_exc: Exception
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        db_context: DatabaseContext,
+        task: dict[str, Any],
+        handler_exc: Exception,
     ) -> None:
         """Handles logging, retries, and marking tasks as failed."""
         current_retry = task.get("retry_count", 0)
@@ -939,6 +950,7 @@ class TaskWorker:
 
 async def handle_system_event_cleanup(
     exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     payload: dict[str, Any],
 ) -> None:
     """
@@ -966,6 +978,7 @@ async def handle_system_event_cleanup(
 
 async def handle_system_error_log_cleanup(
     exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     payload: dict[str, Any],
 ) -> None:
     """
@@ -993,7 +1006,9 @@ async def handle_system_error_log_cleanup(
 
 async def _process_script_wake_llm(
     exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     wake_contexts: list[dict[str, Any]],
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     event_data: dict[str, Any],
     listener_id: str | None,
 ) -> None:
@@ -1017,6 +1032,7 @@ async def _process_script_wake_llm(
             all_attachment_ids.extend(attachments)
 
     # Fetch attachment metadata if any attachments are referenced
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     trigger_attachments: list[dict[str, Any]] | None = None
     if all_attachment_ids:
         # Get attachment registry from execution context
@@ -1157,6 +1173,7 @@ async def _process_script_wake_llm(
 
 async def handle_script_execution(
     exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     payload: dict[str, Any],
 ) -> None:
     """
@@ -1308,6 +1325,7 @@ async def handle_script_execution(
 
 async def handle_reindex_document(
     exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     payload: dict[str, Any],
 ) -> None:
     """

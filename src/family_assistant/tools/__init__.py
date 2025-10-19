@@ -266,6 +266,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
 
 
 # Combine all tool definitions
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 TOOLS_DEFINITION: list[dict[str, Any]] = (
     NOTE_TOOLS_DEFINITION
     + SERVICE_TOOLS_DEFINITION

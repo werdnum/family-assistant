@@ -320,6 +320,7 @@ class WeatherContextProvider(ContextProvider):
             self._display_tz_str = "UTC"
 
         self._httpx_client = httpx_client
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self._weather_data_cache: dict[str, Any] | None = None
         self._cache_expiry_time: datetime | None = None
 
@@ -331,6 +332,7 @@ class WeatherContextProvider(ContextProvider):
         """Gets today's date in the display timezone."""
         return datetime.now(self._display_pytz_tz).date()
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def _fetch_and_cache_weather_data(self) -> dict[str, Any] | None:
         """Fetches weather data from WillyWeather API and caches it."""
         now_utc = datetime.now(pytz.utc)
@@ -414,6 +416,7 @@ class WeatherContextProvider(ContextProvider):
             return "N/A"
         return dt_obj.astimezone(self._display_pytz_tz).strftime("%H:%M")
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _format_uv_alert(self, uv_day_data: dict[str, Any], api_tz_str: str) -> str:
         """Formats UV information for a day."""
         alert = uv_day_data.get("alert")
@@ -437,6 +440,7 @@ class WeatherContextProvider(ContextProvider):
             ).format(index=first_entry.get("index"), scale=first_entry.get("scale"))
         return self._prompts.get("weather_no_uv_alert", "Low")
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _format_rainfall_summary(self, rainfall_day_entry: dict[str, Any]) -> str:
         """Formats rainfall summary for a day."""
         prob = rainfall_day_entry.get("probability", 0)
@@ -465,8 +469,11 @@ class WeatherContextProvider(ContextProvider):
 
     def _format_daily_weather_summary(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         day_weather_entry: dict[str, Any],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         day_rainfall_entry: dict[str, Any],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         day_sun_uv_data: dict[str, Any],  # Contains 'sunrisesunset' and 'uv' day data
         day_date_obj: date,
         api_tz_str: str,
@@ -506,7 +513,11 @@ class WeatherContextProvider(ContextProvider):
         )
 
     def _format_todays_detailed_forecast(
-        self, weather_data: dict[str, Any], today_date_obj: date, api_tz_str: str
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        weather_data: dict[str, Any],
+        today_date_obj: date,
+        api_tz_str: str,
     ) -> list[str]:
         """Formats a detailed forecast for today."""
         fragments: list[str] = []
@@ -657,7 +668,11 @@ class WeatherContextProvider(ContextProvider):
         return fragments
 
     def _format_weekly_outlook(
-        self, weather_data: dict[str, Any], today_date_obj: date, api_tz_str: str
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        weather_data: dict[str, Any],
+        today_date_obj: date,
+        api_tz_str: str,
     ) -> list[str]:
         """Formats a summarized weather outlook for the next 6 days."""
         fragments: list[str] = []
@@ -761,6 +776,7 @@ class CalendarContextProvider(ContextProvider):
 
     def __init__(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         calendar_config: dict[str, Any],
         timezone_str: str,
         prompts: PromptsType,

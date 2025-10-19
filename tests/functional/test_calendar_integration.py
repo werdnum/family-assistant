@@ -127,6 +127,7 @@ async def get_event_by_summary_from_radicale(
 
 async def wait_for_radicale_indexing(
     exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     calendar_config: dict[str, Any],
     event_summary: str,
     timeout_seconds: float = 5.0,
@@ -1086,6 +1087,7 @@ async def test_search_events(
             "enabled": False,  # Disable for this test - we're testing search, not duplicate detection
         },
     }
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     dummy_prompts: dict[str, Any] = {
         "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
     }
@@ -1546,6 +1548,7 @@ async def test_similarity_based_search_finds_similar_events(
         },
     }
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     dummy_prompts: dict[str, Any] = {
         "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
     }

@@ -67,6 +67,7 @@ async def llm_client_factory() -> Callable[
 
 
 @pytest_asyncio.fixture
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 async def sample_tools() -> list[dict[str, Any]]:
     """Sample tools for testing tool calling functionality."""
     return [
@@ -235,6 +236,7 @@ async def test_streaming_with_tool_calls(
     provider: str,
     model: str,
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     sample_tools: list[dict[str, Any]],
 ) -> None:
     """Test streaming with tool calls."""
@@ -657,6 +659,7 @@ async def test_streaming_with_tool_calls_gemini(
     provider: str,
     model: str,
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     sample_tools: list[dict[str, Any]],
 ) -> None:
     """Test streaming with tool calls for Google Gemini (VCR bypass)."""

@@ -100,7 +100,9 @@ def format_datetime_or_date(
 
 
 def parse_event(
-    event_data: str, timezone_str: str | None = None
+    event_data: str,
+    timezone_str: str | None = None,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> dict[str, Any] | None:  # reportExplicitAny for Any is acceptable by style guide
     """
     Parses VCALENDAR data into a dictionary, including the UID.
@@ -198,8 +200,10 @@ def parse_event(
 async def _fetch_ical_events_async(
     ical_urls: list[str],
     timezone_str: str,  # Added timezone string
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> list[dict[str, Any]]:  # reportExplicitAny for Any is acceptable by style guide
     """Asynchronously fetches and parses events from a list of iCal URLs."""
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     all_events: list[dict[str, Any]] = []
     async with httpx.AsyncClient(timeout=30.0) as client:  # Increased timeout
         fetch_tasks: list[asyncio.Task[httpx.Response]] = []
@@ -266,9 +270,11 @@ def _fetch_caldav_events_sync(
     calendar_urls: list[str],
     timezone_str: str,  # Added timezone string
     base_url: str | None = None,  # Added base_url parameter
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> list[dict[str, Any]]:  # reportExplicitAny for Any is acceptable by style guide
     """Synchronous function to connect to CalDAV servers using specific calendar URLs and fetch events."""
     logger.debug("Executing synchronous CalDAV fetch using direct calendar URLs.")
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     all_events: list[dict[str, Any]] = []
 
     if not calendar_urls:
@@ -397,6 +403,7 @@ def _fetch_caldav_events_sync(
         # Continue to the next calendar URL if one fails
 
     # Sort events by start time
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def get_sort_key_caldav(event: dict[str, Any]) -> datetime:
         """Converts date/datetime to timezone-aware datetime in the local timezone for sorting."""
         start_val = event["start"]
@@ -443,11 +450,14 @@ def _fetch_caldav_events_sync(
 
 
 async def fetch_upcoming_events(
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     calendar_config: dict[str, Any],  # Config structure can be complex, Any is fine
     timezone_str: str,  # Added timezone string
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> list[dict[str, Any]]:  # reportExplicitAny for Any is acceptable by style guide
     """Fetches events from configured CalDAV and iCal sources and merges them."""
     logger.debug("Entering fetch_upcoming_events orchestrator.")
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     all_events: list[dict[str, Any]] = []
     # Allow tasks list to hold both Futures (from run_in_executor) and Tasks
     tasks: list[asyncio.Future[Any] | asyncio.Task[Any]] = []
@@ -527,6 +537,7 @@ async def fetch_upcoming_events(
     )
 
     # --- Sort Combined Events ---
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def get_sort_key(event: dict[str, Any]) -> datetime:
         """Converts date/datetime to timezone-aware datetime in the local timezone for sorting."""
         start_val = event["start"]
@@ -578,6 +589,7 @@ async def fetch_upcoming_events(
 
 
 def format_events_for_prompt(
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     events: list[dict[str, Any]],
     prompts: dict[str, str],  # Prompts can have varied structure
     timezone_str: str,  # Added timezone string
@@ -701,7 +713,9 @@ def format_events_for_prompt(
 async def fetch_event_details_for_confirmation(
     uid: str,
     calendar_url: str,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     calendar_config: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> dict[str, Any] | None:
     """Fetches calendar event details by UID for use in confirmation prompts.
 
@@ -717,6 +731,7 @@ async def fetch_event_details_for_confirmation(
         f"Fetching event details for confirmation: UID={uid}, calendar={calendar_url}"
     )
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     caldav_config: dict[str, Any] | None = calendar_config.get("caldav")
     if not caldav_config:
         logger.error("CalDAV configuration not found for event details fetch")
@@ -756,6 +771,7 @@ async def fetch_event_details_for_confirmation(
         return None
 
     # Synchronous fetch function
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def fetch_sync() -> dict[str, Any] | None:
         try:
             with caldav.DAVClient(

@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 # Tool definitions
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 EVENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -219,6 +220,7 @@ async def query_recent_events_tool(
 async def test_event_listener_tool(
     exec_context: ToolExecutionContext,
     source: str,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     match_conditions: dict[str, Any],
     hours: int = 24,
     limit: int = 10,

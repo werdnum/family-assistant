@@ -1152,6 +1152,7 @@ async def radicale_server(
 
 
 @pytest.fixture(scope="module")
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def vcr_config() -> dict[str, Any]:
     """Configure VCR for recording and replaying HTTP interactions."""
     # Only use "once" mode if explicitly requested via environment variable

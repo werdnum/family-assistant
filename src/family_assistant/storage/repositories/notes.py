@@ -28,6 +28,7 @@ class DuplicateNoteError(Exception):
 class NotesRepository(BaseRepository):
     """Repository for managing notes in the database."""
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def get_all(self) -> list[dict[str, Any]]:
         """Retrieves all notes."""
         try:
@@ -81,6 +82,7 @@ class NotesRepository(BaseRepository):
             )
             raise
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def get_by_id(self, note_id: int) -> dict[str, Any] | None:
         """
         Retrieves a note by its ID.
@@ -95,6 +97,7 @@ class NotesRepository(BaseRepository):
         row = await self._db.fetch_one(query)
         return dict(row) if row else None
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def get_by_title(self, title: str) -> dict[str, Any] | None:
         """Retrieves a specific note by its title."""
         try:

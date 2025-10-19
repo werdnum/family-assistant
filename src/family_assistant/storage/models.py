@@ -21,6 +21,7 @@ class Automation(BaseModel):
     conversation_id: str
     interface_type: str
     action_type: str
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     action_config: dict[str, Any]
     enabled: bool
     created_at: datetime
@@ -28,6 +29,7 @@ class Automation(BaseModel):
 
     # Event-specific fields (null for schedule automations)
     source_id: str | None = None
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     match_conditions: dict[str, Any] | None = None
     condition_script: str | None = None
     one_time: bool | None = None

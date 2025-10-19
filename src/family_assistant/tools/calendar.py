@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 # Calendar Tool Definitions
 async def _check_for_duplicate_events(
     exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     calendar_config: dict[str, Any],
     summary: str,
     start_time: str,
@@ -81,6 +82,7 @@ async def _check_for_duplicate_events(
 
         # Search for events in the time window using the existing search infrastructure
         # This will apply similarity-based filtering
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         caldav_config: dict[str, Any] | None = calendar_config.get("caldav")
         if not caldav_config:
             return None
@@ -126,6 +128,7 @@ async def _check_for_duplicate_events(
                 search_end_dt = search_end_dt.replace(tzinfo=local_tz)
 
         # Search events in time window (synchronous, run in executor)
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         def search_events_sync() -> list[dict[str, Any]]:
             with caldav.DAVClient(
                 url=client_url_to_use,
@@ -418,6 +421,7 @@ CALENDAR_TOOLS_DEFINITION = [
 
 async def add_calendar_event_tool(
     exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     calendar_config: dict[str, Any],
     summary: str,
     start_time: str,
@@ -439,6 +443,7 @@ async def add_calendar_event_tool(
         f"Executing add_calendar_event_tool: {summary}, RRULE: {recurrence_rule}"
     )
     # calendar_config is now a direct parameter
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     caldav_config: dict[str, Any] | None = calendar_config.get("caldav")  # type: ignore
 
     if not caldav_config:
@@ -626,6 +631,7 @@ async def add_calendar_event_tool(
 
 async def search_calendar_events_tool(
     exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     calendar_config: dict[str, Any],
     search_text: str | None = None,
     start_date: str | None = None,
@@ -642,6 +648,7 @@ async def search_calendar_events_tool(
         f"Executing search_calendar_events_tool: text='{search_text}', start={start_date}, end={end_date}"
     )
     # calendar_config is now a direct parameter
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     caldav_config: dict[str, Any] | None = calendar_config.get("caldav")
 
     if not caldav_config:
@@ -709,6 +716,7 @@ async def search_calendar_events_tool(
         logger.info(f"Searching from {search_start} to {search_end}")
 
         # Search events (synchronous, run in executor) - returns structured data
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         def search_events_sync() -> list[dict[str, Any]]:
             logger.debug(f"Connecting to CalDAV server: {client_url_to_use}")
             with caldav.DAVClient(
@@ -864,6 +872,7 @@ async def search_calendar_events_tool(
 
 async def modify_calendar_event_tool(
     exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     calendar_config: dict[str, Any],
     uid: str,
     calendar_url: str,
@@ -879,6 +888,7 @@ async def modify_calendar_event_tool(
     """
     logger.info(f"Executing modify_calendar_event_tool for UID: {uid}")
     # calendar_config is now a direct parameter
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     caldav_config: dict[str, Any] | None = calendar_config.get("caldav")
 
     if not caldav_config:
@@ -1104,6 +1114,7 @@ async def modify_calendar_event_tool(
 
 async def delete_calendar_event_tool(
     exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     calendar_config: dict[str, Any],
     uid: str,
     calendar_url: str,
@@ -1113,6 +1124,7 @@ async def delete_calendar_event_tool(
     """
     logger.info(f"Executing delete_calendar_event_tool for UID: {uid}")
     # calendar_config is now a direct parameter
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     caldav_config: dict[str, Any] | None = calendar_config.get("caldav")
 
     if not caldav_config:

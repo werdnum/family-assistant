@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 class MessageHistoryRepository(BaseRepository):
     """Repository for managing message history in the database."""
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def add(self, **kwargs: Any) -> dict[str, Any] | None:  # noqa: ANN401 # Forwards arbitrary message args
         """Alias for add_message for backward compatibility."""
         return await self.add_message(**kwargs)
@@ -34,7 +35,9 @@ class MessageHistoryRepository(BaseRepository):
         role: str,  # 'user', 'assistant', 'system', 'tool', 'error'
         content: str | None,  # Content can be optional now
         # --- Renamed/Added Fields ---
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tool_calls: list[dict[str, Any]] | None = None,  # Renamed from tool_calls_info
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         reasoning_info: dict[str, Any] | None = None,  # Added
         # Note: `tool_call_id` is now a separate parameter below for 'tool' role messages
         error_traceback: str | None = None,  # Added
@@ -43,11 +46,14 @@ class MessageHistoryRepository(BaseRepository):
         ) = None,  # Added: ID linking tool response to assistant request
         processing_profile_id: str | None = None,  # Added: Profile ID
         user_id: str | None = None,  # Added: User identifier
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         attachments: list[dict[str, Any]] | None = None,  # Attachment metadata
         tool_name: str | None = None,  # Added: Function/tool name for tool messages
         name: str | None = None,  # OpenAI API compatibility (mapped to tool_name)
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         provider_metadata: dict[str, Any]
         | None = None,  # Added: Provider-specific metadata for round-trip
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any] | None:  # Changed to return Optional[Dict]
         """
         Stores a message in the history table.
@@ -180,6 +186,7 @@ class MessageHistoryRepository(BaseRepository):
         limit: int | None = None,
         max_age: timedelta | None = None,
         processing_profile_id: str | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """
         Retrieves recent message history for a conversation.
@@ -234,6 +241,7 @@ class MessageHistoryRepository(BaseRepository):
         conversation_id: str,
         hours: int = 24,
         limit: int | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """
         Retrieves and groups message history by turn_id.
@@ -286,7 +294,10 @@ class MessageHistoryRepository(BaseRepository):
         return grouped_messages
 
     async def get_by_interface_id(
-        self, interface_type: str, interface_message_id: str
+        self,
+        interface_type: str,
+        interface_message_id: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any] | None:
         """
         Retrieves a message by its interface-specific ID.
@@ -330,6 +341,7 @@ class MessageHistoryRepository(BaseRepository):
         row = await self._db.fetch_one(stmt)
         return row["interface_type"] if row else None
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def get_by_turn_id(self, turn_id: str) -> list[dict[str, Any]]:
         """
         Retrieves all messages for a specific turn.
@@ -350,7 +362,10 @@ class MessageHistoryRepository(BaseRepository):
         return [self._process_message_row(row) for row in rows]
 
     async def get_by_thread_id(
-        self, thread_root_id: int, processing_profile_id: str | None = None
+        self,
+        thread_root_id: int,
+        processing_profile_id: str | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """
         Retrieves all messages in a thread.
@@ -435,6 +450,7 @@ class MessageHistoryRepository(BaseRepository):
         before: datetime | None = None,
         after: datetime | None = None,
         limit: int = 50,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> tuple[list[dict[str, Any]], bool, bool]:
         """
         Get messages for a conversation with timestamp-based pagination.
@@ -531,6 +547,7 @@ class MessageHistoryRepository(BaseRepository):
         after: datetime,
         interface_type: str | None = None,
         limit: int = 100,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """
         Get messages created after a specific timestamp.
@@ -564,6 +581,8 @@ class MessageHistoryRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return [self._process_message_row(row) for row in rows]
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _process_message_row(self, row: dict[str, Any]) -> dict[str, Any]:
         """
         Process a message row from the database.
@@ -621,6 +640,7 @@ class MessageHistoryRepository(BaseRepository):
         conversation_id: str | None = None,
         date_from: datetime | None = None,
         date_to: datetime | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[tuple[str, str], list[dict[str, Any]]]:
         """
         Retrieves all message history, grouped by (interface_type, conversation_id) and ordered by timestamp.
@@ -661,6 +681,7 @@ class MessageHistoryRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
 
         # Group messages by (interface_type, conversation_id)
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         grouped_history: dict[tuple[str, str], list[dict[str, Any]]] = {}
 
         for row in rows:
@@ -681,6 +702,7 @@ class MessageHistoryRepository(BaseRepository):
         conversation_id: str | None = None,
         date_from: datetime | None = None,
         date_to: datetime | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> tuple[list[dict[str, Any]], int]:
         """
         Get conversation summaries with pagination, optimized for performance.

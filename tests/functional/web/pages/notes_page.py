@@ -306,6 +306,7 @@ class NotesPage(BasePage):
         await self.ensure_on_notes_list()
         return await self.is_element_visible(self.NO_NOTES_MESSAGE)
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def get_note_content_from_edit_page(self, title: str) -> dict[str, Any]:
         """Get the content of a note from its edit page.
 

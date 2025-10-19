@@ -99,7 +99,9 @@ async def add_message_to_history(
     role: str,  # 'user', 'assistant', 'system', 'tool', 'error'
     content: str | None,  # Content can be optional now
     # --- Renamed/Added Fields ---
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     tool_calls: list[dict[str, Any]] | None = None,  # Renamed from tool_calls_info
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     reasoning_info: dict[str, Any] | None = None,  # Added
     # Note: `tool_call_id` is now a separate parameter below for 'tool' role messages
     error_traceback: str | None = None,  # Added
@@ -107,7 +109,9 @@ async def add_message_to_history(
         str | None
     ) = None,  # Added: ID linking tool response to assistant request
     processing_profile_id: str | None = None,  # Added: Profile ID
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     attachments: list[dict[str, Any]] | None = None,  # Attachment metadata
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> dict[str, Any] | None:  # Changed to return Optional[Dict]
     """Adds a message to the history table, including optional fields."""
     # Note: The return type was previously Optional[int], changed to Optional[Dict] to return ID in a dict
@@ -220,6 +224,7 @@ async def get_recent_history(
     limit: int,
     max_age: timedelta,
     processing_profile_id: str | None = None,  # Added for filtering
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> list[dict[str, Any]]:
     """Retrieves recent messages for a conversation, including tool call info.
     If a message included by limit/max_age belongs to a turn, all other messages
@@ -266,6 +271,7 @@ async def get_recent_history(
         )
         # Store candidate messages in a dictionary by internal_id for easy merging
         # These are newest first at this stage.
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         all_messages_dict: dict[int, dict[str, Any]] = {
             # Use public item access for 'internal_id' instead of relying on ._mapping internal attribute
             row_mapping["internal_id"]: dict(row_mapping)
@@ -329,6 +335,7 @@ async def get_message_by_interface_id(
     interface_type: str,
     conversation_id: str,
     interface_message_id: str,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> dict[str, Any] | None:
     """Retrieves a specific message by its chat and message ID, including all fields."""
     try:
@@ -355,7 +362,9 @@ async def get_message_by_interface_id(
 
 # --- New Functions ---
 async def get_messages_by_turn_id(
-    db_context: DatabaseContext, turn_id: str
+    db_context: DatabaseContext,
+    turn_id: str,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> list[dict[str, Any]]:
     """Retrieves all messages associated with a specific turn ID."""
     try:
@@ -383,6 +392,7 @@ async def get_messages_by_thread_id(
     db_context: DatabaseContext,
     thread_root_id: int,
     processing_profile_id: str | None = None,  # Added for filtering
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> list[dict[str, Any]]:
     """Retrieves all messages belonging to a specific conversation thread."""
     # A thread is defined by the `internal_id` of its first message.
@@ -419,6 +429,7 @@ async def get_messages_by_thread_id(
 
 async def get_grouped_message_history(
     db_context: DatabaseContext,  # Added context
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> dict[tuple[str, str], list[dict[str, Any]]]:
     """Retrieves all message history, grouped by (interface_type, conversation_id) and ordered by timestamp."""
     try:
@@ -436,6 +447,7 @@ async def get_grouped_message_history(
         # Convert RowMapping to dicts for easier handling
         dict_rows = [dict(row) for row in rows]
         # Initialize with the correct type annotation
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         grouped_history: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for row_dict in dict_rows:  # Iterate over dictionaries
             group_key = (row_dict["interface_type"], row_dict["conversation_id"])

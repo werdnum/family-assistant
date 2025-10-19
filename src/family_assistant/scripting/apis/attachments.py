@@ -180,6 +180,7 @@ class ScriptAttachment:
         """
         return io.BytesIO(self.get_content())
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def to_dict(self) -> dict[str, Any]:
         """
         Get the attachment metadata as a dictionary.
@@ -222,6 +223,7 @@ class AttachmentAPI:
         self.main_loop = main_loop
         self.db_engine = db_engine
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def get(self, attachment_id: str) -> dict[str, Any] | None:
         """
         Get attachment metadata by ID.
@@ -247,6 +249,7 @@ class AttachmentAPI:
             logger.error(f"Error getting attachment {attachment_id}: {e}")
             return None
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def _get_async(self, attachment_id: str) -> dict[str, Any] | None:
         """Async implementation of get."""
 
@@ -282,7 +285,10 @@ class AttachmentAPI:
             }
 
     def list(
-        self, source_type: str | None = None, limit: int = 20
+        self,
+        source_type: str | None = None,
+        limit: int = 20,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """
         List attachments in the current conversation.
@@ -310,7 +316,10 @@ class AttachmentAPI:
             return []
 
     async def _list_async(
-        self, source_type: str | None = None, limit: int = 20
+        self,
+        source_type: str | None = None,
+        limit: int = 20,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """Async implementation of list."""
 

@@ -246,6 +246,7 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
             logger.info(
                 "delegate_request_response_callable: Matched! Returning delegate tool call."
             )
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             current_tool_call_args: dict[str, Any] = {
                 "target_service_id": SPECIALIZED_PROFILE_ID,
                 "user_request": DELEGATED_TASK_DESCRIPTION,
@@ -298,6 +299,7 @@ async def mock_confirmation_callback() -> AsyncMock:
     return AsyncMock(spec=Callable[..., Awaitable[bool]])
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def create_tools_provider(profile_tools_config: dict[str, Any]) -> ToolsProvider:
     """Helper to create a ToolsProvider stack for a profile."""
     enabled_local_tool_names = set(profile_tools_config.get("enable_local_tools", []))

@@ -50,6 +50,7 @@ async def add_or_update_note_tool(
 
 
 # Tool Definitions
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 NOTE_TOOLS_DEFINITION: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -166,7 +167,9 @@ NOTE_TOOLS_DEFINITION: list[dict[str, Any]] = [
 
 
 async def get_note_tool(
-    title: str, exec_context: ToolExecutionContext
+    title: str,
+    exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> dict[str, Any]:
     """Tool wrapper for get_note_by_title."""
     note = await exec_context.db_context.notes.get_by_title(title)
@@ -187,7 +190,9 @@ async def get_note_tool(
 
 
 async def list_notes_tool(
-    exec_context: ToolExecutionContext, include_in_prompt: bool | None = None
+    exec_context: ToolExecutionContext,
+    include_in_prompt: bool | None = None,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> list[dict[str, Any]]:
     """Tool wrapper for get_all_notes with optional filtering."""
     all_notes = await exec_context.db_context.notes.get_all()
@@ -214,7 +219,9 @@ async def list_notes_tool(
 
 
 async def delete_note_tool(
-    title: str, exec_context: ToolExecutionContext
+    title: str,
+    exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> dict[str, Any]:
     """Tool wrapper for delete_note."""
     deleted = await exec_context.db_context.notes.delete(title)

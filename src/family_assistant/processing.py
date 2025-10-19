@@ -51,6 +51,7 @@ class ChatInteractionResult:
 
     text_reply: str | None = None
     assistant_message_internal_id: int | None = None
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     reasoning_info: dict[str, Any] | None = None
     error_traceback: str | None = None
     attachment_ids: list[str] | None = None
@@ -66,7 +67,9 @@ class ToolExecutionResult:
     """Result of executing a single tool call."""
 
     stream_event: "LLMStreamEvent"
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     llm_message: dict[str, Any]
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     history_message: dict[str, Any]
     auto_attachment_ids: list[str] | None = None  # list of attachment IDs
 
@@ -80,6 +83,7 @@ class ProcessingServiceConfig:
     timezone_str: str
     max_history_messages: int
     history_max_age_hours: int
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     tools_config: dict[
         str, Any
     ]  # Added to hold tool configurations like 'confirm_tools'
@@ -87,8 +91,10 @@ class ProcessingServiceConfig:
     id: str  # Unique identifier for this service profile
     description: str = ""  # Human-readable description of this profile
     # Type hint for model_parameters should reflect pattern -> params_dict structure
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     model_parameters: dict[str, dict[str, Any]] | None = None  # Corrected type
     fallback_model_id: str | None = None  # Added for LLM fallback
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     fallback_model_parameters: dict[str, dict[str, Any]] | None = None  # Corrected type
     # Web-specific history settings
     web_max_history_messages: int | None = None  # If None, uses max_history_messages
@@ -112,10 +118,12 @@ class ProcessingService:
         service_config: ProcessingServiceConfig,  # Updated to use service_config
         context_providers: list[ContextProvider],  # NEW: List of context providers
         server_url: str | None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         app_config: dict[str, Any],  # Keep app_config for now
         clock: Clock | None = None,
         attachment_registry: AttachmentRegistry
         | None = None,  # AttachmentRegistry (required for attachment operations)
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         event_sources: dict[str, Any] | None = None,  # Add event sources
     ) -> None:
         """
@@ -257,6 +265,7 @@ class ProcessingService:
     async def process_message(
         self,
         db_context: DatabaseContext,  # Added db_context
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
         # --- Updated Signature ---
         interface_type: str,
@@ -269,11 +278,14 @@ class ProcessingService:
         # Callback signature updated to match ToolExecutionContext's expectation
         request_confirmation_callback: (
             Callable[
+                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
                 [str, str, str | None, str, str, dict[str, Any], float],
                 Awaitable[bool],  # Changed int to str
             ]
             | None
         ) = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
@@ -299,7 +311,9 @@ class ProcessingService:
             - A list of attachment IDs to send with the response (or None).
         """
         # Use the streaming generator and collect all messages
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         turn_messages: list[dict[str, Any]] = []
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         final_reasoning_info: dict[str, Any] | None = None
         final_attachment_ids: list[str] | None = None
 
@@ -334,6 +348,7 @@ class ProcessingService:
     async def process_message_stream(
         self,
         db_context: DatabaseContext,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
         interface_type: str,
         conversation_id: str,
@@ -344,11 +359,13 @@ class ProcessingService:
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
+                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
                 [str, str, str | None, str, str, dict[str, Any], float],
                 Awaitable[bool],
             ]
             | None
         ) = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> AsyncIterator[tuple[LLMStreamEvent, dict[str, Any]]]:
         """
         Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
@@ -360,6 +377,7 @@ class ProcessingService:
         This generator handles the same logic as process_message but yields events incrementally.
         """
         final_content: str | None = None
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         final_reasoning_info: dict[str, Any] | None = None
         max_iterations = 5
         current_iteration = 1
@@ -507,6 +525,7 @@ class ProcessingService:
 
             # Yield a synthetic "done" event with the complete assistant message
             # Include attachment IDs if any were captured from attach_to_response calls
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             done_metadata: dict[str, Any] = {"message": assistant_message_for_turn}
             if pending_attachment_ids:
                 # Fetch full metadata for each attachment for web UI display
@@ -682,6 +701,7 @@ class ProcessingService:
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: Callable[
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             [str, str, str | None, str, str, dict[str, Any], float],
             Awaitable[bool],
         ]
@@ -1048,7 +1068,10 @@ class ProcessingService:
             )
 
     async def _convert_attachment_urls_to_data_uris(
-        self, content_parts: list[dict[str, Any]]
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        content_parts: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """
         Convert any attachment server URLs in content parts to data URIs.
@@ -1214,7 +1237,10 @@ class ProcessingService:
             return ""
 
     async def _format_history_for_llm(
-        self, history_messages: list[dict[str, Any]]
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        history_messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """
         Formats message history retrieved from the database into the list structure
@@ -1226,6 +1252,7 @@ class ProcessingService:
         Returns:
             A list of message dictionaries formatted for the LLM API.
         """
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]] = []
         # Process history messages, formatting assistant tool calls correctly
         for msg in history_messages:
@@ -1371,6 +1398,7 @@ class ProcessingService:
         db_context: DatabaseContext,
         interface_type: str,
         conversation_id: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         trigger_content_parts: list[dict[str, Any]],
         trigger_interface_message_id: str | None,
         user_name: str,
@@ -1380,11 +1408,13 @@ class ProcessingService:
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
+                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
                 [str, str, str | None, str, str, dict[str, Any], float],
                 Awaitable[bool],
             ]
             | None
         ) = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         trigger_attachments: list[dict[str, Any]] | None = None,
     ) -> ChatInteractionResult:
         """
@@ -1834,6 +1864,7 @@ class ProcessingService:
         db_context: DatabaseContext,
         interface_type: str,
         conversation_id: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         trigger_content_parts: list[dict[str, Any]],
         trigger_interface_message_id: str | None,
         user_name: str,
@@ -1843,11 +1874,13 @@ class ProcessingService:
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: (
             Callable[
+                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
                 [str, str, str | None, str, str, dict[str, Any], float],
                 Awaitable[bool],
             ]
             | None
         ) = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         trigger_attachments: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """
@@ -2093,6 +2126,7 @@ class ProcessingService:
                         )
 
             # Add current user trigger message
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             llm_user_content: str | list[dict[str, Any]]
             if (
                 len(converted_trigger_parts) == 1
@@ -2147,7 +2181,9 @@ class ProcessingService:
             )
 
     def _generate_attachment_metadata_lines(
-        self, attachments: list[dict[str, Any]]
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        attachments: list[dict[str, Any]],
     ) -> list[str]:
         """
         Generate attachment metadata lines for a list of attachments.

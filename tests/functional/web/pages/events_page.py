@@ -254,6 +254,7 @@ class EventsPage(BasePage):
         event_cards = await self.page.query_selector_all(self.EVENT_CARD)
         return len(event_cards)
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def get_pagination_info(self) -> dict[str, Any]:
         """Get pagination information.
 

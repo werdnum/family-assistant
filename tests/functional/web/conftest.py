@@ -298,6 +298,7 @@ async def _create_web_assistant(
     test_id = uuid.uuid4().hex[:8]
     scope_prefix = f"_{scope_label.lower()}" if scope_label else ""
     storage_suffix = f"{scope_prefix}_{test_id}"
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     test_config: dict[str, Any] = {
         "telegram_enabled": False,
         "telegram_token": None,
@@ -737,7 +738,9 @@ class TestDataFactory:
         self,
         content: str | None = None,
         tags: list[str] | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         metadata: dict[str, Any] | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """Create a test note."""
         self._note_counter += 1
@@ -758,6 +761,7 @@ class TestDataFactory:
         title: str | None = None,
         content: str | None = None,
         file_type: str = "text/plain",
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """Create a test document."""
         self._document_counter += 1
