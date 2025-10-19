@@ -30,5 +30,4 @@ rule:
     - pattern: $PAGE.wait_for_timeout($$$)
     - not:
         inside:
-          kind: while
-
+          kind: while_statement

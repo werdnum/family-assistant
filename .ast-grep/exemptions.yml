@@ -67,4 +67,3 @@ exemptions:
       Legacy test fixtures in conftest.py use time.sleep() for synchronous
       blocking waits. Should be refactored to use async alternatives.
     ticket: "#TBD-refactor-sleep-to-wait-for-condition"
-
