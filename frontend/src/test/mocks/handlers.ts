@@ -311,6 +311,141 @@ export const handlers = [
       },
     });
   }),
+
+  // Mock automations endpoint
+  http.get('/api/automations', ({ request }) => {
+    const url = new URL(request.url);
+    const conversationId = url.searchParams.get('conversation_id');
+
+    const automations = [
+      {
+        id: '123',
+        type: 'event',
+        name: 'Test Automation Web',
+        conversation_id: 'web',
+        enabled: true,
+      },
+      {
+        id: '456',
+        type: 'event',
+        name: 'Test Automation Telegram',
+        conversation_id: 'telegram',
+        enabled: false,
+      },
+    ];
+
+    const filteredAutomations = conversationId
+      ? automations.filter((a) => a.conversation_id === conversationId)
+      : automations;
+
+    return HttpResponse.json({
+      automations: filteredAutomations,
+    });
+  }),
+
+  // Mock automation detail endpoint
+  http.get('/api/automations/:type/:id', ({ request, params }) => {
+    const { type, id } = params;
+    const url = new URL(request.url);
+    const conversationId = url.searchParams.get('conversation_id');
+
+    const automations = [
+      {
+        id: '123',
+        type: 'event',
+        name: 'Test Automation Web',
+        conversation_id: 'web',
+        enabled: true,
+      },
+      {
+        id: '456',
+        type: 'event',
+        name: 'Test Automation Telegram',
+        conversation_id: 'telegram',
+        enabled: false,
+      },
+    ];
+
+    const automation = automations.find(
+      (a) => a.id === id && a.type === type && a.conversation_id === conversationId
+    );
+
+    if (automation) {
+      return HttpResponse.json(automation);
+    }
+
+    return new HttpResponse(null, { status: 404 });
+  }),
+
+  // Mock automation patch endpoint
+  http.patch('/api/automations/:type/:id', async ({ request, params }) => {
+    const { type, id } = params;
+    const url = new URL(request.url);
+    const conversationId = url.searchParams.get('conversation_id');
+    const body = await request.json();
+
+    const automations = [
+      {
+        id: '123',
+        type: 'event',
+        name: 'Test Automation Web',
+        conversation_id: 'web',
+        enabled: true,
+      },
+      {
+        id: '456',
+        type: 'event',
+        name: 'Test Automation Telegram',
+        conversation_id: 'telegram',
+        enabled: false,
+      },
+    ];
+
+    const automation = automations.find(
+      (a) => a.id === id && a.type === type && a.conversation_id === conversationId
+    );
+
+    if (automation) {
+      const updatedAutomation = { ...automation, ...body };
+      return HttpResponse.json(updatedAutomation);
+    }
+
+    return new HttpResponse(null, { status: 404 });
+  }),
+
+  // Mock automation delete endpoint
+  http.delete('/api/automations/:type/:id', ({ request, params }) => {
+    const { type, id } = params;
+    const url = new URL(request.url);
+    const conversationId = url.searchParams.get('conversation_id');
+
+    const automations = [
+      {
+        id: '123',
+        type: 'event',
+        name: 'Test Automation Web',
+        conversation_id: 'web',
+        enabled: true,
+      },
+      {
+        id: '456',
+        type: 'event',
+        name: 'Test Automation Telegram',
+        conversation_id: 'telegram',
+        enabled: false,
+      },
+    ];
+
+    const automation = automations.find(
+      (a) => a.id === id && a.type === type && a.conversation_id === conversationId
+    );
+
+    if (automation) {
+      return new HttpResponse(null, { status: 204 });
+    }
+
+    return new HttpResponse(null, { status: 404 });
+  }),
 ];
 
 // Helper function to generate test responses based on input
