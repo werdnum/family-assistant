@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 # Tool Definitions
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -797,6 +798,7 @@ async def modify_pending_callback_tool(
         ):
             return f"Error: Callback task '{task_id}' does not belong to this conversation. Modification denied."
 
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         updates: dict[str, Any] = {}
         if new_callback_time:
             try:
@@ -907,6 +909,7 @@ async def schedule_action_tool(
     exec_context: ToolExecutionContext,
     schedule_time: str,
     action_type: str = "wake_llm",
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     action_config: dict[str, Any] | None = None,
 ) -> str:
     """Schedule any action for future execution.
@@ -975,6 +978,7 @@ async def schedule_recurring_action_tool(
     start_time: str,
     recurrence_rule: str,
     action_type: str = "wake_llm",
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     action_config: dict[str, Any] | None = None,
     task_name: str | None = None,
 ) -> str:

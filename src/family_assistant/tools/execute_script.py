@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 async def execute_script_tool(
     exec_context: ToolExecutionContext,
     script: str,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     globals: dict[str, Any] | None = None,
 ) -> str:
     """
@@ -140,6 +141,7 @@ async def execute_script_tool(
 
 
 # Tool Definition
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 SCRIPT_TOOLS_DEFINITION: list[dict[str, Any]] = [
     {
         "type": "function",

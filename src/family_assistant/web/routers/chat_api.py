@@ -43,6 +43,8 @@ async def _process_user_attachments(
     attachment_registry: "AttachmentRegistry",
     db_context: DatabaseContext,
     user_id: str,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None]:
     """
     Process user attachments from the request payload.
@@ -56,9 +58,11 @@ async def _process_user_attachments(
     Returns:
         Tuple of (trigger_content_parts, trigger_attachments)
     """
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     trigger_content_parts: list[dict[str, Any]] = [
         {"type": "text", "text": payload.prompt}
     ]
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     trigger_attachments: list[dict[str, Any]] | None = None
 
     if payload.attachments:
@@ -370,9 +374,11 @@ async def api_chat_send_message(
         )
 
     # Process user attachments if present
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     trigger_content_parts: list[dict[str, Any]] = [
         {"type": "text", "text": payload.prompt}
     ]
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     trigger_attachments: list[dict[str, Any]] | None = None
 
     if payload.attachments:
@@ -751,9 +757,11 @@ async def api_chat_send_message_stream(
         )
 
     # Process user attachments if present
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     trigger_content_parts: list[dict[str, Any]] = [
         {"type": "text", "text": payload.prompt}
     ]
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     attachment_metadata: list[dict[str, Any]] | None = None
 
     if payload.attachments:
@@ -774,6 +782,7 @@ async def api_chat_send_message_stream(
         """Generate SSE formatted events from the processing stream."""
 
         # Queue for confirmation events
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         confirmation_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
         # Get a fresh database context for the stream
@@ -787,6 +796,7 @@ async def api_chat_send_message_stream(
                 interface_message_id_cb: str | None,
                 tool_name: str,
                 tool_call_id: str,
+                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
                 tool_args: dict[str, Any],
                 timeout_seconds: float,
             ) -> bool:
@@ -1007,6 +1017,7 @@ async def api_chat_send_message_stream(
                                         )
 
                             # Send completion event with optional metadata
+                            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
                             done_data: dict[str, Any] = {}
                             if event.metadata and event.metadata.get("reasoning_info"):
                                 done_data["reasoning_info"] = event.metadata[

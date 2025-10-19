@@ -32,6 +32,7 @@ class IndexingSource(BaseEventSource, EventSource):
         self.processor: EventProcessor | None = None
         self._running = False
         self._event_queue: asyncio.Queue[
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             tuple[dict[str, Any], asyncio.Future[None]]
         ] = asyncio.Queue(maxsize=1000)
         self._processor_task: asyncio.Task | None = None
@@ -58,6 +59,7 @@ class IndexingSource(BaseEventSource, EventSource):
                 await self._processor_task
         logger.info(f"Stopped indexing event source [{self.source_id}]")
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def emit_event(self, event_data: dict[str, Any]) -> asyncio.Future[None]:
         """
         Emit an indexing event.

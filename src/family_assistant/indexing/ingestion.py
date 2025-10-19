@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # Define a simple class on the fly that behaves like the Document protocol
 # This avoids needing a direct import of a specific Document implementation
 class IngestedDocument:
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def __init__(self, data: dict[str, Any]) -> None:
         self._data = data
 
@@ -44,6 +45,7 @@ class IngestedDocument:
         return self._data["_created_at"]
 
     @property
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def metadata(self) -> dict[str, Any] | None:
         return self._data["_base_metadata"]
 
@@ -70,7 +72,9 @@ async def process_document_ingestion_request(
     uploaded_file_content_type: str | None = None,  # Client-provided content type
     url_to_scrape: str | None = None,
     created_at_dt: datetime | None = None,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     doc_metadata: dict[str, Any] | None = None,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> dict[str, Any]:
     """
     Processes a document ingestion request, saves files, stores metadata, and enqueues for indexing.

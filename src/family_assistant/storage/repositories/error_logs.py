@@ -25,6 +25,7 @@ class ErrorLogsRepository(BaseRepository):
         since: datetime | None = None,
         limit: int = 50,
         offset: int = 0,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """
         Retrieve error logs with optional filtering.
@@ -55,6 +56,7 @@ class ErrorLogsRepository(BaseRepository):
         rows = await self._db.fetch_all(query)
         return [dict(row) for row in rows]
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def get_by_id(self, error_id: int) -> dict[str, Any] | None:
         """
         Get a specific error log by ID.
@@ -111,6 +113,7 @@ class ErrorLogsRepository(BaseRepository):
         traceback: str | None = None,
         module: str | None = None,
         function_name: str | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         extra_data: dict[str, Any] | None = None,
     ) -> int:
         """

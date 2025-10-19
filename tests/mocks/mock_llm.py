@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Define type aliases for clarity
 # MatcherArgs represents the keyword arguments passed to the LLM method
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 MatcherArgs = dict[str, Any]
 # MatcherFunction now takes a single dictionary of arguments,
 # which are the keyword arguments for the `generate_response` method.
@@ -63,11 +64,13 @@ class RuleBasedMockLLMClient(LLMInterface):
             self.default_response = default_response
             logger.debug("RuleBasedMockLLMClient using provided default response.")
 
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self._calls: list[dict[str, Any]] = []
         logger.info(
             f"RuleBasedMockLLMClient initialized with {len(rules)} rules for model '{self.model}'."
         )
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _record_call(self, method_name: str, actual_kwargs: dict[str, Any]) -> None:
         """Helper to store call data."""
         call_data = {
@@ -79,13 +82,16 @@ class RuleBasedMockLLMClient(LLMInterface):
             f"Recorded call to '{method_name}'. Total calls: {len(self._calls)}. Args: {actual_kwargs}"
         )
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def get_calls(self) -> list[dict[str, Any]]:
         """Returns a list of recorded calls."""
         return self._calls
 
     async def generate_response(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
@@ -173,7 +179,9 @@ class RuleBasedMockLLMClient(LLMInterface):
 
     def generate_response_stream(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
@@ -210,6 +218,7 @@ class RuleBasedMockLLMClient(LLMInterface):
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """
         Mock implementation for formatting a user message with file.
@@ -225,6 +234,7 @@ class RuleBasedMockLLMClient(LLMInterface):
         }
         self._record_call("format_user_message_with_file", actual_kwargs)
 
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         content_parts: list[dict[str, Any]] = []
         final_prompt_text = prompt_text or "Process the provided file."
 
@@ -257,6 +267,7 @@ class RuleBasedMockLLMClient(LLMInterface):
                     },
                 })
 
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         user_message_content: str | list[dict[str, Any]]
         if len(content_parts) == 1 and content_parts[0]["type"] == "text":
             user_message_content = content_parts[0]["text"]
@@ -268,6 +279,7 @@ class RuleBasedMockLLMClient(LLMInterface):
 
 # --- Helper function to extract text from messages ---
 # (Useful for writing matchers)
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def get_last_message_text(messages: list[dict[str, Any]]) -> str:
     """Extracts and concatenates text from the last message in a list."""
     if not messages:
@@ -287,6 +299,7 @@ def get_last_message_text(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def get_system_prompt(messages: list[dict[str, Any]]) -> str | None:
     """Extracts the system prompt content from a list of messages."""
     if not messages:

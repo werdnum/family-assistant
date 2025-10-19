@@ -44,6 +44,7 @@ def detect_image_mime_type(content: bytes) -> str:
 
 
 # Tool Definitions
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 HOME_ASSISTANT_TOOLS_DEFINITION: list[dict[str, Any]] = [
     {
         "type": "function",

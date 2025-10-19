@@ -56,11 +56,14 @@ class MockLLMWithThoughtSignatures:
 
     def __init__(self) -> None:
         self.call_count = 0
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self.last_messages: list[dict[str, Any]] = []
 
     async def generate_response(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
@@ -96,7 +99,9 @@ class MockLLMWithThoughtSignatures:
 
     def generate_response_stream(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
@@ -105,7 +110,9 @@ class MockLLMWithThoughtSignatures:
 
     async def _generate_response_stream(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
@@ -120,6 +127,7 @@ class MockLLMWithThoughtSignatures:
             for tool_call in response.tool_calls:
                 yield LLMStreamEvent(type="tool_call", tool_call=tool_call)
 
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         metadata: dict[str, Any] = {}
         if response.provider_metadata:
             metadata["provider_metadata"] = response.provider_metadata
@@ -131,6 +139,7 @@ class MockLLMWithThoughtSignatures:
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """Mock implementation - not needed for these tests."""
         return {"role": "user", "content": prompt_text or ""}
@@ -141,7 +150,9 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
 
     async def generate_response(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
@@ -157,7 +168,9 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
 
     def generate_response_stream(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
@@ -166,7 +179,9 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
 
     async def _generate_response_stream(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
@@ -177,6 +192,7 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
         if response.content:
             yield LLMStreamEvent(type="content", content=response.content)
 
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         metadata: dict[str, Any] = {}
         if response.provider_metadata:
             metadata["provider_metadata"] = response.provider_metadata
@@ -188,6 +204,7 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
         file_path: str | None,
         mime_type: str | None,
         max_text_length: int | None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """Mock implementation - not needed for these tests."""
         return {"role": "user", "content": prompt_text or ""}

@@ -23,6 +23,7 @@ async def test_calendar_config_from_provider() -> None:
     }
 
     # Create a mock calendar tool function
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def mock_calendar_tool(calendar_config: dict[str, Any], summary: str) -> str:
         """Mock calendar tool that requires calendar_config."""
         caldav_config = calendar_config.get("caldav", {})
@@ -87,6 +88,7 @@ async def test_calendar_tool_without_config() -> None:
     """Test that calendar tool fails gracefully when calendar_config is not available."""
 
     # Create a mock calendar tool function
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def mock_calendar_tool(calendar_config: dict[str, Any], summary: str) -> str:
         """Mock calendar tool that requires calendar_config."""
         return "Should not reach here"
@@ -162,6 +164,7 @@ async def test_calendar_config_preference() -> None:
     }
 
     # Create a mock calendar tool function
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def mock_calendar_tool(calendar_config: dict[str, Any], summary: str) -> str:
         """Mock calendar tool that requires calendar_config."""
         caldav_config = calendar_config.get("caldav", {})

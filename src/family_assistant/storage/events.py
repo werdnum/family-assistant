@@ -235,6 +235,7 @@ async def delete_event_listener(
 async def store_event(
     db_context: DatabaseContext,
     source_id: str,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     event_data: dict[str, Any],
     triggered_listener_ids: list[int] | None = None,
     timestamp: datetime | None = None,
@@ -253,6 +254,7 @@ async def query_recent_events(
     source_id: str | None = None,
     hours: int = 24,
     limit: int = 100,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> list[dict[str, Any]]:
     """Query recent events with optional filters."""
     return await db_context.events.query_recent_events(

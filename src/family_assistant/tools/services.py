@@ -28,6 +28,7 @@ ConfirmationCallbackSignature = Callable[
 ]
 
 # Tool Definitions
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 SERVICE_TOOLS_DEFINITION: list[dict[str, Any]] = [
     {
         "type": "function",

@@ -57,6 +57,7 @@ class DocumentIndexer:
 
     def __init__(
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         pipeline_config: dict[str, Any],
         llm_client: LLMInterface,
         embedding_generator: EmbeddingGenerator,
@@ -167,7 +168,10 @@ class DocumentIndexer:
         )
 
     async def process_document(
-        self, exec_context: ToolExecutionContext, payload: dict[str, Any]
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        exec_context: ToolExecutionContext,
+        payload: dict[str, Any],
     ) -> None:
         """
         Task handler method to process and index content parts provided for a document
@@ -254,6 +258,7 @@ class DocumentIndexer:
                     continue
 
                 embedding_type = key
+                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
                 metadata_for_item: dict[str, Any] = {"original_key": key}
 
                 if key.startswith("content_chunk_"):

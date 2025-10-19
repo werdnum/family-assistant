@@ -77,6 +77,7 @@ class VectorSearchQuery:
 
 
 def _build_in_clause_for_sqlite(
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     params: dict[str, Any],
     where_clauses: list[str],
     column_name: str,
@@ -103,6 +104,7 @@ async def query_vector_store(
     db_context: DatabaseContext,
     query: VectorSearchQuery,
     query_embedding: list[float] | None = None,  # Pass generated embedding separately
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> list[dict[str, Any]]:
     """
     Performs vector, keyword, or hybrid search based on the VectorSearchQuery input.
@@ -136,6 +138,7 @@ async def query_vector_store(
         return []
 
     # --- Parameter Mapping and Query Construction (using raw SQL example) ---
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     params: dict[str, Any] = {"limit": query.limit, "rrf_k": query.rrf_k}
     doc_where_clauses = ["1=1"]
     embed_where_clauses = ["1=1"]

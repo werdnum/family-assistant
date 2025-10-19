@@ -33,6 +33,7 @@ class EventProcessor:
         sources: dict[str, EventSource],
         db_context: DatabaseContext | None = None,
         sample_interval_hours: float = 1.0,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         config: dict[str, Any] | None = None,
         get_db_context_func: Callable[[], DatabaseContext] | None = None,
     ) -> None:
@@ -94,6 +95,7 @@ class EventProcessor:
                     f"Failed to stop event source {source_id}: {e}", exc_info=True
                 )
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def process_event(self, source_id: str, event_data: dict[str, Any]) -> None:
         """Process an event from a source."""
         if not self._running:
@@ -186,7 +188,10 @@ class EventProcessor:
         return True
 
     def _get_nested_value(
-        self, data: dict, key_path: str
+        self,
+        data: dict,
+        key_path: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> str | int | float | bool | dict[str, Any] | list[Any] | None:
         """Get value from nested dict using dot notation (e.g., 'new_state.state')."""
         keys = key_path.split(".")
@@ -244,7 +249,11 @@ class EventProcessor:
         )
 
     async def _execute_action(
-        self, listener: dict[str, Any], event_data: dict[str, Any]
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        listener: dict[str, Any],
+        event_data: dict[str, Any],
     ) -> None:
         """Execute the action defined in the listener (opens new DB context)."""
         if self.get_db_context_func:
@@ -258,7 +267,9 @@ class EventProcessor:
     async def _execute_action_in_context(
         self,
         db_ctx: DatabaseContext,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         listener: dict[str, Any],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         event_data: dict[str, Any],
     ) -> None:
         """Execute the action defined in the listener within existing DB context."""
@@ -312,6 +323,7 @@ class EventProcessor:
         )
         logger.info(f"Disabled one-time listener {listener_id}")
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def get_health_status(self) -> dict[str, Any]:
         """Get health status of all event sources."""
         status = {

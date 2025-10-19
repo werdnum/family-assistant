@@ -59,6 +59,7 @@ class MockDocumentImpl(Document):
         source_id: str,
         title: str | None = None,
         created_at: datetime | None = None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         metadata: dict[str, Any] | None = None,
         source_uri: str | None = None,
     ) -> None:
@@ -100,6 +101,7 @@ class MockDocumentImpl(Document):
         return self._created_at
 
     @property
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def metadata(self) -> dict[str, Any] | None:
         return self._metadata
 
@@ -465,6 +467,7 @@ async def test_get_full_document_content_with_raw_content(
             return datetime.now(timezone.utc)
 
         @property
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         def metadata(self) -> dict[str, Any] | None:
             return {"test": True}
 

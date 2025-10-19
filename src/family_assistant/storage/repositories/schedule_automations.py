@@ -26,6 +26,7 @@ VALID_ACTION_TYPES = {"wake_llm", "script"}
 class ScheduleAutomationsRepository(BaseRepository):
     """Repository for managing schedule-based automations."""
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _normalize_automation(self, row: dict[str, Any]) -> ScheduleAutomationDict:
         """
         Normalize a database row to ScheduleAutomationDict.
@@ -91,6 +92,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         name: str,
         recurrence_rule: str,
         action_type: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         action_config: dict[str, Any],
         conversation_id: str,
         interface_type: str = "telegram",
@@ -214,6 +216,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         name: str,
         recurrence_rule: str,
         action_type: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         action_config: dict[str, Any],
         conversation_id: str,
         interface_type: str = "telegram",
@@ -373,6 +376,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         conversation_id: str,
         name: str | None | object = _UNSET,
         recurrence_rule: str | None | object = _UNSET,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         action_config: dict[str, Any] | None | object = _UNSET,
         description: str | None | object = _UNSET,
         enabled: bool | None | object = _UNSET,
@@ -400,6 +404,7 @@ class ScheduleAutomationsRepository(BaseRepository):
             )
             return False
 
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         update_values: dict[str, Any] = {}
 
         if isinstance(name, str) or name is None:
@@ -696,6 +701,7 @@ class ScheduleAutomationsRepository(BaseRepository):
     async def get_execution_stats(
         self,
         automation_id: int,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """
         Get execution statistics for an automation.

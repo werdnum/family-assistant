@@ -82,6 +82,7 @@ async def enqueue_task(
     db_context: DatabaseContext,  # Added context
     task_id: str,
     task_type: str,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     payload: dict[str, Any] | None = None,
     scheduled_at: datetime | None = None,
     max_retries_override: int | None = None,
@@ -219,6 +220,7 @@ async def dequeue_task(
     worker_id: str,
     task_types: list[str],  # Added context
     current_time: datetime,  # Added current_time parameter
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> dict[str, Any] | None:
     """Atomically dequeues the next available task."""
 
@@ -474,7 +476,9 @@ async def manually_retry_task(
 
 
 async def get_all_tasks(
-    db_context: DatabaseContext, limit: int = 100
+    db_context: DatabaseContext,
+    limit: int = 100,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> list[dict[str, Any]]:
     """Retrieves tasks, ordered by creation descending."""
     try:

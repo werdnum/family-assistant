@@ -24,6 +24,7 @@ DAY = 86400
 WEEK = 604800
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def _datetime_to_dict(dt: datetime) -> dict[str, Any]:
     """Convert a datetime object to a dictionary representation."""
     return {
@@ -40,6 +41,7 @@ def _datetime_to_dict(dt: datetime) -> dict[str, Any]:
     }
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def _dict_to_datetime(time_dict: dict[str, Any]) -> datetime:
     """Convert a time dictionary back to a datetime object."""
     tz_str = time_dict.get("timezone", "UTC")
@@ -67,11 +69,13 @@ def _dict_to_datetime(time_dict: dict[str, Any]) -> datetime:
 # Time Creation Functions
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def time_now() -> dict[str, Any]:
     """Get the current time in the local timezone."""
     return _datetime_to_dict(datetime.now())
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def time_now_utc() -> dict[str, Any]:
     """Get the current time in UTC."""
     return _datetime_to_dict(datetime.now(timezone.utc))
@@ -86,6 +90,7 @@ def time_create(
     second: int = 0,
     nanosecond: int = 0,
     timezone_name: str = "UTC",
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> dict[str, Any]:
     """
     Create a time object with the specified components.
@@ -125,6 +130,7 @@ def time_create(
     return _datetime_to_dict(dt)
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def time_from_timestamp(seconds: float, nanoseconds: int = 0) -> dict[str, Any]:
     """
     Create a time object from a Unix timestamp.
@@ -142,7 +148,10 @@ def time_from_timestamp(seconds: float, nanoseconds: int = 0) -> dict[str, Any]:
 
 
 def time_parse(
-    time_string: str, format_string: str = "", timezone_name: str = ""
+    time_string: str,
+    format_string: str = "",
+    timezone_name: str = "",
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> dict[str, Any]:
     """
     Parse a time string into a time object.
@@ -213,6 +222,8 @@ def time_parse(
 # Time Manipulation Functions
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def time_in_location(time_dict: dict[str, Any], timezone_name: str) -> dict[str, Any]:
     """
     Convert a time to a different timezone.
@@ -239,6 +250,7 @@ def time_in_location(time_dict: dict[str, Any], timezone_name: str) -> dict[str,
     return _datetime_to_dict(dt_converted)
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def time_format(time_dict: dict[str, Any], format_string: str) -> str:
     """
     Format a time according to a format string.
@@ -260,6 +272,8 @@ def time_format(time_dict: dict[str, Any], format_string: str) -> str:
     return dt.strftime(format_string)
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def time_add(time_dict: dict[str, Any], seconds: float) -> dict[str, Any]:
     """
     Add seconds to a time.
@@ -277,7 +291,11 @@ def time_add(time_dict: dict[str, Any], seconds: float) -> dict[str, Any]:
 
 
 def time_add_duration(
-    time_dict: dict[str, Any], amount: float, unit: str
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    time_dict: dict[str, Any],
+    amount: float,
+    unit: str,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> dict[str, Any]:
     """
     Add a duration with a specific unit to a time.
@@ -310,36 +328,43 @@ def time_add_duration(
 # Time Component Functions
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def time_year(time_dict: dict[str, Any]) -> int:
     """Get the year from a time dictionary."""
     return time_dict.get("year", 1970)
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def time_month(time_dict: dict[str, Any]) -> int:
     """Get the month from a time dictionary."""
     return time_dict.get("month", 1)
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def time_day(time_dict: dict[str, Any]) -> int:
     """Get the day from a time dictionary."""
     return time_dict.get("day", 1)
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def time_hour(time_dict: dict[str, Any]) -> int:
     """Get the hour from a time dictionary."""
     return time_dict.get("hour", 0)
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def time_minute(time_dict: dict[str, Any]) -> int:
     """Get the minute from a time dictionary."""
     return time_dict.get("minute", 0)
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def time_second(time_dict: dict[str, Any]) -> int:
     """Get the second from a time dictionary."""
     return time_dict.get("second", 0)
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def time_weekday(time_dict: dict[str, Any]) -> int:
     """
     Get the weekday from a time dictionary.
@@ -354,21 +379,29 @@ def time_weekday(time_dict: dict[str, Any]) -> int:
 # Time Comparison Functions
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def time_before(t1: dict[str, Any], t2: dict[str, Any]) -> bool:
     """Check if t1 is before t2."""
     return int(t1["unix_nano"]) < int(t2["unix_nano"])
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def time_after(t1: dict[str, Any], t2: dict[str, Any]) -> bool:
     """Check if t1 is after t2."""
     return int(t1["unix_nano"]) > int(t2["unix_nano"])
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def time_equal(t1: dict[str, Any], t2: dict[str, Any]) -> bool:
     """Check if t1 equals t2."""
     return int(t1["unix_nano"]) == int(t2["unix_nano"])
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def time_diff(t1: dict[str, Any], t2: dict[str, Any]) -> float:
     """
     Calculate the difference between two times in seconds.
@@ -522,6 +555,7 @@ def timezone_is_valid(timezone_name: str) -> bool:
         return False
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def timezone_offset(timezone_name: str, time_dict: dict[str, Any] | None = None) -> int:
     """
     Get the offset in seconds for a timezone at a specific time.
@@ -560,7 +594,10 @@ def timezone_offset(timezone_name: str, time_dict: dict[str, Any] | None = None)
 
 
 def is_between(
-    start_hour: int, end_hour: int, time_dict: dict[str, Any] | None = None
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    start_hour: int,
+    end_hour: int,
+    time_dict: dict[str, Any] | None = None,
 ) -> bool:
     """
     Check if the current time (or specified time) is between two hours.
@@ -585,6 +622,7 @@ def is_between(
         return hour >= start_hour or hour < end_hour
 
 
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def is_weekend(time_dict: dict[str, Any] | None = None) -> bool:
     """
     Check if a time falls on a weekend.

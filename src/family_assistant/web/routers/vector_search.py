@@ -362,6 +362,7 @@ async def handle_vector_search(
             query_embedding=query_embedding,
         )
         # --- Group results by document_id and prepare for template ---
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         grouped_documents: dict[int, dict[str, Any]] = {}
         if raw_results:
             for row_mapping in raw_results:

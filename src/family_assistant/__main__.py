@@ -58,6 +58,7 @@ CONFIG_FILE_PATH = "config.yaml"  # Path to the new config file
 
 
 # --- Configuration Loading ---
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # noqa: ANN401  # Config structure has nested dicts with various value types
     """
     Loads configuration according to the defined hierarchy:
@@ -71,6 +72,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
         A dictionary containing the resolved configuration.
     """
     # 1. Code Defaults
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     config_data: dict[str, Any] = {  # noqa: ANN401  # Config values include strings, ints, lists, nested dicts
         # --- Top-level application-wide settings & secrets placeholders ---
         "telegram_token": None,

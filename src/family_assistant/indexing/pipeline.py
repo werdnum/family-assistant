@@ -34,6 +34,7 @@ class IndexableContent:
     mime_type: str | None = None
     """MIME type of the content (e.g., 'text/plain', 'image/jpeg')."""
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     metadata: dict[str, Any] = field(default_factory=dict)
     """Processor-specific details (e.g., {'page_number': 3})."""
 
@@ -82,7 +83,10 @@ class IndexingPipeline:
     """
 
     def __init__(
-        self, processors: list[ContentProcessor], config: dict[str, Any]
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        processors: list[ContentProcessor],
+        config: dict[str, Any],
     ) -> None:
         """
         Initializes the pipeline with a list of processors and a configuration.

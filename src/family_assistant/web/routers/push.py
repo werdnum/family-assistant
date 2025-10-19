@@ -44,6 +44,7 @@ class UnsubscribeRequest(BaseModel):
 @router.post("/api/push/subscribe")
 async def subscribe(
     request: PushSubscriptionRequest,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     user: Annotated[dict[str, Any], Depends(get_current_user)],
     db: Annotated[DatabaseContext, Depends(get_db)],
 ) -> dict[str, str]:
@@ -81,6 +82,7 @@ async def subscribe(
 @router.post("/api/push/unsubscribe")
 async def unsubscribe(
     request: UnsubscribeRequest,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     user: Annotated[dict[str, Any], Depends(get_current_user)],
     db: Annotated[DatabaseContext, Depends(get_db)],
 ) -> dict[str, str]:

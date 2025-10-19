@@ -42,8 +42,10 @@ class EmailDocument(Document):
     _title: str | None = None
     _created_at: datetime | None = None
     _source_uri: str | None = None
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     _base_metadata: dict[str, Any] = field(default_factory=dict)
     _content_plain: str | None = None  # Store plain text content separately
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     _attachment_info_raw: list[dict[str, Any]] | None = (
         None  # Store raw attachment info
     )
@@ -74,6 +76,7 @@ class EmailDocument(Document):
         return self._created_at
 
     @property
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def metadata(self) -> dict[str, Any] | None:
         """Base metadata extracted directly from the source."""
         return self._base_metadata
@@ -84,6 +87,7 @@ class EmailDocument(Document):
         return self._content_plain
 
     @property
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def attachments(self) -> list[dict[str, Any]] | None:
         """List of attachment metadata dictionaries (filename, content_type, size, storage_path)."""
         return self._attachment_info_raw
@@ -137,6 +141,7 @@ class EmailDocument(Document):
             # _source_uri could be set if a web view link exists, otherwise None
         )
 
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def to_dict(self) -> dict[str, Any]:
         """Converts the EmailDocument instance to a dictionary."""
         return {
@@ -167,7 +172,10 @@ class EmailIndexer:
         logger.info("EmailIndexer initialized with an IndexingPipeline instance.")
 
     async def handle_index_email(
-        self, exec_context: ToolExecutionContext, payload: dict[str, Any]
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        self,
+        exec_context: ToolExecutionContext,
+        payload: dict[str, Any],
     ) -> None:
         """
         Task handler to index a specific email from the received_emails table.

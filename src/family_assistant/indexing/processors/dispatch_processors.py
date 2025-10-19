@@ -95,6 +95,7 @@ class EmbeddingDispatchProcessor(ContentProcessor):
             return current_items  # Pass all items through
 
         texts_to_embed_list: list[str] = []
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         embedding_metadata_list: list[dict[str, Any]] = []
 
         for item_to_dispatch in items_to_embed:

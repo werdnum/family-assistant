@@ -41,6 +41,7 @@ class LLMClientFactory:
     @classmethod
     def create_client(
         cls,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         config: dict[str, Any],
     ) -> "LLMInterface":
         """
@@ -99,6 +100,7 @@ class LLMClientFactory:
         return cls._create_single_client(config)
 
     @classmethod
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _create_single_client(cls, config: dict[str, Any]) -> "LLMInterface":
         """Create a single LLM client (existing logic)."""
         model = config.get("model")
