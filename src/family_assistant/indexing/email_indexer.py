@@ -175,6 +175,7 @@ class EmailIndexer:
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         exec_context: ToolExecutionContext,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         payload: dict[str, Any],
     ) -> None:
         """

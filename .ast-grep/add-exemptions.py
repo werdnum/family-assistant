@@ -35,8 +35,9 @@ from pathlib import Path
 
 
 def find_violations(rule_id: str, files: list[str] | None = None) -> list[dict]:
-    """Run ast-grep scan to find violations of the specified rule."""
-    cmd = ["ast-grep", "scan", "-r", rule_id, "--json"]
+    """Run check-conformance.py to find violations (respects existing exemptions)."""
+    # Use check-conformance.py which filters out already-exempted violations
+    cmd = [".ast-grep/check-conformance.py", "--json"]
 
     # Add specific files if provided
     if files:
@@ -45,18 +46,24 @@ def find_violations(rule_id: str, files: list[str] | None = None) -> list[dict]:
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
-        # ast-grep scan exits with 1 if violations are found, which is not an error for us.
-        # A real error occurs if the exit code is non-zero AND there's no stdout.
-        if result.returncode != 0 and not result.stdout:
-            error_msg = result.stderr.strip() if result.stderr else "Unknown error"
-            print(f"Error running ast-grep: {error_msg}", file=sys.stderr)
+        # Check for errors - fail loudly instead of silently
+        if result.returncode != 0:
+            error_msg = (
+                result.stderr.strip()
+                if result.stderr
+                else f"Exit code {result.returncode}"
+            )
+            print(f"Error running check-conformance.py: {error_msg}", file=sys.stderr)
             sys.exit(1)
 
         if not result.stdout:
             return []
 
         # Parse JSON output
-        violations = json.loads(result.stdout)
+        all_violations = json.loads(result.stdout)
+
+        # Filter to only the specified rule
+        violations = [v for v in all_violations if v.get("ruleId") == rule_id]
         return violations
 
     except json.JSONDecodeError as e:

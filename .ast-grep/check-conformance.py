@@ -50,6 +50,7 @@ class Violation:
     file_path: str
     line_number: int
     message: str
+    # ast-grep-ignore: no-dict-any - raw_data contains arbitrary JSON from ast-grep
     raw_data: dict[str, Any]
 
 
@@ -186,10 +187,15 @@ def run_ast_grep(files: list[str]) -> list[Violation]:
         for item in data:
             file_path = item.get("file", "")
             rule_id = item.get("ruleId", "unknown")
+            severity = item.get("severity", "error")
 
             # Ignore ast-grep's builtin unused-suppression diagnostics because we
             # implement exemption tracking ourselves.
             if rule_id == "unused-suppression":
+                continue
+
+            # Skip hint-level violations (hints are handled separately by check-hints.py)
+            if severity == "hint":
                 continue
 
             # Skip test-only rules for non-test files

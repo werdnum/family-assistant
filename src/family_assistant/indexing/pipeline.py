@@ -86,6 +86,7 @@ class IndexingPipeline:
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         processors: list[ContentProcessor],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         config: dict[str, Any],
     ) -> None:
         """

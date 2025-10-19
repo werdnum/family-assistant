@@ -213,6 +213,7 @@ class HomeAssistantSource(BaseEventSource, EventSource):
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         event_type: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         event: dict[str, Any] | HasDataAttr,
     ) -> None:
         """Handle an event synchronously from the thread."""
@@ -397,6 +398,7 @@ class HomeAssistantSource(BaseEventSource, EventSource):
     async def validate_match_conditions(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         match_conditions: dict[str, Any],
     ) -> ValidationResult:
         """

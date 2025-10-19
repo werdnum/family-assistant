@@ -597,6 +597,7 @@ def is_between(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     start_hour: int,
     end_hour: int,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     time_dict: dict[str, Any] | None = None,
 ) -> bool:
     """

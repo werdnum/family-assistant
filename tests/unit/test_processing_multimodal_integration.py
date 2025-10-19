@@ -508,7 +508,9 @@ class TestProcessingServiceMultimodal:
             # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             name: str,
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             args: dict[str, Any],
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             context: dict[str, Any],
             call_id: str,
         ) -> ToolReturnType:
@@ -581,7 +583,9 @@ class TestProcessingServiceMultimodal:
             # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             name: str,
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             args: dict[str, Any],
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             context: dict[str, Any],
             call_id: str,
         ) -> str:
@@ -690,7 +694,9 @@ class TestProcessingServiceMultimodal:
             # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             name: str,
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             args: dict[str, Any],
+            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             context: dict[str, Any],
             call_id: str,
         ) -> ToolReturnType:

@@ -515,6 +515,7 @@ class WeatherContextProvider(ContextProvider):
     def _format_todays_detailed_forecast(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         weather_data: dict[str, Any],
         today_date_obj: date,
         api_tz_str: str,
@@ -670,6 +671,7 @@ class WeatherContextProvider(ContextProvider):
     def _format_weekly_outlook(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         weather_data: dict[str, Any],
         today_date_obj: date,
         api_tz_str: str,
