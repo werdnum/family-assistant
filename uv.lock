@@ -235,6 +235,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/4f/39/720b5d4463612a40a166d00999cbb715fce3edaf08a9a7588ba5985699ec/assertpy-1.1.tar.gz", hash = "sha256:acc64329934ad71a3221de185517a43af33e373bb44dc05b5a9b174394ef4833", size = 25421, upload-time = "2020-07-19T14:39:02.462Z" }
 
 [[package]]
+name = "ast-grep-cli"
+version = "0.39.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/de/a4/8d978c3f77c0e592d83d26897aba8b5b413d989986e1fb6fb1ab5f8f3948/ast_grep_cli-0.39.6.tar.gz", hash = "sha256:cbe6707e68839f77435c51c0f34c9785afc4a9b12a8568ce94ef421b29883beb", size = 211099, upload-time = "2025-10-05T03:06:33.757Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/52/1b/5e59e30fe7b2c5c2b5a3491af43253cb0cbd0320843aa329d9d62e84dc7b/ast_grep_cli-0.39.6-py3-none-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:ccfdcc4c4127f9abe7aae02b0796e6b6152b72dc52cdbfde5617d8128e36addb", size = 13932718, upload-time = "2025-10-05T03:06:21.621Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/c7/123126e82dd38fe104626ca5e51cdc66099a5f5273832992235947fb256d/ast_grep_cli-0.39.6-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:4e3b97fb2f155c4a347a08b5ed9ca9fd744dd95626337bb95845e2469a7ea463", size = 6985699, upload-time = "2025-10-05T03:06:24.628Z" },
+    { url = "https://files.pythonhosted.org/packages/31/91/433676faa5878e945490ca8440f9f6640fac4227be6e0414e642ce964a21/ast_grep_cli-0.39.6-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:822d895ef6c05c15ef3b453f4d2132de9dd1910b434d87cb0780b28423f36250", size = 6803052, upload-time = "2025-10-05T03:06:26.484Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/bb/6b4cd4fd24ebafc4354ac13f3dbcef3a49ff34b96b010096106b22d2f6db/ast_grep_cli-0.39.6-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:8d939716977e313b40ac8b56dc70f6ec19982655a5f6f27bfdd651b56f21ed12", size = 7111436, upload-time = "2025-10-05T03:06:27.873Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/ea/070bd465367f13187b1079100c57c76fd9348709ae3fbfeb6bb53a3c00d9/ast_grep_cli-0.39.6-py3-none-win32.whl", hash = "sha256:653bb8cdf2999ec3e99d858794d2a190c795e9855b97c32cce3d76ac763ccd27", size = 6681469, upload-time = "2025-10-05T03:06:29.703Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/ba/390e225d3db6098a6c4b947121c2045ce36fb172d7dac755b4627d54b615/ast_grep_cli-0.39.6-py3-none-win_amd64.whl", hash = "sha256:3a16b06a3eb88a036973adbcc9ff98c8aee60256ef5c9e2e2f22911b104255a4", size = 7008882, upload-time = "2025-10-05T03:06:30.989Z" },
+    { url = "https://files.pythonhosted.org/packages/af/ae/56a8c528714f8c8860605b69608ce5306502047c2ebed73b9dfecd2cfc87/ast_grep_cli-0.39.6-py3-none-win_arm64.whl", hash = "sha256:fd2210c9cf1163efef854487c7bf96e66ddf77e41cdee1a4e958263e4a15e178", size = 6736087, upload-time = "2025-10-05T03:06:32.598Z" },
+]
+
+[[package]]
 name = "astroid"
 version = "3.3.10"
 source = { registry = "https://pypi.org/simple" }
@@ -1010,6 +1025,7 @@ dependencies = [
 dev = [
     { name = "aiosqlite" },
     { name = "assertpy" },
+    { name = "ast-grep-cli" },
     { name = "asyncpg" },
     { name = "basedpyright" },
     { name = "httpx" },
@@ -1077,6 +1093,7 @@ requires-dist = [
     { name = "aiosqlite", marker = "extra == 'dev'" },
     { name = "alembic", specifier = ">=1.15.2" },
     { name = "assertpy", marker = "extra == 'dev'", specifier = ">=1.1" },
+    { name = "ast-grep-cli", marker = "extra == 'dev'", specifier = ">=0.39.0" },
     { name = "asyncpg", specifier = ">=0.29.0" },
     { name = "asyncpg", marker = "extra == 'dev'", specifier = ">=0.29.0" },
     { name = "authlib", specifier = ">=1.3.1" },
