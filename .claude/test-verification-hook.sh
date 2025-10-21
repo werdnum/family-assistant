@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-# Skip verification when running in remote Claude Code session (dependencies auto-setup)
+# Skip verification when running in remote Claude Code session (can't run full test suite due to resource constraints)
 if [ "${CLAUDE_CODE_REMOTE:-false}" = "true" ]; then
     exit 0
 fi
