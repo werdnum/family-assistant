@@ -40,3 +40,4 @@ test-results
 gha-creds-*.json
 .review_cache
 frontend/dev-dist
+.claude/settings.local.json
