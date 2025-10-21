@@ -78,8 +78,31 @@ A top-level list `service_profiles` will define individual profiles. Each profil
 - `id` (string): A unique identifier for the profile.
 - `description` (string, optional): A human-readable description.
 - `processing_config` (object, optional): Overrides for `ProcessingServiceConfig` settings. This
-  includes `delegation_security_level`.
+  includes `delegation_security_level` and `include_system_docs`.
 - `tools_config` (object, optional): Configuration for the toolset available to this profile.
+
+### 3.2.0. `include_system_docs`
+
+Each profile's `processing_config` can specify an `include_system_docs` list to automatically load
+user documentation files from `docs/user/` and append them to the system prompt:
+
+```yaml
+processing_config:
+  include_system_docs:
+    - "USER_GUIDE.md"
+    - "scripting.md"
+  prompts:
+    system_prompt: "You are a helpful assistant."
+```
+
+The specified documentation files will be loaded at profile initialization and appended to the
+system prompt with markdown headers separating each document. This is useful for providing
+context-specific documentation to profiles without having to manually copy content or use the
+`get_user_documentation_content` tool.
+
+**Security**: The same path validation and security checks from
+`get_user_documentation_content_tool` are applied. Files must be in `docs/user/` (or `DOCS_USER_DIR`
+env var), have `.md` or `.txt` extensions, and cannot use directory traversal (`..`).
 
 ### 3.2.1. `delegation_security_level`
 

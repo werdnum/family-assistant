@@ -254,6 +254,10 @@ service_profiles:
       # Using direct Google provider for consistency
       provider: "google"
       llm_model: "gemini-2.5-pro"
+      # Auto-load system documentation into this profile's system prompt
+      # include_system_docs:
+      #   - "USER_GUIDE.md"
+      #   - "scripting.md"
       prompts:
         system_prompt: "You are an automated event handler assistant. You are responding to events from scripts and automations. Provide clear, concise responses focused on the event context.\n\nCurrent time: {current_time}\n\n{aggregated_other_context}"
       max_history_messages: 1 # Minimal history for event processing
