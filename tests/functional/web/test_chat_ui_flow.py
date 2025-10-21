@@ -913,8 +913,7 @@ async def test_mobile_chat_input_visibility(
     # Test that last message is not obscured by input
     # Send multiple messages to fill the viewport
     for i in range(3):
-        await chat_input.type(f"Additional test message {i + 1}")
-        await chat_input.press("Enter")
+        await chat_page.send_message(f"Additional test message {i + 1}")
         await chat_page.wait_for_assistant_response(timeout=15000)
 
     # Get all message elements
