@@ -429,12 +429,12 @@ class ChatPage(BasePage):
         if not await self.is_sidebar_open():
             await self.toggle_sidebar()
 
-        # Use locator instead of ElementHandle to avoid race conditions
-        # Locators automatically retry and handle element detachment during React re-renders
+        # Use locator's click with timeout to atomically wait and click
+        # This avoids stale element references that can happen if React re-renders
+        # between a separate wait_for() and click() call
         selector = f'[data-conversation-id="{conversation_id}"]'
         conv_item = self.page.locator(selector)
-        await conv_item.wait_for(state="visible", timeout=10000)
-        await conv_item.click()
+        await conv_item.click(timeout=10000)
 
         # Wait for the conversation to load
         await self.wait_for_load()
