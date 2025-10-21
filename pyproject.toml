@@ -110,6 +110,7 @@ dev = [
     "vcrpy>=7.0.0",  # HTTP record/replay for testing - v7 fixes urllib3 conflicts
     "aiosqlite",
     "assertpy>=1.1", # Add assertpy
+    "ast-grep-cli>=0.39.0",  # For code pattern matching and transformations
     "pytest-mock",
     "pgserver>=0.1.0",
     "asyncpg>=0.29.0",
