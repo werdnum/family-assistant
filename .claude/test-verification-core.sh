@@ -146,18 +146,19 @@ check_test_status() {
     fi
 
     # Find all test commands after the last modification
+    # Accept both "poe test" and ".venv/bin/poe test" (with or without leading ./)
     local TEST_COMMANDS=$(cat "$TRANSCRIPT_PATH" | jq -c --arg mod_time "$LAST_MOD_TIME" '
         select(.type == "assistant" and .message.content and (.message.content | type == "array") and .timestamp > $mod_time) |
         .message.content[] |
         select(.type == "tool_use" and .name == "Bash") |
-        select(.input.command | test("^poe\\s+test(\\s+(-[xqvs]+|--[a-z-]+|-n\\s*[0-9]+))*\\s*$"; "i")) |
+        select(.input.command | test("^(\\.?/?\\.\\.?venv/bin/)?poe\\s+test(\\s+(-[xqvs]+|--[a-z-]+|-n\\s*[0-9]+))*\\s*$"; "i")) |
         {id: .id, command: .input.command}
     ' 2>/dev/null)
 
     if [ -z "$TEST_COMMANDS" ]; then
         echo "❌ Tests have not been run since modifying $LAST_MOD_FILE at $LAST_MOD_TIME" >&2
-        echo "You MUST run 'poe test' before finishing" >&2
-        echo "Reminder: only 'poe test' (with optional -xq) will do. No other commands will satisfy this hook." >&2
+        echo "You MUST run 'poe test' or '.venv/bin/poe test' before finishing" >&2
+        echo "Reminder: only 'poe test' or '.venv/bin/poe test' (with optional -xq) will do. No other commands will satisfy this hook." >&2
         echo "... even if you think these changes don't impact any or all tests." >&2
         echo "If you have other feedback to address, do that first – you will need to re-run tests after making any further changes." >&2
         return 1
