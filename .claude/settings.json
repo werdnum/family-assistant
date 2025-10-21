@@ -1,5 +1,17 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/bash .claude/session-start-hook.sh",
+            "timeout": 300000
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "matcher": "",
