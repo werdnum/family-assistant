@@ -22,10 +22,15 @@ if TYPE_CHECKING:
 from unittest.mock import MagicMock
 
 import caldav
-import pgserver
 import pytest
 import pytest_asyncio  # Import the correct decorator
 import vcr
+
+# Try to import pgserver, but it's optional if TEST_DATABASE_URL is provided
+try:
+    import pgserver  # pyright: ignore[reportMissingImports]
+except ImportError:
+    pgserver = None  # type: ignore[assignment]
 from caldav.lib import error as caldav_error  # Import the error module
 from passlib.hash import bcrypt
 from sqlalchemy import text
@@ -447,6 +452,12 @@ def postgres_container() -> Generator[ContainerProtocol, None, None]:
         return
 
     # Use pgserver - it's always available as a pip dependency
+    if pgserver is None:
+        raise RuntimeError(
+            "pgserver is not installed and TEST_DATABASE_URL is not set. "
+            "Set TEST_DATABASE_URL to use an external PostgreSQL, or install pgserver."
+        )
+
     logger.info("Starting PostgreSQL using pgserver...")
     temp_dir = tempfile.mkdtemp(prefix="pytest_pgserver_")
     pg = None
