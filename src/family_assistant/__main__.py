@@ -4,6 +4,7 @@ import copy  # Keep for deep_merge_dicts
 import json  # Keep for config logging and mcp_config.json
 import logging
 import os
+import pathlib
 import signal
 import string  # For environment variable expansion in MCP config
 import sys
@@ -49,6 +50,81 @@ def deep_merge_dicts(base_dict: dict, merge_dict: dict) -> dict:
         else:
             result[key] = value  # This will overwrite or add the key
     return result
+
+
+def load_user_documentation(filenames: list[str]) -> str:
+    """Load user documentation files from docs/user/ directory.
+
+    Args:
+        filenames: List of filenames to load (e.g., ['USER_GUIDE.md', 'scripting.md'])
+
+    Returns:
+        Combined content from all files, separated by markdown headers.
+        Returns empty string if no files can be loaded.
+    """
+    # Determine the docs/user directory
+    docs_user_dir_env = os.getenv("DOCS_USER_DIR")
+    if docs_user_dir_env:
+        docs_user_dir = pathlib.Path(docs_user_dir_env).resolve()
+    else:
+        docs_user_dir = pathlib.Path("docs") / "user"
+        # Try Docker default if the calculated path doesn't exist
+        if not docs_user_dir.exists() and pathlib.Path("/app/docs/user").exists():
+            docs_user_dir = pathlib.Path("/app/docs/user")
+
+    if not docs_user_dir.is_dir():
+        logger.warning(
+            f"User documentation directory not found: '{docs_user_dir}'. "
+            "Cannot load system docs for profile."
+        )
+        return ""
+
+    allowed_extensions = {".md", ".txt"}
+    combined_content = []
+
+    for filename in filenames:
+        # Security check: prevent directory traversal
+        if ".." in filename or not any(
+            filename.endswith(ext) for ext in allowed_extensions
+        ):
+            logger.warning(
+                f"Skipping invalid documentation filename: '{filename}' "
+                "(contains '..' or invalid extension)"
+            )
+            continue
+
+        file_path = (docs_user_dir / filename).resolve()
+
+        # Ensure resolved path is still within docs directory
+        if docs_user_dir.resolve() not in file_path.parents:
+            logger.warning(
+                f"Skipping documentation file outside allowed directory: '{filename}'"
+            )
+            continue
+
+        # Try to read the file
+        try:
+            with open(file_path, encoding="utf-8") as f:
+                content = f.read().strip()
+                if content:
+                    # Add a markdown header to separate documents
+                    header = f"\n\n# Included Documentation: {filename}\n\n"
+                    combined_content.append(header + content)
+                    logger.info(
+                        f"Loaded user documentation: '{filename}' ({len(content)} chars)"
+                    )
+                else:
+                    logger.warning(f"Documentation file is empty: '{filename}'")
+        except FileNotFoundError:
+            logger.warning(
+                f"Documentation file not found: '{filename}' in '{docs_user_dir}'"
+            )
+        except Exception as e:
+            logger.error(
+                f"Error reading documentation file '{filename}': {e}", exc_info=True
+            )
+
+    return "\n".join(combined_content)
 
 
 # --- Constants ---
@@ -550,6 +626,35 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
                     resolved_profile_config["processing_config"][scalar_key] = (
                         profile_def["processing_config"][scalar_key]
                     )
+
+            # Handle include_system_docs - auto-load documentation into system prompt
+            if "include_system_docs" in profile_def["processing_config"]:
+                include_docs = profile_def["processing_config"]["include_system_docs"]
+                if isinstance(include_docs, list) and include_docs:
+                    logger.info(
+                        f"Profile '{profile_def['id']}' configured to load system docs: {include_docs}"
+                    )
+                    loaded_docs_content = load_user_documentation(include_docs)
+                    if loaded_docs_content:
+                        # Append to system_prompt
+                        current_system_prompt = resolved_profile_config[
+                            "processing_config"
+                        ]["prompts"].get("system_prompt", "")
+                        if current_system_prompt:
+                            resolved_profile_config["processing_config"]["prompts"][
+                                "system_prompt"
+                            ] = current_system_prompt + "\n" + loaded_docs_content
+                        else:
+                            resolved_profile_config["processing_config"]["prompts"][
+                                "system_prompt"
+                            ] = loaded_docs_content
+                        logger.info(
+                            f"Appended {len(loaded_docs_content)} characters of documentation to system prompt for profile '{profile_def['id']}'"
+                        )
+                    else:
+                        logger.warning(
+                            f"Profile '{profile_def['id']}' requested system docs {include_docs} but none could be loaded"
+                        )
 
         # Replace tools_config entirely if defined in profile
         if "tools_config" in profile_def and isinstance(
