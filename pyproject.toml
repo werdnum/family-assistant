@@ -112,7 +112,6 @@ dev = [
     "assertpy>=1.1", # Add assertpy
     "ast-grep-cli>=0.39.0",  # For code pattern matching and transformations
     "pytest-mock",
-    "pgserver>=0.1.0",
     "asyncpg>=0.29.0",
     "types-aiofiles",
     "types-assertpy", # Added
@@ -152,6 +151,9 @@ dev = [
 local-embeddings = [
     "sentence-transformers>=3.0.1",
     "torch>=2.4.0",
+]
+pgserver = [
+    "pgserver>=0.1.0",  # PostgreSQL test server (requires Python <=3.12)
 ]
 
 [project.scripts]

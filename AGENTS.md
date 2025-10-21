@@ -89,6 +89,11 @@ npm ci --prefix frontend
 # Optional: Install local embedding model support (adds ~450MB of dependencies)
 # Only needed if you want to use local sentence transformer models instead of cloud APIs
 uv pip install -e '.[dev,local-embeddings]'
+
+# Optional: Install pgserver for PostgreSQL testing (requires Python <=3.12)
+# Only needed if TEST_DATABASE_URL is unset (e.g., cloud coding environments)
+# Not needed if you have access to an external PostgreSQL database
+uv pip install -e '.[pgserver]'
 ```
 
 ## Frontend Development
