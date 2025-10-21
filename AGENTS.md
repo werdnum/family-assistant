@@ -38,11 +38,53 @@ Additional guidance is available in subdirectories:
 
 ## Development Setup
 
-### Installation
+### Quick Setup
+
+The easiest way to set up your development environment is to use the setup script:
 
 ```bash
-# Install the project in development mode with all dependencies
-uv pip install -e '.[dev]'
+# Run the setup script to install all dependencies
+./scripts/setup-workspace.sh
+
+# Activate the virtual environment
+source .venv/bin/activate
+
+# Verify setup
+poe test
+```
+
+The setup script will:
+
+- Create a virtual environment (`.venv`)
+- Install all Python dependencies using `uv sync --extra dev`
+- Install development tools (`poethepoet`, `pytest-xdist`, `pre-commit`)
+- Install pre-commit hooks
+- Install frontend dependencies (`npm ci --prefix frontend`)
+- Install Playwright browsers
+
+### Manual Installation
+
+If you prefer to set up manually:
+
+```bash
+# Create virtual environment
+uv venv .venv
+source .venv/bin/activate
+
+# Install Python dependencies
+uv sync --extra dev
+
+# Install additional dev tools
+uv pip install poethepoet pytest-xdist pre-commit
+
+# Install pre-commit hooks
+.venv/bin/pre-commit install
+
+# Install frontend dependencies
+npm ci --prefix frontend
+
+# Install Playwright browsers
+.venv/bin/playwright install chromium
 
 # Optional: Install local embedding model support (adds ~450MB of dependencies)
 # Only needed if you want to use local sentence transformer models instead of cloud APIs
