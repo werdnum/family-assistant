@@ -21,9 +21,11 @@ export default defineConfig(({ mode }) => ({
   plugins: [
     VitePWA({
       registerType: 'autoUpdate',
+      injectRegister: null, // Manual SW registration (see router-entry.jsx)
       strategies: 'injectManifest', // Use custom service worker
       srcDir: 'src', // Source directory containing sw.js
       filename: 'sw.js', // Custom service worker filename
+      manifestFilename: 'manifest.webmanifest', // Manifest filename
       includeAssets: [
         'favicon.ico',
         'apple-touch-icon.png',
@@ -40,22 +42,22 @@ export default defineConfig(({ mode }) => ({
         theme_color: '#ffffff',
         icons: [
           {
-            src: '/static/dist/pwa-192x192.png',
+            src: 'pwa-192x192.png',
             sizes: '192x192',
             type: 'image/png',
           },
           {
-            src: '/static/dist/pwa-512x512.png',
+            src: 'pwa-512x512.png',
             sizes: '512x512',
             type: 'image/png',
           },
           {
-            src: '/static/dist/apple-touch-icon.png',
+            src: 'apple-touch-icon.png',
             sizes: '180x180',
             type: 'image/png',
           },
           {
-            src: '/static/dist/badge.png',
+            src: 'badge.png',
             sizes: '96x96',
             type: 'image/png',
           },

@@ -24,8 +24,8 @@ self.addEventListener('push', (event) => {
     const title = data.title || 'Family Assistant';
     const options = {
       body: data.body || 'You have a new notification.',
-      icon: '/pwa-192x192.png',
-      badge: '/badge.png',
+      icon: '/static/dist/pwa-192x192.png',
+      badge: '/static/dist/badge.png',
       tag: data.tag || 'general', // Group notifications by conversation
       data: data.data || {}, // Preserve custom data for click handling
       requireInteraction: false,
@@ -40,7 +40,7 @@ self.addEventListener('push', (event) => {
     event.waitUntil(
       self.registration.showNotification('Family Assistant', {
         body: 'You have a new message',
-        icon: '/pwa-192x192.png',
+        icon: '/static/dist/pwa-192x192.png',
       })
     );
   }

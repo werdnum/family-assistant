@@ -22,6 +22,64 @@ async def root_redirect(request: Request) -> RedirectResponse:
     return RedirectResponse(url="/chat", status_code=302)
 
 
+@vite_pages_router.get("/sw.js", name="service_worker")
+async def serve_service_worker(request: Request) -> FileResponse:
+    """Serve the service worker from root path with proper headers to control all pages."""
+    dev_mode = _get_dev_mode_from_request(request)
+
+    if dev_mode:
+        # In dev mode, proxy to Vite dev server
+        # The Vite dev server will serve the SW at /static/dist/sw.js
+        sw_path = (
+            pathlib.Path(__file__).parent.parent.parent.parent.parent
+            / "frontend"
+            / "src"
+            / "sw.js"
+        )
+    else:
+        # In production, serve from built dist directory
+        sw_path = (
+            pathlib.Path(__file__).parent.parent.parent / "static" / "dist" / "sw.js"
+        )
+
+    if sw_path.exists():
+        return FileResponse(
+            sw_path,
+            media_type="application/javascript",
+            headers={
+                "Service-Worker-Allowed": "/",  # Allow SW to control all pages
+                "Cache-Control": "no-cache",  # Don't cache SW file
+            },
+        )
+    else:
+        logger.error(f"Service worker not found at: {sw_path}")
+        raise HTTPException(status_code=404, detail="Service worker not found")
+
+
+@vite_pages_router.get("/manifest.webmanifest", name="pwa_manifest")
+async def serve_pwa_manifest(request: Request) -> FileResponse:
+    """Serve the PWA manifest from root path."""
+    dev_mode = _get_dev_mode_from_request(request)
+
+    if not dev_mode:
+        # In production, serve from built dist directory
+        manifest_path = (
+            pathlib.Path(__file__).parent.parent.parent
+            / "static"
+            / "dist"
+            / "manifest.webmanifest"
+        )
+
+        if manifest_path.exists():
+            return FileResponse(
+                manifest_path,
+                media_type="application/manifest+json",
+            )
+
+    # In dev mode or if manifest not found, let Vite handle it
+    raise HTTPException(status_code=404, detail="Manifest not found")
+
+
 def _get_dev_mode_from_request(request: Request) -> bool:
     """Get dev_mode from app config if available, otherwise from environment."""
     if hasattr(request.app.state, "config") and "dev_mode" in request.app.state.config:
