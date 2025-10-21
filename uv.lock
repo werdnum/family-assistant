@@ -1040,7 +1040,6 @@ dev = [
     { name = "mdformat-frontmatter" },
     { name = "mdformat-gfm" },
     { name = "mdformat-tables" },
-    { name = "pgserver" },
     { name = "poethepoet" },
     { name = "pre-commit" },
     { name = "psycopg-binary" },
@@ -1075,6 +1074,9 @@ local-embeddings = [
     { name = "sentence-transformers" },
     { name = "torch", version = "2.8.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_python_implementation != 'PyPy' and sys_platform == 'darwin'" },
     { name = "torch", version = "2.8.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_python_implementation == 'PyPy' or sys_platform != 'darwin'" },
+]
+pgserver = [
+    { name = "pgserver" },
 ]
 
 [package.dev-dependencies]
@@ -1132,7 +1134,7 @@ requires-dist = [
     { name = "openai", specifier = ">=1.0.0,<1.93.0" },
     { name = "passlib", extras = ["bcrypt"], specifier = ">=1.7" },
     { name = "passlib", extras = ["bcrypt"], specifier = ">=1.7.4" },
-    { name = "pgserver", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+    { name = "pgserver", marker = "extra == 'pgserver'", specifier = ">=0.1.0" },
     { name = "pgvector", specifier = ">=0.2.0" },
     { name = "playwright", specifier = "==1.55.0" },
     { name = "poethepoet", marker = "extra == 'dev'", specifier = ">=0.11.0" },
@@ -1180,7 +1182,7 @@ requires-dist = [
     { name = "vobject", specifier = ">=0.9.6" },
     { name = "watchdog", marker = "extra == 'dev'", specifier = ">=3.0.0" },
 ]
-provides-extras = ["dev", "local-embeddings"]
+provides-extras = ["dev", "local-embeddings", "pgserver"]
 
 [package.metadata.requires-dev]
 dev = [
