@@ -6,6 +6,11 @@
 
 set -euo pipefail
 
+# Skip verification when running in remote Claude Code session (dependencies auto-setup)
+if [ "${CLAUDE_CODE_REMOTE:-false}" = "true" ]; then
+    exit 0
+fi
+
 # Read JSON input from stdin
 INPUT=$(cat)
 
