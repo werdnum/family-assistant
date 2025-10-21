@@ -25,7 +25,7 @@ PYTHON_BIN="${VENV_PATH}/bin"
 # Persist environment variables for subsequent bash commands
 if [ -n "$CLAUDE_ENV_FILE" ]; then
     echo "export VIRTUAL_ENV='${VENV_PATH}'" >> "$CLAUDE_ENV_FILE"
-    echo "export PATH='${PYTHON_BIN}:\$PATH'" >> "$CLAUDE_ENV_FILE"
+    echo "export PATH='${PYTHON_BIN}:${PATH}'" >> "$CLAUDE_ENV_FILE"
 fi
 
 echo "✓ Workspace setup complete" >&2
