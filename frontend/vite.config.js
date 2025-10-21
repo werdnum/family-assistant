@@ -35,25 +35,27 @@ export default defineConfig(({ mode }) => ({
         name: 'Family Assistant',
         short_name: 'FamAssist',
         description: 'Family Assistant PWA',
+        start_url: '/chat',
+        scope: '/',
         theme_color: '#ffffff',
         icons: [
           {
-            src: 'pwa-192x192.png',
+            src: '/static/dist/pwa-192x192.png',
             sizes: '192x192',
             type: 'image/png',
           },
           {
-            src: 'pwa-512x512.png',
+            src: '/static/dist/pwa-512x512.png',
             sizes: '512x512',
             type: 'image/png',
           },
           {
-            src: 'apple-touch-icon.png',
+            src: '/static/dist/apple-touch-icon.png',
             sizes: '180x180',
             type: 'image/png',
           },
           {
-            src: 'badge.png',
+            src: '/static/dist/badge.png',
             sizes: '96x96',
             type: 'image/png',
           },

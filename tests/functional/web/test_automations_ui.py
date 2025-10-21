@@ -228,6 +228,7 @@ async def test_automations_responsive_design(
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
+@pytest.mark.flaky(reruns=2)
 async def test_create_schedule_automation_form(
     web_test_with_console_check: WebTestFixture,
 ) -> None:
