@@ -30,3 +30,21 @@ if (document.readyState === 'loading') {
 } else {
   mountApp();
 }
+
+// Register service worker for PWA functionality
+if (typeof window !== 'undefined' && 'serviceWorker' in window.navigator) {
+  window.navigator.serviceWorker
+    .register('/sw.js', { scope: '/' })
+    .then((registration) => {
+      // Check for updates periodically (every hour)
+      window.setInterval(
+        () => {
+          registration.update();
+        },
+        60 * 60 * 1000
+      );
+    })
+    .catch((error) => {
+      console.error('Service Worker registration failed:', error);
+    });
+}
