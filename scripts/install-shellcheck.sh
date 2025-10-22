@@ -45,14 +45,11 @@ install_shellcheck() {
     # Construct download URL and filename
     local base_url="https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}"
     local filename
-    local extract_cmd
 
     if [ "$platform" = "windows.x86_64" ]; then
         filename="shellcheck-${SHELLCHECK_VERSION}.zip"
-        extract_cmd="unzip -q"
     else
         filename="shellcheck-${SHELLCHECK_VERSION}.${platform}.tar.xz"
-        extract_cmd="tar -xJf"
     fi
 
     local download_url="${base_url}/${filename}"

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # A wrapper script to run a command with a memory limit derived from the
 # pod's available cgroup memory, supporting both cgroups v1 and v2.
