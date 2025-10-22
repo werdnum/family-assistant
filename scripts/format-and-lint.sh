@@ -222,7 +222,7 @@ if [ ${#OTHER_FILES[@]} -gt 0 ]; then
     echo "${BLUE}🔧 Other files (shell scripts, etc.)...${NC}"
     echo -n "${BLUE}  ▸ Checking syntax...${NC}"
     timer_start
-    
+
     SHELL_ERRORS=0
     for file in "${OTHER_FILES[@]}"; do
         case "$file" in
@@ -263,7 +263,7 @@ if [ ${#OTHER_FILES[@]} -gt 0 ]; then
                 ;;
         esac
     done
-    
+
     if [ $SHELL_ERRORS -eq 0 ]; then
         echo -n "${GREEN} ✓${NC}"
     else
@@ -271,6 +271,56 @@ if [ ${#OTHER_FILES[@]} -gt 0 ]; then
     fi
     timer_end
     echo ""
+fi
+
+# Phase 5: Shellcheck for shell scripts
+SHELL_FILES=()
+if [ ${#OTHER_FILES[@]} -gt 0 ]; then
+    for file in "${OTHER_FILES[@]}"; do
+        case "$file" in
+            *.sh|*.bash)
+                SHELL_FILES+=("$file")
+                ;;
+        esac
+    done
+fi
+
+# Also check for shell scripts if no specific files were provided
+if [ $# -eq 0 ]; then
+    while IFS= read -r -d '' file; do
+        SHELL_FILES+=("$file")
+    done < <(find scripts -name "*.sh" -type f -print0 2>/dev/null)
+fi
+
+if [ ${#SHELL_FILES[@]} -gt 0 ]; then
+    # Find shellcheck - prefer .venv/bin, fallback to system
+    SHELLCHECK_BIN=""
+    if [ -x "${VIRTUAL_ENV:-.venv}/bin/shellcheck" ]; then
+        SHELLCHECK_BIN="${VIRTUAL_ENV:-.venv}/bin/shellcheck"
+    elif command -v shellcheck >/dev/null 2>&1; then
+        SHELLCHECK_BIN="shellcheck"
+    fi
+
+    if [ -n "$SHELLCHECK_BIN" ]; then
+        echo "${BLUE}🐚 Shell scripts (shellcheck)...${NC}"
+        echo -n "${BLUE}  ▸ Running shellcheck...${NC}"
+        timer_start
+
+        if ! "$SHELLCHECK_BIN" -x "${SHELL_FILES[@]}" 2>&1; then
+            timer_end
+            echo ""
+            echo "${RED}❌ shellcheck found issues${NC}"
+            HAS_ERRORS=1
+        else
+            echo -n "${GREEN} ✓${NC}"
+            timer_end
+        fi
+        echo ""
+    else
+        echo "${YELLOW}⚠ shellcheck not found, skipping shell script linting${NC}"
+        echo "${YELLOW}   Install with: ./scripts/install-shellcheck.sh${NC}"
+        echo ""
+    fi
 fi
 
 # Summary
