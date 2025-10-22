@@ -32,7 +32,8 @@ Consider saving logs to a file and searching for log entries that might reveal p
 5. **Progress Evaluation**: Regularly assess whether you're making forward progress or need to
    change strategy
 
-When stuck (especially when you suspect there may be a clue in the logs), consider delegating to other LLMs, example:
+When stuck (especially when you suspect there may be a clue in the logs), consider delegating to
+other LLMs, example:
 
 ```
 pytest 'tests/broken_test.py::specific_broken_test[sqlite]' -xs llm -f tests/broken_test.py "Try to work out why this test is failing"
@@ -53,7 +54,8 @@ gemini -p "Figure out why tests/broken_test.py is failing"
 
 For web UI issues:
 
-- Test manually with the Playwright MCP tools (mcp__playwright_*) to check if you can reproduce the problem.
+- Test manually with the Playwright MCP tools (mcp\_\_playwright\_\*) to check if you can reproduce
+  the problem.
 - Use `--screenshot` / `--video` / `--tracing` with Playwright to see what the UI looks like.
 
 **When to Persevere vs. Change Strategy:**
