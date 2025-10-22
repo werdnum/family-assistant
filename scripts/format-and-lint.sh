@@ -18,10 +18,10 @@ timer_end() {
     echo " (${ELAPSED}s)"
 }
 
-# Check for --fast flag
-FAST_MODE=0
+# Check for --fast flag (reserved for future use)
+# FAST_MODE=0
 if [ "$1" = "--fast" ]; then
-    FAST_MODE=1
+    # FAST_MODE=1
     shift # Remove --fast from arguments
 fi
 
@@ -89,11 +89,11 @@ if [ ${#PYTHON_FILES[@]} -gt 0 ]; then
     # Ruff check
     echo -n "${BLUE}  ▸ Running ruff check...${NC}"
     timer_start
-    if ! ${VIRTUAL_ENV:-.venv}/bin/ruff check --fix --preview --ignore=E501 "${PYTHON_FILES[@]}" 2>&1; then
+    if ! "${VIRTUAL_ENV:-.venv}"/bin/ruff check --fix --preview --ignore=E501 "${PYTHON_FILES[@]}" 2>&1; then
         timer_end
         echo ""
         echo "${YELLOW}💡 Showing suggested fixes (including unsafe ones):${NC}"
-        ${VIRTUAL_ENV:-.venv}/bin/ruff check --unsafe-fixes --diff --preview --ignore=E501 "${PYTHON_FILES[@]}"
+        "${VIRTUAL_ENV:-.venv}"/bin/ruff check --unsafe-fixes --diff --preview --ignore=E501 "${PYTHON_FILES[@]}"
         echo ""
         echo "${RED}❌ ruff check failed. Fix the issues above and try again. Use ruff check --fix --unsafe-fixes to apply.${NC}"
         HAS_ERRORS=1
@@ -106,7 +106,7 @@ if [ ${#PYTHON_FILES[@]} -gt 0 ]; then
     if [ $HAS_ERRORS -eq 0 ]; then
         echo -n "${BLUE}  ▸ Running ruff format...${NC}"
         timer_start
-        if ! ${VIRTUAL_ENV:-.venv}/bin/ruff format --preview "${PYTHON_FILES[@]}" 2>&1; then
+        if ! "${VIRTUAL_ENV:-.venv}"/bin/ruff format --preview "${PYTHON_FILES[@]}" 2>&1; then
             timer_end
             echo ""
             echo "${RED}❌ ruff format failed${NC}"
@@ -121,7 +121,7 @@ if [ ${#PYTHON_FILES[@]} -gt 0 ]; then
     if [ $HAS_ERRORS -eq 0 ]; then
         echo -n "${BLUE}  ▸ Running basedpyright...${NC}"
         timer_start
-        if ! ${VIRTUAL_ENV:-.venv}/bin/basedpyright "${PYTHON_FILES[@]}" 2>&1; then
+        if ! "${VIRTUAL_ENV:-.venv}"/bin/basedpyright "${PYTHON_FILES[@]}" 2>&1; then
             timer_end
             echo ""
             echo "${RED}❌ basedpyright type checking failed${NC}"
@@ -136,7 +136,7 @@ if [ ${#PYTHON_FILES[@]} -gt 0 ]; then
     if [ $HAS_ERRORS -eq 0 ]; then
         echo -n "${BLUE}  ▸ Running pylint...${NC}"
         timer_start
-        if ! ${VIRTUAL_ENV:-.venv}/bin/pylint --errors-only "${PYTHON_FILES[@]}" 2>&1; then
+        if ! "${VIRTUAL_ENV:-.venv}"/bin/pylint --errors-only "${PYTHON_FILES[@]}" 2>&1; then
             timer_end
             echo ""
             echo "${RED}❌ pylint found errors${NC}"
@@ -203,12 +203,12 @@ if [ ${#JS_TS_FILES[@]} -gt 0 ]; then
 fi
 
 # Phase 3: Markdown files (if any)
-if [ ${#MARKDOWN_FILES[@]} -gt 0 ] && command -v ${VIRTUAL_ENV:-.venv}/bin/mdformat >/dev/null 2>&1; then
+if [ ${#MARKDOWN_FILES[@]} -gt 0 ] && command -v "${VIRTUAL_ENV:-.venv}"/bin/mdformat >/dev/null 2>&1; then
     echo "${BLUE}📄 Markdown files...${NC}"
     echo -n "${BLUE}  ▸ Running mdformat...${NC}"
     timer_start
     # Run mdformat but don't fail the script if it fails on some files
-    if ${VIRTUAL_ENV:-.venv}/bin/mdformat --wrap 100 "${MARKDOWN_FILES[@]}" 2>/dev/null; then
+    if "${VIRTUAL_ENV:-.venv}"/bin/mdformat --wrap 100 "${MARKDOWN_FILES[@]}" 2>/dev/null; then
         echo -n "${GREEN} ✓${NC}"
     else
         echo -n "${YELLOW} ⚠${NC}"
@@ -226,29 +226,20 @@ if [ ${#OTHER_FILES[@]} -gt 0 ]; then
     SHELL_ERRORS=0
     for file in "${OTHER_FILES[@]}"; do
         case "$file" in
-            *.sh)
-                if ! bash -n "$file" 2>/dev/null; then
-                    echo ""
-                    echo "${RED}❌ Syntax error in shell script: $file${NC}"
-                    bash -n "$file"
-                    SHELL_ERRORS=1
-                    HAS_ERRORS=1
-                fi
-                ;;
-            *.bash)
-                if ! bash -n "$file" 2>/dev/null; then
-                    echo ""
-                    echo "${RED}❌ Syntax error in bash script: $file${NC}"
-                    bash -n "$file"
-                    SHELL_ERRORS=1
-                    HAS_ERRORS=1
-                fi
-                ;;
             *review-hook.sh|*hook*.sh)
                 # Special case for hook scripts that use bash features
                 if ! bash -n "$file" 2>/dev/null; then
                     echo ""
                     echo "${RED}❌ Syntax error in bash script: $file${NC}"
+                    bash -n "$file"
+                    SHELL_ERRORS=1
+                    HAS_ERRORS=1
+                fi
+                ;;
+            *.sh|*.bash)
+                if ! bash -n "$file" 2>/dev/null; then
+                    echo ""
+                    echo "${RED}❌ Syntax error in shell script: $file${NC}"
                     bash -n "$file"
                     SHELL_ERRORS=1
                     HAS_ERRORS=1
