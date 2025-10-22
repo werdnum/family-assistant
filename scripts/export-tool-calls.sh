@@ -112,13 +112,10 @@ echo "Exporting tool calls from the last ${DAYS_BACK} days (limit: ${LIMIT})..."
 echo "Output: ${OUTPUT_FILE}"
 
 # Execute query and format as JSON array
-kubectl exec -in postgres deploy/storage-cluster-shell -- psql -U postgres mlbot -t -A \
+if ! kubectl exec -in postgres deploy/storage-cluster-shell -- psql -U postgres mlbot -t -A \
     -c "${SQL_QUERY}" | \
     grep -v '^$' | \
-    jq -s '.' > "${OUTPUT_FILE}" 2>"$ERROR_LOG"
-
-# Check for jq errors
-if [ $? -ne 0 ]; then
+    jq -s '.' > "${OUTPUT_FILE}" 2>"$ERROR_LOG"; then
     echo "✗ Error processing JSON output:"
     cat "$ERROR_LOG"
     exit 1
@@ -147,3 +144,4 @@ else
     rm -f "${OUTPUT_FILE}"
     exit 1
 fi
+

@@ -137,11 +137,11 @@ if [ $SKIP_LINT -eq 0 ]; then
     # Ruff check
     echo -n "${BLUE}  ▸ Running ruff check...${NC}"
     timer_start
-    if ! ${VIRTUAL_ENV:-.venv}/bin/ruff check --fix --preview --ignore=E501 src tests 2>&1; then
+    if ! "${VIRTUAL_ENV:-.venv}"/bin/ruff check --fix --preview --ignore=E501 src tests 2>&1; then
         timer_end
         echo ""
         echo "${YELLOW}💡 Showing suggested fixes (including unsafe ones):${NC}"
-        ${VIRTUAL_ENV:-.venv}/bin/ruff check --unsafe-fixes --diff --preview --ignore=E501 src tests
+        "${VIRTUAL_ENV:-.venv}"/bin/ruff check --unsafe-fixes --diff --preview --ignore=E501 src tests
         echo ""
         echo "${RED}❌ ruff check failed. Fix the issues above and try again. Use ruff check --fix --unsafe-fixes to apply.${NC}"
         exit 1
@@ -152,7 +152,7 @@ if [ $SKIP_LINT -eq 0 ]; then
     # Ruff format
     echo -n "${BLUE}  ▸ Running ruff format...${NC}"
     timer_start
-    if ! ${VIRTUAL_ENV:-.venv}/bin/ruff format --preview src tests 2>&1; then
+    if ! "${VIRTUAL_ENV:-.venv}"/bin/ruff format --preview src tests 2>&1; then
         timer_end
         echo ""
         echo "${RED}❌ ruff format failed${NC}"
@@ -179,9 +179,9 @@ echo "${BLUE}  ▸ Building frontend...${NC}"
 echo "${BLUE}  ▸ Starting pytest...${NC}"
 TEST_START=$(date +%s)
 if [ "${USE_MEMORY_LIMIT:-0}" = "1" ]; then
-    scripts/run_with_memory_limit.sh pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PARALLELISM "${PYTEST_ARGS[@]}" &
+    scripts/run_with_memory_limit.sh pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch "$PARALLELISM" "${PYTEST_ARGS[@]}" &
 else
-    pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PARALLELISM "${PYTEST_ARGS[@]}" &
+    pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch "$PARALLELISM" "${PYTEST_ARGS[@]}" &
 fi
 TEST_PID=$!
 
@@ -196,13 +196,13 @@ if [ $SKIP_LINT -eq 0 ]; then
     # Start basedpyright
     echo "${BLUE}  ▸ Starting basedpyright...${NC}"
     PYRIGHT_START=$(date +%s)
-    ${VIRTUAL_ENV:-.venv}/bin/basedpyright src tests &
+    "${VIRTUAL_ENV:-.venv}"/bin/basedpyright src tests &
     PYRIGHT_PID=$!
 
     # Start pylint
     echo "${BLUE}  ▸ Starting pylint...${NC}"
     PYLINT_START=$(date +%s)
-    ${VIRTUAL_ENV:-.venv}/bin/pylint -j0 src tests &
+    "${VIRTUAL_ENV:-.venv}"/bin/pylint -j0 src tests &
     PYLINT_PID=$!
 
     # Start frontend linting
@@ -246,7 +246,7 @@ fi
 # Wait for linting/type checking only if they were started
 if [ $SKIP_LINT -eq 0 ]; then
     # Wait for pyright
-    if wait $PYRIGHT_PID; then
+    if wait "$PYRIGHT_PID"; then
         END_TIME=$(date +%s)
         ELAPSED=$((END_TIME - PYRIGHT_START))
         echo "${GREEN}  ✓ Type checking complete (${ELAPSED}s)${NC}"
@@ -258,7 +258,7 @@ if [ $SKIP_LINT -eq 0 ]; then
     fi
 
     # Wait for pylint
-    if wait $PYLINT_PID; then
+    if wait "$PYLINT_PID"; then
         END_TIME=$(date +%s)
         ELAPSED=$((END_TIME - PYLINT_START))
         echo "${GREEN}  ✓ Linting complete (${ELAPSED}s)${NC}"
@@ -270,7 +270,7 @@ if [ $SKIP_LINT -eq 0 ]; then
     fi
 
     # Wait for frontend linting
-    if wait $FRONTEND_PID; then
+    if wait "$FRONTEND_PID"; then
         END_TIME=$(date +%s)
         ELAPSED=$((END_TIME - FRONTEND_START))
         echo "${GREEN}  ✓ Frontend linting complete (${ELAPSED}s)${NC}"
