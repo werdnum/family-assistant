@@ -59,7 +59,14 @@ else
     echo "⚠️  No frontend/package.json found, skipping frontend setup"
 fi
 
-# Step 6: Install Playwright browsers
+# Step 6: Install shellcheck
+echo "🐚 Installing shellcheck..."
+./scripts/install-shellcheck.sh .venv/bin || {
+    echo "⚠️  Warning: Failed to install shellcheck"
+    echo "   You may need to run: ./scripts/install-shellcheck.sh manually"
+}
+
+# Step 7: Install Playwright browsers
 if grep -q "playwright" pyproject.toml 2>/dev/null; then
     echo "🎭 Installing Playwright browsers..."
     .venv/bin/playwright install chromium || {
@@ -68,7 +75,7 @@ if grep -q "playwright" pyproject.toml 2>/dev/null; then
     }
 fi
 
-# Step 7: Verify setup
+# Step 8: Verify setup
 echo ""
 echo "✅ Workspace setup complete!"
 echo ""
