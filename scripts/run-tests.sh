@@ -44,7 +44,7 @@ timer_end() {
 
 # Parse command line arguments
 SKIP_LINT=0
-PYTEST_ARGS=""
+PYTEST_ARGS=()
 PARALLELISM=""
 
 while [ $# -gt 0 ]; do
@@ -72,7 +72,7 @@ while [ $# -gt 0 ]; do
             ;;
         *)
             # All other arguments are passed to pytest
-            PYTEST_ARGS="$PYTEST_ARGS $1"
+            PYTEST_ARGS+=("$1")
             shift
             ;;
     esac
@@ -84,20 +84,20 @@ if [ -z "$PARALLELISM" ] && [ -n "$PYTEST_PARALLELISM" ]; then
 fi
 
 # Auto-select SQLite backend when PostgreSQL isn't available
-if ! echo " $PYTEST_ARGS " | grep -Eq ' --db(=| )| --postgres '; then
+if ! echo " ${PYTEST_ARGS[*]} " | grep -Eq ' --db(=| )| --postgres '; then
     if command -v docker >/dev/null 2>&1 || \
        command -v podman >/dev/null 2>&1 || \
        [ -n "$TEST_DATABASE_URL" ]; then
         :
     else
         echo "${YELLOW}PostgreSQL not detected - running SQLite-only tests${NC}"
-        PYTEST_ARGS="--db sqlite $PYTEST_ARGS"
+        PYTEST_ARGS=("--db" "sqlite" "${PYTEST_ARGS[@]}")
     fi
 fi
 
 # Default pytest arguments if none provided
-if [ -z "$PYTEST_ARGS" ]; then
-    PYTEST_ARGS="tests --ignore=scratch"
+if [ ${#PYTEST_ARGS[@]} -eq 0 ]; then
+    PYTEST_ARGS=("tests" "--ignore=scratch")
 fi
 
 # Acquire exclusive lock to prevent concurrent test runs
@@ -179,9 +179,9 @@ echo "${BLUE}  ▸ Building frontend...${NC}"
 echo "${BLUE}  ▸ Starting pytest...${NC}"
 TEST_START=$(date +%s)
 if [ "${USE_MEMORY_LIMIT:-0}" = "1" ]; then
-    scripts/run_with_memory_limit.sh pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PARALLELISM $PYTEST_ARGS &
+    scripts/run_with_memory_limit.sh pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PARALLELISM "${PYTEST_ARGS[@]}" &
 else
-    pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PARALLELISM $PYTEST_ARGS &
+    pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch $PARALLELISM "${PYTEST_ARGS[@]}" &
 fi
 TEST_PID=$!
 
