@@ -19,6 +19,7 @@ import argparse
 import hashlib
 import json
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -715,10 +716,10 @@ def review_changes(
         Tuple of (exit_code, review_data)
     """
 
-    # Default to a fast, cost-effective model if available
-    # Note: llm-openrouter plugin doesn't expose models through standard llm.get_models()
-    # For now, rely on llm's default model configuration (gpt-4o-mini)
-    # TODO: Figure out correct way to use OpenRouter models via llm Python API
+    # Default to OpenRouter model if OPENROUTER_API_KEY is available and no model specified
+    # Note: OpenRouter models require the openrouter/ prefix
+    if model_name is None and os.getenv("OPENROUTER_API_KEY"):
+        model_name = "openrouter/google/gemini-2.5-pro"
 
     # Get repo root
     try:
