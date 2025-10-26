@@ -373,9 +373,11 @@ class ChatPage(BasePage):
         # Get current conversation ID before creating new chat
         current_url = self.page.url
 
-        new_chat_button = await self.page.wait_for_selector(self.NEW_CHAT_BUTTON)
-        if new_chat_button:
-            await new_chat_button.click()
+        # Use locator's click with timeout to atomically wait and click
+        # This avoids stale element references that can happen if React re-renders
+        # between a separate wait_for_selector() and click() call
+        new_chat_button = self.page.locator(self.NEW_CHAT_BUTTON)
+        await new_chat_button.click(timeout=10000)
 
         # Wait for URL to change to new conversation
         await self.page.wait_for_function(
