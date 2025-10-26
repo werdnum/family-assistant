@@ -99,6 +99,7 @@ class ProcessingServiceConfig:
     # Web-specific history settings
     web_max_history_messages: int | None = None  # If None, uses max_history_messages
     web_history_max_age_hours: int | None = None  # If None, uses history_max_age_hours
+    max_iterations: int = 5
 
 
 # --- Processing Service Class ---
@@ -205,6 +206,10 @@ class ProcessingService:
         if self.service_config.web_history_max_age_hours is not None:
             return self.service_config.web_history_max_age_hours
         return self.service_config.history_max_age_hours
+
+    @property
+    def max_iterations(self) -> int:
+        return self.service_config.max_iterations
 
     def _get_history_limits_for_interface(
         self, interface_type: str
@@ -379,7 +384,7 @@ class ProcessingService:
         final_content: str | None = None
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         final_reasoning_info: dict[str, Any] | None = None
-        max_iterations = 5
+        max_iterations = self.max_iterations
         current_iteration = 1
         pending_attachment_ids: list[
             str

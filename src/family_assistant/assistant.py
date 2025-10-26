@@ -850,6 +850,7 @@ class Assistant:
                 web_history_max_age_hours=profile_proc_conf_dict.get(
                     "web_history_max_age_hours"
                 ),
+                max_iterations=profile_proc_conf_dict.get("max_iterations", 5),
                 tools_config=profile_tools_conf_dict,
                 delegation_security_level=profile_proc_conf_dict.get(
                     "delegation_security_level", "confirm"
