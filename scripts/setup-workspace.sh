@@ -34,7 +34,16 @@ source .venv/bin/activate
 
 # Step 3: Install Python dependencies
 echo "📥 Installing Python dependencies..."
-uv sync --extra dev
+
+# Detect architecture for pgserver extra
+ARCH=$(uname -m)
+if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "amd64" ]; then
+    echo "🔍 Detected amd64 architecture, installing pgserver extra..."
+    uv sync --extra dev --extra pgserver
+else
+    echo "🔍 Detected non-amd64 architecture ($ARCH), skipping pgserver extra..."
+    uv sync --extra dev
+fi
 
 # Install additional dev tools that might not be in pyproject.toml
 echo "📥 Installing additional development tools..."
