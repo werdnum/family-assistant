@@ -83,9 +83,9 @@ class ChatPage(BasePage):
             message: The message to send
         """
         # Wait for the chat input to be available and enabled
-        chat_input = await self.page.wait_for_selector(self.CHAT_INPUT, state="visible")
-        if not chat_input:
-            raise RuntimeError("Chat input not found")
+        # Use locator API to avoid stale element references
+        chat_input = self.page.locator(self.CHAT_INPUT)
+        await chat_input.wait_for(state="visible", timeout=10000)
 
         # Focus the input
         await chat_input.click()
@@ -288,14 +288,9 @@ class ChatPage(BasePage):
         was_open = await self.is_sidebar_open()
 
         # The toggle button is now always visible and has a specific aria-label
-        # Wait for the specific sidebar toggle button to be available
-        toggle_button = await self.page.wait_for_selector(
-            self.SIDEBAR_TOGGLE, state="visible", timeout=10000
-        )
-        if toggle_button:
-            await toggle_button.click()
-        else:
-            raise RuntimeError("Sidebar toggle button not found")
+        # Use locator API to avoid stale element references when React re-renders
+        toggle_button = self.page.locator(self.SIDEBAR_TOGGLE)
+        await toggle_button.click(timeout=10000)
 
         # Handle mobile Sheet animations more robustly
         viewport_size = self.page.viewport_size
