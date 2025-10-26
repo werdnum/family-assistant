@@ -716,9 +716,9 @@ def review_changes(
         Tuple of (exit_code, review_data)
     """
 
-    # Default to OpenRouter model if OPENROUTER_API_KEY is available and no model specified
+    # Default to OpenRouter model if OPENROUTER_KEY is available and no model specified
     # Note: OpenRouter models require the openrouter/ prefix
-    if model_name is None and os.getenv("OPENROUTER_API_KEY"):
+    if model_name is None and os.getenv("OPENROUTER_KEY"):
         model_name = "openrouter/google/gemini-2.5-pro"
 
     # Get repo root
