@@ -67,3 +67,17 @@ exemptions:
       Legacy test fixtures in conftest.py use time.sleep() for synchronous
       blocking waits. Should be refactored to use async alternatives.
     ticket: "#TBD-refactor-sleep-to-wait-for-condition"
+
+  # ===========================================================================
+  # dict[str, Any] exemptions - Hook scripts with arbitrary JSON
+  # ===========================================================================
+  - rule: no-dict-any
+    files:
+      - .claude/review-hook.py
+    reason: |
+      Hook script receives arbitrary JSON input from Claude Code PreToolUse hook system.
+      The hook data structure is defined externally and is genuinely arbitrary - different
+      tools have different structures. Creating typed structures for this would be overly
+      rigid and doesn't provide value since the hook only extracts specific fields.
+    ticket: null
+
