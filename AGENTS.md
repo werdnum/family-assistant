@@ -3,8 +3,8 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this
 repository.
 
-> **Note**: CLAUDE.md is a symlink to this file (AGENTS.md). If you need to edit CLAUDE.md, you
-> should edit AGENTS.md instead.
+> **Note**: CLAUDE.md sources this file (AGENTS.md) using `@AGENTS.md`. If you need to edit
+> CLAUDE.md, you should edit AGENTS.md instead.
 >
 > **Architecture Documentation**: For a comprehensive visual overview of the system architecture,
 > component interactions, and data flows, see
