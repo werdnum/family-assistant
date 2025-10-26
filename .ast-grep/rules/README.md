@@ -203,6 +203,30 @@ If a rule triggers incorrectly, add an exemption with a clear explanation:
 - The conformance check adds ~0.1-0.3s to lint time
 - For large files, increase timeout in `.claude/lint-hook.py`
 
+## Hints (Non-Enforced Guidance)
+
+The `.ast-grep/rules/hints/` directory contains patterns that provide helpful guidance but don't
+block commits. These are informational only - use your judgment about whether to apply them.
+
+### `no-wait-for-selector-then-click`
+
+**Pattern**: `$VAR = await $PAGE.wait_for_selector($$$)`
+
+**Guidance**: Consider using Playwright's Locator API instead of `wait_for_selector()` when you plan
+to interact with the element, as Locators automatically retry on stale element references.
+
+```python
+# ❌ Prone to stale element errors
+button = await page.wait_for_selector('[data-testid="submit"]')
+await button.click()  # Can fail if React re-renders
+
+# ✅ Robust (auto-retries)
+button = page.locator('[data-testid="submit"]')
+await button.click(timeout=10000)
+```
+
+If you're only checking element state without interacting, `wait_for_selector()` is fine.
+
 ## Resources
 
 - [ast-grep Documentation](https://ast-grep.github.io/)
