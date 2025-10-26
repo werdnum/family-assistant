@@ -1,0 +1,28 @@
+id: no-wait-for-selector-then-click
+language: python
+severity: hint
+message: "Consider using Locator API instead of wait_for_selector() to avoid stale element references"
+note: |
+  HINT: This is informational guidance, not an enforced rule.
+
+  Using wait_for_selector() returns an ElementHandle which can become stale if React
+  re-renders between getting the handle and using it, causing "Element is not attached
+  to the DOM" errors.
+
+  If you're immediately interacting with the element (click, fill, type, etc.), prefer
+  the Locator API which automatically retries on stale elements:
+
+  ❌ PRONE TO STALE REFERENCES:
+    button = await page.wait_for_selector('[data-testid="submit"]')
+    await button.click()  # Can fail if React re-renders
+
+  ✅ ROBUST (auto-retries):
+    button = page.locator('[data-testid="submit"]')
+    await button.click(timeout=10000)
+
+  If you're only checking element state (is_visible, is_enabled, get_attribute, etc.)
+  without interacting, wait_for_selector() is fine - no action needed.
+
+rule:
+  pattern: $VAR = await $PAGE.wait_for_selector($$$)
+
