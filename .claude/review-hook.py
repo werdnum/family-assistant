@@ -377,7 +377,7 @@ class ReviewHook:
         # Skip review when running in remote Claude Code session without API key
         # (resource-constrained environment needs external LLM API)
         if os.getenv("CLAUDE_CODE_REMOTE", "false").lower() == "true" and not os.getenv(
-            "OPENROUTER_API_KEY"
+            "OPENROUTER_KEY"
         ):
             sys.exit(0)
 
