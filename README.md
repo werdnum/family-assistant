@@ -42,8 +42,7 @@ For a detailed architecture overview, see [docs/architecture-diagram.md](docs/ar
     cd family-assistant
     ```
 
-2.  **Run the setup script:**
-
+    git clone https://github.com/werdnum/family-assistant.git
     The easiest way to set up your development environment is to use the setup script:
 
     ```bash
