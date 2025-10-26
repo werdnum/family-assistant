@@ -18,7 +18,6 @@ class ReviewHook:
 
     def __init__(self) -> None:
         self.repo_root = self._get_repo_root()
-        # ast-grep-ignore: no-dict-any - Hook configuration uses generic dict for flexibility
         self.stash_ref: str | None = None
         self.has_stashed = False
 
@@ -35,7 +34,6 @@ class ReviewHook:
             sys.exit(0)
         return Path(result.stdout.strip())
 
-    # ast-grep-ignore: no-dict-any - JSON parsing requires generic dict
     def _parse_input(self) -> dict[str, Any]:
         """Parse the JSON input from stdin."""
         try:
@@ -44,7 +42,6 @@ class ReviewHook:
             # Invalid input, allow the command
             sys.exit(0)
 
-    # ast-grep-ignore: no-dict-any - JSON input is genuinely arbitrary hook data
     def _extract_command(self, json_input: dict[str, Any]) -> str:
         """Extract the bash command from the JSON input."""
         return json_input.get("tool_input", {}).get("command", "")
@@ -84,36 +81,39 @@ class ReviewHook:
             # No unstaged changes
             return False
 
-        # Create a stash
+        # Use git stash push --keep-index to:
+        # 1. Stash unstaged changes
+        # 2. Keep staged changes in the index AND working directory
+        # 3. Reset non-staged files to match HEAD (fixes issue where committed
+        #    files that aren't re-staged would stay at their old state)
         result = subprocess.run(
-            ["git", "stash", "create", "review-hook: unstaged changes"],
+            [
+                "git",
+                "stash",
+                "push",
+                "--keep-index",
+                "-m",
+                "review-hook: unstaged changes",
+            ],
             capture_output=True,
             text=True,
             check=False,
         )
 
-        if result.stdout.strip():
-            self.stash_ref = result.stdout.strip()
-            # Store the stash
-            subprocess.run(
-                [
-                    "git",
-                    "stash",
-                    "store",
-                    "-m",
-                    "review-hook: unstaged changes",
-                    self.stash_ref,
-                ],
+        if result.returncode == 0:
+            # Get the stash ref for later restoration
+            stash_list_result = subprocess.run(
+                ["git", "stash", "list"],
+                capture_output=True,
+                text=True,
                 check=False,
             )
-            # Reset to match index
-            subprocess.run(["git", "checkout-index", "-a", "-f"], check=False)
-            self.has_stashed = True
-            print(
-                f"✅ Unstaged changes stashed (ref: {self.stash_ref[:8]})",
-                file=sys.stderr,
-            )
-            return True
+            # The stash we just created is stash@{0}
+            if stash_list_result.stdout:
+                self.stash_ref = "stash@{0}"
+                self.has_stashed = True
+                print("✅ Unstaged changes stashed", file=sys.stderr)
+                return True
         return False
 
     def _restore_stash(self) -> None:
@@ -123,31 +123,18 @@ class ReviewHook:
 
         print("\nRestoring stashed changes...", file=sys.stderr)
         result = subprocess.run(
-            ["git", "stash", "apply", "--quiet", self.stash_ref],
+            ["git", "stash", "pop", "--quiet", "--index", self.stash_ref],
             capture_output=True,
             check=False,
         )
 
         if result.returncode == 0:
-            subprocess.run(
-                ["git", "stash", "drop", "--quiet", self.stash_ref], check=False
-            )
             print("✅ Stashed changes restored successfully", file=sys.stderr)
         else:
             print("⚠️ Failed to restore stashed changes cleanly", file=sys.stderr)
-            # If stash apply fails it can leave conflict markers behind. Clean up the
-            # working tree by restoring the index contents so the user keeps their
-            # staged/ formatted changes without conflict artifacts.
-            cleanup = subprocess.run(
-                ["git", "checkout-index", "-a", "-f"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if cleanup.returncode != 0 and cleanup.stderr:
-                print(cleanup.stderr, file=sys.stderr)
             print(
-                f"Your changes are preserved in stash: {self.stash_ref[:8]}",
+                f"Your changes are preserved in {self.stash_ref}. "
+                f"You can restore them with: git stash apply {self.stash_ref}",
                 file=sys.stderr,
             )
 
@@ -252,7 +239,6 @@ class ReviewHook:
 
         return True, ""
 
-    # ast-grep-ignore: no-dict-any - Review data returned by script is genuinely arbitrary
     def _run_review(self, command: str) -> tuple[int, dict[str, Any], str]:
         """Run the review script and get JSON output.
 
@@ -291,7 +277,6 @@ class ReviewHook:
 
         return result.returncode, review_data, cache_key
 
-    # ast-grep-ignore: no-dict-any - Issues contain arbitrary JSON data from review script
     def _format_issues(self, issues: list[dict[str, Any]]) -> str:
         """Format issues from JSON for display."""
         if not issues:
@@ -353,8 +338,11 @@ class ReviewHook:
 
     def run(self) -> None:
         """Main workflow execution."""
-        # Skip review when running in remote Claude Code session (resource-constrained)
-        if os.getenv("CLAUDE_CODE_REMOTE", "false").lower() == "true":
+        # Skip review when running in remote Claude Code session without API key
+        # (resource-constrained environment needs external LLM API)
+        if os.getenv("CLAUDE_CODE_REMOTE", "false").lower() == "true" and not os.getenv(
+            "OPENROUTER_API_KEY"
+        ):
             sys.exit(0)
 
         try:
@@ -364,6 +352,25 @@ class ReviewHook:
 
             # Check if this is a commit/PR command
             if not self._is_commit_or_pr(command):
+                sys.exit(0)
+
+            # Skip review when modifying review infrastructure itself
+            # (meta-commits to review system create unavoidable bootstrapping issues)
+            result = subprocess.run(
+                ["git", "diff", "--cached", "--name-only"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            staged_files = result.stdout.strip().split("\n") if result.stdout else []
+            if any(
+                ".claude/review-hook.py" in f or ".ast-grep/exemptions.yml" in f
+                for f in staged_files
+            ):
+                print(
+                    "⏭️  Skipping review for meta-commit to review infrastructure",
+                    file=sys.stderr,
+                )
                 sys.exit(0)
 
             print(
