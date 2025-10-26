@@ -715,6 +715,11 @@ def review_changes(
         Tuple of (exit_code, review_data)
     """
 
+    # Default to a fast, cost-effective model if available
+    # Note: llm-openrouter plugin doesn't expose models through standard llm.get_models()
+    # For now, rely on llm's default model configuration (gpt-4o-mini)
+    # TODO: Figure out correct way to use OpenRouter models via llm Python API
+
     # Get repo root
     try:
         result = subprocess.run(
