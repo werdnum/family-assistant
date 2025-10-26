@@ -157,17 +157,34 @@ class ReviewHook:
         if not staged_files:
             return True
 
+        # Set up environment to include venv bin directory in PATH
+        # This ensures tools like ast-grep can be found
+        env = os.environ.copy()
+        venv_bin = self.repo_root / ".venv" / "bin"
+        if venv_bin.exists():
+            env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
+
         print("Running format-and-lint.sh on staged files...", file=sys.stderr)
         result = subprocess.run(
             [str(script_path)] + staged_files,
             capture_output=True,
             text=True,
             check=False,
+            env=env,
         )
 
         if result.returncode != 0:
             print("❌ Formatting/linting failed", file=sys.stderr)
-            print(result.stdout, file=sys.stderr)
+            if result.stdout:
+                print(result.stdout, file=sys.stderr)
+            if result.stderr:
+                print("STDERR:", file=sys.stderr)
+                print(result.stderr, file=sys.stderr)
+            if not result.stdout and not result.stderr:
+                print(
+                    f"No output from format-and-lint.sh (exit code {result.returncode})",
+                    file=sys.stderr,
+                )
             return False
 
         # Stage any changes made by formatters
@@ -189,6 +206,12 @@ class ReviewHook:
         if not config_path.exists():
             return True, ""
 
+        # Set up environment to include venv bin directory in PATH
+        env = os.environ.copy()
+        venv_bin = self.repo_root / ".venv" / "bin"
+        if venv_bin.exists():
+            env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
+
         print("Running pre-commit hooks...", file=sys.stderr)
 
         for iteration in range(5):
@@ -208,6 +231,7 @@ class ReviewHook:
                 capture_output=True,
                 text=True,
                 check=False,
+                env=env,
             )
 
             if result.returncode == 0:
@@ -253,8 +277,19 @@ class ReviewHook:
             print("Review script not found, skipping code review", file=sys.stderr)
             return 0, {}, ""
 
+        # Set up environment to include venv bin directory in PATH
+        env = os.environ.copy()
+        venv_bin = self.repo_root / ".venv" / "bin"
+        if venv_bin.exists():
+            env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
+
+        # Use venv python explicitly to ensure modules like llm are available
+        venv_python = venv_bin / "python3"
+        python_executable = str(venv_python) if venv_python.exists() else sys.executable
+
         print("\nAnalyzing staged changes for issues...", file=sys.stderr)
-        cmd = [sys.executable, str(review_script), "--json"]
+        cmd = [python_executable, str(review_script), "--json"]
+
         if command:
             cmd.extend(["--command", command])
         result = subprocess.run(
@@ -262,6 +297,7 @@ class ReviewHook:
             capture_output=True,
             text=True,
             check=False,
+            env=env,
         )
 
         # The human-readable output goes to stderr, JSON to stdout
@@ -352,25 +388,6 @@ class ReviewHook:
 
             # Check if this is a commit/PR command
             if not self._is_commit_or_pr(command):
-                sys.exit(0)
-
-            # Skip review when modifying review infrastructure itself
-            # (meta-commits to review system create unavoidable bootstrapping issues)
-            result = subprocess.run(
-                ["git", "diff", "--cached", "--name-only"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            staged_files = result.stdout.strip().split("\n") if result.stdout else []
-            if any(
-                ".claude/review-hook.py" in f or ".ast-grep/exemptions.yml" in f
-                for f in staged_files
-            ):
-                print(
-                    "⏭️  Skipping review for meta-commit to review infrastructure",
-                    file=sys.stderr,
-                )
                 sys.exit(0)
 
             print(
