@@ -179,9 +179,9 @@ echo "${BLUE}  ▸ Building frontend...${NC}"
 echo "${BLUE}  ▸ Starting pytest...${NC}"
 TEST_START=$(date +%s)
 if [ "${USE_MEMORY_LIMIT:-0}" = "1" ]; then
-    scripts/run_with_memory_limit.sh pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch "$PARALLELISM" "${PYTEST_ARGS[@]}" &
+    scripts/run_with_memory_limit.sh "${VIRTUAL_ENV:-.venv}"/bin/pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch "$PARALLELISM" "${PYTEST_ARGS[@]}" &
 else
-    pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch "$PARALLELISM" "${PYTEST_ARGS[@]}" &
+    "${VIRTUAL_ENV:-.venv}"/bin/pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch "$PARALLELISM" "${PYTEST_ARGS[@]}" &
 fi
 TEST_PID=$!
 
