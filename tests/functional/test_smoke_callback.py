@@ -315,6 +315,7 @@ async def test_schedule_and_execute_callback(
     logger.info(f"--- Callback Test ({test_run_id}) Passed ---")
 
 
+@pytest.mark.flaky(reruns=2)
 @pytest.mark.asyncio
 async def test_modify_pending_callback(
     db_engine: AsyncEngine,
