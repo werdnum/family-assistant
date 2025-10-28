@@ -156,9 +156,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
   // Streaming callbacks
   const handleStreamingMessage = useCallback((content: string) => {
-    // Skip update if content is empty or only whitespace
-    // Keep the loading indicator visible until we have actual content
-    if (!content || content.trim() === '') {
+    if (!content.trim()) {
+      return;
+    }
       return;
     }
 
