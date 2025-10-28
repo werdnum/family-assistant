@@ -1,9 +1,21 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import JsonPayloadViewer from './JsonPayloadViewer';
 import styles from './TaskCard.module.css';
 
 const TaskCard = ({ task, onRetry, onCancel }) => {
+  const [showRetryDialog, setShowRetryDialog] = useState(false);
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
   // Format dates for display
   const formatDate = (dateString) => {
     if (!dateString) {
@@ -46,17 +58,21 @@ const TaskCard = ({ task, onRetry, onCancel }) => {
   };
 
   const handleRetryClick = () => {
-    // eslint-disable-next-line no-alert
-    if (window.confirm('Are you sure you want to retry this task?')) {
-      onRetry(task.id);
-    }
+    setShowRetryDialog(true);
+  };
+
+  const handleRetryConfirm = () => {
+    setShowRetryDialog(false);
+    onRetry(task.id);
   };
 
   const handleCancelClick = () => {
-    // eslint-disable-next-line no-alert
-    if (window.confirm('Are you sure you want to cancel this task?')) {
-      onCancel(task.id);
-    }
+    setShowCancelDialog(true);
+  };
+
+  const handleCancelConfirm = () => {
+    setShowCancelDialog(false);
+    onCancel(task.id);
   };
 
   return (
@@ -144,6 +160,44 @@ const TaskCard = ({ task, onRetry, onCancel }) => {
 
       {/* Show empty payload message if no payload */}
       {!task.payload && <div className={styles.noPayload}>No payload data</div>}
+
+      {/* Retry Confirmation Dialog */}
+      <AlertDialog open={showRetryDialog} onOpenChange={setShowRetryDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Retry Task</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to retry this task? This will reschedule it for immediate
+              execution.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleRetryConfirm}>Retry</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Cancel Confirmation Dialog */}
+      <AlertDialog open={showCancelDialog} onOpenChange={setShowCancelDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel Task</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to cancel this task? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>No, Keep Task</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleCancelConfirm}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Yes, Cancel Task
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
