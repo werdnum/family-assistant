@@ -399,6 +399,87 @@ class AttachmentAPI:
             else:
                 return f"Sent attachment {attachment_id}"
 
+    def create(
+        self,
+        content: bytes | str,
+        filename: str,
+        description: str = "",
+        mime_type: str = "application/octet-stream",
+    ) -> str:
+        """
+        Create a new attachment from script-generated content.
+
+        Args:
+            content: File content as bytes or string (will be UTF-8 encoded if string)
+            filename: Filename for the attachment
+            description: Description of the attachment
+            mime_type: MIME type of the content (default: application/octet-stream)
+
+        Returns:
+            The attachment_id (UUID) of the created attachment
+
+        Raises:
+            ValueError: If content validation fails or storage fails
+        """
+        try:
+            # Starlark scripts run in worker threads, so use run_coroutine_threadsafe
+            if self.main_loop:
+                future = asyncio.run_coroutine_threadsafe(
+                    self._create_async(content, filename, description, mime_type),
+                    self.main_loop,
+                )
+                return future.result(timeout=30)
+            else:
+                # No main loop provided, use asyncio.run (works in tests and standalone contexts)
+                return asyncio.run(
+                    self._create_async(content, filename, description, mime_type)
+                )
+
+        except Exception as e:
+            logger.error(f"Error creating attachment: {e}")
+            raise ValueError(f"Failed to create attachment: {e}") from e
+
+    async def _create_async(
+        self,
+        content: bytes | str,
+        filename: str,
+        description: str,
+        mime_type: str,
+    ) -> str:
+        """Async implementation of create."""
+        # Convert string content to bytes if needed
+        content_bytes = content.encode("utf-8") if isinstance(content, str) else content
+
+        # Store the file first (this validates size and mime type)
+        file_metadata = await self.attachment_registry._store_file_only(
+            file_content=content_bytes,
+            filename=filename,
+            content_type=mime_type,
+        )
+
+        # Register it in the database with source_type="script"
+        async with DatabaseContext(engine=self.db_engine) as db_context:
+            attachment_metadata = await self.attachment_registry.register_attachment(
+                db_context=db_context,
+                attachment_id=file_metadata.attachment_id,
+                source_type="script",
+                source_id="script_execution",
+                mime_type=mime_type,
+                description=description or f"Script-generated: {filename}",
+                size=len(content_bytes),
+                content_url=file_metadata.content_url,
+                storage_path=file_metadata.storage_path,
+                conversation_id=self.conversation_id,
+                message_id=None,
+                metadata={"original_filename": filename, "created_by": "script"},
+            )
+
+        logger.info(
+            f"Script created attachment {attachment_metadata.attachment_id}: {filename}"
+        )
+
+        return attachment_metadata.attachment_id
+
 
 def create_attachment_api(
     execution_context: ToolExecutionContext,
