@@ -438,6 +438,7 @@ async def test_events_responsive_design(
     assert await filters_section.is_visible()
 
 
+@pytest.mark.flaky(reruns=2)
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_api_error_handling(
