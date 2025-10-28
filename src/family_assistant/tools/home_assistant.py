@@ -6,7 +6,9 @@ rendering templates and retrieving camera snapshots.
 
 from __future__ import annotations
 
+import json
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.tools.types import (
@@ -46,6 +48,56 @@ def detect_image_mime_type(content: bytes) -> str:
 # Tool Definitions
 # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 HOME_ASSISTANT_TOOLS_DEFINITION: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "download_state_history",
+            "description": (
+                "Downloads historical state data from Home Assistant as a JSON file. "
+                "This tool retrieves past state changes for specified entities over a given time period, "
+                "allowing analysis and manipulation of historical data.\n\n"
+                "Returns: A JSON attachment containing the state history data with entity states, attributes, "
+                "and timestamps. The data can be loaded and analyzed programmatically. "
+                "If no entities are specified, retrieves history for all entities (may be large). "
+                "On errors, returns descriptive error messages."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "entity_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Optional list of entity IDs to retrieve history for (e.g., ['sensor.temperature', 'light.living_room']). "
+                            "If not provided, retrieves history for all entities. Be cautious with all entities as it may return a large dataset."
+                        ),
+                    },
+                    "start_time": {
+                        "type": "string",
+                        "description": (
+                            "Optional ISO 8601 timestamp for the start of the history period (e.g., '2024-01-01T00:00:00Z'). "
+                            "If not provided, defaults to 24 hours ago."
+                        ),
+                    },
+                    "end_time": {
+                        "type": "string",
+                        "description": (
+                            "Optional ISO 8601 timestamp for the end of the history period (e.g., '2024-01-02T00:00:00Z'). "
+                            "If not provided, defaults to current time."
+                        ),
+                    },
+                    "significant_changes_only": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, only return significant state changes (filters out minor updates). "
+                            "Defaults to false."
+                        ),
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -265,3 +317,163 @@ async def get_camera_snapshot_tool(
     except Exception as e:
         logger.error(f"Error getting camera snapshot: {e}", exc_info=True)
         return ToolResult(text=f"Error: Failed to retrieve camera snapshot: {str(e)}")
+
+
+async def download_state_history_tool(
+    exec_context: ToolExecutionContext,
+    entity_ids: list[str] | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    significant_changes_only: bool = False,
+) -> ToolResult:
+    """
+    Downloads Home Assistant state history as a JSON attachment.
+
+    Args:
+        exec_context: The tool execution context containing HA client
+        entity_ids: Optional list of entity IDs to retrieve history for
+        start_time: Optional ISO 8601 timestamp for start of period
+        end_time: Optional ISO 8601 timestamp for end of period
+        significant_changes_only: If true, only significant state changes
+
+    Returns:
+        ToolResult with JSON attachment containing state history data
+    """
+    logger.info(
+        f"Downloading state history: entities={entity_ids}, start={start_time}, "
+        f"end={end_time}, significant_only={significant_changes_only}"
+    )
+
+    # Check if Home Assistant client is available
+    if (
+        not hasattr(exec_context, "home_assistant_client")
+        or not exec_context.home_assistant_client
+    ):
+        logger.error("Home Assistant client not available in execution context")
+        return ToolResult(
+            text="Error: Home Assistant integration is not configured or available."
+        )
+
+    ha_client = exec_context.home_assistant_client
+
+    # Parse timestamps
+    try:
+        # Parse end_time first to determine default start_time
+        if end_time:
+            end_timestamp = datetime.fromisoformat(
+                end_time.replace("Z", "+00:00")
+            ).astimezone(UTC)
+        else:
+            # Default to now
+            end_timestamp = datetime.now(UTC)
+
+        if start_time:
+            start_timestamp = datetime.fromisoformat(
+                start_time.replace("Z", "+00:00")
+            ).astimezone(UTC)
+        else:
+            # Default to 24 hours before end_time
+            start_timestamp = end_timestamp - timedelta(days=1)
+
+        # Validate that start_time is before end_time
+        if start_timestamp >= end_timestamp:
+            return ToolResult(
+                text=f"Error: start_time ({start_timestamp.isoformat()}) must be before end_time ({end_timestamp.isoformat()})"
+            )
+
+    except (ValueError, AttributeError) as e:
+        logger.error(f"Error parsing timestamps: {e}", exc_info=True)
+        return ToolResult(
+            text=f"Error: Invalid timestamp format. Use ISO 8601 format (e.g., '2024-01-01T00:00:00Z'): {str(e)}"
+        )
+
+    # Retrieve history
+    try:
+        # Build parameters
+        histories = []
+
+        # Use async_get_entity_histories to retrieve history
+        async for history in ha_client.async_get_entity_histories(
+            entities=entity_ids,
+            start_timestamp=start_timestamp,
+            end_timestamp=end_timestamp,
+            significant_changes_only=significant_changes_only,
+        ):
+            # Convert history to dict for JSON serialization
+            history_dict = {
+                "entity_id": history.entity_id,
+                "states": [
+                    {
+                        "state": state.state,
+                        "attributes": dict(state.attributes)
+                        if state.attributes
+                        else {},
+                        "last_changed": state.last_changed.isoformat()
+                        if state.last_changed
+                        else None,
+                        "last_updated": state.last_updated.isoformat()
+                        if state.last_updated
+                        else None,
+                    }
+                    for state in history.states
+                ],
+            }
+            histories.append(history_dict)
+
+        if not histories:
+            return ToolResult(
+                text="No history data found for the specified parameters."
+            )
+
+        # Convert to JSON
+        json_data = json.dumps(
+            {
+                "start_time": start_timestamp.isoformat(),
+                "end_time": end_timestamp.isoformat(),
+                "significant_changes_only": significant_changes_only,
+                "entities": histories,
+            },
+            indent=2,
+        )
+
+        json_bytes = json_data.encode("utf-8")
+
+        # Check size limits
+        max_text_size, max_multimodal_size = get_attachment_limits(exec_context)
+        if len(json_bytes) > max_text_size:
+            max_mb = max_text_size / (1024 * 1024)
+            logger.warning(
+                f"History data is {len(json_bytes) / (1024 * 1024):.1f}MB, exceeds {max_mb:.0f}MB limit"
+            )
+            return ToolResult(
+                text=f"Error: History data too large ({len(json_bytes) / (1024 * 1024):.1f}MB), "
+                f"exceeds {max_mb:.0f}MB limit. Try reducing the time range or number of entities."
+            )
+
+        logger.info(
+            f"Successfully retrieved state history: {len(histories)} entities, {len(json_bytes)} bytes"
+        )
+
+        # Build description
+        entity_count = len(histories)
+        state_count = sum(len(h["states"]) for h in histories)
+        description = (
+            f"State history for {entity_count} entities ({state_count} states) "
+            f"from {start_timestamp.strftime('%Y-%m-%d %H:%M:%S')} to {end_timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+
+        # Return JSON as attachment
+        return ToolResult(
+            text=description,
+            attachments=[
+                ToolAttachment(
+                    mime_type="application/json",
+                    content=json_bytes,
+                    description=description,
+                )
+            ],
+        )
+
+    except Exception as e:
+        logger.error(f"Error retrieving state history: {e}", exc_info=True)
+        return ToolResult(text=f"Error: Failed to retrieve state history: {str(e)}")
