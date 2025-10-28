@@ -1,7 +1,6 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
 import {
   ActionBarPrimitive,
-  BranchPickerPrimitive,
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
@@ -11,8 +10,6 @@ import {
 import {
   ArrowDownIcon,
   CheckIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
   CopyIcon,
   SendHorizontalIcon,
   UserIcon,
@@ -23,7 +20,6 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import classNames from 'classnames';
 import { MarkdownText } from './MarkdownText';
 import { TooltipIconButton } from './TooltipIconButton';
 import { LOADING_MARKER } from './constants';
@@ -67,10 +63,6 @@ const messageContentComponents = {
     // Don't specify by_name since we want all tools to go through DynamicToolUI
   },
 };
-
-interface BranchPickerProps {
-  className?: string;
-}
 
 // ProfilesProvider component to fetch and provide profiles data
 const ProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -315,7 +307,6 @@ const UserMessage: React.FC = () => {
           </Avatar>
         </div>
       </div>
-      <BranchPicker className="justify-end pr-12" />
     </MessagePrimitive.Root>
   );
 };
@@ -431,7 +422,6 @@ const AssistantMessage: React.FC = () => {
           </div>
         </div>
       </div>
-      <BranchPicker className="pl-12" />
     </MessagePrimitive.Root>
   );
 };
@@ -455,33 +445,6 @@ const AssistantActionBar: React.FC = () => {
         </TooltipIconButton>
       </ActionBarPrimitive.Copy>
     </ActionBarPrimitive.Root>
-  );
-};
-
-const BranchPicker: React.FC<BranchPickerProps> = ({ className, ...rest }) => {
-  return (
-    <BranchPickerPrimitive.Root
-      hideWhenSingleBranch
-      className={classNames(
-        'flex items-center gap-2 mt-2 text-sm text-muted-foreground',
-        className
-      )}
-      {...rest}
-    >
-      <BranchPickerPrimitive.Previous asChild>
-        <TooltipIconButton tooltip="Previous" size="sm" variant="ghost">
-          <ChevronLeftIcon size={14} />
-        </TooltipIconButton>
-      </BranchPickerPrimitive.Previous>
-      <Badge variant="secondary" className="text-xs font-mono">
-        <BranchPickerPrimitive.Number /> / <BranchPickerPrimitive.Count />
-      </Badge>
-      <BranchPickerPrimitive.Next asChild>
-        <TooltipIconButton tooltip="Next" size="sm" variant="ghost">
-          <ChevronRightIcon size={14} />
-        </TooltipIconButton>
-      </BranchPickerPrimitive.Next>
-    </BranchPickerPrimitive.Root>
   );
 };
 
