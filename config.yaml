@@ -163,6 +163,7 @@ default_profile_settings:
       - "query_recent_events" # Event system tool
       - "render_home_assistant_template" # Home Assistant template rendering
       - "get_camera_snapshot" # Get camera snapshots from Home Assistant
+      - "download_state_history" # Download Home Assistant state history as JSON
       # Unified automation tools (event and schedule-based)
       - "create_automation" # Create event or schedule-based automations
       - "list_automations" # List all automations
