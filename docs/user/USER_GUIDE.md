@@ -147,6 +147,15 @@ You can ask the assistant a wide variety of things:
   message): "What kind of flower is this?", "Can you describe what's in this picture?" (Support for
   other file types may be available).
 
+- **Create Data Visualizations:** \*The assistant can create charts and graphs from your data using
+  Vega/Vega-Lite specifications: \*"Create a bar chart showing sales by month from this CSV file"
+  (attach a CSV file) \*"Generate a line graph of temperature trends" (provide JSON data or attach a
+  data file) \*"Visualize the distribution of categories in this dataset" \*The assistant will
+  produce high-quality PNG images that you can view, download, or share. You can provide data inline
+  in your message or attach CSV/JSON files. The assistant understands both Vega and Vega-Lite
+  specifications and can create a wide variety of chart types including bar charts, line graphs,
+  scatter plots, pie charts, and more complex visualizations.
+
 - **Interact with Your Smart Home (Home Assistant):** \*If your family uses Home Assistant and it's
   connected to the assistant, you can control devices with your voice: \*"Turn on the kitchen
   lights." \*"Is the garage door closed?" \*"Set the thermostat to 70 degrees." \*"What's the
