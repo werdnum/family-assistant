@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { AlertCircle } from 'lucide-react';
 import TasksFilter from './TasksFilter';
 import TaskCard from './TaskCard';
 import styles from './TasksList.module.css';
@@ -11,6 +13,7 @@ const TasksList = ({ onLoadingChange }) => {
   const [taskTypes, setTaskTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [actionError, setActionError] = useState(null);
 
   // Parse URL parameters for filters
   const filters = {
@@ -104,6 +107,7 @@ const TasksList = ({ onLoadingChange }) => {
   // Handle task retry
   const handleRetry = async (taskId) => {
     try {
+      setActionError(null);
       const response = await fetch(`/api/tasks/${taskId}/retry`, {
         method: 'POST',
       });
@@ -116,14 +120,14 @@ const TasksList = ({ onLoadingChange }) => {
       await fetchTasks();
     } catch (err) {
       console.error('Error retrying task:', err);
-      // eslint-disable-next-line no-alert
-      window.alert(`Failed to retry task: ${err.message}`);
+      setActionError(`Failed to retry task: ${err.message}`);
     }
   };
 
   // Handle task cancel
   const handleCancel = async (taskId) => {
     try {
+      setActionError(null);
       const response = await fetch(`/api/tasks/${taskId}/cancel`, {
         method: 'POST',
       });
@@ -136,8 +140,7 @@ const TasksList = ({ onLoadingChange }) => {
       await fetchTasks();
     } catch (err) {
       console.error('Error cancelling task:', err);
-      // eslint-disable-next-line no-alert
-      window.alert(`Failed to cancel task: ${err.message}`);
+      setActionError(`Failed to cancel task: ${err.message}`);
     }
   };
 
@@ -184,6 +187,19 @@ const TasksList = ({ onLoadingChange }) => {
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearFilters}
       />
+
+      {actionError && (
+        <Alert variant="destructive" className="mb-4">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>
+            {actionError}
+            <Button onClick={() => setActionError(null)} variant="ghost" size="sm" className="ml-2">
+              Dismiss
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
 
       {tasks.length === 0 ? (
         <div className={styles.emptyState}>
