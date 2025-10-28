@@ -178,6 +178,8 @@ default_profile_settings:
       - "transform_image" # Transform existing images based on instructions
       # Image manipulation tools
       - "highlight_image" # Highlight or annotate areas in images
+      # Data visualization tools
+      - "create_vega_chart" # Create data visualizations from Vega/Vega-Lite specs as PNG
     enable_mcp_server_ids: # Explicitly define MCP servers for the default profile
       - "time"
       - "brave"

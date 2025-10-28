@@ -96,6 +96,8 @@ dependencies = [
     "backoff>=2.2.1",
     "py-vapid>=1.9.2",
     "pywebpush>=2.1.1",
+    "vl-convert-python>=1.6.0",
+    # For rendering Vega/Vega-Lite specs to PNG
 ]
 
 [project.optional-dependencies]
