@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import TYPE_CHECKING
 
@@ -247,6 +248,151 @@ class TestAttachmentAPI:
 
         assert "not accessible" in result.lower()
 
+    async def test_create_attachment_with_string_content(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+    ) -> None:
+        """Test creating attachment with string content."""
+        api = AttachmentAPI(
+            attachment_registry=attachment_registry,
+            conversation_id="test_conversation",
+            main_loop=None,
+            db_engine=db_engine,
+        )
+
+        content = "Hello, world!"
+        attachment_id = await api._create_async(
+            content=content,
+            filename="test.txt",
+            description="Test text file",
+            mime_type="text/plain",
+        )
+
+        # Verify attachment was created
+        assert attachment_id is not None
+        assert len(attachment_id) == 36  # UUID format
+
+        # Verify we can retrieve it
+        async with DatabaseContext(engine=db_engine) as db_context:
+            metadata = await attachment_registry.get_attachment(
+                db_context, attachment_id
+            )
+            assert metadata is not None
+            assert metadata.source_type == "script"
+            assert metadata.mime_type == "text/plain"
+            assert metadata.description == "Test text file"
+            assert metadata.conversation_id == "test_conversation"
+
+            # Verify content
+            retrieved_content = await attachment_registry.get_attachment_content(
+                db_context, attachment_id
+            )
+            assert retrieved_content == content.encode("utf-8")
+
+    async def test_create_attachment_with_bytes_content(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+    ) -> None:
+        """Test creating attachment with bytes content."""
+        api = AttachmentAPI(
+            attachment_registry=attachment_registry,
+            conversation_id="test_conversation",
+            main_loop=None,
+            db_engine=db_engine,
+        )
+
+        content = b"Binary data here"
+        attachment_id = await api._create_async(
+            content=content,
+            filename="binary.txt",
+            description="Binary file",
+            mime_type="text/plain",
+        )
+
+        # Verify attachment was created
+        assert attachment_id is not None
+
+        # Verify content
+        async with DatabaseContext(engine=db_engine) as db_context:
+            retrieved_content = await attachment_registry.get_attachment_content(
+                db_context, attachment_id
+            )
+            assert retrieved_content == content
+
+    async def test_create_attachment_with_json_content(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+    ) -> None:
+        """Test creating attachment with JSON content (stored as text/plain)."""
+        api = AttachmentAPI(
+            attachment_registry=attachment_registry,
+            conversation_id="test_conversation",
+            main_loop=None,
+            db_engine=db_engine,
+        )
+
+        json_data = {"key": "value", "number": 42, "list": [1, 2, 3]}
+        content = json.dumps(json_data)
+
+        attachment_id = await api._create_async(
+            content=content,
+            filename="data.json",
+            description="JSON data",
+            mime_type="text/plain",  # Use text/plain since application/json not in allowed list
+        )
+
+        # Verify attachment was created and content is correct
+        async with DatabaseContext(engine=db_engine) as db_context:
+            retrieved_content = await attachment_registry.get_attachment_content(
+                db_context, attachment_id
+            )
+            assert retrieved_content is not None
+            retrieved_data = json.loads(retrieved_content.decode("utf-8"))
+            assert retrieved_data == json_data
+
+    async def test_create_attachment_conversation_scoped(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+    ) -> None:
+        """Test that created attachments are scoped to the conversation."""
+        api = AttachmentAPI(
+            attachment_registry=attachment_registry,
+            conversation_id="conversation_a",
+            main_loop=None,
+            db_engine=db_engine,
+        )
+
+        attachment_id = await api._create_async(
+            content="Test content",
+            filename="test.txt",
+            description="Test file",
+            mime_type="text/plain",
+        )
+
+        # Verify it's accessible from the same conversation
+        same_api = AttachmentAPI(
+            attachment_registry=attachment_registry,
+            conversation_id="conversation_a",
+            main_loop=None,
+            db_engine=db_engine,
+        )
+        result = await same_api._get_async(attachment_id)
+        assert result is not None
+
+        # Verify it's NOT accessible from a different conversation
+        different_api = AttachmentAPI(
+            attachment_registry=attachment_registry,
+            conversation_id="conversation_b",
+            main_loop=None,
+            db_engine=db_engine,
+        )
+        result = await different_api._get_async(attachment_id)
+        assert result is None
+
 
 class TestCreateAttachmentAPI:
     """Test the create_attachment_api factory function."""
@@ -480,3 +626,183 @@ attachment_list()
                     script=script,
                     execution_context=execution_context,
                 )
+
+    async def test_script_create_text_attachment(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+    ) -> None:
+        """Test creating a text attachment from within a Starlark script."""
+        async with DatabaseContext(engine=db_engine) as db_context:
+            execution_context = ToolExecutionContext(
+                interface_type="test",
+                conversation_id="test_conversation",
+                user_name="test_user",
+                turn_id="test_turn",
+                db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=attachment_registry,
+            )
+
+            config = StarlarkConfig(enable_print=True)
+            engine = StarlarkEngine(config=config)
+
+            # Script that creates a text attachment
+            script = """
+content = "Hello from script!"
+attachment_id = attachment_create(
+    content=content,
+    filename="script-output.txt",
+    description="Script-generated text file",
+    mime_type="text/plain"
+)
+print("Created attachment:", attachment_id)
+attachment_id
+"""
+
+            result = await engine.evaluate_async(
+                script=script,
+                execution_context=execution_context,
+            )
+
+            # Verify result is a valid UUID
+            assert isinstance(result, str)
+            assert len(result) == 36  # UUID format
+
+        # Verify the attachment exists and has correct metadata
+        async with DatabaseContext(engine=db_engine) as verify_context:
+            metadata = await attachment_registry.get_attachment(verify_context, result)
+            assert metadata is not None
+            assert metadata.source_type == "script"
+            assert metadata.mime_type == "text/plain"
+            assert metadata.description == "Script-generated text file"
+            assert metadata.conversation_id == "test_conversation"
+
+            # Verify content
+            content = await attachment_registry.get_attachment_content(
+                verify_context, result
+            )
+            assert content == b"Hello from script!"
+
+    async def test_script_create_json_attachment(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+    ) -> None:
+        """Test creating a JSON attachment from within a Starlark script."""
+        async with DatabaseContext(engine=db_engine) as db_context:
+            execution_context = ToolExecutionContext(
+                interface_type="test",
+                conversation_id="test_conversation",
+                user_name="test_user",
+                turn_id="test_turn",
+                db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=attachment_registry,
+            )
+
+            config = StarlarkConfig(enable_print=True)
+            engine = StarlarkEngine(config=config)
+
+            # Script that creates a JSON attachment (stored as text/plain)
+            script = """
+# Create a data structure
+data = {
+    "name": "Test",
+    "count": 42,
+    "items": ["a", "b", "c"]
+}
+
+# Encode to JSON
+json_content = json_encode(data)
+
+# Create attachment (using text/plain since application/json not in allowed list)
+attachment_id = attachment_create(
+    content=json_content,
+    filename="data.json",
+    description="JSON data from script",
+    mime_type="text/plain"
+)
+
+# Return the attachment_id for verification
+attachment_id
+"""
+
+            result = await engine.evaluate_async(
+                script=script,
+                execution_context=execution_context,
+            )
+
+            # Verify result is a valid UUID
+            assert isinstance(result, str)
+            assert len(result) == 36  # UUID format
+
+        # Verify the attachment content is valid JSON
+        async with DatabaseContext(engine=db_engine) as verify_context:
+            content = await attachment_registry.get_attachment_content(
+                verify_context, result
+            )
+            assert content is not None
+            data = json.loads(content.decode("utf-8"))
+            assert data["name"] == "Test"
+            assert data["count"] == 42
+            assert data["items"] == ["a", "b", "c"]
+
+    async def test_script_create_and_retrieve_attachment(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+    ) -> None:
+        """Test creating an attachment and then retrieving it in the same script."""
+        async with DatabaseContext(engine=db_engine) as db_context:
+            execution_context = ToolExecutionContext(
+                interface_type="test",
+                conversation_id="test_conversation",
+                user_name="test_user",
+                turn_id="test_turn",
+                db_context=db_context,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=attachment_registry,
+            )
+
+            config = StarlarkConfig(enable_print=True)
+            engine = StarlarkEngine(config=config)
+
+            # Script that creates an attachment and retrieves it
+            script = """
+# Create attachment
+attachment_id = attachment_create(
+    content="Test content",
+    filename="test.txt",
+    description="Test file",
+    mime_type="text/plain"
+)
+
+# Retrieve metadata
+metadata = attachment_get(attachment_id)
+
+# Return both ID and description
+{
+    "id": attachment_id,
+    "description": metadata.get("description") if metadata else None
+}
+"""
+
+            result = await engine.evaluate_async(
+                script=script,
+                execution_context=execution_context,
+            )
+
+            # Verify result
+            assert isinstance(result, dict)
+            assert "id" in result
+            assert result["description"] == "Test file"
