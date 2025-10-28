@@ -253,29 +253,18 @@ service_profiles:
     slash_commands:
       - "/research"
   - id: "data_visualization"
-    description: "Assistant profile optimized for creating data visualizations and charts. Uses Vega/Vega-Lite to generate professional charts from user data. Ideal for data analysis and visual representation tasks."
+    description: "Assistant profile optimized for creating data visualizations and charts. Uses Vega/Vega-Lite to generate professional charts from user data."
     processing_config:
-      # Using direct Google provider
-      provider: "google"
-      llm_model: "gemini-2.5-pro"
-      # Auto-load data visualization documentation
       include_system_docs:
         - "data_visualization.md"
-      prompts:
-        system_prompt: "You are a data visualization assistant interacting with {user_name}. You specialize in creating clear, informative charts and graphs from data. After any tool calls you make, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users.\n\nCurrent time: {current_time}\n\n{aggregated_other_context}"
-      delegation_security_level: "unrestricted"
     tools_config:
       enable_local_tools:
-        # Data visualization tool
         - "create_vega_chart"
-        # Communication and attachments
         - "attach_to_response"
         - "get_attachment_info"
-        # Document access for data
         - "search_documents"
         - "get_full_document_content"
       enable_mcp_server_ids: []
-      confirm_tools: []
     slash_commands:
       - "/visualize"
       - "/chart"
