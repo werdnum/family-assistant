@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import JsonPayloadViewer from './JsonPayloadViewer';
 import styles from './TaskCard.module.css';
 
-const TaskCard = ({ task, onRetry }) => {
+const TaskCard = ({ task, onRetry, onCancel }) => {
   // Format dates for display
   const formatDate = (dateString) => {
     if (!dateString) {
@@ -28,6 +28,8 @@ const TaskCard = ({ task, onRetry }) => {
         return `${styles.statusBadge} ${styles.statusDone}`;
       case 'failed':
         return `${styles.statusBadge} ${styles.statusFailed}`;
+      case 'cancelled':
+        return `${styles.statusBadge} ${styles.statusCancelled}`;
       default:
         return `${styles.statusBadge} ${styles.statusDefault}`;
     }
@@ -38,10 +40,22 @@ const TaskCard = ({ task, onRetry }) => {
     return ['failed', 'processing'].includes(status?.toLowerCase());
   };
 
+  // Check if task can be cancelled
+  const canCancel = (status) => {
+    return status?.toLowerCase() === 'pending';
+  };
+
   const handleRetryClick = () => {
     // eslint-disable-next-line no-alert
     if (window.confirm('Are you sure you want to retry this task?')) {
       onRetry(task.id);
+    }
+  };
+
+  const handleCancelClick = () => {
+    // eslint-disable-next-line no-alert
+    if (window.confirm('Are you sure you want to cancel this task?')) {
+      onCancel(task.id);
     }
   };
 
@@ -58,6 +72,16 @@ const TaskCard = ({ task, onRetry }) => {
           {canRetry(task.status) && (
             <Button onClick={handleRetryClick} size="sm" title="Manually retry this task">
               Retry
+            </Button>
+          )}
+          {canCancel(task.status) && (
+            <Button
+              onClick={handleCancelClick}
+              size="sm"
+              variant="destructive"
+              title="Cancel this task"
+            >
+              Cancel
             </Button>
           )}
         </div>

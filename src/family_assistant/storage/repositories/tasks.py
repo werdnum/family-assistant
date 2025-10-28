@@ -552,3 +552,55 @@ class TasksRepository(BaseRepository):
         else:
             logger.error(f"Failed to update task {task['task_id']} for manual retry.")
             return False
+
+    async def cancel_task(self, internal_task_id: int) -> bool:
+        """
+        Cancels a pending task.
+
+        Args:
+            internal_task_id: The internal database ID of the task (tasks_table.c.id)
+
+        Returns:
+            True if the task was successfully cancelled, False otherwise
+            (e.g., task not found or not in pending status)
+        """
+        # Fetch the task by its internal ID
+        select_stmt = select(tasks_table).where(tasks_table.c.id == internal_task_id)
+        task_row = await self._db.fetch_one(select_stmt)
+
+        if not task_row:
+            logger.warning(
+                f"Cancel requested for non-existent task with internal ID {internal_task_id}."
+            )
+            return False
+
+        task = dict(task_row)
+        logger.info(
+            f"Cancel requested for task {task['task_id']} "
+            f"(internal ID: {internal_task_id}, status: {task['status']})"
+        )
+
+        # Only allow cancelling pending tasks
+        if task["status"] != "pending":
+            logger.warning(
+                f"Cannot cancel task {task['task_id']} with status '{task['status']}'. "
+                f"Only pending tasks can be cancelled."
+            )
+            return False
+
+        # Update the task status to cancelled
+        update_stmt = (
+            update(tasks_table)
+            .where(tasks_table.c.id == internal_task_id)
+            .where(tasks_table.c.status == "pending")  # Double-check status
+            .values(status="cancelled")
+        )
+
+        result = await self._db.execute_with_retry(update_stmt)
+
+        if result.rowcount > 0:  # type: ignore[attr-defined]
+            logger.info(f"Successfully cancelled task {task['task_id']}.")
+            return True
+        else:
+            logger.error(f"Failed to cancel task {task['task_id']}.")
+            return False

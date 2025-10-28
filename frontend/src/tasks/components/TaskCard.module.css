@@ -64,6 +64,11 @@
   color: #fff;
 }
 
+.statusCancelled {
+  background-color: #6c757d;
+  color: #fff;
+}
+
 .statusDefault {
   background-color: #6c757d;
   color: #fff;
@@ -157,3 +162,4 @@
   background-color: rgba(220, 53, 69, 0.15);
   border-color: rgba(220, 53, 69, 0.3);
 }
+
