@@ -30,7 +30,8 @@
       "*.js",
       "*.jsx",
       "*.ts",
-      "*.tsx"
+      "*.tsx",
+      "package.json"
     ]
   }
 }
