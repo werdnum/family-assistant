@@ -64,3 +64,17 @@ async def retry_task(
             status.HTTP_404_NOT_FOUND, "Task not found or not retryable"
         )
     return {"message": "Retry scheduled"}
+
+
+@tasks_api_router.post(
+    "/{internal_task_id}/cancel", status_code=status.HTTP_202_ACCEPTED
+)
+async def cancel_task(
+    internal_task_id: int,
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
+) -> dict[str, str]:
+    """Cancel a pending task."""
+    success = await db_context.tasks.cancel_task(internal_task_id)
+    if not success:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Task not found or not pending")
+    return {"message": "Task cancelled"}
