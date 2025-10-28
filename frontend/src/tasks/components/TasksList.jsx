@@ -121,6 +121,26 @@ const TasksList = ({ onLoadingChange }) => {
     }
   };
 
+  // Handle task cancel
+  const handleCancel = async (taskId) => {
+    try {
+      const response = await fetch(`/api/tasks/${taskId}/cancel`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Cancel failed: ${response.status} ${response.statusText}`);
+      }
+
+      // Refresh tasks list after successful cancellation
+      await fetchTasks();
+    } catch (err) {
+      console.error('Error cancelling task:', err);
+      // eslint-disable-next-line no-alert
+      window.alert(`Failed to cancel task: ${err.message}`);
+    }
+  };
+
   // Clear all filters
   const clearFilters = () => {
     setSearchParams({});
@@ -186,7 +206,7 @@ const TasksList = ({ onLoadingChange }) => {
 
           <div className={styles.tasksGrid}>
             {tasks.map((task) => (
-              <TaskCard key={task.id} task={task} onRetry={handleRetry} />
+              <TaskCard key={task.id} task={task} onRetry={handleRetry} onCancel={handleCancel} />
             ))}
           </div>
         </div>

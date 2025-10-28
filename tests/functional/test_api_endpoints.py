@@ -101,6 +101,68 @@ async def test_tasks_api_list(
 
 
 @pytest.mark.asyncio
+async def test_tasks_api_cancel_pending(
+    api_client: httpx.AsyncClient, db_engine: AsyncEngine
+) -> None:
+    """Test successfully cancelling a pending task."""
+    # Create a pending task
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.tasks.enqueue(task_id="t_cancel", task_type="demo", payload={})
+
+    # Get the task to find its internal ID
+    resp = await api_client.get("/api/tasks/")
+    assert resp.status_code == 200
+    tasks = resp.json()["tasks"]
+    task = next(t for t in tasks if t["task_id"] == "t_cancel")
+    task_internal_id = task["id"]
+
+    # Cancel the task
+    resp = await api_client.post(f"/api/tasks/{task_internal_id}/cancel")
+    assert resp.status_code == 202
+    assert resp.json()["message"] == "Task cancelled"
+
+    # Verify the task is now cancelled
+    resp = await api_client.get("/api/tasks/")
+    tasks = resp.json()["tasks"]
+    task = next(t for t in tasks if t["task_id"] == "t_cancel")
+    assert task["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_tasks_api_cancel_non_pending(
+    api_client: httpx.AsyncClient, db_engine: AsyncEngine
+) -> None:
+    """Test that cancelling a non-pending task fails."""
+    # Create a task and mark it as done
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.tasks.enqueue(task_id="t_done", task_type="demo", payload={})
+        await db.tasks.update_status(task_id="t_done", status="done")
+
+    # Get the task to find its internal ID
+    resp = await api_client.get("/api/tasks/")
+    assert resp.status_code == 200
+    tasks = resp.json()["tasks"]
+    task = next(t for t in tasks if t["task_id"] == "t_done")
+    task_internal_id = task["id"]
+
+    # Try to cancel the task (should fail)
+    resp = await api_client.post(f"/api/tasks/{task_internal_id}/cancel")
+    assert resp.status_code == 404
+    assert "not found or not pending" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_tasks_api_cancel_nonexistent(
+    api_client: httpx.AsyncClient, db_engine: AsyncEngine
+) -> None:
+    """Test that cancelling a nonexistent task returns 404."""
+    # Try to cancel a task that doesn't exist
+    resp = await api_client.post("/api/tasks/99999/cancel")
+    assert resp.status_code == 404
+    assert "not found or not pending" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
 async def test_events_api_list_and_detail(
     api_client: httpx.AsyncClient, db_engine: AsyncEngine
 ) -> None:
