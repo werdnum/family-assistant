@@ -159,8 +159,6 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     if (!content.trim()) {
       return;
     }
-      return;
-    }
 
     if (streamingMessageIdRef.current) {
       setMessages((prev) => {
