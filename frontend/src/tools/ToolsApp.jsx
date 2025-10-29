@@ -149,14 +149,13 @@ const ToolsApp = () => {
       const parameters = editorInstanceRef.current.getValue();
 
       // Execute the tool
-      const response = await fetch('/api/tools/execute', {
+      const response = await fetch(`/api/tools/execute/${selectedTool}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          tool_name: selectedTool,
-          parameters: parameters,
+          arguments: parameters,
         }),
       });
 
