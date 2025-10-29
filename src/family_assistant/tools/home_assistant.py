@@ -439,7 +439,7 @@ async def download_state_history_tool(
         json_bytes = json_data.encode("utf-8")
 
         # Check size limits
-        max_text_size, max_multimodal_size = get_attachment_limits(exec_context)
+        max_text_size, _ = get_attachment_limits(exec_context)
         if len(json_bytes) > max_text_size:
             max_mb = max_text_size / (1024 * 1024)
             logger.warning(

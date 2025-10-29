@@ -363,11 +363,10 @@ async def test_download_state_history_empty() -> None:
     """
     mock_ha_client = MagicMock()
 
-    # Mock empty async generator
+    # Mock empty async generator that yields nothing
     async def mock_empty_generator() -> AsyncGenerator[HistoryItem, None]:
-        # Empty generator - explicitly return without yielding
-        return
-        yield  # Make this a generator (unreachable)
+        if False:  # pylint: disable=using-constant-test
+            yield HistoryItem(entity_id="", states=[])
 
     # Set the mock to return the generator when called
     mock_ha_client.async_get_entity_histories = MagicMock(
