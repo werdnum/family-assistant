@@ -527,8 +527,16 @@ class GoogleGenAIClient(BaseLLMClient):
                     and hasattr(candidate.content, "parts")
                 ):
                     parts = candidate.content.parts
-                    if parts and hasattr(parts[0], "text"):
-                        content = parts[0].text
+                    # Collect text from non-thought parts only
+                    if parts:
+                        text_parts = []
+                        for part in parts:
+                            # Skip thought parts - they're for debugging only
+                            is_thought = hasattr(part, "thought") and part.thought
+                            if not is_thought and hasattr(part, "text") and part.text:
+                                text_parts.append(part.text)
+                        if text_parts:
+                            content = "".join(text_parts)
 
             # Extract tool calls and thought signatures from response
             tool_calls = None
@@ -542,15 +550,19 @@ class GoogleGenAIClient(BaseLLMClient):
                 ):
                     found_tool_calls = []
                     thought_signatures = []
+                    thought_summaries = []
 
                     for part_index, part in enumerate(candidate.content.parts):
-                        # Extract thought signature if present
-                        if hasattr(part, "thought") and part.thought:
+                        # Extract thought signature if present (encrypted for context preservation)
+                        if (
+                            hasattr(part, "thought_signature")
+                            and part.thought_signature
+                        ):
                             # Convert to bytes if needed and base64 encode for storage
                             thought_bytes = (
-                                part.thought
-                                if isinstance(part.thought, bytes)
-                                else str(part.thought).encode("utf-8")
+                                part.thought_signature
+                                if isinstance(part.thought_signature, bytes)
+                                else str(part.thought_signature).encode("utf-8")
                             )
                             signature_b64 = base64.b64encode(thought_bytes).decode(
                                 "ascii"
@@ -558,6 +570,15 @@ class GoogleGenAIClient(BaseLLMClient):
                             thought_signatures.append({
                                 "part_index": part_index,
                                 "signature": signature_b64,
+                            })
+
+                        # Extract thought summary if present (readable for debugging/introspection)
+                        if hasattr(part, "thought") and part.thought:
+                            # When part.thought is True, the thought text is in part.text
+                            thought_text = part.text if hasattr(part, "text") else ""
+                            thought_summaries.append({
+                                "part_index": part_index,
+                                "summary": thought_text,
                             })
 
                         if hasattr(part, "function_call") and part.function_call:
@@ -603,6 +624,12 @@ class GoogleGenAIClient(BaseLLMClient):
                     "completion_tokens": getattr(usage, "candidates_token_count", 0),
                     "total_tokens": getattr(usage, "total_token_count", 0),
                 }
+
+            # Add thought summaries to reasoning_info for debugging/introspection
+            if thought_summaries:
+                if reasoning_info is None:
+                    reasoning_info = {}
+                reasoning_info["thought_summaries"] = thought_summaries
 
             return LLMOutput(
                 content=content,
@@ -766,9 +793,10 @@ class GoogleGenAIClient(BaseLLMClient):
                 config=generation_config,
             )
 
-            # Track tool calls and thought signatures being accumulated
+            # Track tool calls, thought signatures, and thought summaries being accumulated
             accumulated_tool_calls = []
             thought_signatures = []
+            thought_summaries = []
             part_index = 0
 
             # Process stream chunks
@@ -787,13 +815,16 @@ class GoogleGenAIClient(BaseLLMClient):
                             and candidate.content.parts is not None  # Fix None check
                         ):
                             for part in candidate.content.parts:
-                                # Extract thought signature if present
-                                if hasattr(part, "thought") and part.thought:
+                                # Extract thought signature if present (encrypted for context preservation)
+                                if (
+                                    hasattr(part, "thought_signature")
+                                    and part.thought_signature
+                                ):
                                     # Convert to bytes if needed and base64 encode
                                     thought_bytes = (
-                                        part.thought
-                                        if isinstance(part.thought, bytes)
-                                        else str(part.thought).encode("utf-8")
+                                        part.thought_signature
+                                        if isinstance(part.thought_signature, bytes)
+                                        else str(part.thought_signature).encode("utf-8")
                                     )
                                     signature_b64 = base64.b64encode(
                                         thought_bytes
@@ -803,8 +834,24 @@ class GoogleGenAIClient(BaseLLMClient):
                                         "signature": signature_b64,
                                     })
 
-                                # Handle text parts
-                                if hasattr(part, "text") and part.text:
+                                # Extract thought summary if present (readable for debugging/introspection)
+                                is_thought = hasattr(part, "thought") and part.thought
+                                if is_thought:
+                                    # When part.thought is True, the thought text is in part.text
+                                    thought_text = (
+                                        part.text if hasattr(part, "text") else ""
+                                    )
+                                    thought_summaries.append({
+                                        "part_index": part_index,
+                                        "summary": thought_text,
+                                    })
+
+                                # Handle text parts - but skip thought parts (they're for debugging only)
+                                if (
+                                    not is_thought
+                                    and hasattr(part, "text")
+                                    and part.text
+                                ):
                                     yield LLMStreamEvent(
                                         type="content", content=part.text
                                     )
@@ -855,6 +902,13 @@ class GoogleGenAIClient(BaseLLMClient):
             done_metadata = {}
             if provider_metadata:
                 done_metadata["provider_metadata"] = provider_metadata
+
+            # Add thought summaries to reasoning_info for debugging/introspection
+            if thought_summaries:
+                if "reasoning_info" not in done_metadata:
+                    done_metadata["reasoning_info"] = {}
+                done_metadata["reasoning_info"]["thought_summaries"] = thought_summaries
+
             yield LLMStreamEvent(type="done", metadata=done_metadata)
 
         except Exception as e:
