@@ -195,6 +195,41 @@ If the tool returns an error:
 
 ## Resources
 
-- Vega-Lite documentation: https://vega.github.io/vega-lite/
-- Vega documentation: https://vega.github.io/vega/
+### Quick Reference
+
+A condensed Vega-Lite reference is automatically included in this profile's system prompt (see
+`vega_lite_reference.md`). It covers common chart types, encoding channels, data types, and
+essential transforms.
+
+### Full Documentation
+
+For detailed information beyond the quick reference, you can use the `scrape_url` tool to
+dynamically fetch specific documentation pages:
+
+**Key Vega-Lite Documentation Pages:**
+
+- Main docs: https://vega.github.io/vega-lite/docs/
+- Encoding reference: https://vega.github.io/vega-lite/docs/encoding.html
+- Mark types: https://vega.github.io/vega-lite/docs/mark.html
+- Data transforms: https://vega.github.io/vega-lite/docs/transform.html
+- Scales: https://vega.github.io/vega-lite/docs/scale.html
+- Time units: https://vega.github.io/vega-lite/docs/timeunit.html
 - Example gallery: https://vega.github.io/vega-lite/examples/
+
+**Vega (low-level) Documentation:**
+
+- Main docs: https://vega.github.io/vega/docs/
+- Specification: https://vega.github.io/vega/docs/specification/
+- Transforms: https://vega.github.io/vega/docs/transforms/
+
+**Using the scrape_url Tool:**
+
+When you need detailed information about specific Vega/Vega-Lite features, use the `scrape_url` MCP
+tool to fetch the documentation:
+
+```
+scrape_url("https://vega.github.io/vega-lite/docs/encoding.html")
+```
+
+This will return the documentation page as markdown that you can use to understand advanced
+features, complex configurations, or troubleshoot issues.
