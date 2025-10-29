@@ -6,6 +6,7 @@ specifications and returning them as PNG attachments.
 """
 
 import csv
+import io
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -125,7 +126,8 @@ async def create_vega_chart_tool(
                         continue
                 elif mime_type == "text/csv" or attachment_filename.endswith(".csv"):
                     # For CSV, we'll parse it into a list of dicts
-                    reader = csv.DictReader(content_str.splitlines())
+                    # Use StringIO to handle CSVs with newlines in quoted fields
+                    reader = csv.DictReader(io.StringIO(content_str))
                     data_dict[attachment_filename] = list(reader)
                 else:
                     logger.warning(
