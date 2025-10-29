@@ -178,8 +178,6 @@ default_profile_settings:
       - "transform_image" # Transform existing images based on instructions
       # Image manipulation tools
       - "highlight_image" # Highlight or annotate areas in images
-      # Data visualization tools
-      - "create_vega_chart" # Create data visualizations from Vega/Vega-Lite specs as PNG
     enable_mcp_server_ids: # Explicitly define MCP servers for the default profile
       - "time"
       - "brave"
@@ -257,6 +255,7 @@ service_profiles:
     processing_config:
       include_system_docs:
         - "data_visualization.md"
+        - "vega_lite_reference.md"
     tools_config:
       enable_local_tools:
         - "create_vega_chart"
@@ -270,6 +269,7 @@ service_profiles:
       enable_mcp_server_ids:
         - "python"
         - "homeassistant"
+        - "scrape"
     slash_commands:
       - "/visualize"
       - "/chart"
