@@ -159,8 +159,12 @@ check_test_status() {
         echo "❌ Tests have not been run since modifying $LAST_MOD_FILE at $LAST_MOD_TIME" >&2
         echo "You MUST run 'poe test' or '.venv/bin/poe test' before finishing" >&2
         echo "Reminder: only 'poe test' or '.venv/bin/poe test' (with optional -xq) will do. No other commands will satisfy this hook." >&2
+        echo "NO EXCUSES!" >&2
+        echo "... even if you think it isn't necessary or important." >&2
         echo "... even if you think these changes don't impact any or all tests." >&2
+        echo "... even if you just ran the tests and just made one little change." >&2
         echo "If you have other feedback to address, do that first – you will need to re-run tests after making any further changes." >&2
+        echo "This hook cannot and may not be bypassed using --no-verify or by any other mechanism. Do not attempt to do so. If you are having trouble, ask the user for help." >&2
         return 1
     fi
 
@@ -212,6 +216,7 @@ check_test_status() {
         echo "If you believe the failure to be a flake, prove it by rerunning poe test to get a passing result." >&2
         echo "If you have other feedback to address, do that first – you will need to re-run tests after making any further changes." >&2
         echo "If you are stuck, consider using @agent-systematic-debugger with a detailed prompt explaining what changes you have made, what you have tried so far and any findings." >&2
+        echo "This hook cannot and may not be bypassed using --no-verify or by any other mechanism. Do not attempt to do so. If you are having trouble, ask the user for help." >&2
         if [ -n "$LAST_TEST_ATTEMPT_COMMAND" ]; then
             if [ -n "$LAST_TEST_ATTEMPT_TIME" ]; then
                 echo "Last failing test command: '$LAST_TEST_ATTEMPT_COMMAND' at $LAST_TEST_ATTEMPT_TIME" >&2
