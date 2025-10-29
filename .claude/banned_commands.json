@@ -1,7 +1,7 @@
 [
   {
     "regexp": "\\bgit\\s+commit\\b.*--no-verify",
-    "explanation": "Using --no-verify bypasses important pre-commit hooks. Please allow the hooks to run to ensure code quality."
+    "explanation": "Using --no-verify is not permitted in this project. If you need to bypass pre-commit hooks, ask the user for help."
   },
   {
     "regexp": "^\\s*rm\\s+-rf\\s+/\\s*$",
