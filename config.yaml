@@ -264,7 +264,12 @@ service_profiles:
         - "get_attachment_info"
         - "search_documents"
         - "get_full_document_content"
-      enable_mcp_server_ids: []
+        - "download_state_history"
+        - "render_home_assistant_template"
+        - "execute_script"
+      enable_mcp_server_ids:
+        - "python"
+        - "homeassistant"
     slash_commands:
       - "/visualize"
       - "/chart"
