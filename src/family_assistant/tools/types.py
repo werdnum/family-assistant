@@ -91,15 +91,16 @@ class ToolExecutionContext:
     request_confirmation_callback: (
         Callable[
             [
-                str,
-                str,
-                str | None,
-                str,
-                str,
+                str,  # interface_type
+                str,  # conversation_id
+                str | None,  # turn_id
+                str,  # tool_name
+                str,  # call_id
                 # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-                dict[str, Any],
-                float,
-            ],  # Changed chat_id to str
+                dict[str, Any],  # tool_args
+                float,  # timeout
+                "ToolExecutionContext",  # context (self-reference)
+            ],
             Awaitable[bool],
         ]
         | None

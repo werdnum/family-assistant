@@ -106,30 +106,32 @@ class ConfirmationCallbackProtocol(Protocol):
 
     This protocol defines the expected signature for callbacks that request
     user confirmation for tool actions. The callback should handle the
-    timeout internally.
+    timeout internally and render the confirmation prompt using async renderers.
     """
 
     async def __call__(
         self,
-        conversation_id: str,
         interface_type: str,
+        conversation_id: str,
         turn_id: str | None,
-        prompt_text: str,
         tool_name: str,
+        call_id: str,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tool_args: dict[str, Any],
         timeout: float,
+        context: ToolExecutionContext,
     ) -> bool:
         """Request user confirmation for a tool action.
 
         Args:
-            conversation_id: Unique identifier for the conversation
             interface_type: Type of interface (e.g., 'telegram', 'api')
+            conversation_id: Unique identifier for the conversation
             turn_id: Optional turn identifier for tracking
-            prompt_text: The confirmation prompt to show the user
             tool_name: Name of the tool requesting confirmation
+            call_id: Unique identifier for this tool call
             tool_args: Arguments being passed to the tool
             timeout: Timeout in seconds for the confirmation
+            context: Full execution context with timezone, calendar config, etc.
 
         Returns:
             True if user confirmed, False if cancelled/timeout
@@ -706,27 +708,16 @@ class ConfirmingToolsProvider(ToolsProvider):
                 )
                 return f"Error: Tool '{name}' requires confirmation, but the system is not configured to ask for it."
 
-            # Fetch event details for calendar tools to enrich confirmation prompt
-            event_details = await self._get_event_details_for_confirmation(
-                name, arguments, context
-            )
-
-            # Enrich arguments with event details and timezone for the confirmation renderer
-            enriched_args = {**arguments}
-            if event_details:
-                enriched_args["__event_details__"] = event_details
-            enriched_args["__timezone_str__"] = context.timezone_str
-
-            # Request confirmation via callback (which handles Future creation/waiting)
-            # Note: The callback is responsible for rendering the confirmation prompt
+            # Request confirmation via callback
+            # The callback is responsible for rendering the confirmation prompt
+            # using async renderers that fetch their own data from context
             try:
                 logger.debug(f"Requesting confirmation for tool '{name}' via callback.")
 
                 typed_callback = context.request_confirmation_callback
 
                 # The callback is expected to handle the timeout internally via asyncio.wait_for
-                # Pass arguments by keyword to ensure correct mapping, especially for mocks.
-                # Call with positional arguments to match expected signature
+                # Pass context so renderers can fetch event details, timezone, etc.
                 user_confirmed = await typed_callback(
                     context.interface_type,
                     context.conversation_id,
@@ -734,8 +725,9 @@ class ConfirmingToolsProvider(ToolsProvider):
                     name,
                     call_id
                     or f"tool_{uuid.uuid4()}",  # Generate a call_id if none provided
-                    enriched_args,
+                    arguments,
                     self.confirmation_timeout,
+                    context,  # Pass full context for renderers
                 )
 
                 if user_confirmed:

@@ -284,7 +284,17 @@ class ProcessingService:
         request_confirmation_callback: (
             Callable[
                 # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-                [str, str, str | None, str, str, dict[str, Any], float],
+                [
+                    str,
+                    str,
+                    str | None,
+                    str,
+                    str,
+                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    dict[str, Any],
+                    float,
+                    "ToolExecutionContext",
+                ],
                 Awaitable[bool],  # Changed int to str
             ]
             | None
@@ -365,7 +375,17 @@ class ProcessingService:
         request_confirmation_callback: (
             Callable[
                 # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-                [str, str, str | None, str, str, dict[str, Any], float],
+                [
+                    str,
+                    str,
+                    str | None,
+                    str,
+                    str,
+                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    dict[str, Any],
+                    float,
+                    "ToolExecutionContext",
+                ],
                 Awaitable[bool],
             ]
             | None
@@ -707,7 +727,17 @@ class ProcessingService:
         chat_interfaces: dict[str, ChatInterface] | None = None,
         request_confirmation_callback: Callable[
             # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-            [str, str, str | None, str, str, dict[str, Any], float],
+            [
+                str,
+                str,
+                str | None,
+                str,
+                str,
+                # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                dict[str, Any],
+                float,
+                "ToolExecutionContext",
+            ],
             Awaitable[bool],
         ]
         | None = None,
@@ -1416,7 +1446,17 @@ class ProcessingService:
         request_confirmation_callback: (
             Callable[
                 # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-                [str, str, str | None, str, str, dict[str, Any], float],
+                [
+                    str,
+                    str,
+                    str | None,
+                    str,
+                    str,
+                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    dict[str, Any],
+                    float,
+                    "ToolExecutionContext",
+                ],
                 Awaitable[bool],
             ]
             | None
@@ -1882,7 +1922,17 @@ class ProcessingService:
         request_confirmation_callback: (
             Callable[
                 # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-                [str, str, str | None, str, str, dict[str, Any], float],
+                [
+                    str,
+                    str,
+                    str | None,
+                    str,
+                    str,
+                    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+                    dict[str, Any],
+                    float,
+                    "ToolExecutionContext",
+                ],
                 Awaitable[bool],
             ]
             | None

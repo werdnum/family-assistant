@@ -7,37 +7,72 @@ for tools that require user confirmation before execution.
 from __future__ import annotations
 
 import logging
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import telegramify_markdown
 
 from family_assistant import calendar_integration
 
+if TYPE_CHECKING:
+    from family_assistant.tools.infrastructure import ToolsProvider
+    from family_assistant.tools.types import ToolExecutionContext
+
 logger = logging.getLogger(__name__)
+
+
+def _extract_calendar_config_from_provider(
+    provider: ToolsProvider | None,
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+) -> dict[str, Any] | None:
+    """Extract calendar config from a tools provider.
+
+    This helper avoids circular imports by using TYPE_CHECKING and runtime isinstance checks.
+    """
+    if provider is None:
+        return None
+
+    # Import here to avoid circular dependency at module load time
+    from family_assistant.tools.infrastructure import (  # noqa: PLC0415
+        CompositeToolsProvider,
+        LocalToolsProvider,
+    )
+
+    # Direct LocalToolsProvider
+    if isinstance(provider, LocalToolsProvider):
+        return provider.get_calendar_config()
+
+    # ConfirmingToolsProvider or other wrapper
+    if hasattr(provider, "wrapped_provider"):
+        wrapped = provider.wrapped_provider  # type: ignore[attr-defined]
+        if isinstance(wrapped, LocalToolsProvider):
+            return wrapped.get_calendar_config()
+        elif isinstance(wrapped, CompositeToolsProvider):
+            for p in wrapped.get_providers():
+                if isinstance(p, LocalToolsProvider):
+                    return p.get_calendar_config()
+
+    return None
 
 
 class ConfirmationRenderer(Protocol):
     """Protocol for confirmation prompt renderers.
 
-    Confirmation renderers take tool arguments (potentially enriched with
-    additional context like event details and timezone) and return a
-    human-readable confirmation prompt string.
-
-    The ConfirmingToolsProvider may enrich args with:
-    - __event_details__: Fetched event details for calendar tools
-    - __timezone_str__: Timezone string from execution context
+    Confirmation renderers are responsible for fetching any necessary data
+    and formatting a human-readable confirmation prompt. They receive the
+    full ToolExecutionContext to access configuration, timezone, etc.
     """
 
-    def __call__(
+    async def __call__(
         self,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         args: dict[str, Any],
+        context: ToolExecutionContext,
     ) -> str:
         """Render a confirmation prompt from tool arguments.
 
         Args:
-            args: Tool arguments, potentially enriched with __event_details__
-                  and __timezone_str__ by ConfirmingToolsProvider
+            args: Tool arguments (e.g., uid, calendar_url for calendar tools)
+            context: Execution context with timezone, calendar config, etc.
 
         Returns:
             Formatted confirmation prompt string
@@ -79,26 +114,49 @@ def _format_event_details_for_confirmation(
         return f"'{summary}' ({start_str} - {end_str})"
 
 
-def render_delete_calendar_event_confirmation(
+async def render_delete_calendar_event_confirmation(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     args: dict[str, Any],
+    context: ToolExecutionContext,
 ) -> str:
     """Renders the confirmation message for deleting a calendar event.
 
+    Fetches event details from the calendar to provide a meaningful prompt.
+
     Args:
-        args: Tool arguments including:
-            - uid: Event UID
-            - calendar_url: Calendar URL
-            - __event_details__: Optional event details (injected by ConfirmingToolsProvider)
-            - __timezone_str__: Timezone string (injected by ConfirmingToolsProvider)
+        args: Tool arguments including uid and calendar_url
+        context: Execution context with calendar config and timezone
     """
-    # Extract enriched data from args (injected by ConfirmingToolsProvider)
-    event_details = args.get("__event_details__")
-    timezone_str = args.get("__timezone_str__", "UTC")
+    # Fetch event details to show the user what they're deleting
+    event_details = None
+    uid = args.get("uid")
+    calendar_url = args.get("calendar_url")
+
+    if uid and calendar_url:
+        # Get calendar config from the tools provider
+        calendar_config = _extract_calendar_config_from_provider(
+            getattr(context, "tools_provider", None)
+        )
+
+        if calendar_config:
+            try:
+                event_details = (
+                    await calendar_integration.fetch_event_details_for_confirmation(
+                        uid=uid,
+                        calendar_url=calendar_url,
+                        calendar_config=calendar_config,
+                    )
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to fetch event details for deletion confirmation: {e}"
+                )
 
     # Use the helper to format event details
     # It handles the None case by returning "Event details not found."
-    event_desc = _format_event_details_for_confirmation(event_details, timezone_str)
+    event_desc = _format_event_details_for_confirmation(
+        event_details, context.timezone_str
+    )
 
     # Use MarkdownV2 compatible formatting
     return (
@@ -107,27 +165,49 @@ def render_delete_calendar_event_confirmation(
     )
 
 
-def render_modify_calendar_event_confirmation(
+async def render_modify_calendar_event_confirmation(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     args: dict[str, Any],
+    context: ToolExecutionContext,
 ) -> str:
     """Renders the confirmation message for modifying a calendar event.
 
+    Fetches event details from the calendar to provide a meaningful prompt.
+
     Args:
-        args: Tool arguments including:
-            - uid: Event UID
-            - calendar_url: Calendar URL
-            - new_summary, new_start_time, etc.: Modification fields
-            - __event_details__: Optional event details (injected by ConfirmingToolsProvider)
-            - __timezone_str__: Timezone string (injected by ConfirmingToolsProvider)
+        args: Tool arguments including uid, calendar_url, and modification fields
+        context: Execution context with calendar config and timezone
     """
-    # Extract enriched data from args (injected by ConfirmingToolsProvider)
-    event_details = args.get("__event_details__")
-    timezone_str = args.get("__timezone_str__", "UTC")
+    # Fetch event details to show the user what they're modifying
+    event_details = None
+    uid = args.get("uid")
+    calendar_url = args.get("calendar_url")
+
+    if uid and calendar_url:
+        # Get calendar config from the tools provider
+        calendar_config = _extract_calendar_config_from_provider(
+            getattr(context, "tools_provider", None)
+        )
+
+        if calendar_config:
+            try:
+                event_details = (
+                    await calendar_integration.fetch_event_details_for_confirmation(
+                        uid=uid,
+                        calendar_url=calendar_url,
+                        calendar_config=calendar_config,
+                    )
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to fetch event details for modification confirmation: {e}"
+                )
 
     # Use the helper to format event details
     # It handles the None case by returning "Event details not found."
-    event_desc = _format_event_details_for_confirmation(event_details, timezone_str)
+    event_desc = _format_event_details_for_confirmation(
+        event_details, context.timezone_str
+    )
 
     changes = []
     # Use MarkdownV2 compatible formatting for code blocks/inline code

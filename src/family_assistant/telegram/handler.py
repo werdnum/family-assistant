@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from family_assistant.telegram.protocols import MessageBatcher
     from family_assistant.telegram.service import TelegramService
     from family_assistant.telegram.ui import TelegramConfirmationUIManager
+    from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -496,11 +497,13 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
                         tool_args: dict[str, Any],
                         timeout_seconds: float,
+                        exec_context: ToolExecutionContext,
                     ) -> bool:
                         logger.debug("confirmation_callback_wrapper called!")
                         renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
                         if renderer:
-                            prompt_text = renderer(tool_args)
+                            # Async renderer that fetches its own data from context
+                            prompt_text = await renderer(tool_args, exec_context)
                         else:
                             prompt_text = f"Confirm execution of tool: {tool_name}"
 
@@ -914,10 +917,12 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
                     tool_args_cb: dict[str, Any],
                     timeout_cb: float,
+                    exec_context_cb: ToolExecutionContext,
                 ) -> bool:
                     renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name_cb)
                     if renderer:
-                        prompt_text_cb = renderer(tool_args_cb)
+                        # Async renderer that fetches its own data from context
+                        prompt_text_cb = await renderer(tool_args_cb, exec_context_cb)
                     else:
                         prompt_text_cb = f"Confirm execution of tool: {tool_name_cb}"
 
