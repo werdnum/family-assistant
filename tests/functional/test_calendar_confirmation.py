@@ -450,7 +450,7 @@ async def test_confirming_tools_provider_with_calendar_events(
 
 @pytest.mark.asyncio
 async def test_confirmation_when_event_not_found(
-    pg_vector_db_engine: AsyncEngine,
+    db_engine: AsyncEngine,
 ) -> None:
     """Test that confirmation handles gracefully when event doesn't exist."""
 
@@ -458,7 +458,7 @@ async def test_confirmation_when_event_not_found(
     # Create LocalToolsProvider with empty calendar config (no valid caldav server)
     mock_provider = LocalToolsProvider([], {}, calendar_config={})
 
-    async with get_db_context(engine=pg_vector_db_engine) as db_ctx:
+    async with get_db_context(engine=db_engine) as db_ctx:
         mock_context = create_test_execution_context(
             db_context=db_ctx, tools_provider=mock_provider
         )
