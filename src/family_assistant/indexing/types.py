@@ -2,7 +2,7 @@
 Typed data structures for the indexing subsystem.
 """
 
-from typing import TypedDict, Union
+from typing import TypedDict
 
 
 class EmailMetadata(TypedDict, total=False):
@@ -49,6 +49,6 @@ class RawFileMetadata(TypedDict):
 
 
 # A union of all possible metadata types for IndexableContent
-IndexableContentMetadata = Union[
-    ChunkMetadata, UrlScrapeMetadata, RawFileMetadata, dict[str, object]
-]
+IndexableContentMetadata = (
+    ChunkMetadata | UrlScrapeMetadata | RawFileMetadata | dict[str, object]
+)
