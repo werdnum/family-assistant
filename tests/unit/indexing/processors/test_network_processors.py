@@ -156,11 +156,11 @@ async def test_fetch_markdown_content_success(
         assert_that(result_item.content).is_equal_to("## Hello Markdown")
         assert_that(result_item.mime_type).is_equal_to("text/markdown")
         assert_that(result_item.source_processor).is_equal_to(processor.name)
-        assert_that(result_item.metadata["original_url"]).is_equal_to(url)
-        assert_that(result_item.metadata["fetched_title"]).is_equal_to(
+        assert_that(result_item.metadata.get("original_url")).is_equal_to(url)
+        assert_that(result_item.metadata.get("fetched_title")).is_equal_to(
             "Mock Markdown Title"
         )
-        assert_that(result_item.metadata["source_scraper_description"]).is_equal_to(
+        assert_that(result_item.metadata.get("source_scraper_description")).is_equal_to(
             "mock-markdown"
         )
     processor.cleanup_temp_files()
@@ -239,9 +239,9 @@ async def test_fetch_image_content_success(
         assert_that(result_item.content).is_none()
         assert_that(result_item.ref).is_not_none()
         assert_that(result_item.mime_type).is_equal_to("image/png")
-        assert_that(result_item.metadata["original_filename"]).is_equal_to(
+        assert_that(result_item.metadata.get("original_filename")).is_equal_to(
             "image.png"
-        )  # Based on URL parsing
+        )
 
         # Verify temp file content
         assert_that(result_item.ref).exists()

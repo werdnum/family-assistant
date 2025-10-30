@@ -16,7 +16,11 @@ from sqlalchemy.exc import SQLAlchemyError
 # Use absolute imports
 # storage functions now accessed via DatabaseContext  # For DB operations (add_document)
 from family_assistant.indexing.pipeline import IndexableContent, IndexingPipeline
-from family_assistant.indexing.types import EmailAttachmentInfo, EmailMetadata
+from family_assistant.indexing.types import (
+    EmailAttachmentInfo,
+    EmailMetadata,
+    IndexableContentMetadata,
+)
 from family_assistant.storage.email import (
     received_emails_table,
 )  # Import table definition
@@ -43,7 +47,9 @@ class EmailDocument(Document):
     _title: str | None = None
     _created_at: datetime | None = None
     _source_uri: str | None = None
-    _base_metadata: EmailMetadata = field(default_factory=dict)
+    _base_metadata: EmailMetadata = field(
+        default_factory=lambda: cast("EmailMetadata", {})
+    )
     _content_plain: str | None = None
     _attachment_info_raw: list[EmailAttachmentInfo] | None = None
 
@@ -101,20 +107,18 @@ class EmailDocument(Document):
             )
 
         # Extract base metadata
-        base_metadata: EmailMetadata = {
-            key: row.get(key)
-            for key in [
-                "sender_address",
-                "from_header",
-                "recipient_address",
-                "to_header",
-                "cc_header",
-                "mailgun_timestamp",
-            ]
-            if row.get(key) is not None
-        }
-        headers_json = row.get("headers_json")
-        if headers_json:
+        base_metadata: EmailMetadata = {}
+        for key in [
+            "sender_address",
+            "from_header",
+            "recipient_address",
+            "to_header",
+            "cc_header",
+            "mailgun_timestamp",
+        ]:
+            if (value := row.get(key)) is not None:
+                base_metadata[key] = value  # type: ignore
+        if (headers_json := row.get("headers_json")) is not None:
             base_metadata["headers"] = headers_json
 
         # Prefer stripped_text for cleaner content
@@ -249,10 +253,12 @@ class EmailIndexer:
             # Provide the raw plain text body.
             plain_text_item = IndexableContent(
                 content=email_doc.content_plain,
-                embedding_type="raw_body_text",  # A generic type for processors to pick up
+                embedding_type="raw_body_text",
                 mime_type="text/plain",
                 source_processor="EmailIndexer.handle_index_email",
-                metadata={"original_source": "email_body"},
+                metadata=cast(
+                    "IndexableContentMetadata", {"original_source": "email_body"}
+                ),
             )
             initial_items.append(plain_text_item)
 
@@ -273,16 +279,19 @@ class EmailIndexer:
                     f"Preparing attachment for pipeline: {original_filename} ({mime_type}) at {storage_path} for email {email_db_id}"
                 )
                 attachment_item = IndexableContent(
-                    content=None,  # Content is in the file pointed to by ref
-                    embedding_type="email_attachment_file",  # Generic type for file processors
+                    content=None,
+                    embedding_type="email_attachment_file",
                     mime_type=mime_type,
                     source_processor="EmailIndexer.handle_index_email.attachment",
-                    metadata={
-                        "original_filename": original_filename,
-                        "email_db_id": email_db_id,  # Link back to email
-                        "email_source_id": email_doc.source_id,  # Message-ID
-                    },
-                    ref=storage_path,  # Path to the saved attachment file
+                    metadata=cast(
+                        "IndexableContentMetadata",
+                        {
+                            "original_filename": original_filename,
+                            "email_db_id": email_db_id,
+                            "email_source_id": email_doc.source_id,
+                        },
+                    ),
+                    ref=storage_path,
                 )
                 initial_items.append(attachment_item)
 
