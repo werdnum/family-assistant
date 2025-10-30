@@ -4,10 +4,14 @@ Content processors focused on text manipulation, like chunking.
 
 import logging
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from family_assistant.indexing.pipeline import ContentProcessor, IndexableContent
 from family_assistant.storage.vector import Document
 from family_assistant.tools.types import ToolExecutionContext
+
+if TYPE_CHECKING:
+    from family_assistant.indexing.types import ChunkMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -143,19 +147,19 @@ class TextChunker(ContentProcessor):
                 )
                 chunks = self._chunk_text_natively(item.content)
                 for i, chunk_text in enumerate(chunks):
-                    chunk_metadata = item.metadata.copy()
-                    chunk_metadata.update({
+                    new_metadata: ChunkMetadata = {
                         "chunk_index": i,
                         "original_embedding_type": item.embedding_type,
                         "original_content_length": len(item.content),
                         "chunk_content_length": len(chunk_text),
-                    })
+                    }
+                    new_metadata.update(item.metadata)  # type: ignore
                     chunk_item = IndexableContent(
                         embedding_type=output_embedding_type,
                         source_processor=self.name,
                         content=chunk_text,
-                        mime_type=item.mime_type,  # Retain original mime_type or set to text/plain
-                        metadata=chunk_metadata,
+                        mime_type=item.mime_type,
+                        metadata=new_metadata,
                     )
                     output_items.append(chunk_item)
                 logger.debug(
