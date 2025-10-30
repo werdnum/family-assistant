@@ -6,6 +6,7 @@ import { getAttachmentKey } from '../../../types/attachments';
 const MessageDisplay = ({ message }) => {
   const [expandedToolCalls, setExpandedToolCalls] = useState(new Set());
   const [expandedTraceback, setExpandedTraceback] = useState(false);
+  const [expandedDetails, setExpandedDetails] = useState(false);
 
   const toggleToolCall = (index) => {
     const newExpanded = new Set(expandedToolCalls);
@@ -238,6 +239,85 @@ const MessageDisplay = ({ message }) => {
             {expandedTraceback && (
               <div className={styles.errorTraceback}>
                 <pre className={styles.tracebackPre}>{message.error_traceback}</pre>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Message Details Section */}
+        {(message.reasoning_info || message.processing_profile_id) && (
+          <div className={styles.detailsSection}>
+            <div className={styles.detailsHeader}>
+              <span className={styles.detailsIcon}>ℹ️</span>
+              <span>Message Details</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setExpandedDetails(!expandedDetails)}
+                aria-expanded={expandedDetails}
+              >
+                {expandedDetails ? '▼' : '▶'}
+                {expandedDetails ? 'Hide' : 'Show'} Details
+              </Button>
+            </div>
+
+            {expandedDetails && (
+              <div className={styles.detailsContent}>
+                {message.processing_profile_id && (
+                  <div className={styles.detailField}>
+                    <strong>Processing Profile:</strong> {message.processing_profile_id}
+                  </div>
+                )}
+
+                {message.reasoning_info && (
+                  <>
+                    {message.reasoning_info.model && (
+                      <div className={styles.detailField}>
+                        <strong>Model:</strong> {message.reasoning_info.model}
+                      </div>
+                    )}
+
+                    {(message.reasoning_info.prompt_tokens !== undefined ||
+                      message.reasoning_info.completion_tokens !== undefined ||
+                      message.reasoning_info.total_tokens !== undefined) && (
+                      <div className={styles.detailField}>
+                        <strong>Token Usage:</strong>
+                        <div className={styles.tokenStats}>
+                          {message.reasoning_info.prompt_tokens !== undefined && (
+                            <span className={styles.tokenStat}>
+                              Prompt: {message.reasoning_info.prompt_tokens.toLocaleString()}
+                            </span>
+                          )}
+                          {message.reasoning_info.completion_tokens !== undefined && (
+                            <span className={styles.tokenStat}>
+                              Completion:{' '}
+                              {message.reasoning_info.completion_tokens.toLocaleString()}
+                            </span>
+                          )}
+                          {message.reasoning_info.total_tokens !== undefined && (
+                            <span className={styles.tokenStat}>
+                              Total: {message.reasoning_info.total_tokens.toLocaleString()}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {message.reasoning_info.reasoning_tokens !== undefined && (
+                      <div className={styles.detailField}>
+                        <strong>Reasoning Tokens:</strong>{' '}
+                        {message.reasoning_info.reasoning_tokens.toLocaleString()}
+                      </div>
+                    )}
+
+                    {message.reasoning_info.thinking && (
+                      <div className={styles.detailField}>
+                        <strong>Thinking Summary:</strong>
+                        <pre className={styles.thinkingPre}>{message.reasoning_info.thinking}</pre>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             )}
           </div>

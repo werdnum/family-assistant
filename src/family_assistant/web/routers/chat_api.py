@@ -264,6 +264,9 @@ class ConversationMessage(BaseModel):
     processing_profile_id: str | None = Field(
         None, description="ID of the processing profile that generated this message"
     )
+    reasoning_info: dict | None = Field(
+        None, description="LLM reasoning/usage information (token counts, model, etc.)"
+    )
     metadata: dict | None = Field(None, description="Additional message metadata")
 
 
@@ -684,6 +687,7 @@ async def get_conversation_messages(
                 error_traceback=msg.get("error_traceback"),
                 attachments=msg.get("attachments"),
                 processing_profile_id=msg.get("processing_profile_id"),
+                reasoning_info=msg.get("reasoning_info"),
                 metadata=msg_metadata,
             )
         )

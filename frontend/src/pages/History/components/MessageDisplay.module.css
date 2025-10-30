@@ -297,6 +297,82 @@
   color: #721c24;
 }
 
+/* Message details section */
+.detailsSection {
+  margin-top: 1rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background-color: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.detailsHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background-color: var(--bg);
+  border-bottom: 1px solid hsl(var(--border));
+  font-weight: 500;
+  color: var(--text);
+}
+
+.detailsIcon {
+  font-size: 1.1em;
+  margin-right: 0.5rem;
+}
+
+.detailsContent {
+  padding: 0.75rem;
+}
+
+.detailField {
+  margin-bottom: 0.75rem;
+}
+
+.detailField:last-child {
+  margin-bottom: 0;
+}
+
+.detailField strong {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.9em;
+  color: var(--text);
+}
+
+.tokenStats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-top: 0.25rem;
+  padding: 0.5rem;
+  background-color: var(--bg);
+  border-radius: 4px;
+  border: 1px solid hsl(var(--border));
+}
+
+.tokenStat {
+  font-family: 'Courier New', monospace;
+  font-size: 0.9em;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.thinkingPre {
+  background-color: var(--bg);
+  border: 1px solid hsl(var(--border));
+  border-radius: 3px;
+  padding: 0.5rem;
+  margin: 0.25rem 0 0 0;
+  font-family: 'Courier New', monospace;
+  font-size: 0.8em;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  color: var(--text);
+  line-height: 1.4;
+}
+
 /* Message footer */
 .messageFooter {
   padding: 0.5rem 1rem;
@@ -318,19 +394,30 @@
     align-items: flex-start;
     gap: 0.5rem;
   }
-  
+
   .messageTimestamp {
     align-self: flex-end;
   }
-  
+
   .toolCallHeader {
     flex-direction: column;
     align-items: flex-start;
     gap: 0.5rem;
   }
-  
+
+  .detailsHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
   .expandButton {
     align-self: flex-end;
+  }
+
+  .tokenStats {
+    flex-direction: column;
+    gap: 0.5rem;
   }
 }
 
