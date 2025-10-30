@@ -16,11 +16,15 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, get_type_hints
 
 from family_assistant import calendar_integration
 from family_assistant.tools.attachment_utils import process_attachment_arguments
-from family_assistant.tools.types import ToolExecutionContext, ToolResult
+from family_assistant.tools.types import (
+    CalendarConfig,
+    ToolExecutionContext,
+    ToolResult,
+)
 
 if TYPE_CHECKING:
     from family_assistant.embeddings import EmbeddingGenerator
-    from family_assistant.tools.types import CalendarConfig
+    from family_assistant.tools.types import CalendarEvent
 
 logger = logging.getLogger(__name__)
 
@@ -229,8 +233,7 @@ class LocalToolsProvider:
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         implementations: dict[str, Any],  # dict[str, Callable]
         embedding_generator: EmbeddingGenerator | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        calendar_config: dict[str, Any] | None = None,
+        calendar_config: CalendarConfig | None = None,
     ) -> None:
         self._definitions = definitions
         self._implementations = implementations
@@ -360,8 +363,10 @@ class LocalToolsProvider:
                         )
 
                 elif param_name == "calendar_config":
-                    # Check if it's a dict type annotation
-                    if annotation_to_check == dict[str, Any]:
+                    if (
+                        annotation_to_check == "CalendarConfig"
+                        or annotation_to_check == dict[str, Any]
+                    ):
                         needs_calendar_config = True
                     # Handle string annotation fallback
                     elif (
@@ -381,6 +386,8 @@ class LocalToolsProvider:
                         logger.debug(
                             f"Matched calendar_config via __origin__ check for {callable_func.__name__}"
                         )
+                    elif annotation_to_check == CalendarConfig:
+                        needs_calendar_config = True
 
             # Inject dependencies based on resolved needs
             if needs_exec_context:
@@ -454,8 +461,7 @@ class LocalToolsProvider:
             # Re-raise or return formatted error string? Returning error string for now.
             return f"Error executing tool '{name}': {e}"
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def get_calendar_config(self) -> dict[str, Any] | None:
+    def get_calendar_config(self) -> CalendarConfig | None:
         """Get the calendar configuration."""
         return self._calendar_config
 
@@ -634,8 +640,7 @@ class ConfirmingToolsProvider(ToolsProvider):
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         args: dict[str, Any],
         context: ToolExecutionContext,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any] | None:
+    ) -> CalendarEvent | None:
         """Fetches additional details for tools that need them for confirmation.
 
         This is specifically for calendar tools that need to fetch event details

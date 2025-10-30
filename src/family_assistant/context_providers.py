@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import httpx
 import pytz
@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import homeassistant_api
+
+    from family_assistant.tools.types import CalendarConfig
 
 # Attempt to import homeassistant_api and its specific exception
 try:
@@ -513,7 +515,6 @@ class WeatherContextProvider(ContextProvider):
         )
 
     def _format_todays_detailed_forecast(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         weather_data: dict[str, Any],
@@ -669,7 +670,6 @@ class WeatherContextProvider(ContextProvider):
         return fragments
 
     def _format_weekly_outlook(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         weather_data: dict[str, Any],
@@ -778,8 +778,7 @@ class CalendarContextProvider(ContextProvider):
 
     def __init__(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        calendar_config: dict[str, Any],
+        calendar_config: "CalendarConfig",
         timezone_str: str,
         prompts: PromptsType,
         clock: calendar_integration.Clock | None = None,
@@ -814,7 +813,7 @@ class CalendarContextProvider(ContextProvider):
 
         try:
             upcoming_events = await calendar_integration.fetch_upcoming_events(
-                calendar_config=self._calendar_config,
+                calendar_config=cast("CalendarConfig", self._calendar_config),
                 timezone_str=self._timezone_str,
             )
             # format_events_for_prompt itself uses prompts for individual event lines

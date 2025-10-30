@@ -10,7 +10,7 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from unittest.mock import AsyncMock
 
 import httpx
@@ -50,6 +50,9 @@ from family_assistant.tools import (
 from family_assistant.web.web_chat_interface import WebChatInterface
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
+
+if TYPE_CHECKING:
+    from family_assistant.tools.types import CalendarConfig
 
 
 class WebTestFixture(NamedTuple):
@@ -326,7 +329,7 @@ async def _create_web_assistant(
                 "description": "Test profile for web UI",
                 "processing_config": {
                     "prompts": {"system_prompt": "You are a helpful test assistant."},
-                    "calendar_config": {},
+                    "calendar_config": cast("CalendarConfig", {}),
                     "timezone": "UTC",
                     "max_history_messages": 5,
                     "history_max_age_hours": 1,
@@ -352,7 +355,7 @@ async def _create_web_assistant(
                 "description": "Test browser profile for web UI",
                 "processing_config": {
                     "prompts": {"system_prompt": "You are a test browser assistant."},
-                    "calendar_config": {},
+                    "calendar_config": cast("CalendarConfig", {}),
                     "timezone": "UTC",
                     "max_history_messages": 5,
                     "history_max_age_hours": 1,
@@ -373,7 +376,7 @@ async def _create_web_assistant(
                 "description": "Test research profile for web UI",
                 "processing_config": {
                     "prompts": {"system_prompt": "You are a test research assistant."},
-                    "calendar_config": {},
+                    "calendar_config": cast("CalendarConfig", {}),
                     "timezone": "UTC",
                     "max_history_messages": 5,
                     "history_max_age_hours": 1,
@@ -1017,7 +1020,7 @@ async def api_test_tools_provider(
         definitions=local_tools_definition,  # Use actual definitions
         implementations=local_tool_implementations,  # Use actual implementations
         embedding_generator=None,  # Not needed for add_note
-        calendar_config={},  # Empty calendar config for tests
+        calendar_config=cast("CalendarConfig", {}),  # Empty calendar config for tests
     )
     # Mock MCP provider as it's not the focus here
     mock_mcp_provider = AsyncMock(spec=MCPToolsProvider)
@@ -1070,7 +1073,7 @@ def api_test_processing_service(
         prompts=api_mock_processing_service_config.prompts,
     )
     calendar_provider = CalendarContextProvider(
-        calendar_config={},  # Empty calendar config for tests
+        calendar_config=cast("CalendarConfig", {}),  # Empty calendar config for tests
         timezone_str=api_mock_processing_service_config.timezone_str,
         prompts=api_mock_processing_service_config.prompts,
     )
