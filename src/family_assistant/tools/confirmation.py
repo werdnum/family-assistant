@@ -55,19 +55,24 @@ def render_delete_calendar_event_confirmation(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     args: dict[str, Any],
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    event_details: dict[str, Any] | None,
-    timezone_str: str,
+    event_details: dict[str, Any] | None = None,
+    timezone_str: str = "UTC",
 ) -> str:
-    """Renders the confirmation message for deleting a calendar event."""
-    event_desc = _format_event_details_for_confirmation(
-        event_details, timezone_str
-    )  # Pass timezone
-    args.get("calendar_url", "Unknown Calendar")
+    """Renders the confirmation message for deleting a calendar event.
+
+    Args:
+        args: Tool arguments containing uid and calendar_url
+        event_details: Optional event details for richer display
+        timezone_str: Timezone for formatting times (default: UTC)
+    """
+    # Use the helper to format event details
+    # It handles the None case by returning "Event details not found."
+    event_desc = _format_event_details_for_confirmation(event_details, timezone_str)
+
     # Use MarkdownV2 compatible formatting
     return (
         f"Please confirm you want to *delete* the event:\n"
         f"Event: {telegramify_markdown.escape_markdown(event_desc)}"
-        # Removed calendar URL line: f"From Calendar: `{telegramify_markdown.escape_markdown(cal_url)}`"
     )
 
 
@@ -76,14 +81,20 @@ def render_modify_calendar_event_confirmation(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     args: dict[str, Any],
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    event_details: dict[str, Any] | None,
-    timezone_str: str,
+    event_details: dict[str, Any] | None = None,
+    timezone_str: str = "UTC",
 ) -> str:
-    """Renders the confirmation message for modifying a calendar event."""
-    event_desc = _format_event_details_for_confirmation(
-        event_details, timezone_str
-    )  # Pass timezone
-    args.get("calendar_url", "Unknown Calendar")
+    """Renders the confirmation message for modifying a calendar event.
+
+    Args:
+        args: Tool arguments containing uid, calendar_url, and modification fields
+        event_details: Optional event details for richer display
+        timezone_str: Timezone for formatting times (default: UTC)
+    """
+    # Use the helper to format event details
+    # It handles the None case by returning "Event details not found."
+    event_desc = _format_event_details_for_confirmation(event_details, timezone_str)
+
     changes = []
     # Use MarkdownV2 compatible formatting for code blocks/inline code
     if args.get("new_summary"):
@@ -108,15 +119,14 @@ def render_modify_calendar_event_confirmation(
     return (
         f"Please confirm you want to *modify* the event:\n"
         f"Event: {telegramify_markdown.escape_markdown(event_desc)}\n"
-        # Removed calendar URL line: f"From Calendar: `{telegramify_markdown.escape_markdown(cal_url)}`\n"
         f"With the following changes:\n" + "\n".join(changes)
     )
 
 
 # Mapping of tool names to their confirmation renderers
-TOOL_CONFIRMATION_RENDERERS: dict[
-    str, Any  # Actually Callable[[dict[str, Any], dict[str, Any] | None, str], str]
-] = {
+# Signature: (args: dict, event_details: dict | None = None, timezone_str: str = "UTC") -> str
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+TOOL_CONFIRMATION_RENDERERS: dict[str, Any] = {
     "delete_calendar_event": render_delete_calendar_event_confirmation,
     "modify_calendar_event": render_modify_calendar_event_confirmation,
 }
