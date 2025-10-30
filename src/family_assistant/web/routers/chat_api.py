@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.web.confirmation_manager import web_confirmation_manager
 from family_assistant.web.dependencies import (
     get_attachment_registry,
@@ -799,6 +800,7 @@ async def api_chat_send_message_stream(
                 # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
                 tool_args: dict[str, Any],
                 timeout_seconds: float,
+                context: ToolExecutionContext,
             ) -> bool:
                 """Request confirmation from the user via SSE."""
                 # For the web UI, we don't use text renderers like Telegram does.

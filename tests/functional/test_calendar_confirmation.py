@@ -160,51 +160,74 @@ async def test_modify_calendar_event_confirmation_shows_event_details(
     assert fetched_details["uid"] == event_uid
     assert fetched_details["summary"] == event_summary
 
-    # Test the confirmation renderer with real event details
-    # Simulate what ConfirmingToolsProvider does: enrich args with event details and timezone
-    test_args = {
-        "uid": event_uid,
-        "calendar_url": test_calendar_url,
-        "new_summary": "Education Open Day",
-        "new_start_time": start_dt.replace(hour=9).isoformat(),
-        "new_end_time": start_dt.replace(hour=12).isoformat(),
-        "__event_details__": fetched_details,
-        "__timezone_str__": TEST_TIMEZONE_STR,
-    }
+    # Test the confirmation renderer - async renderers fetch their own data
+    # Create a mock ToolExecutionContext with tools_provider
 
-    confirmation_prompt = render_modify_calendar_event_confirmation(args=test_args)
+    # Create LocalToolsProvider with calendar config so renderer can fetch event details
+    mock_provider = LocalToolsProvider([], {}, calendar_config=test_calendar_config)
 
-    # Debug: print the confirmation prompt
-    print(f"\n\nDEBUG: Confirmation prompt:\n{confirmation_prompt}\n\n")
-    print(f"DEBUG: Looking for event_summary: {event_summary}")
-    print(f"DEBUG: Event details: {fetched_details}")
+    async with get_db_context(engine=pg_vector_db_engine) as db_ctx:
+        mock_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test",
+            user_name="TestUser",
+            turn_id="test-turn",
+            db_context=db_ctx,
+            timezone_str=TEST_TIMEZONE_STR,
+            tools_provider=mock_provider,
+            processing_service=None,
+            clock=None,
+            event_sources=None,
+            home_assistant_client=None,
+            attachment_registry=None,
+            chat_interface=None,
+            request_confirmation_callback=None,
+        )
 
-    # Also check for escaped version of the summary since confirmation uses telegramify_markdown
+        test_args = {
+            "uid": event_uid,
+            "calendar_url": test_calendar_url,
+            "new_summary": "Education Open Day",
+            "new_start_time": start_dt.replace(hour=9).isoformat(),
+            "new_end_time": start_dt.replace(hour=12).isoformat(),
+        }
 
-    escaped_summary = telegramify_markdown.escape_markdown(event_summary)
-    print(f"DEBUG: Escaped event_summary: {escaped_summary}")
+        confirmation_prompt = await render_modify_calendar_event_confirmation(
+            test_args, mock_context
+        )
 
-    # Verify the confirmation prompt contains both original and new details
-    # Check for either escaped or unescaped version
-    assert (
-        event_summary in confirmation_prompt or escaped_summary in confirmation_prompt
-    ), (
-        f"Original event summary not in confirmation. Looking for '{event_summary}' or '{escaped_summary}'"
-    )
-    assert "Education Open Day" in confirmation_prompt, (
-        "New summary not in confirmation"
-    )
-    assert "Event details not found" not in confirmation_prompt, (
-        "Should not show error message"
-    )
+        # Debug: print the confirmation prompt
+        print(f"\n\nDEBUG: Confirmation prompt:\n{confirmation_prompt}\n\n")
+        print(f"DEBUG: Looking for event_summary: {event_summary}")
+        print(f"DEBUG: Event details: {fetched_details}")
 
-    # Verify it formats the event time correctly
-    # The exact format depends on format_datetime_or_date but should mention the time
-    assert (
-        "14:00" in confirmation_prompt
-        or "2:00" in confirmation_prompt
-        or "2 PM" in confirmation_prompt
-    ), "Original event time not properly formatted in confirmation"
+        # Also check for escaped version of the summary since confirmation uses telegramify_markdown
+
+        escaped_summary = telegramify_markdown.escape_markdown(event_summary)
+        print(f"DEBUG: Escaped event_summary: {escaped_summary}")
+
+        # Verify the confirmation prompt contains both original and new details
+        # Check for either escaped or unescaped version
+        assert (
+            event_summary in confirmation_prompt
+            or escaped_summary in confirmation_prompt
+        ), (
+            f"Original event summary not in confirmation. Looking for '{event_summary}' or '{escaped_summary}'"
+        )
+        assert "Education Open Day" in confirmation_prompt, (
+            "New summary not in confirmation"
+        )
+        assert "Event details not found" not in confirmation_prompt, (
+            "Should not show error message"
+        )
+
+        # Verify it formats the event time correctly
+        # The exact format depends on format_datetime_or_date but should mention the time
+        assert (
+            "14:00" in confirmation_prompt
+            or "2:00" in confirmation_prompt
+            or "2 PM" in confirmation_prompt
+        ), "Original event time not properly formatted in confirmation"
 
 
 @pytest.mark.asyncio
@@ -248,29 +271,50 @@ async def test_delete_calendar_event_confirmation_shows_event_details(
 
     assert fetched_details is not None
 
-    # Test the delete confirmation renderer
-    # Simulate what ConfirmingToolsProvider does: enrich args with event details and timezone
-    test_args = {
-        "uid": event_uid,
-        "calendar_url": test_calendar_url,
-        "__event_details__": fetched_details,
-        "__timezone_str__": TEST_TIMEZONE_STR,
-    }
+    # Test the delete confirmation renderer - async renderers fetch their own data
+    # Create LocalToolsProvider with calendar config so renderer can fetch event details
+    mock_provider = LocalToolsProvider([], {}, calendar_config=test_calendar_config)
 
-    confirmation_prompt = render_delete_calendar_event_confirmation(args=test_args)
+    async with get_db_context(engine=pg_vector_db_engine) as db_ctx:
+        mock_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test",
+            user_name="TestUser",
+            turn_id="test-turn",
+            db_context=db_ctx,
+            timezone_str=TEST_TIMEZONE_STR,
+            tools_provider=mock_provider,
+            processing_service=None,
+            clock=None,
+            event_sources=None,
+            home_assistant_client=None,
+            attachment_registry=None,
+            chat_interface=None,
+            request_confirmation_callback=None,
+        )
 
-    # Verify the confirmation prompt
-    # The confirmation uses telegramify_markdown which escapes special characters
+        test_args = {
+            "uid": event_uid,
+            "calendar_url": test_calendar_url,
+        }
 
-    escaped_summary = telegramify_markdown.escape_markdown(event_summary)
+        confirmation_prompt = await render_delete_calendar_event_confirmation(
+            args=test_args, context=mock_context
+        )
 
-    assert (
-        event_summary in confirmation_prompt or escaped_summary in confirmation_prompt
-    ), (
-        f"Event summary '{event_summary}' (or escaped '{escaped_summary}') not in delete confirmation"
-    )
-    assert "delete" in confirmation_prompt.lower(), "Delete action not mentioned"
-    assert "Event details not found" not in confirmation_prompt
+        # Verify the confirmation prompt
+        # The confirmation uses telegramify_markdown which escapes special characters
+
+        escaped_summary = telegramify_markdown.escape_markdown(event_summary)
+
+        assert (
+            event_summary in confirmation_prompt
+            or escaped_summary in confirmation_prompt
+        ), (
+            f"Event summary '{event_summary}' (or escaped '{escaped_summary}') not in delete confirmation"
+        )
+        assert "delete" in confirmation_prompt.lower(), "Delete action not mentioned"
+        assert "Event details not found" not in confirmation_prompt
 
 
 @pytest.mark.asyncio
@@ -330,6 +374,7 @@ async def test_confirming_tools_provider_with_calendar_events(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tool_args: dict[str, Any],
         timeout_seconds: float,
+        context: ToolExecutionContext,
     ) -> bool:
         """Capture the confirmation prompt and accept it."""
         # For testing, we just capture that the callback was called with the right tool
@@ -404,22 +449,44 @@ async def test_confirming_tools_provider_with_calendar_events(
 
 
 @pytest.mark.asyncio
-async def test_confirmation_when_event_not_found() -> None:
+async def test_confirmation_when_event_not_found(
+    pg_vector_db_engine: AsyncEngine,
+) -> None:
     """Test that confirmation handles gracefully when event doesn't exist."""
 
-    # Test with non-existent event
-    # Simulate what ConfirmingToolsProvider does when event details fetch fails
-    test_args = {
-        "uid": "non-existent-event@example.com",
-        "calendar_url": "https://example.com/calendar/",
-        "new_summary": "This will fail",
-        "__event_details__": None,  # Event details fetch failed
-        "__timezone_str__": TEST_TIMEZONE_STR,
-    }
+    # Test with non-existent event - async renderer will try to fetch and fail gracefully
+    # Create LocalToolsProvider with empty calendar config (no valid caldav server)
+    mock_provider = LocalToolsProvider([], {}, calendar_config={})
 
-    # Render confirmation with no event details (simulating fetch failure)
-    confirmation_prompt = render_modify_calendar_event_confirmation(args=test_args)
+    async with get_db_context(engine=pg_vector_db_engine) as db_ctx:
+        mock_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test",
+            user_name="TestUser",
+            turn_id="test-turn",
+            db_context=db_ctx,
+            timezone_str=TEST_TIMEZONE_STR,
+            tools_provider=mock_provider,
+            processing_service=None,
+            clock=None,
+            event_sources=None,
+            home_assistant_client=None,
+            attachment_registry=None,
+            chat_interface=None,
+            request_confirmation_callback=None,
+        )
 
-    # Should show error message but still show the changes
-    assert "Event details not found" in confirmation_prompt
-    assert "This will fail" in confirmation_prompt
+        test_args = {
+            "uid": "non-existent-event@example.com",
+            "calendar_url": "https://example.com/calendar/",
+            "new_summary": "This will fail",
+        }
+
+        # Render confirmation - will try to fetch event and fail gracefully
+        confirmation_prompt = await render_modify_calendar_event_confirmation(
+            args=test_args, context=mock_context
+        )
+
+        # Should show error message but still show the changes
+        assert "Event details not found" in confirmation_prompt
+        assert "This will fail" in confirmation_prompt
