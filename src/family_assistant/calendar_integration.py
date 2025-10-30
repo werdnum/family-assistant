@@ -1,7 +1,7 @@
 import asyncio  # Import asyncio for run_in_executor
 import logging
 from datetime import date, datetime, time, timedelta  # Added time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo  # Import ZoneInfo
 
 import caldav
@@ -13,6 +13,9 @@ from caldav.lib.error import (  # Reverted to original-like import path
 )
 
 from family_assistant.utils.clock import Clock, SystemClock
+
+if TYPE_CHECKING:
+    from family_assistant.tools.types import CalendarConfig
 
 logger = logging.getLogger(__name__)
 
@@ -713,8 +716,7 @@ def format_events_for_prompt(
 async def fetch_event_details_for_confirmation(
     uid: str,
     calendar_url: str,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    calendar_config: dict[str, Any],
+    calendar_config: "CalendarConfig",
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> dict[str, Any] | None:
     """Fetches calendar event details by UID for use in confirmation prompts.
@@ -731,15 +733,14 @@ async def fetch_event_details_for_confirmation(
         f"Fetching event details for confirmation: UID={uid}, calendar={calendar_url}"
     )
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    caldav_config: dict[str, Any] | None = calendar_config.get("caldav")
+    caldav_config = calendar_config.get("caldav")
     if not caldav_config:
         logger.error("CalDAV configuration not found for event details fetch")
         return None
 
-    username: str | None = caldav_config.get("username")
-    password: str | None = caldav_config.get("password")
-    base_url: str | None = caldav_config.get("base_url")
+    username = caldav_config.get("username")
+    password = caldav_config.get("password")
+    base_url = caldav_config.get("base_url")
 
     if not username or not password:
         logger.error("CalDAV credentials missing for event details fetch")

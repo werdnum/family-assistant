@@ -7,7 +7,7 @@ import base64
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, TypedDict
 
 if TYPE_CHECKING:
     from family_assistant.embeddings import EmbeddingGenerator
@@ -20,6 +20,21 @@ if TYPE_CHECKING:
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.tools import ToolsProvider
     from family_assistant.utils.clock import Clock
+
+
+class CalDavConfig(TypedDict):
+    """CalDAV configuration for calendar access."""
+
+    username: str
+    password: str
+    base_url: str
+    calendar_urls: list[str]
+
+
+class CalendarConfig(TypedDict):
+    """Calendar configuration containing CalDAV settings."""
+
+    caldav: CalDavConfig
 
 
 @dataclass

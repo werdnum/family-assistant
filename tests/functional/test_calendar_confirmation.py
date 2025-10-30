@@ -9,7 +9,7 @@ import logging
 import re
 import uuid
 from datetime import datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -19,7 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.calendar_integration import (
     fetch_event_details_for_confirmation,
 )
-from family_assistant.storage.context import get_db_context
+
+if TYPE_CHECKING:
+    from family_assistant.tools.types import CalendarConfig
+from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -43,6 +46,29 @@ from family_assistant.tools.types import ToolExecutionContext, ToolResult
 logger = logging.getLogger(__name__)
 
 TEST_TIMEZONE_STR = "Australia/Sydney"
+
+
+def create_test_execution_context(
+    db_context: DatabaseContext,
+    tools_provider: LocalToolsProvider | None = None,
+) -> ToolExecutionContext:
+    """Helper to create a ToolExecutionContext for tests with minimal boilerplate."""
+    return ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-conv",
+        user_name="TestUser",
+        turn_id="test-turn",
+        db_context=db_context,
+        timezone_str=TEST_TIMEZONE_STR,
+        tools_provider=tools_provider,
+        processing_service=None,
+        clock=None,
+        event_sources=None,
+        home_assistant_client=None,
+        attachment_registry=None,
+        chat_interface=None,
+        request_confirmation_callback=None,
+    )
 
 
 async def create_test_event_in_radicale(
@@ -152,7 +178,7 @@ async def test_modify_calendar_event_confirmation_shows_event_details(
     fetched_details = await fetch_event_details_for_confirmation(
         uid=event_uid,
         calendar_url=test_calendar_url,
-        calendar_config=test_calendar_config,
+        calendar_config=cast("CalendarConfig", test_calendar_config),
     )
 
     # Verify we can fetch the event
@@ -167,21 +193,8 @@ async def test_modify_calendar_event_confirmation_shows_event_details(
     mock_provider = LocalToolsProvider([], {}, calendar_config=test_calendar_config)
 
     async with get_db_context(engine=pg_vector_db_engine) as db_ctx:
-        mock_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test",
-            user_name="TestUser",
-            turn_id="test-turn",
-            db_context=db_ctx,
-            timezone_str=TEST_TIMEZONE_STR,
-            tools_provider=mock_provider,
-            processing_service=None,
-            clock=None,
-            event_sources=None,
-            home_assistant_client=None,
-            attachment_registry=None,
-            chat_interface=None,
-            request_confirmation_callback=None,
+        mock_context = create_test_execution_context(
+            db_context=db_ctx, tools_provider=mock_provider
         )
 
         test_args = {
@@ -266,7 +279,7 @@ async def test_delete_calendar_event_confirmation_shows_event_details(
     fetched_details = await fetch_event_details_for_confirmation(
         uid=event_uid,
         calendar_url=test_calendar_url,
-        calendar_config=test_calendar_config,
+        calendar_config=cast("CalendarConfig", test_calendar_config),
     )
 
     assert fetched_details is not None
@@ -276,21 +289,8 @@ async def test_delete_calendar_event_confirmation_shows_event_details(
     mock_provider = LocalToolsProvider([], {}, calendar_config=test_calendar_config)
 
     async with get_db_context(engine=pg_vector_db_engine) as db_ctx:
-        mock_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test",
-            user_name="TestUser",
-            turn_id="test-turn",
-            db_context=db_ctx,
-            timezone_str=TEST_TIMEZONE_STR,
-            tools_provider=mock_provider,
-            processing_service=None,
-            clock=None,
-            event_sources=None,
-            home_assistant_client=None,
-            attachment_registry=None,
-            chat_interface=None,
-            request_confirmation_callback=None,
+        mock_context = create_test_execution_context(
+            db_context=db_ctx, tools_provider=mock_provider
         )
 
         test_args = {
@@ -459,21 +459,8 @@ async def test_confirmation_when_event_not_found(
     mock_provider = LocalToolsProvider([], {}, calendar_config={})
 
     async with get_db_context(engine=pg_vector_db_engine) as db_ctx:
-        mock_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test",
-            user_name="TestUser",
-            turn_id="test-turn",
-            db_context=db_ctx,
-            timezone_str=TEST_TIMEZONE_STR,
-            tools_provider=mock_provider,
-            processing_service=None,
-            clock=None,
-            event_sources=None,
-            home_assistant_client=None,
-            attachment_registry=None,
-            chat_interface=None,
-            request_confirmation_callback=None,
+        mock_context = create_test_execution_context(
+            db_context=db_ctx, tools_provider=mock_provider
         )
 
         test_args = {

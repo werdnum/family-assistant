@@ -12,7 +12,7 @@ import inspect
 import json
 import logging
 import uuid
-from typing import TYPE_CHECKING, Any, Protocol, get_type_hints
+from typing import TYPE_CHECKING, Any, Protocol, cast, get_type_hints
 
 from family_assistant import calendar_integration
 from family_assistant.tools.attachment_utils import process_attachment_arguments
@@ -20,6 +20,7 @@ from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.embeddings import EmbeddingGenerator
+    from family_assistant.tools.types import CalendarConfig
 
 logger = logging.getLogger(__name__)
 
@@ -676,7 +677,7 @@ class ConfirmingToolsProvider(ToolsProvider):
                         event_details = await calendar_integration.fetch_event_details_for_confirmation(
                             uid=uid,
                             calendar_url=calendar_url,
-                            calendar_config=calendar_config,
+                            calendar_config=cast("CalendarConfig", calendar_config),
                         )
                         return event_details
                     except Exception as e:

@@ -7,7 +7,7 @@ for tools that require user confirmation before execution.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import telegramify_markdown
 
@@ -15,15 +15,14 @@ from family_assistant import calendar_integration
 
 if TYPE_CHECKING:
     from family_assistant.tools.infrastructure import ToolsProvider
-    from family_assistant.tools.types import ToolExecutionContext
+    from family_assistant.tools.types import CalendarConfig, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
 
 def _extract_calendar_config_from_provider(
     provider: ToolsProvider | None,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-) -> dict[str, Any] | None:
+) -> CalendarConfig | None:
     """Extract calendar config from a tools provider.
 
     This helper avoids circular imports by using TYPE_CHECKING and runtime isinstance checks.
@@ -39,17 +38,20 @@ def _extract_calendar_config_from_provider(
 
     # Direct LocalToolsProvider
     if isinstance(provider, LocalToolsProvider):
-        return provider.get_calendar_config()
+        config = provider.get_calendar_config()
+        return cast("CalendarConfig", config) if config else None
 
     # ConfirmingToolsProvider or other wrapper
     if hasattr(provider, "wrapped_provider"):
         wrapped = provider.wrapped_provider  # type: ignore[attr-defined]
         if isinstance(wrapped, LocalToolsProvider):
-            return wrapped.get_calendar_config()
+            config = wrapped.get_calendar_config()
+            return cast("CalendarConfig", config) if config else None
         elif isinstance(wrapped, CompositeToolsProvider):
             for p in wrapped.get_providers():
                 if isinstance(p, LocalToolsProvider):
-                    return p.get_calendar_config()
+                    config = p.get_calendar_config()
+                    return cast("CalendarConfig", config) if config else None
 
     return None
 
@@ -139,18 +141,14 @@ async def render_delete_calendar_event_confirmation(
         )
 
         if calendar_config:
-            try:
-                event_details = (
-                    await calendar_integration.fetch_event_details_for_confirmation(
-                        uid=uid,
-                        calendar_url=calendar_url,
-                        calendar_config=calendar_config,
-                    )
+            # fetch_event_details_for_confirmation returns None on error
+            event_details = (
+                await calendar_integration.fetch_event_details_for_confirmation(
+                    uid=uid,
+                    calendar_url=calendar_url,
+                    calendar_config=calendar_config,
                 )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to fetch event details for deletion confirmation: {e}"
-                )
+            )
 
     # Use the helper to format event details
     # It handles the None case by returning "Event details not found."
@@ -190,18 +188,14 @@ async def render_modify_calendar_event_confirmation(
         )
 
         if calendar_config:
-            try:
-                event_details = (
-                    await calendar_integration.fetch_event_details_for_confirmation(
-                        uid=uid,
-                        calendar_url=calendar_url,
-                        calendar_config=calendar_config,
-                    )
+            # fetch_event_details_for_confirmation returns None on error
+            event_details = (
+                await calendar_integration.fetch_event_details_for_confirmation(
+                    uid=uid,
+                    calendar_url=calendar_url,
+                    calendar_config=calendar_config,
                 )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to fetch event details for modification confirmation: {e}"
-                )
+            )
 
     # Use the helper to format event details
     # It handles the None case by returning "Event details not found."
