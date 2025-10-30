@@ -184,6 +184,8 @@ def parse_event(
                 "start": dtstart,
                 "end": dtend,
                 "all_day": is_all_day,
+                "calendar_url": None,
+                "similarity": None,
             },
         )
     except StopIteration:
