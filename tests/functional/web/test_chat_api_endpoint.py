@@ -3,6 +3,7 @@ import logging
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import timedelta
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -42,6 +43,9 @@ from family_assistant.web.app_creator import app as actual_app
 from family_assistant.web.models import ChatMessageResponse  # Updated import
 from family_assistant.web.web_chat_interface import WebChatInterface
 from tests.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
+
+if TYPE_CHECKING:
+    from family_assistant.tools.types import CalendarConfig
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +106,9 @@ async def test_tools_provider(
         definitions=local_tools_definition,  # Use actual definitions
         implementations=local_tool_implementations,  # Use actual implementations
         embedding_generator=None,  # Not needed for add_note
-        calendar_config={},  # Empty calendar config for tests
+        calendar_config=cast(
+            "CalendarConfig", {"caldav": {"calendar_urls": ["http://test.com"]}}
+        ),
     )
     # Mock MCP provider as it's not the focus here
     mock_mcp_provider = AsyncMock(spec=MCPToolsProvider)
@@ -154,7 +160,9 @@ def test_processing_service(
         prompts=mock_processing_service_config.prompts,
     )
     calendar_provider = CalendarContextProvider(
-        calendar_config={},  # Empty calendar config for tests
+        calendar_config=cast(
+            "CalendarConfig", {"caldav": {"calendar_urls": ["http://test.com"]}}
+        ),
         timezone_str=mock_processing_service_config.timezone_str,
         prompts=mock_processing_service_config.prompts,
     )
@@ -685,7 +693,9 @@ def test_processing_service_no_tools(
         prompts=mock_processing_service_config_no_tools.prompts,
     )
     calendar_provider = CalendarContextProvider(
-        calendar_config={},
+        calendar_config=cast(
+            "CalendarConfig", {"caldav": {"calendar_urls": ["http://test.com"]}}
+        ),
         timezone_str=mock_processing_service_config_no_tools.timezone_str,
         prompts=mock_processing_service_config_no_tools.prompts,
     )

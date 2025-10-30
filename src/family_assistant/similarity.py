@@ -18,6 +18,8 @@ if TYPE_CHECKING:
         SentenceTransformer,
     )
 
+    from family_assistant.tools.types import CalendarConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -181,7 +183,7 @@ def create_similarity_strategy(
 
 
 def create_similarity_strategy_from_config(
-    calendar_config: dict,
+    calendar_config: CalendarConfig,
 ) -> SimilarityStrategy:
     """Create a similarity strategy from calendar configuration dict.
 
