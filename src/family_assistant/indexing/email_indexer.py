@@ -16,6 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 # Use absolute imports
 # storage functions now accessed via DatabaseContext  # For DB operations (add_document)
 from family_assistant.indexing.pipeline import IndexableContent, IndexingPipeline
+from family_assistant.indexing.types import EmailAttachmentInfo, EmailMetadata
 from family_assistant.storage.email import (
     received_emails_table,
 )  # Import table definition
@@ -42,13 +43,9 @@ class EmailDocument(Document):
     _title: str | None = None
     _created_at: datetime | None = None
     _source_uri: str | None = None
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    _base_metadata: dict[str, Any] = field(default_factory=dict)
-    _content_plain: str | None = None  # Store plain text content separately
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    _attachment_info_raw: list[dict[str, Any]] | None = (
-        None  # Store raw attachment info
-    )
+    _base_metadata: EmailMetadata = field(default_factory=dict)
+    _content_plain: str | None = None
+    _attachment_info_raw: list[EmailAttachmentInfo] | None = None
 
     @property
     def source_type(self) -> str:
@@ -76,8 +73,7 @@ class EmailDocument(Document):
         return self._created_at
 
     @property
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def metadata(self) -> dict[str, Any] | None:
+    def metadata(self) -> EmailMetadata | None:
         """Base metadata extracted directly from the source."""
         return self._base_metadata
 
@@ -87,9 +83,8 @@ class EmailDocument(Document):
         return self._content_plain
 
     @property
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def attachments(self) -> list[dict[str, Any]] | None:
-        """List of attachment metadata dictionaries (filename, content_type, size, storage_path)."""
+    def attachments(self) -> list[EmailAttachmentInfo] | None:
+        """List of attachment metadata dictionaries."""
         return self._attachment_info_raw
 
     @classmethod
@@ -106,7 +101,7 @@ class EmailDocument(Document):
             )
 
         # Extract base metadata
-        base_metadata = {
+        base_metadata: EmailMetadata = {
             key: row.get(key)
             for key in [
                 "sender_address",
@@ -114,16 +109,13 @@ class EmailDocument(Document):
                 "recipient_address",
                 "to_header",
                 "cc_header",
-                "mailgun_timestamp",  # Include mailgun timestamp if useful
+                "mailgun_timestamp",
             ]
-            if row.get(key) is not None  # Only include if not None
+            if row.get(key) is not None
         }
-        # Add headers JSON if present and not None
         headers_json = row.get("headers_json")
         if headers_json:
-            base_metadata["headers"] = (
-                headers_json  # Store raw headers under 'headers' key
-            )
+            base_metadata["headers"] = headers_json
 
         # Prefer stripped_text for cleaner content
         content = row.get("stripped_text") or row.get("body_plain")
