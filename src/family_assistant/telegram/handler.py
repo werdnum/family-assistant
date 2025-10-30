@@ -341,10 +341,12 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     content_type="image/jpeg",
                 )
 
-                trigger_content_parts.append({
-                    "type": "image_url",
-                    "image_url": {"url": attachment_metadata.content_url},
-                })
+                trigger_content_parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": attachment_metadata.content_url},
+                    }
+                )
 
                 trigger_attachments = [
                     {
@@ -489,17 +491,18 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 async with self._typing_notifications(context, chat_id):
 
                     async def confirmation_callback_wrapper(
-                        interface_type: str,
                         conversation_id: str,
+                        interface_type: str,
                         turn_id: str | None,
+                        prompt_text: str,
                         tool_name: str,
-                        call_id: str,
                         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
                         tool_args: dict[str, Any],
                         timeout_seconds: float,
                         exec_context: ToolExecutionContext,
                     ) -> bool:
                         logger.debug("confirmation_callback_wrapper called!")
+                        # Allow custom renderers to override the prompt_text if available
                         renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
                         if renderer:
                             # Async renderer that fetches its own data from context
@@ -885,10 +888,12 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             try:
                 base64_image = base64.b64encode(photo_bytes).decode("utf-8")
                 mime_type = "image/jpeg"
-                trigger_content_parts_for_profile.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
-                })
+                trigger_content_parts_for_profile.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
+                    }
+                )
             except Exception as img_err_direct:
                 logger.error(
                     f"Error encoding photo for slash command direct profile call: {img_err_direct}"
