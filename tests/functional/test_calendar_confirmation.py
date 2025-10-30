@@ -161,19 +161,18 @@ async def test_modify_calendar_event_confirmation_shows_event_details(
     assert fetched_details["summary"] == event_summary
 
     # Test the confirmation renderer with real event details
+    # Simulate what ConfirmingToolsProvider does: enrich args with event details and timezone
     test_args = {
         "uid": event_uid,
         "calendar_url": test_calendar_url,
         "new_summary": "Education Open Day",
         "new_start_time": start_dt.replace(hour=9).isoformat(),
         "new_end_time": start_dt.replace(hour=12).isoformat(),
+        "__event_details__": fetched_details,
+        "__timezone_str__": TEST_TIMEZONE_STR,
     }
 
-    confirmation_prompt = render_modify_calendar_event_confirmation(
-        args=test_args,
-        event_details=fetched_details,
-        timezone_str=TEST_TIMEZONE_STR,
-    )
+    confirmation_prompt = render_modify_calendar_event_confirmation(args=test_args)
 
     # Debug: print the confirmation prompt
     print(f"\n\nDEBUG: Confirmation prompt:\n{confirmation_prompt}\n\n")
@@ -250,16 +249,15 @@ async def test_delete_calendar_event_confirmation_shows_event_details(
     assert fetched_details is not None
 
     # Test the delete confirmation renderer
+    # Simulate what ConfirmingToolsProvider does: enrich args with event details and timezone
     test_args = {
         "uid": event_uid,
         "calendar_url": test_calendar_url,
+        "__event_details__": fetched_details,
+        "__timezone_str__": TEST_TIMEZONE_STR,
     }
 
-    confirmation_prompt = render_delete_calendar_event_confirmation(
-        args=test_args,
-        event_details=fetched_details,
-        timezone_str=TEST_TIMEZONE_STR,
-    )
+    confirmation_prompt = render_delete_calendar_event_confirmation(args=test_args)
 
     # Verify the confirmation prompt
     # The confirmation uses telegramify_markdown which escapes special characters
@@ -410,18 +408,17 @@ async def test_confirmation_when_event_not_found() -> None:
     """Test that confirmation handles gracefully when event doesn't exist."""
 
     # Test with non-existent event
+    # Simulate what ConfirmingToolsProvider does when event details fetch fails
     test_args = {
         "uid": "non-existent-event@example.com",
         "calendar_url": "https://example.com/calendar/",
         "new_summary": "This will fail",
+        "__event_details__": None,  # Event details fetch failed
+        "__timezone_str__": TEST_TIMEZONE_STR,
     }
 
     # Render confirmation with no event details (simulating fetch failure)
-    confirmation_prompt = render_modify_calendar_event_confirmation(
-        args=test_args,
-        event_details=None,
-        timezone_str=TEST_TIMEZONE_STR,
-    )
+    confirmation_prompt = render_modify_calendar_event_confirmation(args=test_args)
 
     # Should show error message but still show the changes
     assert "Event details not found" in confirmation_prompt

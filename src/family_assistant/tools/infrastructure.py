@@ -706,6 +706,17 @@ class ConfirmingToolsProvider(ToolsProvider):
                 )
                 return f"Error: Tool '{name}' requires confirmation, but the system is not configured to ask for it."
 
+            # Fetch event details for calendar tools to enrich confirmation prompt
+            event_details = await self._get_event_details_for_confirmation(
+                name, arguments, context
+            )
+
+            # Enrich arguments with event details and timezone for the confirmation renderer
+            enriched_args = {**arguments}
+            if event_details:
+                enriched_args["__event_details__"] = event_details
+            enriched_args["__timezone_str__"] = context.timezone_str
+
             # Request confirmation via callback (which handles Future creation/waiting)
             # Note: The callback is responsible for rendering the confirmation prompt
             try:
@@ -723,7 +734,7 @@ class ConfirmingToolsProvider(ToolsProvider):
                     name,
                     call_id
                     or f"tool_{uuid.uuid4()}",  # Generate a call_id if none provided
-                    arguments,
+                    enriched_args,
                     self.confirmation_timeout,
                 )
 

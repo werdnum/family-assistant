@@ -7,13 +7,42 @@ for tools that require user confirmation before execution.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Protocol
 
 import telegramify_markdown
 
 from family_assistant import calendar_integration
 
 logger = logging.getLogger(__name__)
+
+
+class ConfirmationRenderer(Protocol):
+    """Protocol for confirmation prompt renderers.
+
+    Confirmation renderers take tool arguments (potentially enriched with
+    additional context like event details and timezone) and return a
+    human-readable confirmation prompt string.
+
+    The ConfirmingToolsProvider may enrich args with:
+    - __event_details__: Fetched event details for calendar tools
+    - __timezone_str__: Timezone string from execution context
+    """
+
+    def __call__(
+        self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        args: dict[str, Any],
+    ) -> str:
+        """Render a confirmation prompt from tool arguments.
+
+        Args:
+            args: Tool arguments, potentially enriched with __event_details__
+                  and __timezone_str__ by ConfirmingToolsProvider
+
+        Returns:
+            Formatted confirmation prompt string
+        """
+        ...
 
 
 def _format_event_details_for_confirmation(
@@ -52,19 +81,21 @@ def _format_event_details_for_confirmation(
 
 def render_delete_calendar_event_confirmation(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     args: dict[str, Any],
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    event_details: dict[str, Any] | None = None,
-    timezone_str: str = "UTC",
 ) -> str:
     """Renders the confirmation message for deleting a calendar event.
 
     Args:
-        args: Tool arguments containing uid and calendar_url
-        event_details: Optional event details for richer display
-        timezone_str: Timezone for formatting times (default: UTC)
+        args: Tool arguments including:
+            - uid: Event UID
+            - calendar_url: Calendar URL
+            - __event_details__: Optional event details (injected by ConfirmingToolsProvider)
+            - __timezone_str__: Timezone string (injected by ConfirmingToolsProvider)
     """
+    # Extract enriched data from args (injected by ConfirmingToolsProvider)
+    event_details = args.get("__event_details__")
+    timezone_str = args.get("__timezone_str__", "UTC")
+
     # Use the helper to format event details
     # It handles the None case by returning "Event details not found."
     event_desc = _format_event_details_for_confirmation(event_details, timezone_str)
@@ -78,19 +109,22 @@ def render_delete_calendar_event_confirmation(
 
 def render_modify_calendar_event_confirmation(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     args: dict[str, Any],
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    event_details: dict[str, Any] | None = None,
-    timezone_str: str = "UTC",
 ) -> str:
     """Renders the confirmation message for modifying a calendar event.
 
     Args:
-        args: Tool arguments containing uid, calendar_url, and modification fields
-        event_details: Optional event details for richer display
-        timezone_str: Timezone for formatting times (default: UTC)
+        args: Tool arguments including:
+            - uid: Event UID
+            - calendar_url: Calendar URL
+            - new_summary, new_start_time, etc.: Modification fields
+            - __event_details__: Optional event details (injected by ConfirmingToolsProvider)
+            - __timezone_str__: Timezone string (injected by ConfirmingToolsProvider)
     """
+    # Extract enriched data from args (injected by ConfirmingToolsProvider)
+    event_details = args.get("__event_details__")
+    timezone_str = args.get("__timezone_str__", "UTC")
+
     # Use the helper to format event details
     # It handles the None case by returning "Event details not found."
     event_desc = _format_event_details_for_confirmation(event_details, timezone_str)
@@ -124,9 +158,7 @@ def render_modify_calendar_event_confirmation(
 
 
 # Mapping of tool names to their confirmation renderers
-# Signature: (args: dict, event_details: dict | None = None, timezone_str: str = "UTC") -> str
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-TOOL_CONFIRMATION_RENDERERS: dict[str, Any] = {
+TOOL_CONFIRMATION_RENDERERS: dict[str, ConfirmationRenderer] = {
     "delete_calendar_event": render_delete_calendar_event_confirmation,
     "modify_calendar_event": render_modify_calendar_event_confirmation,
 }
