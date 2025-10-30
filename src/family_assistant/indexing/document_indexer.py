@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from family_assistant.indexing.pipeline import (
         Document,  # Assuming Document is defined/exported here
     )
+    from family_assistant.indexing.types import IndexableContentMetadata
 from family_assistant.utils.scraping import Scraper  # Added
 
 logger = logging.getLogger(__name__)
@@ -228,12 +229,12 @@ class DocumentIndexer:
                 file_item_metadata["original_filename"] = original_filename
 
             file_item = IndexableContent(
-                content=None,  # Binary content is at file_ref
-                embedding_type="original_document_file",  # Generic type for the whole file
-                mime_type=mime_type,  # Use the detected MIME type passed in payload
+                content=None,
+                embedding_type="original_document_file",
+                mime_type=mime_type,
                 source_processor="DocumentIndexer.process_document",
-                metadata=file_item_metadata,
-                ref=file_ref,  # file_ref is the path to the persistently stored file
+                metadata=cast("IndexableContentMetadata", file_item_metadata),
+                ref=file_ref,
             )
             initial_items.append(file_item)
         elif (
@@ -279,10 +280,10 @@ class DocumentIndexer:
                 item = IndexableContent(
                     content=text_content,
                     embedding_type=embedding_type,
-                    mime_type="text/plain",  # Assuming content_parts are always text
+                    mime_type="text/plain",
                     source_processor="DocumentIndexer.process_document",
-                    metadata=metadata_for_item,
-                    ref=None,  # Text content is inline
+                    metadata=cast("IndexableContentMetadata", metadata_for_item),
+                    ref=None,
                 )
                 initial_items.append(item)
         else:
@@ -302,10 +303,10 @@ class DocumentIndexer:
 
             url_item = IndexableContent(
                 content=url_to_scrape,
-                embedding_type="raw_url",  # WebFetcherProcessor will look for this type
-                mime_type="text/plain",  # The content of *this* item is a plain text URL
+                embedding_type="raw_url",
+                mime_type="text/plain",
                 source_processor="DocumentIndexer.process_document",
-                metadata=url_item_metadata,
+                metadata=cast("IndexableContentMetadata", url_item_metadata),
                 ref=None,
             )
             initial_items.append(url_item)

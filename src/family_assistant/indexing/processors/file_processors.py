@@ -4,7 +4,7 @@ Content processors for handling specific file types.
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 try:
     from markitdown import MarkItDown
@@ -14,6 +14,10 @@ except ImportError:
 from family_assistant.indexing.pipeline import IndexableContent
 
 if TYPE_CHECKING:
+    from family_assistant.indexing.types import (
+        ExtractionMetadata,
+        IndexableContentMetadata,
+    )
     from family_assistant.storage.vector import Document
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -82,18 +86,18 @@ class PDFTextExtractor:
                     )
 
                     if markdown_content:
-                        new_metadata = item.metadata.copy()
-                        new_metadata["extraction_method"] = "markitdown"
-                        # original_filename should be in item.metadata from DocumentIndexer
-
+                        new_metadata: ExtractionMetadata = {
+                            "extraction_method": "markitdown"
+                        }
+                        new_metadata.update(item.metadata)  # type: ignore
                         output_items.append(
                             IndexableContent(
                                 content=markdown_content,
-                                embedding_type="extracted_markdown_content",  # New type for raw markdown
+                                embedding_type="extracted_markdown_content",
                                 mime_type="text/markdown",
                                 source_processor=self.name,
-                                metadata=new_metadata,
-                                ref=None,  # Content is now inline
+                                metadata=cast("IndexableContentMetadata", new_metadata),
+                                ref=None,
                             )
                         )
                         logger.info(
