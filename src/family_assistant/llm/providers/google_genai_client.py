@@ -327,7 +327,7 @@ class GoogleGenAIClient(BaseLLMClient):
                         ):
                             # Decode base64 signature and attach to part
                             signature_bytes = base64.b64decode(signature_b64)
-                            parts[part_index]["thought"] = signature_bytes
+                            parts[part_index]["thought_signature"] = signature_bytes
 
                 if parts:
                     contents.append({"role": "model", "parts": parts})
