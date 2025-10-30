@@ -571,7 +571,7 @@ class GoogleGenAIClient(BaseLLMClient):
                                 "part_index": part_index,
                                 "signature": signature_b64,
                             })
-
+                            thought_text = getattr(part, "text", "")
                         # Extract thought summary if present (readable for debugging/introspection)
                         if hasattr(part, "thought") and part.thought:
                             # When part.thought is True, the thought text is in part.text
@@ -835,7 +835,7 @@ class GoogleGenAIClient(BaseLLMClient):
                                     })
 
                                 # Extract thought summary if present (readable for debugging/introspection)
-                                is_thought = hasattr(part, "thought") and part.thought
+                                    thought_text = getattr(part, "text", "")
                                 if is_thought:
                                     # When part.thought is True, the thought text is in part.text
                                     thought_text = (
