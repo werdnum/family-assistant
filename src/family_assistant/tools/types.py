@@ -7,6 +7,7 @@ import base64
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Optional, TypedDict
 
 if TYPE_CHECKING:
@@ -35,6 +36,18 @@ class CalendarConfig(TypedDict):
     """Calendar configuration containing CalDAV settings."""
 
     caldav: CalDavConfig
+
+
+class CalendarEvent(TypedDict):
+    """Represents a calendar event with structured data."""
+
+    uid: str
+    summary: str
+    start: datetime | date
+    end: datetime | date
+    all_day: bool
+    calendar_url: str | None
+    similarity: float | None
 
 
 @dataclass

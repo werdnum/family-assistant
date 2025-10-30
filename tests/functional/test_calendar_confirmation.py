@@ -9,7 +9,7 @@ import logging
 import re
 import uuid
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -19,9 +19,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.calendar_integration import (
     fetch_event_details_for_confirmation,
 )
-
-if TYPE_CHECKING:
-    from family_assistant.tools.types import CalendarConfig
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
@@ -41,7 +38,11 @@ from family_assistant.tools.confirmation import (
     render_delete_calendar_event_confirmation,
     render_modify_calendar_event_confirmation,
 )
-from family_assistant.tools.types import ToolExecutionContext, ToolResult
+from family_assistant.tools.types import (
+    CalendarConfig,
+    ToolExecutionContext,
+    ToolResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,14 +84,17 @@ async def create_test_event_in_radicale(
 
     # Use the actual add_calendar_event_tool to create the event
 
-    calendar_config = {
-        "caldav": {
-            "username": user,
-            "password": passwd,
-            "base_url": base_url,
-            "calendar_urls": [calendar_url],
-        }
-    }
+    calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "username": user,
+                "password": passwd,
+                "base_url": base_url,
+                "calendar_urls": [calendar_url],
+            }
+        },
+    )
 
     # Create a minimal database context for the test
     async with get_db_context(engine=engine) as db_ctx:
@@ -165,20 +169,23 @@ async def test_modify_calendar_event_confirmation_shows_event_details(
     )
 
     # Setup calendar config
-    test_calendar_config = {
-        "caldav": {
-            "username": r_user,
-            "password": r_pass,
-            "base_url": radicale_base_url,
-            "calendar_urls": [test_calendar_url],
-        }
-    }
+    test_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "username": r_user,
+                "password": r_pass,
+                "base_url": radicale_base_url,
+                "calendar_urls": [test_calendar_url],
+            }
+        },
+    )
 
     # Test fetching event details directly
     fetched_details = await fetch_event_details_for_confirmation(
         uid=event_uid,
         calendar_url=test_calendar_url,
-        calendar_config=cast("CalendarConfig", test_calendar_config),
+        calendar_config=test_calendar_config,
     )
 
     # Verify we can fetch the event
@@ -266,20 +273,23 @@ async def test_delete_calendar_event_confirmation_shows_event_details(
     )
 
     # Setup calendar config
-    test_calendar_config = {
-        "caldav": {
-            "username": r_user,
-            "password": r_pass,
-            "base_url": radicale_base_url,
-            "calendar_urls": [test_calendar_url],
-        }
-    }
+    test_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "username": r_user,
+                "password": r_pass,
+                "base_url": radicale_base_url,
+                "calendar_urls": [test_calendar_url],
+            }
+        },
+    )
 
     # Test fetching event details
     fetched_details = await fetch_event_details_for_confirmation(
         uid=event_uid,
         calendar_url=test_calendar_url,
-        calendar_config=cast("CalendarConfig", test_calendar_config),
+        calendar_config=test_calendar_config,
     )
 
     assert fetched_details is not None
@@ -347,14 +357,17 @@ async def test_confirming_tools_provider_with_calendar_events(
     await asyncio.sleep(0.1)
 
     # Setup providers with real calendar config
-    test_calendar_config = {
-        "caldav": {
-            "username": r_user,
-            "password": r_pass,
-            "base_url": radicale_base_url,
-            "calendar_urls": [test_calendar_url],
-        }
-    }
+    test_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "username": r_user,
+                "password": r_pass,
+                "base_url": radicale_base_url,
+                "calendar_urls": [test_calendar_url],
+            }
+        },
+    )
 
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition,
@@ -456,7 +469,9 @@ async def test_confirmation_when_event_not_found(
 
     # Test with non-existent event - async renderer will try to fetch and fail gracefully
     # Create LocalToolsProvider with empty calendar config (no valid caldav server)
-    mock_provider = LocalToolsProvider([], {}, calendar_config={})
+    mock_provider = LocalToolsProvider(
+        [], {}, calendar_config=cast("CalendarConfig", {})
+    )
 
     async with get_db_context(engine=db_engine) as db_ctx:
         mock_context = create_test_execution_context(

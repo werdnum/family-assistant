@@ -5,7 +5,7 @@ import re
 import time
 import uuid
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
@@ -39,7 +39,7 @@ from family_assistant.tools.calendar import (
     add_calendar_event_tool,
     search_calendar_events_tool,
 )
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.types import CalendarConfig, ToolExecutionContext
 from family_assistant.utils.clock import MockClock
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
@@ -127,8 +127,7 @@ async def get_event_by_summary_from_radicale(
 
 async def wait_for_radicale_indexing(
     exec_context: ToolExecutionContext,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    calendar_config: dict[str, Any],
+    calendar_config: "CalendarConfig",
     event_summary: str,
     timeout_seconds: float = 5.0,
 ) -> bool:
@@ -259,15 +258,18 @@ async def test_add_event_and_verify_in_system_prompt(
     )
 
     # --- Setup ProcessingService ---
-    test_calendar_config = {
-        "caldav": {
-            "base_url": radicale_base_url,  # Add base_url for DAVClient
-            "username": r_user,
-            "password": r_pass,
-            "calendar_urls": [test_calendar_direct_url],
+    test_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "base_url": radicale_base_url,  # Add base_url for DAVClient
+                "username": r_user,
+                "password": r_pass,
+                "calendar_urls": [test_calendar_direct_url],
+            },
+            "ical": {"urls": []},
         },
-        "ical": {"urls": []},
-    }
+    )
     dummy_prompts = {
         "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
     }
@@ -441,15 +443,18 @@ async def test_modify_event(
     # --- Setup ProcessingService for initial event creation ---
     # Note: This ProcessingService instance is configured for the *initial add*
     # It will be reconfigured later for the *modify* step.
-    test_calendar_config_for_add = {  # Use a distinct config dict if needed, or reuse
-        "caldav": {
-            "base_url": radicale_base_url,
-            "username": r_user,
-            "password": r_pass,
-            "calendar_urls": [test_calendar_direct_url],
+    test_calendar_config_for_add = cast(
+        "CalendarConfig",
+        {  # Use a distinct config dict if needed, or reuse
+            "caldav": {
+                "base_url": radicale_base_url,
+                "username": r_user,
+                "password": r_pass,
+                "calendar_urls": [test_calendar_direct_url],
+            },
+            "ical": {"urls": []},
         },
-        "ical": {"urls": []},
-    }
+    )
     dummy_prompts_for_add = {
         "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
     }
@@ -851,15 +856,18 @@ async def test_delete_event(
     )
 
     # --- Setup ProcessingService (similar to other tests) ---
-    test_calendar_config = {
-        "caldav": {
-            "base_url": radicale_base_url,  # Add base_url
-            "username": r_user,
-            "password": r_pass,
-            "calendar_urls": [test_calendar_direct_url],
+    test_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "base_url": radicale_base_url,  # Add base_url
+                "username": r_user,
+                "password": r_pass,
+                "calendar_urls": [test_calendar_direct_url],
+            },
+            "ical": {"urls": []},
         },
-        "ical": {"urls": []},
-    }
+    )
     dummy_prompts = {
         "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
     }  # type: ignore
@@ -1075,18 +1083,21 @@ async def test_search_events(
     event2_end = event2_start + timedelta(hours=2)
 
     # --- Setup ProcessingService (used for creating events and then searching) ---
-    test_calendar_config = {
-        "caldav": {
-            "base_url": radicale_base_url,
-            "username": r_user,
-            "password": r_pass,
-            "calendar_urls": [test_calendar_direct_url],
+    test_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "base_url": radicale_base_url,
+                "username": r_user,
+                "password": r_pass,
+                "calendar_urls": [test_calendar_direct_url],
+            },
+            "ical": {"urls": []},
+            "duplicate_detection": {
+                "enabled": False,  # Disable for this test - we're testing search, not duplicate detection
+            },
         },
-        "ical": {"urls": []},
-        "duplicate_detection": {
-            "enabled": False,  # Disable for this test - we're testing search, not duplicate detection
-        },
-    }
+    )
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     dummy_prompts: dict[str, Any] = {
         "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
@@ -1444,15 +1455,18 @@ END:VCALENDAR"""
     await asyncio.to_thread(calendar.save_event, timed_event_data)
 
     # Setup calendar configuration
-    test_calendar_config = {
-        "caldav": {
-            "base_url": radicale_server[0],
-            "username": r_user,
-            "password": r_pass,
-            "calendar_urls": [test_calendar_direct_url],
+    test_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "base_url": radicale_server[0],
+                "username": r_user,
+                "password": r_pass,
+                "calendar_urls": [test_calendar_direct_url],
+            },
+            "ical": {"urls": []},
         },
-        "ical": {"urls": []},
-    }
+    )
 
     # Import and test the fetch function
 
@@ -1532,21 +1546,24 @@ async def test_similarity_based_search_finds_similar_events(
     event3_end = event3_start + timedelta(hours=1)
 
     # Setup calendar config with embedding similarity
-    test_calendar_config = {
-        "caldav": {
-            "base_url": radicale_base_url,
-            "username": r_user,
-            "password": r_pass,
-            "calendar_urls": [test_calendar_direct_url],
+    test_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "base_url": radicale_base_url,
+                "username": r_user,
+                "password": r_pass,
+                "calendar_urls": [test_calendar_direct_url],
+            },
+            "ical": {"urls": []},
+            "duplicate_detection": {
+                "enabled": True,
+                "similarity_strategy": "fuzzy",  # Use fuzzy for tests (fast, no deps)
+                "similarity_threshold": 0.30,
+                "time_window_hours": 2,
+            },
         },
-        "ical": {"urls": []},
-        "duplicate_detection": {
-            "enabled": True,
-            "similarity_strategy": "fuzzy",  # Use fuzzy for tests (fast, no deps)
-            "similarity_threshold": 0.30,
-            "time_window_hours": 2,
-        },
-    }
+    )
 
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     dummy_prompts: dict[str, Any] = {
@@ -1852,21 +1869,24 @@ async def test_similarity_search_threshold_filtering(
     end_time = start_time + timedelta(hours=1)
 
     # Setup with higher threshold
-    test_calendar_config = {
-        "caldav": {
-            "base_url": radicale_base_url,
-            "username": r_user,
-            "password": r_pass,
-            "calendar_urls": [test_calendar_direct_url],
+    test_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "base_url": radicale_base_url,
+                "username": r_user,
+                "password": r_pass,
+                "calendar_urls": [test_calendar_direct_url],
+            },
+            "ical": {"urls": []},
+            "duplicate_detection": {
+                "enabled": True,
+                "similarity_strategy": "fuzzy",
+                "similarity_threshold": 0.50,  # Higher threshold
+                "time_window_hours": 2,
+            },
         },
-        "ical": {"urls": []},
-        "duplicate_detection": {
-            "enabled": True,
-            "similarity_strategy": "fuzzy",
-            "similarity_threshold": 0.50,  # Higher threshold
-            "time_window_hours": 2,
-        },
-    }
+    )
 
     # Create events directly using tool
     async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
@@ -1963,21 +1983,24 @@ async def test_similarity_search_score_sorting(
 
     start_time = tomorrow.replace(hour=9, minute=0, second=0, microsecond=0)
 
-    test_calendar_config = {
-        "caldav": {
-            "base_url": radicale_base_url,
-            "username": r_user,
-            "password": r_pass,
-            "calendar_urls": [test_calendar_direct_url],
+    test_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "base_url": radicale_base_url,
+                "username": r_user,
+                "password": r_pass,
+                "calendar_urls": [test_calendar_direct_url],
+            },
+            "ical": {"urls": []},
+            "duplicate_detection": {
+                "enabled": True,
+                "similarity_strategy": "fuzzy",
+                "similarity_threshold": 0.20,  # Low threshold to get all events
+                "time_window_hours": 2,
+            },
         },
-        "ical": {"urls": []},
-        "duplicate_detection": {
-            "enabled": True,
-            "similarity_strategy": "fuzzy",
-            "similarity_threshold": 0.20,  # Low threshold to get all events
-            "time_window_hours": 2,
-        },
-    }
+    )
 
     async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
         exec_context = ToolExecutionContext(
@@ -2072,22 +2095,25 @@ async def test_duplicate_detection_error_shown(
     base_url, username, password, calendar_url = radicale_server
 
     # Create test config with fuzzy similarity (fast, zero dependencies)
-    test_calendar_config = {
-        "caldav": {
-            "base_url": base_url,
-            "username": username,
-            "password": password,
-            "calendar_urls": [calendar_url],
-            # RADICALE WORKAROUND: Use naive datetimes for search compatibility
-            "_use_naive_datetimes_for_search": True,
+    test_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "base_url": base_url,
+                "username": username,
+                "password": password,
+                "calendar_urls": [calendar_url],
+                # RADICALE WORKAROUND: Use naive datetimes for search compatibility
+                "_use_naive_datetimes_for_search": True,
+            },
+            "duplicate_detection": {
+                "enabled": True,
+                "similarity_strategy": "fuzzy",
+                "similarity_threshold": 0.30,
+                "time_window_hours": 2,
+            },
         },
-        "duplicate_detection": {
-            "enabled": True,
-            "similarity_strategy": "fuzzy",
-            "similarity_threshold": 0.30,
-            "time_window_hours": 2,
-        },
-    }
+    )
 
     # Create execution context
     async with DatabaseContext(pg_vector_db_engine) as db_context:
@@ -2205,21 +2231,24 @@ async def test_duplicate_detection_no_error_different_time(
 
     base_url, username, password, calendar_url = radicale_server
 
-    test_calendar_config = {
-        "caldav": {
-            "base_url": base_url,
-            "username": username,
-            "password": password,
-            "calendar_urls": [calendar_url],
-            "_use_naive_datetimes_for_search": True,
+    test_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "base_url": base_url,
+                "username": username,
+                "password": password,
+                "calendar_urls": [calendar_url],
+                "_use_naive_datetimes_for_search": True,
+            },
+            "duplicate_detection": {
+                "enabled": True,
+                "similarity_strategy": "fuzzy",
+                "similarity_threshold": 0.30,
+                "time_window_hours": 2,
+            },
         },
-        "duplicate_detection": {
-            "enabled": True,
-            "similarity_strategy": "fuzzy",
-            "similarity_threshold": 0.30,
-            "time_window_hours": 2,
-        },
-    }
+    )
 
     async with DatabaseContext(pg_vector_db_engine) as db_context:
         exec_context = ToolExecutionContext(
@@ -2296,20 +2325,23 @@ async def test_duplicate_detection_disabled(
     base_url, username, password, calendar_url = radicale_server
 
     # Config with duplicate detection DISABLED
-    test_calendar_config = {
-        "caldav": {
-            "base_url": base_url,
-            "username": username,
-            "password": password,
-            "calendar_urls": [calendar_url],
-            "_use_naive_datetimes_for_search": True,
+    test_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "base_url": base_url,
+                "username": username,
+                "password": password,
+                "calendar_urls": [calendar_url],
+                "_use_naive_datetimes_for_search": True,
+            },
+            "duplicate_detection": {
+                "enabled": False,  # Disabled
+                "similarity_strategy": "fuzzy",
+                "similarity_threshold": 0.30,
+            },
         },
-        "duplicate_detection": {
-            "enabled": False,  # Disabled
-            "similarity_strategy": "fuzzy",
-            "similarity_threshold": 0.30,
-        },
-    }
+    )
 
     async with DatabaseContext(pg_vector_db_engine) as db_context:
         exec_context = ToolExecutionContext(
@@ -2382,20 +2414,23 @@ async def test_duplicate_detection_all_day_events(
 
     base_url, username, password, calendar_url = radicale_server
 
-    test_calendar_config = {
-        "caldav": {
-            "base_url": base_url,
-            "username": username,
-            "password": password,
-            "calendar_urls": [calendar_url],
-            "_use_naive_datetimes_for_search": True,
+    test_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "base_url": base_url,
+                "username": username,
+                "password": password,
+                "calendar_urls": [calendar_url],
+                "_use_naive_datetimes_for_search": True,
+            },
+            "duplicate_detection": {
+                "enabled": True,
+                "similarity_strategy": "fuzzy",
+                "similarity_threshold": 0.30,
+            },
         },
-        "duplicate_detection": {
-            "enabled": True,
-            "similarity_strategy": "fuzzy",
-            "similarity_threshold": 0.30,
-        },
-    }
+    )
 
     async with DatabaseContext(pg_vector_db_engine) as db_context:
         exec_context = ToolExecutionContext(
@@ -2486,21 +2521,24 @@ async def test_duplicate_detection_exact_same_title(
 
     base_url, username, password, calendar_url = radicale_server
 
-    test_calendar_config = {
-        "caldav": {
-            "base_url": base_url,
-            "username": username,
-            "password": password,
-            "calendar_urls": [calendar_url],
-            "_use_naive_datetimes_for_search": True,
+    test_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "base_url": base_url,
+                "username": username,
+                "password": password,
+                "calendar_urls": [calendar_url],
+                "_use_naive_datetimes_for_search": True,
+            },
+            "duplicate_detection": {
+                "enabled": True,
+                "similarity_strategy": "fuzzy",
+                "similarity_threshold": 0.30,
+                "time_window_hours": 2,
+            },
         },
-        "duplicate_detection": {
-            "enabled": True,
-            "similarity_strategy": "fuzzy",
-            "similarity_threshold": 0.30,
-            "time_window_hours": 2,
-        },
-    }
+    )
 
     async with DatabaseContext(pg_vector_db_engine) as db_context:
         exec_context = ToolExecutionContext(

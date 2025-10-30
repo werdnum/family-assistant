@@ -1,30 +1,37 @@
 """Test that LocalToolsProvider handles calendar_config properly."""
 
-from typing import Any
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.infrastructure import LocalToolsProvider
-from family_assistant.tools.types import ToolExecutionContext, ToolResult
+from family_assistant.tools.types import (
+    CalendarConfig,
+    ToolExecutionContext,
+    ToolResult,
+)
 
 
 @pytest.mark.asyncio
 async def test_calendar_config_from_provider() -> None:
     """Test that calendar_config is used from provider when set."""
 
-    test_calendar_config = {
-        "caldav": {
-            "username": "test_user",
-            "password": "test_pass",
-            "calendar_urls": ["https://example.com/cal"],
-        }
-    }
+    test_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "username": "test_user",
+                "password": "test_pass",
+                "calendar_urls": ["https://example.com/cal"],
+            }
+        },
+    )
 
     # Create a mock calendar tool function
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def mock_calendar_tool(calendar_config: dict[str, Any], summary: str) -> str:
+    async def mock_calendar_tool(calendar_config: CalendarConfig, summary: str) -> str:
         """Mock calendar tool that requires calendar_config."""
         caldav_config = calendar_config.get("caldav", {})
         username = caldav_config.get("username", "NO_USER")
@@ -89,7 +96,7 @@ async def test_calendar_tool_without_config() -> None:
 
     # Create a mock calendar tool function
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def mock_calendar_tool(calendar_config: dict[str, Any], summary: str) -> str:
+    async def mock_calendar_tool(calendar_config: CalendarConfig, summary: str) -> str:
         """Mock calendar tool that requires calendar_config."""
         return "Should not reach here"
 
@@ -155,17 +162,20 @@ async def test_calendar_tool_without_config() -> None:
 async def test_calendar_config_preference() -> None:
     """Test that instance calendar_config is used when available."""
 
-    instance_calendar_config = {
-        "caldav": {
-            "username": "instance_user",
-            "password": "instance_pass",
-            "calendar_urls": ["https://instance.example.com/cal"],
-        }
-    }
+    instance_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "username": "instance_user",
+                "password": "instance_pass",
+                "calendar_urls": ["https://instance.example.com/cal"],
+            }
+        },
+    )
 
     # Create a mock calendar tool function
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def mock_calendar_tool(calendar_config: dict[str, Any], summary: str) -> str:
+    async def mock_calendar_tool(calendar_config: CalendarConfig, summary: str) -> str:
         """Mock calendar tool that requires calendar_config."""
         caldav_config = calendar_config.get("caldav", {})
         username = caldav_config.get("username", "NO_USER")

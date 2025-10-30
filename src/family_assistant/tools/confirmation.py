@@ -15,7 +15,11 @@ from family_assistant import calendar_integration
 
 if TYPE_CHECKING:
     from family_assistant.tools.infrastructure import ToolsProvider
-    from family_assistant.tools.types import CalendarConfig, ToolExecutionContext
+    from family_assistant.tools.types import (
+        CalendarConfig,
+        CalendarEvent,
+        ToolExecutionContext,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -83,8 +87,7 @@ class ConfirmationRenderer(Protocol):
 
 
 def _format_event_details_for_confirmation(
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    details: dict[str, Any] | None,
+    details: CalendarEvent | None,
     timezone_str: str,
 ) -> str:
     """Formats fetched event details for inclusion in confirmation prompts."""
