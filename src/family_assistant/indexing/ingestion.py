@@ -5,6 +5,7 @@ import os
 import pathlib
 import re
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -17,46 +18,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Define a simple class on the fly that behaves like the Document protocol
-# This avoids needing a direct import of a specific Document implementation
+@dataclass(frozen=True)
 class IngestedDocument:
+    """A document prepared for ingestion, adhering to the Document protocol."""
+
+    source_type: str
+    source_id: str
+    source_uri: str | None
+    title: str | None
+    created_at: datetime | None
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def __init__(self, data: dict[str, Any]) -> None:
-        self._data = data
-
-    @property
-    def source_type(self) -> str:
-        return self._data["_source_type"]
-
-    @property
-    def source_id(self) -> str:
-        return self._data["_source_id"]
-
-    @property
-    def source_uri(self) -> str | None:
-        return self._data["_source_uri"]
-
-    @property
-    def title(self) -> str | None:
-        return self._data["_title"]
-
-    @property
-    def created_at(self) -> datetime | None:
-        return self._data["_created_at"]
-
-    @property
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def metadata(self) -> dict[str, Any] | None:
-        return self._data["_base_metadata"]
-
-    @property
-    def file_path(self) -> str | None:
-        return self._data.get("_file_path")
-
-    @property
-    def id(self) -> int | None:  # pylint: disable=invalid-name
-        """The internal database ID of the document, if persisted. None otherwise."""
-        return self._data.get("_id")
+    metadata: dict[str, Any] | None
+    file_path: str | None = None
+    id: int | None = None  # pylint: disable=invalid-name
 
 
 async def process_document_ingestion_request(
@@ -167,16 +141,15 @@ async def process_document_ingestion_request(
             }
 
         # Create Document Record in DB
-        document_data_for_obj = {
-            "_source_type": source_type,
-            "_source_id": source_id,
-            "_source_uri": source_uri,
-            "_title": title,
-            "_created_at": created_at_dt,
-            "_base_metadata": doc_metadata,
-            "_file_path": file_ref,  # Store the file path
-        }
-        doc_for_storage = IngestedDocument(document_data_for_obj)
+        doc_for_storage = IngestedDocument(
+            source_type=source_type,
+            source_id=source_id,
+            source_uri=source_uri,
+            title=title,
+            created_at=created_at_dt,
+            metadata=doc_metadata,
+            file_path=file_ref,
+        )
 
         document_id: int = await db_context.vector.add_document(
             doc=doc_for_storage,

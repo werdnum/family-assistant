@@ -8,6 +8,8 @@ import logging  # Added
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from family_assistant.indexing.types import IndexableContentMetadata
+
 if TYPE_CHECKING:
     from family_assistant.storage.vector import Document
     from family_assistant.tools.types import ToolExecutionContext
@@ -34,9 +36,8 @@ class IndexableContent:
     mime_type: str | None = None
     """MIME type of the content (e.g., 'text/plain', 'image/jpeg')."""
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    metadata: dict[str, Any] = field(default_factory=dict)
-    """Processor-specific details (e.g., {'page_number': 3})."""
+    metadata: IndexableContentMetadata = field(default_factory=dict)
+    """Processor-specific details (e.g., chunk index, original URL)."""
 
     ref: str | None = None
     """Reference to original binary data if content is None (e.g., temporary file path)."""
