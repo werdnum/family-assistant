@@ -1,0 +1,86 @@
+interactions:
+  - request:
+      body: '{"contents": [{"parts": [{"text": "What''s the weather in Paris?"}], "role": "user"}], "tools": [{"functionDeclarations": [{"description": "Get the current weather", "name": "get_weather", "parameters": {"properties": {"location": {"description": "City name", "type": "STRING"}}, "required": ["location"], "type": "OBJECT"}}]}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.12.3
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.12.3
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"Paris\"\n              }\n            },\n            \"thoughtSignature\": \"CvIBAdHtim9bbv0vzqa3lBJjMjJzsyYJ7IQFABwT/sdv0QvpD7oIO3Jm9G+8BAAa+3MvpEtvLCHPQUfptojkLtbfmdihZ508G1JDDUKA/1zqopBTd5AF5DCelNoLPiXC3oXQQpWlVXjK+Xh6IyxCjMwmvN/dh924zlbfTvnxE/Ity81ItJ24SqXIuDpvLY1dwhQpwSQ4Bv9LRjgdSNJpjf6s3Z3xYUcGgz1qm3fvr7EC0tQCULJ6YPDUb8WUXdE0o4MToxzRj5nbkZaJmYAyvKZXvhhjzbc9QR+jIdipO4+KTAhcpXXYE4OKDomfwtokV+XR9iQ=\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 46,\n    \"candidatesTokenCount\": 15,\n    \"totalTokenCount\": 112,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 46\n      }\n    ],\n    \"thoughtsTokenCount\": 51\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"5UIDaYC2NurZvdIP_vq4yQ4\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Thu, 30 Oct 2025 10:50:13 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=1276
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": "What''s the weather in Paris?"}], "role": "user"}, {"parts": [{"thoughtSignature": "Q3ZJQkFkSHRpbTliYnYwdnpxYTNsQkpqTWpKenN5WUo3SVFGQUJ3VC9zZHYwUXZwRDdvSU8zSm05Rys4QkFBYSszTXZwRXR2TENIUFFVZnB0b2prTHRiZm1kaWhaNTA4RzFKRERVS0EvMXpxb3BCVGQ1QUY1RENlbE5vTFBpWEMzb1hRUXBXbFZYaksrWGg2SXl4Q2pNd212Ti9kaDkyNHpsYmZUdm54RS9JdHk4MUl0SjI0U3FYSXVEcHZMWTFkd2hRcHdTUTRCdjlMUmpnZFNOSnBqZjZzM1ozeFlVY0dnejFxbTNmdnI3RUMwdFFDVUxKNllQRFViOFdVWGRFMG80TVRveHpSajVuYmtaYUptWUF5dktaWHZoaGp6YmM5UVIraklkaXBPNCtLVEFoY3BYWFlFNE9LRG9tZnd0b2tWK1hSOWlRPQ==", "functionCall": {"args": {"location": "Paris"}, "name": "get_weather"}}], "role": "model"}, {"parts": [{"functionResponse": {"name": "unknown", "response": {"result": "15\u00b0C, sunny"}}}], "role": "function"}, {"parts": [{"text": "Thanks! What about London?"}], "role": "user"}], "tools": [{"functionDeclarations": [{"description": "Get the current weather", "name": "get_weather", "parameters": {"properties": {"location": {"description": "City name", "type": "STRING"}}, "required": ["location"], "type": "OBJECT"}}]}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.12.3
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.12.3
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"London\"\n              }\n            },\n            \"thoughtSignature\": \"CtICAdHtim+jU4ujGvH7+Bx7YPksB4Atwa/JrnxSwyoEeyxVmvC7SGeVC4zQqWoavp2T/P2meXalBA4LS5H+YoXRE9Rr3r/a/8YEbD4kYkOe9sWf6WSxlruEVnPii1ApLsVwRTog78p7Yfn3XNv2Jm4T42IrGEA4VXrKupZQEO0FwO1SL6GmcqSIUpCRLMBEwuphwfx2mjPJsTpiZA2KSxCEY7OnQJ83WrX+z7qSGbzaW5uyV9tTJdnJxp+PNd0DYD9HX6K3Ofy0SL4cXZZI1K66WBTXGzv0NypyrV0T/ZJhgaaDZ8kATIVDG0SINfaQ4o095UtSsCDSLdY0dgT4g6mXNfMGJBZoZrLBqbtyF5usWt+RVH8J+qDod8ZaRmtM9w+YY/fT/0r15YarPiPHN1rdMqsqNNle8N+QJELn/I2syTg+vmY3aMZpWJ5T918HjkCDYi8=\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 86,\n    \"candidatesTokenCount\": 15,\n    \"totalTokenCount\": 183,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 86\n      }\n    ],\n    \"thoughtsTokenCount\": 82\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"50IDaZnKAe2kvdIPwv7GkQ4\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Thu, 30 Oct 2025 10:50:15 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=1161
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
+version: 1
