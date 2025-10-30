@@ -175,8 +175,111 @@ async def test_thought_signature_reconstruction(
 
     # Check that at least one part has the reconstructed thought signature
     parts = model_msg_with_tool["parts"]
-    parts_with_thought = [part for part in parts if "thought" in part]
+    parts_with_thought_signature = [
+        part for part in parts if "thought_signature" in part
+    ]
 
-    if parts_with_thought:
-        # Verify the thought was reconstructed as bytes
-        assert parts_with_thought[0]["thought"] == b"test_signature_data"
+    if parts_with_thought_signature:
+        # Verify the thought_signature was reconstructed as bytes
+        assert (
+            parts_with_thought_signature[0]["thought_signature"]
+            == b"test_signature_data"
+        )
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=sanitize_response)
+async def test_thought_signature_multiturn_with_api(
+    google_client_thinking: GoogleGenAIClient,
+) -> None:
+    """Test that thought signatures work in multi-turn conversations sent to the API.
+
+    This is a true integration test that verifies the API accepts reconstructed
+    thought signatures. It catches bugs like using wrong field names that would
+    cause API validation errors.
+    """
+    if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
+        pytest.skip("Skipping Google test in CI without API key")
+
+    # Define tools for the conversation
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Get the current weather",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string", "description": "City name"},
+                    },
+                    "required": ["location"],
+                },
+            },
+        }
+    ]
+
+    # Turn 1: Initial request that will generate thought signatures
+    initial_messages = [{"role": "user", "content": "What's the weather in Paris?"}]
+
+    response1 = await google_client_thinking.generate_response(
+        messages=initial_messages, tools=tools
+    )
+
+    # Verify we got tool calls with thought signatures
+    assert response1.tool_calls is not None
+    assert len(response1.tool_calls) > 0
+
+    # Build conversation history including the response with thought signatures
+    # This simulates what would be stored in the database
+    conversation_history = initial_messages.copy()
+
+    # Add the assistant's response with tool calls
+    assistant_message = {
+        "role": "assistant",
+        "content": response1.content or "",
+        "tool_calls": [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.function.name,
+                    "arguments": tc.function.arguments,
+                },
+            }
+            for tc in response1.tool_calls
+        ],
+    }
+
+    # Include provider_metadata with thought signatures if present
+    if response1.provider_metadata:
+        assistant_message["provider_metadata"] = response1.provider_metadata
+
+    conversation_history.append(assistant_message)
+
+    # Add tool response
+    conversation_history.append({
+        "role": "tool",
+        "tool_call_id": response1.tool_calls[0].id,
+        "content": "15°C, sunny",
+    })
+
+    # Turn 2: Follow-up message - this will reconstruct thought signatures
+    # and send them back to the API
+    conversation_history.append({
+        "role": "user",
+        "content": "Thanks! What about London?",
+    })
+
+    # This is the critical test: send messages with reconstructed thought signatures
+    # If we used the wrong field name, the API would reject this with validation errors
+    response2 = await google_client_thinking.generate_response(
+        messages=conversation_history, tools=tools
+    )
+
+    # If we got here without validation errors, the thought signatures were
+    # correctly reconstructed and accepted by the API
+    assert response2 is not None
+    # The second response should also have tool calls for London weather
+    assert response2.tool_calls is not None
