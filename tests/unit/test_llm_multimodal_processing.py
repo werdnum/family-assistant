@@ -430,7 +430,9 @@ class TestLiteLLMClient:
         assert len(result) == 2
         assert result[0]["role"] == "tool"
         assert result[1]["role"] == "user"  # Injected message
-        assert "File from previous tool response" in result[1]["content"]
+        assert isinstance(result[1]["content"], list)
+        assert result[1]["content"][0]["type"] == "text"
+        assert "File from previous tool response" in result[1]["content"][0]["text"]
 
     def test_process_tool_messages_with_file_path_only_attachment(self) -> None:
         """Test processing tool messages with file-path-only attachments"""
@@ -462,10 +464,8 @@ class TestLiteLLMClient:
             "External PDF file" in result[1]["content"]
         )  # Uses description, not file_path
 
-    def test_process_tool_messages_falls_back_to_base_class_for_non_claude(
-        self,
-    ) -> None:
-        """Test that non-Claude models fall back to base class behavior"""
+    def test_process_tool_messages_adds_image_for_non_claude(self) -> None:
+        """Test that non-Claude models inject image attachments using LiteLLM format"""
         client = LiteLLMClient(model="gpt-4")
 
         fake_image_data = b"fake image data"
@@ -488,4 +488,11 @@ class TestLiteLLMClient:
         assert len(result) == 2
         assert result[0]["role"] == "tool"
         assert "[File content in following message]" in result[0]["content"]
-        assert result[1]["role"] == "user"  # Injected message
+        assert result[1]["role"] == "user"
+        assert isinstance(result[1]["content"], list)
+        first_part = result[1]["content"][0]
+        image_part = result[1]["content"][1]
+        assert first_part["type"] == "text"
+        assert "File from previous tool response" in first_part["text"]
+        assert image_part["type"] == "image_url"
+        assert image_part["image_url"]["url"].startswith("data:image/png;base64,")

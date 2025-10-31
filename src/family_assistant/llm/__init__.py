@@ -448,6 +448,69 @@ class LLMInterface(Protocol):
 class LiteLLMClient(BaseLLMClient):
     """LLM client implementation using the LiteLLM library."""
 
+    def _create_attachment_injection(
+        self,
+        attachment: "ToolAttachment",
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    ) -> dict[str, Any]:
+        """Create user injection messages for attachments when using LiteLLM."""
+
+        base_message = super()._create_attachment_injection(attachment)
+
+        # If there's no inline content available, fall back to base class behaviour
+        if attachment.content is None:
+            return base_message
+
+        base_text = str(base_message.get("content", ""))
+        injection_parts: list[dict[str, Any]] = [
+            {"type": "text", "text": base_text}
+        ]
+
+        if attachment.mime_type.startswith("image/"):
+            image_b64 = attachment.get_content_as_base64()
+            if image_b64:
+                injection_parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{attachment.mime_type};base64,{image_b64}"
+                        },
+                    }
+                )
+            else:
+                logger.warning(
+                    "LiteLLM attachment injection: Unable to encode image attachment. "
+                    "Falling back to text-only description."
+                )
+        elif attachment.mime_type == "application/pdf":
+            size_kb = len(attachment.content) / 1024
+            description = attachment.description or "PDF document"
+            injection_parts.append(
+                {
+                    "type": "text",
+                    "text": (
+                        f"[PDF Document: {description} ({size_kb:.1f} KB). "
+                        "Inline PDF previews are not supported via LiteLLM; "
+                        "use the attachment metadata or provide a summary.]"
+                    ),
+                }
+            )
+        else:
+            size_kb = len(attachment.content) / 1024
+            description = attachment.description or attachment.mime_type
+            injection_parts.append(
+                {
+                    "type": "text",
+                    "text": (
+                        f"[File content available: {description} "
+                        f"({attachment.mime_type}, {size_kb:.1f} KB). "
+                        "Inline preview not supported; refer to attachment metadata.]"
+                    ),
+                }
+            )
+
+        return {"role": "user", "content": injection_parts}
+
     def __init__(
         self,
         model: str,
