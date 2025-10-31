@@ -1,0 +1,88 @@
+interactions:
+  - request:
+      body: null
+      headers:
+        Content-Type:
+          - application/json
+      method: GET
+      uri: http://localhost:56891/api/states/input_boolean.test_switch
+    response:
+      body:
+        string: '{"entity_id":"input_boolean.test_switch","state":"off","attributes":{"editable":false,"friendly_name":"Test Switch"},"last_changed":"2025-10-31T03:40:15.673144+00:00","last_reported":"2025-10-31T03:40:15.673144+00:00","last_updated":"2025-10-31T03:40:15.673144+00:00","context":{"id":"01K8W5M1XSBEDDB37EZB22G3T3","parent_id":null,"user_id":null}}'
+      headers:
+        Content-Length:
+          - '346'
+        Content-Type:
+          - application/json
+        Date:
+          - Fri, 31 Oct 2025 03:40:16 GMT
+        Referrer-Policy:
+          - no-referrer
+        Server:
+          - ''
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: null
+      headers:
+        Content-Type:
+          - application/json
+      method: GET
+      uri: http://localhost:56891/api/states/input_text.test_sensor
+    response:
+      body:
+        string: '{"entity_id":"input_text.test_sensor","state":"test_value","attributes":{"editable":false,"min":0,"max":100,"pattern":null,"mode":"text","friendly_name":"Test Sensor"},"last_changed":"2025-10-31T03:40:15.667463+00:00","last_reported":"2025-10-31T03:40:15.667463+00:00","last_updated":"2025-10-31T03:40:15.667463+00:00","context":{"id":"01K8W5M1XK0Q7WMPB0HVJJDMG7","parent_id":null,"user_id":null}}'
+      headers:
+        Content-Length:
+          - '397'
+        Content-Type:
+          - application/json
+        Date:
+          - Fri, 31 Oct 2025 03:40:16 GMT
+        Referrer-Policy:
+          - no-referrer
+        Server:
+          - ''
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: null
+      headers:
+        Content-Type:
+          - application/json
+      method: GET
+      uri: http://localhost:56891/api/history/period/{START_TIME}?end_time=%7BEND_TIME%7D&filter_entity_id=input_boolean.test_switch%2Cinput_text.test_sensor
+    response:
+      body:
+        string: '[[{"entity_id":"input_boolean.test_switch","state":"off","attributes":{"friendly_name":"Test Switch"},"last_changed":"2025-10-31T03:40:15.673144+00:00","last_updated":"2025-10-31T03:40:15.673144+00:00"}],[{"entity_id":"input_text.test_sensor","state":"test_value","attributes":{"friendly_name":"Test Sensor"},"last_changed":"2025-10-31T03:40:15.667463+00:00","last_updated":"2025-10-31T03:40:15.667463+00:00"}]]'
+      headers:
+        Content-Encoding:
+          - deflate
+        Content-Length:
+          - '185'
+        Content-Type:
+          - application/json
+        Date:
+          - Fri, 31 Oct 2025 03:40:16 GMT
+        Referrer-Policy:
+          - no-referrer
+        Server:
+          - ''
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+      status:
+        code: 200
+        message: OK
+version: 1

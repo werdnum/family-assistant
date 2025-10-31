@@ -1,6 +1,6 @@
 """Tests for the Starlark time API."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -40,7 +40,7 @@ class TestTimeCreation:
         assert result["timezone"] == "UTC"
 
         # Verify it's roughly current UTC time
-        now_utc = datetime.now(timezone.utc)
+        now_utc = datetime.now(UTC)
         assert result["year"] == now_utc.year
         assert result["month"] == now_utc.month
         assert result["day"] == now_utc.day

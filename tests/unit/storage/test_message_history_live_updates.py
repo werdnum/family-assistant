@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -16,7 +16,7 @@ TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 
 @pytest_asyncio.fixture(scope="function")
-async def db_engine() -> AsyncGenerator[AsyncEngine, None]:
+async def db_engine() -> AsyncGenerator[AsyncEngine]:
     """Creates an in-memory SQLite engine and sets up the schema for each test function."""
     engine = create_async_engine(TEST_DATABASE_URL)
     async with engine.begin() as conn:
@@ -28,7 +28,7 @@ async def db_engine() -> AsyncGenerator[AsyncEngine, None]:
 
 
 @pytest_asyncio.fixture(scope="function")
-async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext, None]:
+async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext]:
     """Provides an *entered* DatabaseContext instance for interacting with the test database."""
     context_instance = get_db_context(engine=db_engine, base_delay=0.01)
     async with context_instance as entered_context:
@@ -40,7 +40,7 @@ async def test_get_messages_after_basic_query(db_context: DatabaseContext) -> No
     """Test basic functionality of get_messages_after."""
     interface_type = "web"
     conversation_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Add messages at different timestamps
     msg1 = await db_context.message_history.add_message(
@@ -112,7 +112,7 @@ async def test_get_messages_after_filter_by_interface_type(
 ) -> None:
     """Test filtering by interface_type in get_messages_after."""
     conversation_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Add messages with different interface types
     msg1 = await db_context.message_history.add_message(
@@ -172,7 +172,7 @@ async def test_get_messages_after_ordering_by_timestamp(
     """Test that messages are ordered by timestamp ascending (oldest first)."""
     interface_type = "web"
     conversation_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Add messages in non-chronological order
     msg1 = await db_context.message_history.add_message(
@@ -233,7 +233,7 @@ async def test_get_messages_after_limit_parameter(db_context: DatabaseContext) -
     """Test that the limit parameter restricts the number of results."""
     interface_type = "web"
     conversation_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Add 5 messages
     for i in range(5):
@@ -266,7 +266,7 @@ async def test_get_messages_after_empty_results(db_context: DatabaseContext) -> 
     """Test that empty list is returned when no messages exist after timestamp."""
     interface_type = "web"
     conversation_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Add a message in the past
     await db_context.message_history.add_message(
@@ -297,7 +297,7 @@ async def test_get_messages_after_different_conversations(
     interface_type = "web"
     conv1 = str(uuid.uuid4())
     conv2 = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Add messages to conversation 1
     msg1 = await db_context.message_history.add_message(

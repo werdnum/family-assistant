@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 import pytest_asyncio
@@ -14,7 +14,7 @@ from family_assistant.storage.repositories.events import EventsRepository
 
 
 @pytest_asyncio.fixture(scope="function")
-async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext, None]:
+async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext]:
     """
     Provides an entered DatabaseContext for repository tests.
 
@@ -655,7 +655,7 @@ class TestScheduleAutomationsRepository:
         assert automation["last_execution_at"] is None
 
         # Simulate task execution
-        execution_time = datetime.now(timezone.utc)
+        execution_time = datetime.now(UTC)
         await db_context.schedule_automations.after_task_execution(
             automation_id, execution_time
         )
@@ -690,7 +690,7 @@ class TestScheduleAutomationsRepository:
         assert automation is not None
 
         # Simulate task execution
-        execution_time = datetime.now(timezone.utc)
+        execution_time = datetime.now(UTC)
         await db_context.schedule_automations.after_task_execution(
             automation_id, execution_time
         )
@@ -730,7 +730,7 @@ class TestScheduleAutomationsRepository:
         assert automation["execution_count"] == 0
 
         # Simulate task execution
-        execution_time = datetime.now(timezone.utc)
+        execution_time = datetime.now(UTC)
         await db_context.schedule_automations.after_task_execution(
             automation_id, execution_time
         )

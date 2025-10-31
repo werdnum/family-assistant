@@ -1,6 +1,6 @@
 """Clock utilities for managing time, allowing for mockable time in tests."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 
@@ -17,7 +17,7 @@ class SystemClock:
 
     def now(self) -> datetime:
         """Return the current system datetime in UTC."""
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
 
 class MockClock:
@@ -29,7 +29,7 @@ class MockClock:
     def __init__(self, initial_time: datetime | None = None) -> None:
         if initial_time and initial_time.tzinfo is None:
             raise ValueError("MockClock initial_time must be timezone-aware.")
-        self._current_time: datetime = initial_time or datetime.now(timezone.utc)
+        self._current_time: datetime = initial_time or datetime.now(UTC)
 
     def now(self) -> datetime:
         """Return the current mock datetime in UTC."""

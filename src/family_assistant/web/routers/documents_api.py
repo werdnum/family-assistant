@@ -2,7 +2,7 @@ import json
 import logging
 import pathlib
 import uuid
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
 from fastapi import (
@@ -323,12 +323,12 @@ async def upload_document(
                     created_at_str.replace("Z", "+00:00")
                 )
                 if created_at_dt.tzinfo is None:
-                    created_at_dt = created_at_dt.replace(tzinfo=timezone.utc)
+                    created_at_dt = created_at_dt.replace(tzinfo=UTC)
             except ValueError:
                 try:
                     created_date = date.fromisoformat(created_at_str)
                     created_at_dt = datetime.combine(
-                        created_date, datetime.min.time(), tzinfo=timezone.utc
+                        created_date, datetime.min.time(), tzinfo=UTC
                     )
                 except ValueError:
                     raise ValueError(

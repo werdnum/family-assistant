@@ -10,7 +10,7 @@ import traceback
 import uuid
 import zoneinfo  # Add this import
 from collections.abc import Awaitable, Callable  # Import Union
-from datetime import datetime, timedelta, timezone  # Added Union
+from datetime import UTC, datetime, timedelta  # Added Union
 from typing import TYPE_CHECKING, Any
 
 from dateutil import rrule
@@ -258,9 +258,7 @@ async def handle_llm_callback(
     try:
         scheduling_timestamp_dt = isoparse(scheduling_timestamp_str)
         if scheduling_timestamp_dt.tzinfo is None:  # Ensure it's offset-aware
-            scheduling_timestamp_dt = scheduling_timestamp_dt.replace(
-                tzinfo=timezone.utc
-            )
+            scheduling_timestamp_dt = scheduling_timestamp_dt.replace(tzinfo=UTC)
     except ValueError as e:
         logger.error(
             f"Invalid scheduling_timestamp format in llm_callback task: {scheduling_timestamp_str}"
@@ -650,7 +648,7 @@ class TaskWorker:
                 logger.debug(
                     f"HANDLER SUCCESS: Worker {self.worker_id} completed handler for task {task['task_id']}"
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error(
                     f"HANDLER TIMEOUT: Task {task['task_id']} (type: {task['task_type']}) timed out after {self.handler_timeout} seconds"
                 )
@@ -686,17 +684,13 @@ class TaskWorker:
                     last_scheduled_at = task.get("scheduled_at")
                     if not last_scheduled_at:
                         # If somehow scheduled_at is missing, use created_at as fallback
-                        last_scheduled_at = task.get(
-                            "created_at", datetime.now(timezone.utc)
-                        )
+                        last_scheduled_at = task.get("created_at", datetime.now(UTC))
                         logger.warning(
                             f"RECURRENCE WARNING: Task {task_id} missing scheduled_at, using created_at ({last_scheduled_at}) for recurrence base."
                         )
                     # Ensure the base time is timezone-aware for rrule
                     if last_scheduled_at.tzinfo is None:
-                        last_scheduled_at = last_scheduled_at.replace(
-                            tzinfo=timezone.utc
-                        )
+                        last_scheduled_at = last_scheduled_at.replace(tzinfo=UTC)
                         logger.warning(
                             f"RECURRENCE WARNING: Made recurrence base time timezone-aware (UTC): {last_scheduled_at}"
                         )
@@ -723,7 +717,7 @@ class TaskWorker:
 
                     # Convert the result back to UTC for storage
                     if next_scheduled_dt:
-                        next_scheduled_dt = next_scheduled_dt.astimezone(timezone.utc)
+                        next_scheduled_dt = next_scheduled_dt.astimezone(UTC)
                         logger.debug(
                             f"RECURRENCE DEBUG: Next occurrence calculated as {next_scheduled_dt} UTC"
                         )
@@ -845,7 +839,7 @@ class TaskWorker:
             # If wait_for completes without timeout, the event was set
             logger.debug(f"Worker {self.worker_id}: Woken up by event.")
             wake_up_event.clear()  # Reset the event for the next notification
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Event didn't fire, timeout reached, proceed to next polling cycle
             logger.debug(
                 f"Worker {self.worker_id}: Wait timed out, continuing poll cycle."
@@ -995,7 +989,7 @@ async def handle_system_error_log_cleanup(
 
     try:
         deleted_count = await exec_context.db_context.error_logs.delete_old(
-            datetime.now(timezone.utc) - timedelta(days=retention_days)
+            datetime.now(UTC) - timedelta(days=retention_days)
         )
 
         logger.info(
@@ -1144,7 +1138,7 @@ async def _process_script_wake_llm(
     callback_task_id = f"script_wake_llm_{listener_id}_{uuid.uuid4().hex[:8]}"
 
     # Get current timestamp for scheduling
-    scheduling_timestamp = datetime.now(timezone.utc).isoformat()
+    scheduling_timestamp = datetime.now(UTC).isoformat()
 
     # Enqueue LLM callback task with attachment support
     payload = {

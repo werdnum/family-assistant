@@ -9,7 +9,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator  # Add missing typing imports
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock  # Import MagicMock
 
@@ -70,7 +70,7 @@ TEST_DOC_CHUNK_1 = (
     "Key areas include solar panel efficiency and battery storage improvements."
 )
 TEST_DOC_METADATA = {"author": "test_user", "version": 1.1}
-TEST_DOC_CREATED_AT = datetime(2024, 5, 15, 10, 0, 0, tzinfo=timezone.utc)
+TEST_DOC_CREATED_AT = datetime(2024, 5, 15, 10, 0, 0, tzinfo=UTC)
 TEST_DOC_CREATED_AT_STR = TEST_DOC_CREATED_AT.isoformat()  # String format for API
 
 # Content parts dictionary mimicking the structure expected by the indexer task
@@ -170,7 +170,7 @@ async def mock_embedding_generator() -> MockEmbeddingGenerator:
 async def http_client(
     pg_vector_db_engine: AsyncEngine,  # Ensure DB is setup before app starts
     mock_embedding_generator: MockEmbeddingGenerator,  # Inject the mock generator
-) -> AsyncGenerator[httpx.AsyncClient, None]:
+) -> AsyncGenerator[httpx.AsyncClient]:
     """
     Provides a test client for the FastAPI application, configured with
     the test database and mock embedding generator.
@@ -553,7 +553,7 @@ async def test_document_indexing_and_query_e2e(
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
             logger.info(f"Background task worker {worker_id} stopped.")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"Timeout stopping worker task {worker_id}. Cancelling.")
             worker_task.cancel()
             try:
@@ -785,7 +785,7 @@ async def test_document_indexing_with_llm_summary_e2e(
             "source_type": "summary_test_upload",
             "source_id": doc_source_id_summary,
             "title": "Document for LLM Summary Test",
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "metadata": json.dumps({"test_type": "llm_summary"}),
             "source_uri": "",  # Add missing source_uri
             # No content_parts, we are testing file processing for summary
@@ -878,7 +878,7 @@ async def test_document_indexing_with_llm_summary_e2e(
         test_shutdown_event.set()
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             worker_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await worker_task
@@ -1039,7 +1039,7 @@ async def test_url_indexing_e2e(
                 "Test URL Ingestion: " + MOCK_URL_TITLE
             ),  # Title for the document record
             "url": TEST_URL_TO_SCRAPE,  # Provide the URL to be scraped
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "metadata": json.dumps({"test_type": "url_indexing"}),
             "source_uri": TEST_URL_TO_SCRAPE,  # Canonical URI is the URL itself
         }
@@ -1171,7 +1171,7 @@ async def test_url_indexing_e2e(
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
             logger.info(f"Background task worker {worker_id} for URL test stopped.")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"Timeout stopping worker task {worker_id}. Cancelling.")
             worker_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -1321,7 +1321,7 @@ async def test_url_indexing_auto_title_e2e(
             "source_id": url_doc_source_id,
             "title": "Placeholder - Should be replaced by auto-extracted title",
             "url": TEST_URL_TO_SCRAPE,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "metadata": json.dumps({"test_type": "url_auto_title_indexing"}),
             "source_uri": TEST_URL_TO_SCRAPE,
         }
@@ -1424,7 +1424,7 @@ async def test_url_indexing_auto_title_e2e(
         test_shutdown_event.set()
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             worker_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await worker_task

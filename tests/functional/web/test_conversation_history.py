@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -273,7 +273,7 @@ async def test_get_conversation_messages_cross_interface_retrieval(
             interface_message_id="web_msg",
             turn_id="turn_1",
             thread_root_id=None,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             role="user",
             content="Web message",
         )
@@ -285,7 +285,7 @@ async def test_get_conversation_messages_cross_interface_retrieval(
             interface_message_id="tg_msg",
             turn_id="turn_2",
             thread_root_id=None,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             role="user",
             content="Telegram message",
         )
@@ -326,7 +326,7 @@ async def test_get_conversations_interface_filter(
             interface_message_id="web_msg_1",
             turn_id="turn_1",
             thread_root_id=None,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             role="user",
             content="Web user message",
         )
@@ -336,7 +336,7 @@ async def test_get_conversations_interface_filter(
             interface_message_id="web_msg_2",
             turn_id="turn_1",
             thread_root_id=None,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             role="assistant",
             content="Web assistant response",
         )
@@ -348,7 +348,7 @@ async def test_get_conversations_interface_filter(
             interface_message_id="tg_msg_1",
             turn_id="turn_2",
             thread_root_id=None,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             role="user",
             content="Telegram user message",
         )
@@ -358,7 +358,7 @@ async def test_get_conversations_interface_filter(
             interface_message_id="tg_msg_2",
             turn_id="turn_2",
             thread_root_id=None,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             role="assistant",
             content="Telegram assistant response",
         )
@@ -417,7 +417,7 @@ async def test_get_conversations_conversation_id_filter(
                 interface_message_id=f"msg_{i}",
                 turn_id=f"turn_{i}",
                 thread_root_id=None,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 role="user",
                 content=f"Test message {i}",
             )
@@ -453,7 +453,7 @@ async def test_get_conversations_date_filters(
     """Test filtering conversations by date range."""
 
     # Create test conversations with different timestamps
-    base_time = datetime.now(timezone.utc)
+    base_time = datetime.now(UTC)
     async with get_db_context(db_engine) as db_context:
         # Old conversation (3 days ago)
         await db_context.message_history.add_message(
@@ -556,7 +556,7 @@ async def test_get_conversations_combined_filters(
 ) -> None:
     """Test using multiple filters together."""
 
-    base_time = datetime.now(timezone.utc)
+    base_time = datetime.now(UTC)
 
     # Create test data
     async with get_db_context(db_engine) as db_context:
@@ -625,7 +625,7 @@ async def test_get_conversation_messages_pagination_default(
 
     # Create 100 messages with distinct timestamps
     async with get_db_context(db_engine) as db_context:
-        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
         for i in range(100):
             timestamp = base_time + timedelta(minutes=i)  # Each message 1 minute apart
             await db_context.message_history.add_message(
@@ -673,7 +673,7 @@ async def test_get_conversation_messages_pagination_before(
 
     # Create messages with known timestamps
     async with get_db_context(db_engine) as db_context:
-        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
         for i in range(20):
             timestamp = base_time.replace(minute=i)
             await db_context.message_history.add_message(
@@ -724,7 +724,7 @@ async def test_get_conversation_messages_pagination_after(
 
     # Create messages with known timestamps
     async with get_db_context(db_engine) as db_context:
-        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
         for i in range(20):
             timestamp = base_time.replace(minute=i)
             await db_context.message_history.add_message(
@@ -773,7 +773,7 @@ async def test_get_conversation_messages_pagination_limit_zero(
 
     # Create 10 messages
     async with get_db_context(db_engine) as db_context:
-        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
         for i in range(10):
             timestamp = base_time.replace(minute=i)
             await db_context.message_history.add_message(
@@ -854,7 +854,7 @@ async def test_get_conversation_messages_empty_results(
     ) as client:
         # Request messages before a timestamp when no messages exist
         before_timestamp = (
-            datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+            datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
             .isoformat()
             .replace("+00:00", "Z")
         )

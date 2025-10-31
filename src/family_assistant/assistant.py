@@ -8,7 +8,7 @@ import os
 import sys
 import zoneinfo
 from asyncio import subprocess as asyncio_subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -234,7 +234,7 @@ class Assistant:
                 dry_run_stdout, dry_run_stderr = await asyncio.wait_for(
                     dry_run_process.communicate(), timeout=10
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 dry_run_process.kill()
                 await dry_run_process.communicate()
                 logger.warning("Playwright browser check timed out")
@@ -269,7 +269,7 @@ class Assistant:
                     _, install_stderr = await asyncio.wait_for(
                         install_process.communicate(), timeout=300
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     install_process.kill()
                     await install_process.communicate()
                     logger.warning("Playwright browser installation timed out")
@@ -1191,7 +1191,7 @@ class Assistant:
                     next_3am_local += timedelta(days=1)
 
                 # Convert to UTC for storage
-                next_3am_utc = next_3am_local.astimezone(timezone.utc)
+                next_3am_utc = next_3am_local.astimezone(UTC)
 
                 # Upsert the system event cleanup task
                 try:
@@ -1278,8 +1278,7 @@ class Assistant:
                 # Check last activity time
                 if self.task_worker_instance.last_activity:
                     time_since_activity = (
-                        datetime.now(timezone.utc)
-                        - self.task_worker_instance.last_activity
+                        datetime.now(UTC) - self.task_worker_instance.last_activity
                     ).total_seconds()
 
                     if time_since_activity > WORKER_INACTIVITY_TIMEOUT:

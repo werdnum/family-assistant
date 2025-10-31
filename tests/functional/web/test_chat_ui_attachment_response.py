@@ -6,7 +6,7 @@ import json
 import os
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -84,7 +84,7 @@ async def create_test_attachment(
                 content_url=f"{base_url}/api/attachments/{attachment_id}",
                 storage_path=file_path,
                 conversation_id=conversation_id,
-                created_at=datetime(2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+                created_at=datetime(2024, 1, 1, 10, 0, 0, tzinfo=UTC),
             )
         )
 

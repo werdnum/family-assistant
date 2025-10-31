@@ -1,6 +1,6 @@
 """Web UI for viewing error logs."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -57,7 +57,7 @@ async def error_list(
             "level": level,
             "logger": logger,
             "days": days,
-            "now_utc": datetime.now(timezone.utc),
+            "now_utc": datetime.now(UTC),
         },
     )
 
@@ -77,5 +77,5 @@ async def error_detail(
 
     return templates.TemplateResponse(
         "error_detail.html",
-        {"request": request, "error": error, "now_utc": datetime.now(timezone.utc)},
+        {"request": request, "error": error, "now_utc": datetime.now(UTC)},
     )

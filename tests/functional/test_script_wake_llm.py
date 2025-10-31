@@ -202,7 +202,7 @@ if temp > 25.0:
     new_task_event.set()
     try:
         await asyncio.wait_for(worker_task, timeout=2.0)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         worker_task.cancel()
         await asyncio.sleep(0.1)
 
@@ -392,7 +392,7 @@ if air_quality < 50:
     new_task_event.set()
     try:
         await asyncio.wait_for(worker_task, timeout=2.0)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         worker_task.cancel()
         await asyncio.sleep(0.1)
 
@@ -538,7 +538,7 @@ if temp > 30 or temp < 10:
     new_task_event.set()
     try:
         await asyncio.wait_for(worker_task, timeout=2.0)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         worker_task.cancel()
         await asyncio.sleep(0.1)
 
@@ -744,7 +744,7 @@ if motion_detected:
         new_task_event.set()
         try:
             await asyncio.wait_for(worker_task, timeout=2.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             worker_task.cancel()
             await asyncio.sleep(0.1)
 
@@ -977,7 +977,7 @@ wake_llm({
         new_task_event.set()
         try:
             await asyncio.wait_for(worker_task, timeout=2.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             worker_task.cancel()
             await asyncio.sleep(0.1)
 

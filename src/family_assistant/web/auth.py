@@ -1,7 +1,7 @@
 import contextlib
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, NoReturn
 
 from authlib.integrations.starlette_client import OAuth  # type: ignore
@@ -168,7 +168,7 @@ class AuthService:
                 )
                 return None
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             if token_row["expires_at"] and token_row["expires_at"] < now:
                 logger.warning(
                     f"Attempt to use expired API token (ID: {token_row['id']}, User: {token_row['user_identifier']})."

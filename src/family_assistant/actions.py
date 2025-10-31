@@ -4,8 +4,8 @@ Shared action execution logic for both event listeners and scheduled tasks.
 
 import logging
 import time
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 from family_assistant.storage.context import DatabaseContext
@@ -14,7 +14,7 @@ from family_assistant.storage.tasks import enqueue_task
 logger = logging.getLogger(__name__)
 
 
-class ActionType(str, Enum):
+class ActionType(StrEnum):
     """Action types supported by the system."""
 
     WAKE_LLM = "wake_llm"
@@ -70,7 +70,7 @@ async def execute_action(
                 "interface_type": interface_type,
                 "conversation_id": conversation_id,
                 "callback_context": callback_context,
-                "scheduling_timestamp": datetime.now(timezone.utc).isoformat(),
+                "scheduling_timestamp": datetime.now(UTC).isoformat(),
             },
             scheduled_at=scheduled_at,
             recurrence_rule=recurrence_rule,

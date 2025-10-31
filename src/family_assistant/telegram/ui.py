@@ -100,7 +100,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                 f"Confirmation response received for {confirm_uuid}: {user_confirmed}"
             )
             return user_confirmed
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 f"Confirmation {confirm_uuid} timed out after {effective_timeout}s."
             )

@@ -2,7 +2,7 @@
 
 import json
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import String, cast, delete, insert, select, update
@@ -81,7 +81,7 @@ class EventsRepository(BaseRepository):
             Tuple of (is_allowed, error_message)
         """
         try:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
 
             # Get current listener state
             listener = await self.get_event_listener_by_id(listener_id)
@@ -188,7 +188,7 @@ class EventsRepository(BaseRepository):
                     interface_type=interface_type,
                     one_time=one_time,
                     enabled=enabled,
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                     daily_executions=0,
                 )
                 .returning(event_listeners_table.c.id)
@@ -535,7 +535,7 @@ class EventsRepository(BaseRepository):
         """
         try:
             if timestamp is None:
-                timestamp = datetime.now(timezone.utc)
+                timestamp = datetime.now(UTC)
 
             # Generate unique event ID
             event_id = f"{source_id}:{int(time.time() * 1000000)}"
@@ -546,7 +546,7 @@ class EventsRepository(BaseRepository):
                 event_data=event_data,
                 triggered_listener_ids=triggered_listener_ids,
                 timestamp=timestamp,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
 
             await self._db.execute_with_retry(stmt)
@@ -574,7 +574,7 @@ class EventsRepository(BaseRepository):
             List of event dictionaries
         """
         try:
-            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+            cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
 
             stmt = select(recent_events_table).where(
                 recent_events_table.c.timestamp >= cutoff_time
@@ -616,7 +616,7 @@ class EventsRepository(BaseRepository):
             Number of deleted events
         """
         try:
-            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=retention_hours)
+            cutoff_time = datetime.now(UTC) - timedelta(hours=retention_hours)
 
             stmt = delete(recent_events_table).where(
                 recent_events_table.c.created_at < cutoff_time
@@ -691,7 +691,7 @@ class EventsRepository(BaseRepository):
     ) -> tuple[list[dict], int]:
         """Get events with listener information."""
         try:
-            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+            cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
 
             # Build base query
             stmt = select(recent_events_table).where(

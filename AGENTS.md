@@ -15,6 +15,7 @@ repository.
 Additional guidance is available in subdirectories:
 
 - **[tests/CLAUDE.md](tests/CLAUDE.md)** - Testing patterns, fixtures, CI debugging
+- **[tests/integration/CLAUDE.md](tests/integration/CLAUDE.md)** - Integration testing with VCR.py
 - **[tests/functional/web/CLAUDE.md](tests/functional/web/CLAUDE.md)** - Playwright web UI testing
 - **[tests/functional/telegram/CLAUDE.md](tests/functional/telegram/CLAUDE.md)** - Telegram bot
   testing

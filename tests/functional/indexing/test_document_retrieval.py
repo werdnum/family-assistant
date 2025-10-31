@@ -58,7 +58,7 @@ class TestDocumentRetrieval:
     """Test multimodal document retrieval functionality."""
 
     @pytest.fixture
-    async def temp_storage_path(self) -> AsyncGenerator[pathlib.Path, None]:
+    async def temp_storage_path(self) -> AsyncGenerator[pathlib.Path]:
         """Create a temporary directory for document storage."""
         with tempfile.TemporaryDirectory() as temp_dir:
             yield pathlib.Path(temp_dir)

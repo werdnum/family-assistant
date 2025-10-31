@@ -4,7 +4,7 @@ This module tests that thread history queries correctly include the root message
 and all child messages in a thread.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -39,7 +39,7 @@ async def test_thread_history_includes_root_message(db_engine: AsyncEngine) -> N
             thread_root_id=None,  # Root message has no thread_root_id yet
             role="user",
             content="Can you highlight the eagle statue?",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             tool_call_id=None,
             tool_calls=None,
             reasoning_info=None,
@@ -62,7 +62,7 @@ async def test_thread_history_includes_root_message(db_engine: AsyncEngine) -> N
             thread_root_id=root_internal_id,  # Points to root
             role="assistant",
             content="I'll get a camera snapshot for you.",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             tool_call_id=None,
             tool_calls=[
                 {
@@ -92,7 +92,7 @@ async def test_thread_history_includes_root_message(db_engine: AsyncEngine) -> N
             thread_root_id=root_internal_id,  # Points to root
             role="tool",
             content="Retrieved snapshot from camera\n[Attachment ID: abc-123-def]",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             tool_call_id="call_123",
             tool_calls=None,
             reasoning_info=None,
@@ -159,7 +159,7 @@ async def test_thread_history_with_profile_filter(db_engine: AsyncEngine) -> Non
             thread_root_id=None,
             role="user",
             content="Test message",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             tool_call_id=None,
             tool_calls=None,
             reasoning_info=None,
@@ -182,7 +182,7 @@ async def test_thread_history_with_profile_filter(db_engine: AsyncEngine) -> Non
             thread_root_id=root_internal_id,
             role="assistant",
             content="Response from profile A",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             tool_call_id=None,
             tool_calls=None,
             reasoning_info=None,
@@ -202,7 +202,7 @@ async def test_thread_history_with_profile_filter(db_engine: AsyncEngine) -> Non
             thread_root_id=root_internal_id,
             role="assistant",
             content="Response from profile B",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             tool_call_id=None,
             tool_calls=None,
             reasoning_info=None,
@@ -298,7 +298,7 @@ async def test_attachment_context_extraction(db_engine: AsyncEngine) -> None:
             thread_root_id=None,
             role="user",
             content="Can you highlight the eagle?",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             tool_call_id=None,
             tool_calls=None,
             reasoning_info=None,
@@ -321,7 +321,7 @@ async def test_attachment_context_extraction(db_engine: AsyncEngine) -> None:
             thread_root_id=root_internal_id,
             role="tool",
             content=f"Retrieved snapshot\n[Attachment ID: {attachment_id_1}]",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             tool_call_id="call_456",
             tool_calls=None,
             reasoning_info=None,
@@ -341,7 +341,7 @@ async def test_attachment_context_extraction(db_engine: AsyncEngine) -> None:
             thread_root_id=root_internal_id,
             role="assistant",
             content=f"Here's the document\n[Attachment ID: {attachment_id_2}]",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             tool_call_id=None,
             tool_calls=None,
             reasoning_info=None,

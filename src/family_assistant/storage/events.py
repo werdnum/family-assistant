@@ -4,7 +4,7 @@ Handles storage for the event listener system.
 
 import logging
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import (
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 # Enum types for the event system
-class EventSourceType(str, Enum):
+class EventSourceType(StrEnum):
     """Types of event sources."""
 
     home_assistant = "home_assistant"
@@ -41,14 +41,14 @@ class EventSourceType(str, Enum):
     webhook = "webhook"
 
 
-class EventActionType(str, Enum):
+class EventActionType(StrEnum):
     """Types of actions that can be triggered by events."""
 
     wake_llm = "wake_llm"
     script = "script"
 
 
-class InterfaceType(str, Enum):
+class InterfaceType(StrEnum):
     """Types of interfaces that can receive event notifications."""
 
     telegram = "telegram"

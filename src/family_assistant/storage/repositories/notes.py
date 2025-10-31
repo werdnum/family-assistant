@@ -1,7 +1,7 @@
 """Repository for notes storage operations."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import delete, insert, select, update
@@ -122,7 +122,7 @@ class NotesRepository(BaseRepository):
         append: bool = False,
     ) -> str:
         """Adds a new note or updates an existing note with the given title (upsert)."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # If append is True, fetch existing content first
         if append:

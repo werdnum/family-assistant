@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import insert, or_, select, update
@@ -202,9 +202,9 @@ class MessageHistoryRepository(BaseRepository):
             List of messages in chronological order
         """
         if max_age:
-            cutoff = datetime.now(timezone.utc) - max_age
+            cutoff = datetime.now(UTC) - max_age
         else:
-            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+            cutoff = datetime.now(UTC) - timedelta(hours=24)
 
         conditions = [
             message_history_table.c.interface_type == interface_type,

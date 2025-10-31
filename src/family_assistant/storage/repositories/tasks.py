@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from asyncio import Event
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, insert, or_, select, update
@@ -65,11 +65,11 @@ class TasksRepository(BaseRepository):
             if processed_scheduled_at.tzinfo is None:
                 raise ValueError("scheduled_at must be timezone-aware")
             # Convert to UTC if it's aware and not already UTC
-            if processed_scheduled_at.tzinfo != timezone.utc:
+            if processed_scheduled_at.tzinfo != UTC:
                 logger.debug(
                     f"Converting scheduled_at for task {task_id} from {processed_scheduled_at.tzinfo} to UTC."
                 )
-                processed_scheduled_at = processed_scheduled_at.astimezone(timezone.utc)
+                processed_scheduled_at = processed_scheduled_at.astimezone(UTC)
 
         max_task_retries = (
             max_retries_override if max_retries_override is not None else 3
@@ -141,7 +141,7 @@ class TasksRepository(BaseRepository):
 
             # If task is immediate and we're in the main context, set the event
             if not processed_scheduled_at or processed_scheduled_at <= datetime.now(
-                timezone.utc
+                UTC
             ):
                 event = get_task_event()
                 event.set()
@@ -507,7 +507,7 @@ class TasksRepository(BaseRepository):
         Returns:
             True if the task was successfully queued for retry, False otherwise
         """
-        current_time = datetime.now(timezone.utc)
+        current_time = datetime.now(UTC)
 
         # Fetch the task by its internal ID
         select_stmt = select(tasks_table).where(tasks_table.c.id == internal_task_id)

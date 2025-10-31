@@ -392,32 +392,33 @@ async def download_state_history_tool(
         # Build parameters
         histories = []
 
-        # Use async_get_entity_histories to retrieve history
-        async for history in ha_client.async_get_entity_histories(
-            entities=entity_ids,
+        # If specific entity IDs are requested, fetch Entity objects first
+        entities = None
+        if entity_ids:
+            entities = []
+            for entity_id in entity_ids:
+                try:
+                    entity = await ha_client._client.async_get_entity(
+                        entity_id=entity_id
+                    )
+                    entities.append(entity)
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to fetch entity {entity_id}: {e}. Skipping."
+                    )
+            entities = tuple(entities) if entities else None
+
+        # Use library's async_get_entity_histories with Entity objects
+        async for history in ha_client._client.async_get_entity_histories(
+            entities=entities,
             start_timestamp=start_timestamp,
             end_timestamp=end_timestamp,
             significant_changes_only=significant_changes_only,
         ):
-            # Convert history to dict for JSON serialization
-            history_dict = {
-                "entity_id": history.entity_id,
-                "states": [
-                    {
-                        "state": state.state,
-                        "attributes": dict(state.attributes)
-                        if state.attributes
-                        else {},
-                        "last_changed": state.last_changed.isoformat()
-                        if state.last_changed
-                        else None,
-                        "last_updated": state.last_updated.isoformat()
-                        if state.last_updated
-                        else None,
-                    }
-                    for state in history.states
-                ],
-            }
+            # Use Pydantic's model_dump for proper JSON serialization
+            history_dict = history.model_dump(mode="json")
+            # Add the entity_id property (computed, not in model_dump)
+            history_dict["entity_id"] = history.entity_id
             histories.append(history_dict)
 
         if not histories:

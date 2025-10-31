@@ -35,7 +35,7 @@ async def get_embedding_generator_dependency(request: Request) -> EmbeddingGener
     return generator
 
 
-async def get_db(request: Request) -> AsyncGenerator[DatabaseContext, None]:
+async def get_db(request: Request) -> AsyncGenerator[DatabaseContext]:
     """FastAPI dependency to get a DatabaseContext."""
     # Get engine from app.state (set by Assistant during setup)
     engine = request.app.state.database_engine

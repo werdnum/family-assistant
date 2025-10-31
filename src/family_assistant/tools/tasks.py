@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import timezone
+from datetime import UTC
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
@@ -724,7 +724,7 @@ async def list_pending_callbacks_tool(
             if scheduled_at_utc:
                 # Ensure scheduled_at_utc is timezone-aware (should be if stored correctly)
                 if scheduled_at_utc.tzinfo is None:
-                    scheduled_at_utc = scheduled_at_utc.replace(tzinfo=timezone.utc)
+                    scheduled_at_utc = scheduled_at_utc.replace(tzinfo=UTC)
                 scheduled_at_local = scheduled_at_utc.astimezone(ZoneInfo(timezone_str))
                 scheduled_at_local_str = scheduled_at_local.strftime(
                     "%Y-%m-%d %H:%M:%S %Z"
@@ -807,9 +807,7 @@ async def modify_pending_callback_tool(
                     scheduled_dt = scheduled_dt.replace(tzinfo=ZoneInfo(timezone_str))
                 if scheduled_dt <= clock.now():  # Use clock from context
                     raise ValueError("New callback time must be in the future.")
-                updates["scheduled_at"] = scheduled_dt.astimezone(
-                    timezone.utc
-                )  # Store as UTC
+                updates["scheduled_at"] = scheduled_dt.astimezone(UTC)  # Store as UTC
             except ValueError as ve:
                 return f"Error: Invalid new_callback_time. {ve}"
 

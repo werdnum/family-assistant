@@ -86,7 +86,7 @@ async def mock_embedding_generator() -> MockEmbeddingGenerator:
 async def http_client(
     pg_vector_db_engine: AsyncEngine,
     mock_embedding_generator: MockEmbeddingGenerator,
-) -> AsyncGenerator[httpx.AsyncClient, None]:
+) -> AsyncGenerator[httpx.AsyncClient]:
     """Provides a test client for the FastAPI application."""
     # Store original state
     original_embedding_generator = getattr(
@@ -341,7 +341,7 @@ async def test_reindex_document_e2e(
         worker.shutdown_event.set()
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             worker_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await worker_task

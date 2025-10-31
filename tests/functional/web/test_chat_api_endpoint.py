@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 @pytest_asyncio.fixture(scope="function")
 async def db_context(
     db_engine: AsyncEngine,
-) -> AsyncGenerator[DatabaseContext, None]:
+) -> AsyncGenerator[DatabaseContext]:
     """Provides a DatabaseContext for a single test function."""
     async with get_db_context(engine=db_engine) as ctx:
         yield ctx
@@ -228,7 +228,7 @@ async def app_fixture(
 
 
 @pytest_asyncio.fixture(scope="function")
-async def test_client(app_fixture: FastAPI) -> AsyncGenerator[AsyncClient, None]:
+async def test_client(app_fixture: FastAPI) -> AsyncGenerator[AsyncClient]:
     """Provides an HTTPX AsyncClient for the test FastAPI app."""
     transport = ASGITransport(app=app_fixture)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -759,7 +759,7 @@ async def app_fixture_no_tools(
 @pytest_asyncio.fixture(scope="function")
 async def test_client_no_tools(
     app_fixture_no_tools: FastAPI,
-) -> AsyncGenerator[AsyncClient, None]:
+) -> AsyncGenerator[AsyncClient]:
     """Provides an HTTPX AsyncClient for the test FastAPI app with no tools."""
     transport = ASGITransport(app=app_fixture_no_tools)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:

@@ -1,6 +1,6 @@
 """Shared utilities for datetime normalization across database backends."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from dateutil.parser import parse as parse_datetime
 
@@ -23,14 +23,14 @@ def normalize_datetime(value: datetime | str | None) -> datetime | None:
     if isinstance(value, datetime):
         # If already a datetime, ensure it's timezone-aware
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
+            return value.replace(tzinfo=UTC)
         return value
 
     # If it's a string, parse it as ISO format
     if isinstance(value, str):
         parsed = parse_datetime(value)
         if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=timezone.utc)
+            return parsed.replace(tzinfo=UTC)
         return parsed
 
     return None

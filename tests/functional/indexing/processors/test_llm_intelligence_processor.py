@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture
-def temp_text_file() -> Generator[pathlib.Path, None, None]:
+def temp_text_file() -> Generator[pathlib.Path]:
     """Creates a temporary text file with some content."""
     content = "This is a test document for summarization by the LLM."
     with tempfile.NamedTemporaryFile(

@@ -8,7 +8,7 @@ import io
 import logging
 import os
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import telegramify_markdown
@@ -206,7 +206,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 try:
                     await context.bot.send_chat_action(chat_id=chat_id, action=action)
                     await asyncio.wait_for(stop_event.wait(), timeout=4.5)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
                 except Exception as e:
                     logger.warning(f"Error sending chat action: {e}")
@@ -337,7 +337,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             try:
                 attachment_metadata = await self.telegram_service.attachment_registry._store_file_only(
                     file_content=first_photo_bytes,
-                    filename=f"telegram_photo_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg",
+                    filename=f"telegram_photo_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.jpg",
                     content_type="image/jpeg",
                 )
 
@@ -462,7 +462,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 user_message_timestamp = (
                     last_update.message.date
                     if last_update.message
-                    else datetime.now(timezone.utc)
+                    else datetime.now(UTC)
                 )
 
                 if user_message_id:

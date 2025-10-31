@@ -8,9 +8,9 @@ import uuid  # Added for unique task IDs
 from collections.abc import AsyncIterator, Awaitable, Callable  # Added Union, Awaitable
 from dataclasses import dataclass  # Added
 from datetime import (  # Added timezone
+    UTC,
     datetime,
     timedelta,  # Added
-    timezone,
 )
 from typing import (
     TYPE_CHECKING,
@@ -1242,7 +1242,7 @@ class ProcessingService:
 
                 # Ensure created_at is timezone-aware (SQLite may return naive datetimes)
                 if created_at.tzinfo is None:
-                    created_at = created_at.replace(tzinfo=timezone.utc)
+                    created_at = created_at.replace(tzinfo=UTC)
 
                 # Calculate age
                 age = now - created_at
@@ -1704,9 +1704,7 @@ class ProcessingService:
                 logger.error(
                     f"Error applying timezone {self.timezone_str}: {tz_err}. Defaulting time format."
                 )
-                current_time_str = datetime.now(timezone.utc).strftime(
-                    "%Y-%m-%d %H:%M:%S UTC"
-                )
+                current_time_str = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
             aggregated_other_context_str = (
                 await self._aggregate_context_from_providers()
@@ -1882,7 +1880,7 @@ class ProcessingService:
                     interface_message_id=None,  # Will be set when sent
                     turn_id=turn_id,
                     thread_root_id=thread_root_id_for_turn,
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=datetime.now(UTC),
                     role="assistant",
                     content=error_message,
                 )
@@ -2119,9 +2117,7 @@ class ProcessingService:
                     .strftime("%Y-%m-%d %H:%M:%S %Z")
                 )
             except Exception:
-                current_time_str = datetime.now(timezone.utc).strftime(
-                    "%Y-%m-%d %H:%M:%S UTC"
-                )
+                current_time_str = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
             aggregated_other_context_str = (
                 await self._aggregate_context_from_providers()

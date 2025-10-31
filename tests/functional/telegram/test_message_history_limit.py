@@ -1,6 +1,6 @@
 """Test that message history correctly includes recent messages when limited."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -24,7 +24,7 @@ def create_mock_update(
     chat = Chat(id=chat_id, type="private")
     message = Message(
         message_id=message_id,
-        date=datetime.now(timezone.utc),
+        date=datetime.now(UTC),
         chat=chat,
         from_user=user,
         text=message_text,
@@ -69,7 +69,7 @@ async def test_message_history_includes_most_recent_when_limited(
         message_counter += 2  # Skip user message IDs
         return Message(
             message_id=msg_id,
-            date=datetime.now(timezone.utc),
+            date=datetime.now(UTC),
             chat=Chat(id=chat_id, type="private"),
         )
 
@@ -200,7 +200,7 @@ async def test_reminder_after_completed_conversation(
         message_counter += 2
         return Message(
             message_id=msg_id,
-            date=datetime.now(timezone.utc),
+            date=datetime.now(UTC),
             chat=Chat(id=chat_id, type="private"),
         )
 
