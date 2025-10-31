@@ -392,25 +392,32 @@ async def download_state_history_tool(
         # Build parameters
         histories = []
 
-        # If specific entity IDs are requested, fetch Entity objects first
-        entities = None
+        # If specific entity IDs are requested, fetch State objects in bulk
+        states = None
         if entity_ids:
-            entities = []
-            for entity_id in entity_ids:
-                try:
-                    entity = await ha_client._client.async_get_entity(
-                        entity_id=entity_id
-                    )
-                    entities.append(entity)
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to fetch entity {entity_id}: {e}. Skipping."
-                    )
-            entities = tuple(entities) if entities else None
+            # Fetch all states in one bulk call instead of looping
+            all_states = await ha_client.async_get_states()
 
-        # Use library's async_get_entity_histories with Entity objects
+            # Filter to requested entities
+            entity_id_set = set(entity_ids)
+            states = []
+            for state in all_states:
+                if state.entity_id in entity_id_set:
+                    states.append(state)
+
+            # Warn about any missing entities
+            found_ids = {s.entity_id for s in states}
+            missing_ids = entity_id_set - found_ids
+            if missing_ids:
+                logger.warning(
+                    f"Requested entities not found in Home Assistant: {missing_ids}"
+                )
+
+            states = tuple(states) if states else None
+
+        # Use library's async_get_entity_histories with State objects
         async for history in ha_client._client.async_get_entity_histories(
-            entities=entities,
+            entities=states,
             start_timestamp=start_timestamp,
             end_timestamp=end_timestamp,
             significant_changes_only=significant_changes_only,
