@@ -85,4 +85,64 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: null
+      headers:
+        Content-Type:
+          - application/json
+      method: GET
+      uri: http://localhost:45821/api/states
+    response:
+      body:
+        string: '[{"entity_id":"zone.home","state":"0","attributes":{"latitude":0,"longitude":0,"radius":100,"passive":false,"persons":[],"editable":true,"icon":"mdi:home","friendly_name":"Home"},"last_changed":"2025-10-31T08:32:08.499044+00:00","last_reported":"2025-10-31T08:32:08.499044+00:00","last_updated":"2025-10-31T08:32:08.499044+00:00","context":{"id":"01K8WPAG9K6F0V4FY0TX6YYVZ7","parent_id":null,"user_id":null}},{"entity_id":"input_boolean.test_switch","state":"off","attributes":{"editable":false,"friendly_name":"Test Switch"},"last_changed":"2025-10-31T08:32:08.578964+00:00","last_reported":"2025-10-31T08:32:08.578964+00:00","last_updated":"2025-10-31T08:32:08.578964+00:00","context":{"id":"01K8WPAGC2MMEK30803C2GV8BP","parent_id":null,"user_id":null}},{"entity_id":"input_text.test_sensor","state":"test_value","attributes":{"editable":false,"min":0,"max":100,"pattern":null,"mode":"text","friendly_name":"Test Sensor"},"last_changed":"2025-10-31T08:32:08.583509+00:00","last_reported":"2025-10-31T08:32:08.583509+00:00","last_updated":"2025-10-31T08:32:08.583509+00:00","context":{"id":"01K8WPAGC7Z1R4BGAPCFA9M1Q1","parent_id":null,"user_id":null}},{"entity_id":"conversation.home_assistant","state":"unknown","attributes":{"friendly_name":"Home Assistant","supported_features":1},"last_changed":"2025-10-31T08:32:08.904830+00:00","last_reported":"2025-10-31T08:32:08.904830+00:00","last_updated":"2025-10-31T08:32:08.904830+00:00","context":{"id":"01K8WPAGP8V08H943JPBW2MWEK","parent_id":null,"user_id":null}},{"entity_id":"sun.sun","state":"above_horizon","attributes":{"next_dawn":"2025-10-31T22:02:58.697237+00:00","next_dusk":"2025-10-31T09:46:43.929449+00:00","next_midnight":"2025-10-31T15:54:38+00:00","next_noon":"2025-11-01T03:54:37+00:00","next_rising":"2025-10-31T22:28:57.686068+00:00","next_setting":"2025-10-31T09:20:48.639958+00:00","elevation":8.92,"azimuth":246.64,"rising":false,"friendly_name":"Sun"},"last_changed":"2025-10-31T08:32:08.947951+00:00","last_reported":"2025-10-31T08:32:08.947951+00:00","last_updated":"2025-10-31T08:32:08.947951+00:00","context":{"id":"01K8WPAGQKGR2CNNGZZSNM6RV0","parent_id":null,"user_id":null}},{"entity_id":"sensor.sun_next_dawn","state":"2025-10-31T22:02:58+00:00","attributes":{"device_class":"timestamp","friendly_name":"Sun Next dawn"},"last_changed":"2025-10-31T08:32:08.951932+00:00","last_reported":"2025-10-31T08:32:08.951932+00:00","last_updated":"2025-10-31T08:32:08.951932+00:00","context":{"id":"01K8WPAGQQNEHYQXTQWBRN799V","parent_id":null,"user_id":null}},{"entity_id":"sensor.sun_next_dusk","state":"2025-10-31T09:46:43+00:00","attributes":{"device_class":"timestamp","friendly_name":"Sun Next dusk"},"last_changed":"2025-10-31T08:32:08.952313+00:00","last_reported":"2025-10-31T08:32:08.952313+00:00","last_updated":"2025-10-31T08:32:08.952313+00:00","context":{"id":"01K8WPAGQRZB38VZ2HN699SDHV","parent_id":null,"user_id":null}},{"entity_id":"sensor.sun_next_midnight","state":"2025-10-31T15:54:38+00:00","attributes":{"device_class":"timestamp","friendly_name":"Sun Next midnight"},"last_changed":"2025-10-31T08:32:08.952575+00:00","last_reported":"2025-10-31T08:32:08.952575+00:00","last_updated":"2025-10-31T08:32:08.952575+00:00","context":{"id":"01K8WPAGQR95HYHRFYZQ5KS7MP","parent_id":null,"user_id":null}},{"entity_id":"sensor.sun_next_noon","state":"2025-11-01T03:54:37+00:00","attributes":{"device_class":"timestamp","friendly_name":"Sun Next noon"},"last_changed":"2025-10-31T08:32:08.952750+00:00","last_reported":"2025-10-31T08:32:08.952750+00:00","last_updated":"2025-10-31T08:32:08.952750+00:00","context":{"id":"01K8WPAGQRT09N8A7XXD6WJ3RX","parent_id":null,"user_id":null}},{"entity_id":"sensor.sun_next_rising","state":"2025-10-31T22:28:57+00:00","attributes":{"device_class":"timestamp","friendly_name":"Sun Next rising"},"last_changed":"2025-10-31T08:32:08.952971+00:00","last_reported":"2025-10-31T08:32:08.952971+00:00","last_updated":"2025-10-31T08:32:08.952971+00:00","context":{"id":"01K8WPAGQR9C605RCM0YX10VJB","parent_id":null,"user_id":null}},{"entity_id":"sensor.sun_next_setting","state":"2025-10-31T09:20:48+00:00","attributes":{"device_class":"timestamp","friendly_name":"Sun Next setting"},"last_changed":"2025-10-31T08:32:08.953129+00:00","last_reported":"2025-10-31T08:32:08.953129+00:00","last_updated":"2025-10-31T08:32:08.953129+00:00","context":{"id":"01K8WPAGQSNWF0QMHWYCGP4N7G","parent_id":null,"user_id":null}},{"entity_id":"person.test_user","state":"unknown","attributes":{"editable":true,"id":"test_user","device_trackers":[],"user_id":"2d75da164e344b6fa854bdfc285bd61a","friendly_name":"Test User"},"last_changed":"2025-10-31T08:32:08.959942+00:00","last_reported":"2025-10-31T08:32:08.959942+00:00","last_updated":"2025-10-31T08:32:08.959942+00:00","context":{"id":"01K8WPAGQZ8MDSJW65SC7TB4A5","parent_id":null,"user_id":null}}]'
+      headers:
+        Content-Encoding:
+          - deflate
+        Content-Length:
+          - '1087'
+        Content-Type:
+          - application/json
+        Date:
+          - Fri, 31 Oct 2025 08:32:09 GMT
+        Referrer-Policy:
+          - no-referrer
+        Server:
+          - ''
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: null
+      headers:
+        Content-Type:
+          - application/json
+      method: GET
+      uri: http://localhost:45821/api/history/period/{START_TIME}?end_time=%7BEND_TIME%7D&filter_entity_id=input_boolean.test_switch%2Cinput_text.test_sensor
+    response:
+      body:
+        string: '[]'
+      headers:
+        Content-Encoding:
+          - deflate
+        Content-Length:
+          - '10'
+        Content-Type:
+          - application/json
+        Date:
+          - Fri, 31 Oct 2025 08:32:09 GMT
+        Referrer-Policy:
+          - no-referrer
+        Server:
+          - ''
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+      status:
+        code: 200
+        message: OK
 version: 1

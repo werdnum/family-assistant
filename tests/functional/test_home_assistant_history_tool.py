@@ -174,6 +174,32 @@ async def test_download_state_history_success(
 
     mock_ha_client._client.async_get_entity = mock_get_entity
 
+    # Mock async_get_states to return the entities we're querying for
+    async def mock_get_states() -> list[State]:
+        return [
+            State(
+                entity_id="sensor.temperature",
+                state="22.5",
+                attributes={
+                    "unit_of_measurement": "°C",
+                    "friendly_name": "Temperature",
+                },
+                last_changed=datetime.now(UTC),
+                last_updated=datetime.now(UTC),
+                context=None,
+            ),
+            State(
+                entity_id="sensor.humidity",
+                state="65",
+                attributes={"unit_of_measurement": "%", "friendly_name": "Humidity"},
+                last_changed=datetime.now(UTC),
+                last_updated=datetime.now(UTC),
+                context=None,
+            ),
+        ]
+
+    mock_ha_client.async_get_states = mock_get_states
+
     tool_call_id = f"call_history_{uuid.uuid4()}"
 
     # --- LLM Rules ---
@@ -317,6 +343,21 @@ async def test_download_state_history_direct_call() -> None:
 
     mock_ha_client._client.async_get_entity = mock_get_entity
 
+    # Mock async_get_states to return the entities we're querying for
+    async def mock_get_states() -> list[State]:
+        return [
+            State(
+                entity_id="light.living_room",
+                state="on",
+                attributes={"friendly_name": "Living Room Light"},
+                last_changed=datetime.now(UTC),
+                last_updated=datetime.now(UTC),
+                context=None,
+            ),
+        ]
+
+    mock_ha_client.async_get_states = mock_get_states
+
     # Create tool execution context
     exec_context = ToolExecutionContext(
         interface_type="test",
@@ -410,6 +451,21 @@ async def test_download_state_history_empty() -> None:
         return mock_entity
 
     mock_ha_client._client.async_get_entity = mock_get_entity
+
+    # Mock async_get_states to return the entities we're querying for
+    async def mock_get_states() -> list[State]:
+        return [
+            State(
+                entity_id="sensor.nonexistent",
+                state="unknown",
+                attributes={},
+                last_changed=datetime.now(UTC),
+                last_updated=datetime.now(UTC),
+                context=None,
+            ),
+        ]
+
+    mock_ha_client.async_get_states = mock_get_states
 
     # Create tool execution context
     exec_context = ToolExecutionContext(
