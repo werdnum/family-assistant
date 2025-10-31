@@ -10,7 +10,7 @@ authors = [
 ]
 description = "A family assistant bot using Telegram, LLMs, and background tasks."
 readme = "README.md" # Assuming you might create one later
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.14"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License", # TODO: Choose your license
@@ -98,7 +98,6 @@ dependencies = [
     "pywebpush>=2.1.1",
     "vl-convert-python>=1.6.0",
     # For rendering Vega/Vega-Lite specs to PNG
-    "homeassistant>=2025.4.4",
 ]
 
 [project.optional-dependencies]
