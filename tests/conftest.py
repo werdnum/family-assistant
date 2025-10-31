@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope="function")
-def app(db_engine: AsyncEngine) -> Generator[Any, None, None]:
+def app(db_engine: AsyncEngine) -> Generator[Any]:
     """Provide the FastAPI app instance for testing."""
     fastapi_app.state.database_engine = db_engine
     yield fastapi_app
@@ -196,7 +196,7 @@ def find_free_port() -> int:
 
 
 @pytest.fixture(autouse=True)
-def reset_task_event() -> Generator[None, None, None]:
+def reset_task_event() -> Generator[None]:
     """Reset the global task event for each test to ensure isolation."""
 
     # Reset before test
@@ -218,7 +218,7 @@ def reset_task_event() -> Generator[None, None, None]:
 @pytest_asyncio.fixture(scope="function")
 async def db_engine(
     request: pytest.FixtureRequest,
-) -> AsyncGenerator[AsyncEngine, None]:
+) -> AsyncGenerator[AsyncEngine]:
     """
     A parameterized fixture that provides a database engine.
 
@@ -419,7 +419,7 @@ class PgServerContainer:
 
 
 @pytest.fixture(scope="session")
-def postgres_container() -> Generator[ContainerProtocol, None, None]:
+def postgres_container() -> Generator[ContainerProtocol]:
     """
     Starts and manages a PostgreSQL server for the test session using pgserver.
 
@@ -491,7 +491,7 @@ def postgres_container() -> Generator[ContainerProtocol, None, None]:
 async def pg_vector_db_engine(
     postgres_container: ContainerProtocol,
     request: pytest.FixtureRequest,
-) -> AsyncGenerator[AsyncEngine, None]:
+) -> AsyncGenerator[AsyncEngine]:
     """
     PostgreSQL database engine with vector support for tests that require pgvector.
     Always provides PostgreSQL regardless of --postgres flag.
@@ -608,7 +608,7 @@ async def cleanup_task_worker(
     shutdown_event: asyncio.Event,
     new_task_event: asyncio.Event | None = None,
     test_name: str = "",
-    timeout: float = 5.0,
+    timeout: float = 5.0,  # noqa: ASYNC109
 ) -> None:
     """
     Properly clean up a TaskWorker task. Ensures the task is fully stopped
@@ -632,7 +632,7 @@ async def cleanup_task_worker(
     try:
         await asyncio.wait_for(worker_task, timeout=timeout)
         logger.info(f"{label} stopped gracefully")
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(f"Timeout stopping {label}. Cancelling.")
         worker_task.cancel()
         try:
@@ -670,9 +670,7 @@ def mock_clock() -> MockClock:
 @pytest_asyncio.fixture(scope="function")
 async def task_worker_manager(
     request: pytest.FixtureRequest, db_engine: AsyncEngine, mock_clock: MockClock
-) -> AsyncGenerator[
-    Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]], None
-]:
+) -> AsyncGenerator[Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]]]:
     """
     Manages the lifecycle of a TaskWorker instance via a factory.
 
@@ -727,7 +725,7 @@ RADICALE_TEST_PASS = "testpass"
 
 
 @pytest.fixture(scope="session")
-def radicale_server_session() -> Generator[tuple[str, str, str], None, None]:
+def radicale_server_session() -> Generator[tuple[str, str, str]]:
     """
     Manages a Radicale CalDAV server instance for the entire test session.
     Sets up the server process and user, but does not create a specific calendar.
@@ -860,7 +858,7 @@ async def radicale_server(
     radicale_server_session: tuple[str, str, str],  # Now yields 3 items
     db_engine: AsyncEngine,  # Use the unified test engine
     request: pytest.FixtureRequest,  # To get test name for unique calendar
-) -> AsyncGenerator[tuple[str, str, str, str], None]:
+) -> AsyncGenerator[tuple[str, str, str, str]]:
     """
     Provides Radicale server details for a single test function.
     Creates a new, unique calendar for each test.
@@ -1046,7 +1044,7 @@ def vcr_bypass_for_streaming(request: pytest.FixtureRequest) -> None:
 
 
 @pytest.fixture(scope="session")
-def built_frontend() -> Generator[None, None, None]:
+def built_frontend() -> Generator[None]:
     """
     Ensures the frontend is built before tests that require it.
     This fixture runs npm install and npm run build if needed.
@@ -1107,7 +1105,7 @@ def built_frontend() -> Generator[None, None, None]:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def setup_fastapi_test_config() -> Generator[None, None, None]:
+def setup_fastapi_test_config() -> Generator[None]:
     """
     Sets up a default test configuration for the FastAPI app.
     This ensures all tests have a valid, writable document_storage_path.

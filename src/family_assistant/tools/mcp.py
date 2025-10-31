@@ -69,7 +69,7 @@ class MCPToolsProvider:
                 try:
                     # Wait for 10 seconds or until stop_event is set
                     await asyncio.wait_for(stop_event.wait(), timeout=10.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Timeout occurred, meaning 10 seconds passed and stop_event is not set
                     if not stop_event.is_set():  # Double check
                         current_time = asyncio.get_running_loop().time()
@@ -336,7 +336,7 @@ class MCPToolsProvider:
                 connection_tasks_future, timeout=self._initialization_timeout_seconds
             )
             logger.info("Finished parallel MCP connection attempts (within timeout).")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(
                 f"MCPToolsProvider initialization timed out after {self._initialization_timeout_seconds} seconds. "
                 "Proceeding with any tools discovered before timeout or if tasks completed with errors."
@@ -370,7 +370,7 @@ class MCPToolsProvider:
             if not logging_task.done():
                 try:
                     await asyncio.wait_for(logging_task, timeout=1.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logging_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await logging_task
@@ -550,7 +550,7 @@ class MCPToolsProvider:
                         await asyncio.wait_for(session.list_tools(), timeout=5.0)
                         logger.debug(f"Health check passed for server '{server_id}'")
 
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.warning(f"Health check timeout for server '{server_id}'")
                         # Don't reconnect on timeout - server might just be slow
 

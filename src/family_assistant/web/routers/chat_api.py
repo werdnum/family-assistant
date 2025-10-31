@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -502,9 +502,7 @@ async def get_conversations(
 
     if date_from:
         try:
-            date_from_dt = datetime.strptime(date_from, "%Y-%m-%d").replace(
-                tzinfo=timezone.utc
-            )
+            date_from_dt = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=UTC)
         except ValueError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -514,9 +512,7 @@ async def get_conversations(
     if date_to:
         try:
             # Set to end of day to include all messages from the target date
-            date_to_dt = datetime.strptime(date_to, "%Y-%m-%d").replace(
-                tzinfo=timezone.utc
-            )
+            date_to_dt = datetime.strptime(date_to, "%Y-%m-%d").replace(tzinfo=UTC)
             date_to_dt = date_to_dt.replace(
                 hour=23, minute=59, second=59, microsecond=999999
             )
@@ -609,9 +605,7 @@ async def get_conversation_messages(
 
         # Sort messages by timestamp to maintain chronological order
         messages.sort(
-            key=lambda msg: msg.get(
-                "timestamp", datetime.min.replace(tzinfo=timezone.utc)
-            )
+            key=lambda msg: msg.get("timestamp", datetime.min.replace(tzinfo=UTC))
         )
 
         has_more_before = False
@@ -783,7 +777,7 @@ async def api_chat_send_message_stream(
     interface_type = payload.interface_type or "api"
     user_name_for_api = "API User"
 
-    async def event_generator() -> AsyncGenerator[str, None]:
+    async def event_generator() -> AsyncGenerator[str]:
         """Generate SSE formatted events from the processing stream."""
 
         # Queue for confirmation events
@@ -924,7 +918,7 @@ async def api_chat_send_message_stream(
                         queue_event = await asyncio.wait_for(
                             confirmation_queue.get(), timeout=0.1
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         # Check if stream task is done
                         if stream_task.done():
                             # Check if there are still events in the queue before breaking
@@ -1078,7 +1072,7 @@ async def api_chat_send_message_stream(
 async def debug_test_stream() -> StreamingResponse:
     """Simple test endpoint to verify SSE streaming works."""
 
-    async def simple_event_generator() -> AsyncGenerator[str, None]:
+    async def simple_event_generator() -> AsyncGenerator[str]:
         logger.info("Starting simple stream test")
         for i in range(5):
             logger.info(f"Yielding test event {i}")
@@ -1207,7 +1201,7 @@ async def live_message_events(
         }
         return f"event: message\ndata: {json.dumps(data)}\n\n"
 
-    async def event_generator() -> AsyncGenerator[str, None]:
+    async def event_generator() -> AsyncGenerator[str]:
         """Generate SSE formatted events for message updates."""
         # Register as a listener
         queue = await message_notifier.register(conversation_id, interface_type)
@@ -1220,7 +1214,7 @@ async def live_message_events(
             yield f"event: connected\ndata: {json.dumps({'conversation_id': conversation_id})}\n\n"
 
             # Initialize last_check timestamp BEFORE any queries to avoid race condition
-            last_check = after_dt if after_dt else datetime.now(timezone.utc)
+            last_check = after_dt if after_dt else datetime.now(UTC)
 
             # If after timestamp provided, send catch-up messages immediately
             if after_dt:
@@ -1268,7 +1262,7 @@ async def live_message_events(
                             yield _create_sse_message(msg)
                     else:
                         # Timeout - send heartbeat and poll for messages
-                        yield f"event: heartbeat\ndata: {json.dumps({'timestamp': datetime.now(timezone.utc).isoformat()})}\n\n"
+                        yield f"event: heartbeat\ndata: {json.dumps({'timestamp': datetime.now(UTC).isoformat()})}\n\n"
 
                         # Polling fallback - check for any messages since last check
                         messages, last_check = await query_new_messages(last_check)

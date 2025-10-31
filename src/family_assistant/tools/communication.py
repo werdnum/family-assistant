@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
@@ -367,7 +367,7 @@ async def send_message_to_user_tool(
                     interface_message_id=sent_message_id_str,
                     turn_id=requesting_turn_id,  # Link to the turn that initiated this action
                     thread_root_id=None,  # This message likely starts a new interaction or is standalone in the target chat
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=datetime.now(UTC),
                     role="assistant",  # The bot is the one sending this message to the target user
                     content=message_content,
                     tool_calls=None,

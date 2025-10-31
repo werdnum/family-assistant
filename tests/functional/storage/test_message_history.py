@@ -3,7 +3,7 @@
 import json  # Import json for parsing SQLite results
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio  # Need this for async fixtures
@@ -33,7 +33,7 @@ TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 
 @pytest_asyncio.fixture(scope="function")
-async def db_engine() -> AsyncGenerator[AsyncEngine, None]:
+async def db_engine() -> AsyncGenerator[AsyncEngine]:
     """Creates an in-memory SQLite engine and sets up the schema for each test function."""
     engine = create_async_engine(TEST_DATABASE_URL)
     async with engine.begin() as conn:
@@ -46,7 +46,7 @@ async def db_engine() -> AsyncGenerator[AsyncEngine, None]:
 
 
 @pytest_asyncio.fixture(scope="function")
-async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext, None]:
+async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext]:
     """Provides an *entered* DatabaseContext instance for interacting with the test database."""
     # Using the factory function aligns better with potential future DI usage
     context_instance = get_db_context(engine=db_engine, base_delay=0.01)
@@ -63,7 +63,7 @@ async def test_add_message_stores_optional_fields(db_context: DatabaseContext) -
     conversation_id = str(uuid.uuid4())
     turn_id = str(uuid.uuid4())
     thread_root_id = 123  # Assume this ID exists from a previous message
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     role = "assistant"
     tool_calls_data = [
         {
@@ -172,7 +172,7 @@ async def test_get_recent_history_retrieves_correct_messages(
     # Arrange
     interface = "history_test"
     conv_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Add messages using the yielded context
     msg1_id_result = await add_message_to_history(
@@ -258,7 +258,7 @@ async def test_get_message_by_interface_id_retrieval(
     interface = "get_by_id"
     conv_id = str(uuid.uuid4())
     msg_id = "message_abc"
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     content = "Target message"
 
     internal_id_result = await add_message_to_history(
@@ -309,7 +309,7 @@ async def test_get_messages_by_turn_id_retrieves_correct_sequence(
     conv_id = str(uuid.uuid4())
     turn_1 = str(uuid.uuid4())
     turn_2 = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Turn 1 messages
     t1_msg1_result = await add_message_to_history(
@@ -401,7 +401,7 @@ async def test_update_message_interface_id_sets_id(db_context: DatabaseContext) 
     # Arrange
     interface = "update_test"
     conv_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     new_interface_id = f"telegram_{uuid.uuid4()}"
 
@@ -451,7 +451,7 @@ async def test_get_messages_by_thread_id_retrieves_correct_sequence(
     interface = "thread_test"
     conv_id_1 = str(uuid.uuid4())
     conv_id_2 = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Thread 1 messages
     msg1_result = await add_message_to_history(

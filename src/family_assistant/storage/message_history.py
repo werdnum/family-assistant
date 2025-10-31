@@ -4,7 +4,7 @@ Handles storage and retrieval of message history.
 
 import json  # Added json import
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast  # Added Tuple, cast
 
 from sqlalchemy import (
@@ -232,7 +232,7 @@ async def get_recent_history(
     would otherwise be outside the limit/max_age.
     """
     try:
-        cutoff_time = datetime.now(timezone.utc) - max_age
+        cutoff_time = datetime.now(UTC) - max_age
         # Define the columns to select for consistency
         selected_columns = [
             message_history_table.c.internal_id,

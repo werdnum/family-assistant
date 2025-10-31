@@ -27,7 +27,7 @@ __all__ = [
 
 
 @pytest.fixture
-def alembic_engine() -> Generator[Engine, None, None]:
+def alembic_engine() -> Generator[Engine]:
     """
     Override this fixture to provide a custom engine for pytest-alembic.
 

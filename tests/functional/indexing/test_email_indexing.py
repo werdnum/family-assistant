@@ -14,7 +14,7 @@ import uuid
 from collections.abc import (
     AsyncGenerator,  # Add missing typing imports & AsyncGenerator
 )
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock  # unittest.mock.AsyncMock removed
@@ -103,10 +103,8 @@ TEST_EMAIL_FORM_DATA = {
     "Message-Id": TEST_EMAIL_MESSAGE_ID,
     "From": f"Project Manager <{TEST_EMAIL_SENDER}>",
     "To": f"Team Inbox <{TEST_EMAIL_RECIPIENT}>",
-    "Date": (
-        datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
-    ),  # RFC 2822 format
-    "timestamp": str(int(datetime.now(timezone.utc).timestamp())),
+    "Date": (datetime.now(UTC).strftime("%a, %d %b %Y %H:%M:%S %z")),  # RFC 2822 format
+    "timestamp": str(int(datetime.now(UTC).timestamp())),
     "token": "dummy_token_e2e",
     "signature": "dummy_signature_e2e",
     "message-headers": (
@@ -175,7 +173,7 @@ async def dump_tables_on_failure(engine: AsyncEngine) -> None:
 async def http_client(
     pg_vector_db_engine: AsyncEngine,  # Ensure DB is setup before app starts
     monkeypatch: pytest.MonkeyPatch,
-) -> AsyncGenerator[httpx.AsyncClient, None]:
+) -> AsyncGenerator[httpx.AsyncClient]:
     """
     Provides a test client for the FastAPI application, configured with
     a temporary directory for attachment storage and a mock embedding generator.
@@ -552,7 +550,7 @@ async def test_email_indexing_and_query_e2e(
             if test_failed:
                 await dump_tables_on_failure(pg_vector_db_engine)
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"Timeout stopping worker task {worker_id}. Cancelling.")
             worker_task.cancel()
         except Exception as e:
@@ -777,7 +775,7 @@ async def test_vector_ranking(
             await asyncio.wait_for(worker_task, timeout=5.0)
             if test_failed:
                 await dump_tables_on_failure(pg_vector_db_engine)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             worker_task.cancel()
 
 
@@ -963,7 +961,7 @@ async def test_metadata_filtering(
             await asyncio.wait_for(worker_task, timeout=5.0)
             if test_failed:
                 await dump_tables_on_failure(pg_vector_db_engine)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             worker_task.cancel()
 
 
@@ -1158,7 +1156,7 @@ async def test_keyword_filtering(
             await asyncio.wait_for(worker_task, timeout=5.0)
             if test_failed:
                 await dump_tables_on_failure(pg_vector_db_engine)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             worker_task.cancel()
 
 
@@ -1449,7 +1447,7 @@ async def test_email_with_pdf_attachment_indexing_e2e(
             logger.info(f"Background task worker {worker_id} stopped for PDF test.")
             if test_failed:
                 await dump_tables_on_failure(pg_vector_db_engine)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 f"Timeout stopping worker task {worker_id} for PDF test. Cancelling."
             )
@@ -1703,7 +1701,7 @@ async def test_email_indexing_with_llm_summary_e2e(
         test_shutdown_event.set()
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             worker_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await worker_task
@@ -1987,7 +1985,7 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
         test_shutdown_event.set()
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             worker_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await worker_task

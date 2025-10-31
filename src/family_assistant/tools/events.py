@@ -4,7 +4,7 @@ Event listener system tools.
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import text
@@ -128,7 +128,7 @@ async def query_recent_events_tool(
     limit = min(max(limit, 1), 20)  # Clamp between 1 and 20
 
     try:
-        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
 
         # Use the database context from the execution context
         db_ctx = exec_context.db_context
@@ -282,7 +282,7 @@ async def test_event_listener_tool(
         )
 
     try:
-        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
 
         # Use the database context from the execution context instead of creating a new one
         db_ctx = exec_context.db_context

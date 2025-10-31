@@ -7,7 +7,7 @@ following patterns from starlark-go but adapted for starlark-pyo3's constraints.
 
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -46,13 +46,13 @@ def _dict_to_datetime(time_dict: dict[str, Any]) -> datetime:
     """Convert a time dictionary back to a datetime object."""
     tz_str = time_dict.get("timezone", "UTC")
     if tz_str == "UTC":
-        tz = timezone.utc
+        tz = UTC
     else:
         try:
             tz = ZoneInfo(tz_str)
         except Exception:
             logger.warning(f"Invalid timezone '{tz_str}', using UTC")
-            tz = timezone.utc
+            tz = UTC
 
     return datetime(
         year=time_dict.get("year", 1970),
@@ -78,7 +78,7 @@ def time_now() -> dict[str, Any]:
 # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 def time_now_utc() -> dict[str, Any]:
     """Get the current time in UTC."""
-    return _datetime_to_dict(datetime.now(timezone.utc))
+    return _datetime_to_dict(datetime.now(UTC))
 
 
 def time_create(
@@ -109,13 +109,13 @@ def time_create(
         A time dictionary
     """
     if timezone_name == "UTC":
-        tz = timezone.utc
+        tz = UTC
     else:
         try:
             tz = ZoneInfo(timezone_name)
         except Exception:
             logger.warning(f"Invalid timezone '{timezone_name}', using UTC")
-            tz = timezone.utc
+            tz = UTC
 
     dt = datetime(
         year=year,
@@ -143,7 +143,7 @@ def time_from_timestamp(seconds: float, nanoseconds: int = 0) -> dict[str, Any]:
         A time dictionary in UTC
     """
     total_seconds = seconds + (nanoseconds / 1_000_000_000)
-    dt = datetime.fromtimestamp(total_seconds, tz=timezone.utc)
+    dt = datetime.fromtimestamp(total_seconds, tz=UTC)
     return _datetime_to_dict(dt)
 
 
@@ -204,17 +204,17 @@ def time_parse(
     # Apply timezone if specified
     if timezone_name:
         if timezone_name == "UTC":
-            tz = timezone.utc
+            tz = UTC
         else:
             try:
                 tz = ZoneInfo(timezone_name)
             except Exception:
                 logger.warning(f"Invalid timezone '{timezone_name}', using UTC")
-                tz = timezone.utc
+                tz = UTC
         dt = dt.replace(tzinfo=tz)
     elif dt.tzinfo is None:
         # Default to UTC for naive datetimes
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
 
     return _datetime_to_dict(dt)
 
@@ -238,13 +238,13 @@ def time_in_location(time_dict: dict[str, Any], timezone_name: str) -> dict[str,
     dt = _dict_to_datetime(time_dict)
 
     if timezone_name == "UTC":
-        tz = timezone.utc
+        tz = UTC
     else:
         try:
             tz = ZoneInfo(timezone_name)
         except Exception:
             logger.warning(f"Invalid timezone '{timezone_name}', using UTC")
-            tz = timezone.utc
+            tz = UTC
 
     dt_converted = dt.astimezone(tz)
     return _datetime_to_dict(dt_converted)
@@ -567,13 +567,10 @@ def timezone_offset(timezone_name: str, time_dict: dict[str, Any] | None = None)
     Returns:
         Offset from UTC in seconds
     """
-    if time_dict is None:
-        dt = datetime.now(timezone.utc)
-    else:
-        dt = _dict_to_datetime(time_dict)
+    dt = datetime.now(UTC) if time_dict is None else _dict_to_datetime(time_dict)
 
     if timezone_name == "UTC":
-        tz = timezone.utc
+        tz = UTC
     else:
         try:
             tz = ZoneInfo(timezone_name)

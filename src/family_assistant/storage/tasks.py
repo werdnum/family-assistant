@@ -5,7 +5,7 @@ Handles storage and retrieval of background tasks using the database queue.
 import asyncio
 import logging
 from asyncio import Event
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import (
@@ -64,7 +64,7 @@ tasks_table = Table(
     Column(
         "created_at",
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     ),
     Column("status", String, default="pending", nullable=False, index=True),
@@ -107,11 +107,11 @@ async def enqueue_task(
         if processed_scheduled_at.tzinfo is None:
             raise ValueError("scheduled_at must be timezone-aware")
         # Convert to UTC if it's aware and not already UTC
-        if processed_scheduled_at.tzinfo != timezone.utc:
+        if processed_scheduled_at.tzinfo != UTC:
             logger.debug(
                 f"Converting scheduled_at for task {task_id} from {processed_scheduled_at.tzinfo} to UTC."
             )
-            processed_scheduled_at = processed_scheduled_at.astimezone(timezone.utc)
+            processed_scheduled_at = processed_scheduled_at.astimezone(UTC)
 
     max_task_retries = max_retries_override if max_retries_override is not None else 3
 
@@ -194,9 +194,7 @@ async def enqueue_task(
         logger.info(
             f"{'Updated' if is_system_task else 'Enqueued'} task {task_id} (Type: {task_type}, Original: {values_to_insert.get('original_task_id')}, Recurrence: {'Yes' if recurrence_rule else 'No'})."
         )
-        is_immediate = scheduled_at is None or scheduled_at <= datetime.now(
-            timezone.utc
-        )
+        is_immediate = scheduled_at is None or scheduled_at <= datetime.now(UTC)
         if is_immediate:
             # Automatically notify workers about immediate tasks
             event = get_task_event()
@@ -396,7 +394,7 @@ async def manually_retry_task(
     """
     # For manual retry, using actual current time is acceptable as it's a user-triggered action
     # not part of the automated time-sensitive worker loop.
-    current_real_time = datetime.now(timezone.utc)
+    current_real_time = datetime.now(UTC)
     try:
         # Fetch the task by its internal ID
         select_stmt = select(tasks_table).where(tasks_table.c.id == internal_task_id)

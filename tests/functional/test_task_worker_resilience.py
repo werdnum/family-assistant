@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -97,7 +97,7 @@ async def test_task_handler_timeout(
 
     try:
         await asyncio.wait_for(worker_task, timeout=5.0)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("Worker did not shut down cleanly, canceling")
         worker_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -341,9 +341,7 @@ async def test_health_check_properties(db_engine: AsyncEngine) -> None:
 
         # Last activity should be recent
         assert worker.last_activity is not None
-        time_since_activity = (
-            datetime.now(timezone.utc) - worker.last_activity
-        ).total_seconds()
+        time_since_activity = (datetime.now(UTC) - worker.last_activity).total_seconds()
         assert time_since_activity < 10  # Should have been updated recently
 
     finally:
@@ -377,7 +375,7 @@ async def test_shutdown_stops_worker(db_engine: AsyncEngine) -> None:
     # Worker should stop within reasonable time
     try:
         await asyncio.wait_for(worker_task, timeout=2.0)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pytest.fail("Worker did not stop after shutdown event")
 
     # Task should be done

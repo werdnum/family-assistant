@@ -9,7 +9,7 @@
 import logging
 import typing
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -69,7 +69,7 @@ def create_mock_update(
     chat = Chat(id=chat_id, type="private")
     message = Message(
         message_id=message_id,
-        date=datetime.now(timezone.utc),
+        date=datetime.now(UTC),
         chat=chat,
         from_user=user,
         text=message_text,

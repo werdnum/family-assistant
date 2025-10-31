@@ -5,7 +5,7 @@ import json
 import logging
 import uuid
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
@@ -62,7 +62,7 @@ async def test_recurring_task_respects_user_timezone(
 
     # Setup mock clock starting at 2025-06-16 05:00:00 UTC (3pm Sydney time)
     # mock_clock fixture is now passed as parameter
-    mock_clock.set_time(datetime(2025, 6, 16, 5, 0, 0, tzinfo=timezone.utc))
+    mock_clock.set_time(datetime(2025, 6, 16, 5, 0, 0, tzinfo=UTC))
     initial_time = mock_clock.now()
 
     # Sydney timezone
@@ -78,7 +78,7 @@ async def test_recurring_task_respects_user_timezone(
         next_6am_sydney += timedelta(days=1)
 
     # Convert to UTC for the initial schedule time
-    initial_schedule_utc = next_6am_sydney.astimezone(timezone.utc)
+    initial_schedule_utc = next_6am_sydney.astimezone(UTC)
     initial_schedule_iso = initial_schedule_utc.isoformat()
 
     logger.info(f"Current time: {initial_time} UTC ({sydney_now} Sydney)")
@@ -238,7 +238,7 @@ async def test_recurring_task_respects_user_timezone(
     assert result is not None, "No pending task found"
     first_scheduled_at = result["scheduled_at"]
     if first_scheduled_at.tzinfo is None:
-        first_scheduled_at = first_scheduled_at.replace(tzinfo=timezone.utc)
+        first_scheduled_at = first_scheduled_at.replace(tzinfo=UTC)
 
     # Verify it's scheduled for 6am Sydney time (should be 20:00 UTC previous day)
     first_scheduled_sydney = first_scheduled_at.astimezone(sydney_tz)
@@ -280,7 +280,7 @@ async def test_recurring_task_respects_user_timezone(
     assert result is not None, "No next recurring task found"
     next_scheduled_at = result["scheduled_at"]
     if next_scheduled_at.tzinfo is None:
-        next_scheduled_at = next_scheduled_at.replace(tzinfo=timezone.utc)
+        next_scheduled_at = next_scheduled_at.replace(tzinfo=UTC)
 
     # Verify it's scheduled for 6am Sydney time the next day
     next_scheduled_sydney = next_scheduled_at.astimezone(sydney_tz)

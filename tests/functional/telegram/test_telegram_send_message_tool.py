@@ -1,7 +1,7 @@
 import json
 import logging
 import uuid
-from datetime import datetime, timezone  # Keep this, create_mock_update uses it
+from datetime import UTC, datetime  # Keep this, create_mock_update uses it
 from typing import Any, cast  # Keep this, create_mock_context uses it
 from unittest.mock import AsyncMock
 
@@ -55,7 +55,7 @@ def create_mock_update(
     chat = Chat(id=chat_id, type="private")
     message = Message(
         message_id=message_id,
-        date=datetime.now(timezone.utc),  # Use timezone.utc
+        date=datetime.now(UTC),  # Use timezone.utc
         chat=chat,
         from_user=user,
         text=message_text,

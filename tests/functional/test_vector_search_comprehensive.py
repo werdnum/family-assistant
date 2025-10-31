@@ -6,7 +6,7 @@ Tests advanced search features, error conditions, and edge cases.
 import asyncio
 import time
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -80,10 +80,10 @@ class TestDocument:
 @pytest.fixture
 async def comprehensive_vector_client(
     pg_vector_db_engine: AsyncEngine,
-) -> AsyncGenerator[httpx.AsyncClient, None]:
+) -> AsyncGenerator[httpx.AsyncClient]:
     """API client with comprehensive test data setup."""
 
-    async def override_get_db() -> AsyncGenerator[DatabaseContext, None]:
+    async def override_get_db() -> AsyncGenerator[DatabaseContext]:
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
             yield db
 
@@ -171,7 +171,7 @@ async def _setup_comprehensive_test_data(
                 id=None,
                 source_uri=f"test://{doc_data['source_id']}",
                 title=doc_data["title"],
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
                 metadata=doc_data["metadata"],
                 file_path=None,
             )
@@ -269,7 +269,7 @@ async def test_vector_search_date_filtering(
 ) -> None:
     """Test filtering by date range."""
     # Filter documents created after a certain time
-    cutoff_time = datetime.now(timezone.utc).isoformat()
+    cutoff_time = datetime.now(UTC).isoformat()
 
     resp = await comprehensive_vector_client.post(
         "/api/vector-search/",
@@ -429,7 +429,7 @@ async def test_vector_search_document_with_no_embeddings(
             id=None,
             source_uri=None,
             title="Document Without Embeddings",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             metadata={"orphan": True},
             file_path=None,
         )
@@ -461,7 +461,7 @@ async def test_vector_search_performance_with_large_dataset(
                 id=None,
                 source_uri=None,
                 title=f"Performance Test Document {i}",
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
                 metadata={"batch": "performance", "index": i},
                 file_path=None,
             )

@@ -1,5 +1,5 @@
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -192,7 +192,7 @@ async def test_documents_api_list_and_detail(
             id=None,
             source_uri=None,
             title="Doc One",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             metadata=None,
             file_path=None,
         )
@@ -211,10 +211,10 @@ async def test_documents_api_list_and_detail(
 @pytest.fixture
 async def vector_api_client(
     pg_vector_db_engine: AsyncEngine,
-) -> AsyncGenerator[httpx.AsyncClient, None]:
+) -> AsyncGenerator[httpx.AsyncClient]:
     """API client with PostgreSQL vector DB setup."""
 
-    async def override_get_db() -> AsyncGenerator[DatabaseContext, None]:
+    async def override_get_db() -> AsyncGenerator[DatabaseContext]:
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
             yield db
 
@@ -253,7 +253,7 @@ async def test_vector_search_api_search(
             id=None,
             source_uri=None,
             title="Doc Two",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             metadata=None,
             file_path=None,
         )
@@ -301,7 +301,7 @@ async def test_vector_search_api_with_limit(
                 id=None,
                 source_uri=None,
                 title=f"Document {i}",
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
                 metadata=None,
                 file_path=None,
             )
@@ -338,7 +338,7 @@ async def test_vector_search_api_document_detail(
             id=None,
             source_uri="file:///test.pdf",
             title="Test PDF Document",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             metadata={"author": "Test User", "pages": 10},
             file_path=None,
         )

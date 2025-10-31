@@ -11,8 +11,9 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+from homeassistant_api.models.history import History
+from homeassistant_api.models.states import State
 
-from family_assistant.home_assistant_wrapper import HistoryItem, StateItem
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import (
     ProcessingService,
@@ -116,12 +117,12 @@ async def test_download_state_history_success(
     # Create mock Home Assistant client wrapper
     mock_ha_client = MagicMock()
 
-    # Mock async generator for history data
-    async def mock_history_generator() -> AsyncGenerator[HistoryItem, None]:
+    # Mock async generator for history data using library's models
+    async def mock_history_generator() -> AsyncGenerator[History]:
         # Mock history for temperature sensor
-
         temp_states = [
-            StateItem(
+            State(
+                entity_id="sensor.temperature",
                 state="22.5",
                 attributes={
                     "unit_of_measurement": "°C",
@@ -129,8 +130,10 @@ async def test_download_state_history_success(
                 },
                 last_changed=datetime.now(UTC) - timedelta(hours=1),
                 last_updated=datetime.now(UTC) - timedelta(hours=1),
+                context=None,
             ),
-            StateItem(
+            State(
+                entity_id="sensor.temperature",
                 state="23.0",
                 attributes={
                     "unit_of_measurement": "°C",
@@ -138,25 +141,38 @@ async def test_download_state_history_success(
                 },
                 last_changed=datetime.now(UTC) - timedelta(minutes=30),
                 last_updated=datetime.now(UTC) - timedelta(minutes=30),
+                context=None,
             ),
         ]
-        yield HistoryItem(entity_id="sensor.temperature", states=temp_states)
+        yield History(states=tuple(temp_states))
 
         # Mock history for humidity sensor
         humidity_states = [
-            StateItem(
+            State(
+                entity_id="sensor.humidity",
                 state="65",
                 attributes={"unit_of_measurement": "%", "friendly_name": "Humidity"},
                 last_changed=datetime.now(UTC) - timedelta(hours=1),
                 last_updated=datetime.now(UTC) - timedelta(hours=1),
+                context=None,
             ),
         ]
-        yield HistoryItem(entity_id="sensor.humidity", states=humidity_states)
+        yield History(states=tuple(humidity_states))
 
     # Set the mock to return the generator when called
-    mock_ha_client.async_get_entity_histories = MagicMock(
+    # Mock the inner _client's async_get_entity_histories method
+    mock_ha_client._client = MagicMock()
+    mock_ha_client._client.async_get_entity_histories = MagicMock(
         return_value=mock_history_generator()
     )
+
+    # Create proper async mock for async_get_entity
+    async def mock_get_entity(entity_id: str) -> MagicMock:
+        mock_entity = MagicMock()
+        mock_entity.entity_id = entity_id
+        return mock_entity
+
+    mock_ha_client._client.async_get_entity = mock_get_entity
 
     tool_call_id = f"call_history_{uuid.uuid4()}"
 
@@ -272,22 +288,34 @@ async def test_download_state_history_direct_call() -> None:
     # Create mock Home Assistant client wrapper
     mock_ha_client = MagicMock()
 
-    # Mock async generator for history data
-    async def mock_history_generator() -> AsyncGenerator[HistoryItem, None]:
+    # Mock async generator for history data using library's models
+    async def mock_history_generator() -> AsyncGenerator[History]:
         states = [
-            StateItem(
+            State(
+                entity_id="light.living_room",
                 state="on",
                 attributes={"friendly_name": "Living Room Light"},
                 last_changed=datetime.now(UTC) - timedelta(hours=1),
                 last_updated=datetime.now(UTC) - timedelta(hours=1),
+                context=None,
             ),
         ]
-        yield HistoryItem(entity_id="light.living_room", states=states)
+        yield History(states=tuple(states))
 
     # Set the mock to return the generator when called
-    mock_ha_client.async_get_entity_histories = MagicMock(
+    # Mock the inner _client's async_get_entity_histories method
+    mock_ha_client._client = MagicMock()
+    mock_ha_client._client.async_get_entity_histories = MagicMock(
         return_value=mock_history_generator()
     )
+
+    # Create proper async mock for async_get_entity that returns an object with entity_id
+    async def mock_get_entity(entity_id: str) -> MagicMock:
+        mock_entity = MagicMock()
+        mock_entity.entity_id = entity_id
+        return mock_entity
+
+    mock_ha_client._client.async_get_entity = mock_get_entity
 
     # Create tool execution context
     exec_context = ToolExecutionContext(
@@ -303,7 +331,7 @@ async def test_download_state_history_direct_call() -> None:
         attachment_registry=None,
     )
 
-    # Call the tool
+    # Call the tool with a specific entity_id (common case)
     result = await download_state_history_tool(
         exec_context=exec_context,
         entity_ids=["light.living_room"],
@@ -364,14 +392,24 @@ async def test_download_state_history_empty() -> None:
     mock_ha_client = MagicMock()
 
     # Mock empty async generator that yields nothing
-    async def mock_empty_generator() -> AsyncGenerator[HistoryItem, None]:
+    async def mock_empty_generator() -> AsyncGenerator[History]:
         if False:  # pylint: disable=using-constant-test
-            yield HistoryItem(entity_id="", states=[])
+            yield History(states=())
 
     # Set the mock to return the generator when called
-    mock_ha_client.async_get_entity_histories = MagicMock(
+    # Mock the inner _client's async_get_entity_histories method
+    mock_ha_client._client = MagicMock()
+    mock_ha_client._client.async_get_entity_histories = MagicMock(
         return_value=mock_empty_generator()
     )
+
+    # Create proper async mock for async_get_entity
+    async def mock_get_entity(entity_id: str) -> MagicMock:
+        mock_entity = MagicMock()
+        mock_entity.entity_id = entity_id
+        return mock_entity
+
+    mock_ha_client._client.async_get_entity = mock_get_entity
 
     # Create tool execution context
     exec_context = ToolExecutionContext(

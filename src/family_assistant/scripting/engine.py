@@ -357,7 +357,7 @@ class StarlarkEngine:
             )
             return result
 
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             error_msg = f"Script execution timed out after {self.config.max_execution_time} seconds"
             logger.error(error_msg)
             raise ScriptTimeoutError(error_msg, self.config.max_execution_time) from e

@@ -5,7 +5,7 @@ Indexing event source implementation.
 import asyncio
 import contextlib
 import logging
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.events.sources import BaseEventSource, EventSource
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class IndexingEventType(str, Enum):
+class IndexingEventType(StrEnum):
     """Types of indexing events."""
 
     DOCUMENT_READY = "document_ready"
@@ -118,7 +118,7 @@ class IndexingSource(BaseEventSource, EventSource):
                     # Clean up the future from pending set
                     self._pending_events.discard(future)
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # No event within timeout, continue loop to check _running
                 continue
             except Exception as e:
@@ -136,7 +136,7 @@ class IndexingSource(BaseEventSource, EventSource):
         start_time = asyncio.get_running_loop().time()
         while self._event_queue.qsize() > 0 or self._pending_events:
             if asyncio.get_running_loop().time() - start_time > timeout:
-                raise asyncio.TimeoutError(
+                raise TimeoutError(
                     f"Timeout waiting for events. Queue size: {self._event_queue.qsize()}, "
                     f"Pending futures: {len(self._pending_events)}"
                 )

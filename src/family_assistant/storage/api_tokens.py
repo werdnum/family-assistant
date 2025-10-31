@@ -5,7 +5,7 @@ CRUD operations for API tokens.
 import logging
 import secrets
 import string
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import insert, select, update  # Added select and update
 
@@ -136,7 +136,7 @@ async def create_and_store_api_token(
     full_token = f"{prefix}{secret}"
 
     hashed_secret = pwd_context.hash(secret)
-    created_at_utc = datetime.now(timezone.utc)
+    created_at_utc = datetime.now(UTC)
 
     # Note: The `api_tokens_table` uses `hashed_token` for the column name
     # that stores the hashed version of the *secret part* of the token.
@@ -269,7 +269,7 @@ async def revoke_api_token(
             == user_identifier,  # Double check ownership
         )
         .values(
-            is_revoked=True, last_used_at=datetime.now(timezone.utc)
+            is_revoked=True, last_used_at=datetime.now(UTC)
         )  # Update last_used_at on revoke
         .returning(api_tokens_table.c.id)  # To check if any row was updated
     )

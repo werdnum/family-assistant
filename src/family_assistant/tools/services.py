@@ -211,7 +211,7 @@ async def delegate_to_service_tool(
                         text=f"OK. Delegation to service '{target_service_id}' cancelled by user.",
                         attachments=None,
                     )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     f"Confirmation for delegating to '{target_service_id}' timed out."
                 )

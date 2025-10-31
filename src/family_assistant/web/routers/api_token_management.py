@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 from dateutil import parser as dateutil_parser
@@ -50,8 +50,8 @@ async def create_api_token(
         try:
             expires_at_dt = dateutil_parser.isoparse(token_data.expires_at)
             if expires_at_dt.tzinfo is None:  # Ensure timezone aware
-                expires_at_dt = expires_at_dt.replace(tzinfo=timezone.utc)
-            if expires_at_dt <= datetime.now(timezone.utc):
+                expires_at_dt = expires_at_dt.replace(tzinfo=UTC)
+            if expires_at_dt <= datetime.now(UTC):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Expiration date must be in the future.",

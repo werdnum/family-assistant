@@ -8,7 +8,7 @@ import json  # Add import
 import logging
 import typing  # ADDED for cast
 import uuid  # Add import
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any  # Add missing typing imports
 from unittest.mock import AsyncMock  # Import call
 
@@ -71,7 +71,7 @@ def create_mock_update(
     chat = Chat(id=chat_id, type="private")
     message = Message(
         message_id=message_id,
-        date=datetime.now(timezone.utc),
+        date=datetime.now(UTC),
         chat=chat,
         from_user=user,
         text=message_text,
@@ -118,7 +118,7 @@ def create_mock_update_with_photo(
 
     message = Message(
         message_id=message_id,
-        date=datetime.now(timezone.utc),
+        date=datetime.now(UTC),
         chat=chat,
         from_user=user,
         text=message_text,

@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 import pytest_asyncio
@@ -17,7 +17,7 @@ TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 
 @pytest_asyncio.fixture(scope="function")
-async def db_engine() -> AsyncGenerator[AsyncEngine, None]:
+async def db_engine() -> AsyncGenerator[AsyncEngine]:
     """Creates an in-memory SQLite engine and sets up the schema for each test function."""
     engine = create_async_engine(TEST_DATABASE_URL)
     async with engine.begin() as conn:
@@ -37,7 +37,7 @@ async def message_notifier() -> MessageNotifier:
 @pytest_asyncio.fixture(scope="function")
 async def db_context(
     db_engine: AsyncEngine, message_notifier: MessageNotifier
-) -> AsyncGenerator[DatabaseContext, None]:
+) -> AsyncGenerator[DatabaseContext]:
     """Provides an *entered* DatabaseContext instance with MessageNotifier."""
     context_instance = get_db_context(
         engine=db_engine, base_delay=0.01, message_notifier=message_notifier
@@ -62,7 +62,7 @@ async def test_add_message_notifies_listeners(
     """Test that add_message triggers notification to registered listeners."""
     interface_type = "web"
     conversation_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Register a listener before adding the message
     queue = await message_notifier.register(conversation_id, interface_type)
@@ -97,7 +97,7 @@ async def test_add_message_without_notifier_works(db_engine: AsyncEngine) -> Non
     async with get_db_context(engine=db_engine, base_delay=0.01) as db_context:
         interface_type = "web"
         conversation_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Add a message - should work fine without notifier
         msg = await db_context.message_history.add_message(
@@ -122,7 +122,7 @@ async def test_multiple_listeners_receive_notifications(
     """Test that multiple listeners for the same conversation receive notifications."""
     interface_type = "web"
     conversation_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Register multiple listeners for the same conversation
     queue1 = await message_notifier.register(conversation_id, interface_type)
@@ -162,7 +162,7 @@ async def test_only_matching_conversation_notified(
     interface_type = "web"
     conv1 = str(uuid.uuid4())
     conv2 = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Register listeners for different conversations
     queue1 = await message_notifier.register(conv1, interface_type)
@@ -196,7 +196,7 @@ async def test_interface_type_isolation(
 ) -> None:
     """Test that notifications are scoped to specific interface types."""
     conversation_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Register listeners for different interface types
     web_queue = await message_notifier.register(conversation_id, "web")

@@ -5,37 +5,14 @@ Wrapper for Home Assistant API client to handle special cases like binary respon
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from datetime import datetime  # noqa: TC003 - needed at runtime for parsing timestamps
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-
     import homeassistant_api
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class StateItem:
-    """Represents a single state in entity history."""
-
-    state: str
-    # ast-grep-ignore: no-dict-any - HA state attributes are dynamic
-    attributes: dict[str, Any]
-    last_changed: datetime | None
-    last_updated: datetime | None
-
-
-@dataclass
-class HistoryItem:
-    """Represents history for a single entity."""
-
-    entity_id: str
-    states: list[StateItem]
 
 
 class HomeAssistantClientWrapper:
@@ -142,86 +119,3 @@ class HomeAssistantClientWrapper:
         ):
             response.raise_for_status()
             return await response.read()
-
-    async def async_get_entity_histories(
-        self,
-        entities: list[str] | None = None,
-        start_timestamp: datetime | None = None,
-        end_timestamp: datetime | None = None,
-        significant_changes_only: bool = False,
-    ) -> AsyncGenerator[HistoryItem, None]:
-        """
-        Get entity state histories from Home Assistant.
-
-        Args:
-            entities: Optional list of entity IDs to retrieve history for
-            start_timestamp: Optional start of history period
-            end_timestamp: Optional end of history period
-            significant_changes_only: If true, only significant state changes
-
-        Yields:
-            History objects containing entity state history
-
-        Raises:
-            Exception: If the history retrieval fails
-        """
-        # Build the path - if start_timestamp provided, use it in path
-        if start_timestamp:
-            start_iso = start_timestamp.isoformat()
-            path = f"/history/period/{start_iso}"
-        else:
-            path = "/history/period"
-
-        # Build query parameters
-        # ast-grep-ignore: no-dict-any - API params require flexibility
-        params: dict[str, Any] = {}
-        if entities:
-            params["filter_entity_id"] = ",".join(entities)
-        if end_timestamp:
-            params["end_time"] = end_timestamp.isoformat()
-        if significant_changes_only:
-            params["significant_changes_only"] = "1"
-
-        # Make the request using the underlying client
-        # The API returns a list of lists, where each inner list contains state history for one entity
-        response = await self.async_request(method="get", path=path, params=params)
-
-        # Response is a list of lists of state dicts
-        # Each top-level list item represents one entity's history
-        if not isinstance(response, list):
-            return
-
-        for entity_history in response:
-            if not entity_history:  # Skip empty histories
-                continue
-
-            # Extract entity_id from first state
-            entity_id = entity_history[0].get("entity_id", "") if entity_history else ""
-
-            # Convert state dicts to StateItem objects
-            states = []
-            for state_dict in entity_history:
-                # Parse timestamps
-                last_changed_str = state_dict.get("last_changed")
-                last_updated_str = state_dict.get("last_updated")
-
-                last_changed = (
-                    datetime.fromisoformat(last_changed_str.replace("Z", "+00:00"))
-                    if last_changed_str
-                    else None
-                )
-                last_updated = (
-                    datetime.fromisoformat(last_updated_str.replace("Z", "+00:00"))
-                    if last_updated_str
-                    else None
-                )
-
-                state_item = StateItem(
-                    state=state_dict.get("state", ""),
-                    attributes=state_dict.get("attributes", {}),
-                    last_changed=last_changed,
-                    last_updated=last_updated,
-                )
-                states.append(state_item)
-
-            yield HistoryItem(entity_id=entity_id, states=states)

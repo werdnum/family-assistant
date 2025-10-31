@@ -45,7 +45,7 @@ class TelegramHandlerTestFixture(NamedTuple):
 @pytest_asyncio.fixture(scope="function")
 async def telegram_handler_fixture(
     db_engine: AsyncEngine,
-) -> AsyncGenerator[TelegramHandlerTestFixture, None]:
+) -> AsyncGenerator[TelegramHandlerTestFixture]:
     """
     Sets up the environment for testing TelegramUpdateHandler using the Assistant class.
     """

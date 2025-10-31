@@ -1,0 +1,30 @@
+interactions:
+  - request:
+      body: null
+      headers:
+        Content-Type:
+          - application/json
+      method: GET
+      uri: http://localhost:58237/api/camera_proxy/camera.nonexistent_camera
+    response:
+      body:
+        string: '404: Not Found'
+      headers:
+        Content-Length:
+          - '14'
+        Content-Type:
+          - text/plain; charset=utf-8
+        Date:
+          - Fri, 31 Oct 2025 03:40:17 GMT
+        Referrer-Policy:
+          - no-referrer
+        Server:
+          - ''
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+      status:
+        code: 404
+        message: Not Found
+version: 1

@@ -4,7 +4,7 @@ Utility functions for testing.
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa  # Import sqlalchemy
 from sqlalchemy import select
@@ -56,7 +56,7 @@ async def wait_for_tasks_to_complete(
                      (only when allow_failures=False).
         Exception: If a database error occurs during polling.
     """
-    start_time = datetime.now(timezone.utc)
+    start_time = datetime.now(UTC)
     end_time = start_time + timedelta(seconds=timeout_seconds)
 
     filters = []
@@ -70,7 +70,7 @@ async def wait_for_tasks_to_complete(
         f"Waiting up to {timeout_seconds}s for tasks to complete...{filter_msg}"
     )
 
-    while datetime.now(timezone.utc) < end_time:
+    while datetime.now(UTC) < end_time:
         try:
             # Use the provided engine to get a context
             async with get_db_context(engine=engine) as db:
@@ -138,7 +138,7 @@ async def wait_for_tasks_to_complete(
                 # Build the query to count non-terminal tasks
                 # For recurring tasks, only consider those that should have already executed
                 # For non-recurring tasks, include all of them (to catch spawned tasks)
-                current_time = datetime.now(timezone.utc)
+                current_time = datetime.now(UTC)
                 time_with_fudge = current_time + timedelta(seconds=30)
                 query = select(
                     sql_count(tasks_table.c.id)
@@ -167,7 +167,7 @@ async def wait_for_tasks_to_complete(
                 pending_count = result.scalar_one_or_none()
 
                 if pending_count == 0:
-                    elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+                    elapsed = (datetime.now(UTC) - start_time).total_seconds()
                     logger.info(f"All relevant tasks completed after {elapsed:.2f}s.")
                     return  # Success!
                 elif pending_count is None:
@@ -193,7 +193,7 @@ async def wait_for_tasks_to_complete(
         await asyncio.sleep(poll_interval_seconds)
 
     # If the loop finishes without returning, timeout occurred
-    elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+    elapsed = (datetime.now(UTC) - start_time).total_seconds()
 
     # --- Fetch details of pending tasks before raising timeout ---
     pending_tasks_details = "Could not fetch pending task details."
@@ -209,7 +209,7 @@ async def wait_for_tasks_to_complete(
                 sa.column("recurrence_rule"),
             ]
             # Show pending tasks, but for recurring tasks only show those that should have already executed
-            current_time = datetime.now(timezone.utc)
+            current_time = datetime.now(UTC)
             time_with_fudge = current_time + timedelta(seconds=30)
             pending_query = (
                 select(*cols_to_select)
@@ -255,7 +255,7 @@ async def wait_for_tasks_to_complete(
         pending_tasks_details = f"Error fetching pending task details: {fetch_err}"
     # --- End fetching details ---
 
-    raise asyncio.TimeoutError(
+    raise TimeoutError(
         f"Timeout ({timeout_seconds}s) waiting for tasks to complete. Elapsed: {elapsed:.2f}s\n{pending_tasks_details}"
     )
 
