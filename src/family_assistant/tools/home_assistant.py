@@ -405,12 +405,15 @@ async def download_state_history_tool(
                 if state.entity_id in entity_id_set:
                     states.append(state)
 
-            # Warn about any missing entities
+            # Error out on any missing entities
             found_ids = {s.entity_id for s in states}
             missing_ids = entity_id_set - found_ids
             if missing_ids:
-                logger.warning(
+                logger.error(
                     f"Requested entities not found in Home Assistant: {missing_ids}"
+                )
+                return ToolResult(
+                    text=f"Error: The following entities were not found in Home Assistant: {', '.join(sorted(missing_ids))}"
                 )
 
             states = tuple(states) if states else None

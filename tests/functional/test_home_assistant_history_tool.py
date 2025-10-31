@@ -490,3 +490,53 @@ async def test_download_state_history_empty() -> None:
     # Verify result
     assert result.text is not None
     assert "No history data found" in result.text
+
+
+@pytest.mark.asyncio
+async def test_download_state_history_missing_entity() -> None:
+    """
+    Test download_state_history_tool when a requested entity is not found.
+    """
+    # Create mock Home Assistant client wrapper
+    mock_ha_client = MagicMock()
+
+    # Mock async_get_states to return a list that doesn't contain all requested entities
+    async def mock_get_states() -> list[State]:
+        return [
+            State(
+                entity_id="sensor.existing",
+                state="22.5",
+                attributes={},
+                last_changed=datetime.now(UTC),
+                last_updated=datetime.now(UTC),
+                context=None,
+            ),
+        ]
+
+    mock_ha_client.async_get_states = mock_get_states
+
+    # Create tool execution context
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_conv",
+        user_name="test_user",
+        turn_id=None,
+        db_context=MagicMock(),
+        processing_service=None,
+        clock=None,
+        home_assistant_client=mock_ha_client,
+        event_sources=None,
+        attachment_registry=None,
+    )
+
+    # Call the tool with a mix of existing and non-existent entity_ids
+    result = await download_state_history_tool(
+        exec_context=exec_context,
+        entity_ids=["sensor.nonexistent", "sensor.existing"],
+    )
+
+    # Verify error message for the missing entity
+    assert result.text is not None
+    assert "Error: The following entities were not found" in result.text
+    assert "sensor.nonexistent" in result.text
+    assert "sensor.existing" not in result.text
