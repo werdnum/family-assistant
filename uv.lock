@@ -1621,18 +1621,11 @@ pgserver = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "assertpy" },
     { name = "llm-fragments-github" },
     { name = "llm-fragments-reader" },
     { name = "llm-openrouter" },
-    { name = "pixeltable-pgserver" },
-    { name = "pytest-alembic" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-json-report" },
     { name = "pytest-rerunfailures" },
     { name = "pytest-xdist" },
-    { name = "ruff" },
-    { name = "vcrpy" },
 ]
 
 [package.metadata]
@@ -1736,18 +1729,11 @@ provides-extras = ["dev", "local-embeddings", "pgserver"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "assertpy", specifier = ">=1.1" },
     { name = "llm-fragments-github", specifier = ">=0.4" },
     { name = "llm-fragments-reader", specifier = ">=0.1" },
     { name = "llm-openrouter" },
-    { name = "pixeltable-pgserver", specifier = ">=0.4.0" },
-    { name = "pytest-alembic", specifier = ">=0.11.0" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-json-report" },
     { name = "pytest-rerunfailures", specifier = ">=16.0.1" },
     { name = "pytest-xdist", specifier = ">=3.7.0" },
-    { name = "ruff" },
-    { name = "vcrpy", specifier = ">=7.0.0" },
 ]
 
 [[package]]
