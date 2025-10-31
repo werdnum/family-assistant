@@ -33,10 +33,15 @@ repos:
         language: system
         types: [markdown]
         exclude: "(?x)^( \n  docs/python-telegram-bot-abridged\\.md|\n  docs/python-telegram-bot-abridged-filtered\\.md\n)$\n"
-  - repo: https://github.com/google/yamlfmt
-    rev: v0.17.0
+  - repo: local
     hooks:
       - id: yamlfmt
+        name: yamlfmt
+        language: golang
+        entry: yamlfmt
+        additional_dependencies:
+          - github.com/google/yamlfmt/cmd/yamlfmt@v0.17.0
+        types: [yaml]
   - repo: local
     hooks:
       - id: biome-format
