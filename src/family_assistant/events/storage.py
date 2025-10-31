@@ -6,7 +6,7 @@ import json
 import logging
 import time
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import text
@@ -138,7 +138,7 @@ class EventStorage:
                     "triggered_listener_ids": json.dumps(triggered_listener_ids)
                     if triggered_listener_ids
                     else None,
-                    "timestamp": datetime.now(timezone.utc),
+                    "timestamp": datetime.now(UTC),
                 },
             )
             logger.debug(

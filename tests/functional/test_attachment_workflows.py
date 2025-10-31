@@ -591,6 +591,6 @@ else:
         new_task_event.set()
         try:
             await asyncio.wait_for(worker_task, timeout=2.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             worker_task.cancel()
             await asyncio.sleep(0.1)

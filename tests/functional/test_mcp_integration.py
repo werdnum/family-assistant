@@ -159,7 +159,7 @@ async def wait_for_server(
 
 # --- Fixture to manage mcp-proxy subprocess for SSE tests ---
 @pytest_asyncio.fixture(scope="function")  # Use pytest_asyncio.fixture
-async def mcp_proxy_server() -> AsyncGenerator[str, None]:
+async def mcp_proxy_server() -> AsyncGenerator[str]:
     """
     Starts mcp-proxy listening for SSE and forwarding to mcp-server-time via stdio.
     Yields the SSE URL.
@@ -220,7 +220,7 @@ async def mcp_proxy_server() -> AsyncGenerator[str, None]:
             logger.warning(
                 f"Error sending SIGTERM/SIGINT to process group or process: {e}"
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "MCP proxy did not terminate after SIGINT/SIGTERM, sending SIGKILL."
             )
@@ -228,7 +228,7 @@ async def mcp_proxy_server() -> AsyncGenerator[str, None]:
                 try:
                     process.kill()
                     await asyncio.wait_for(process.wait(), timeout=5)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.error("MCP proxy did not terminate after SIGKILL.")
                 except Exception as e:
                     logger.error(f"Error during SIGKILL: {e}")

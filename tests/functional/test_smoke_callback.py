@@ -3,7 +3,7 @@ import json
 import logging
 import uuid  # Added for turn_id
 from collections.abc import Callable
-from datetime import timedelta, timezone
+from datetime import UTC, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
@@ -593,9 +593,9 @@ async def test_modify_pending_callback(
     # Ensure modified_task_data["scheduled_at"] is offset-aware UTC
     db_scheduled_at = modified_task_data["scheduled_at"]
     if db_scheduled_at.tzinfo is None:  # Should be stored as UTC
-        db_scheduled_at = db_scheduled_at.replace(tzinfo=timezone.utc)
+        db_scheduled_at = db_scheduled_at.replace(tzinfo=UTC)
 
-    assert db_scheduled_at == modified_callback_dt.astimezone(timezone.utc), (
+    assert db_scheduled_at == modified_callback_dt.astimezone(UTC), (
         "Callback time not updated correctly"
     )
     assert modified_task_data["payload"]["callback_context"] == modified_context, (
@@ -1555,7 +1555,7 @@ async def test_schedule_recurring_callback(
         # (accounting for the specific BYHOUR=8 in the rule)
         next_scheduled = next_task["scheduled_at"]
         if next_scheduled.tzinfo is None:
-            next_scheduled = next_scheduled.replace(tzinfo=timezone.utc)
+            next_scheduled = next_scheduled.replace(tzinfo=UTC)
         # For testing purposes, we'll just verify it's in the future
         assert next_scheduled > initial_callback_dt
         logger.info(f"Next occurrence scheduled at {next_scheduled}")

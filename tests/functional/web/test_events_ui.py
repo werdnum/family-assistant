@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -518,7 +518,7 @@ async def test_events_with_actual_data(
                 "attributes": {"brightness": 255},
             },
             triggered_listener_ids=[],
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
         # Create another event with triggered listeners
@@ -530,7 +530,7 @@ async def test_events_with_actual_data(
                 "chunks": 5,
             },
             triggered_listener_ids=[1, 2],
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
     # Navigate to events page
@@ -793,7 +793,7 @@ async def test_events_json_formatting_in_detail_view(
                 },
             },
             triggered_listener_ids=[1, 2, 3],
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
         # Get the created event ID (it will be in the format source_id:timestamp)
@@ -843,7 +843,7 @@ async def test_events_triggered_listeners_display(
             source_id="indexing",
             event_data={"document": "test.pdf", "status": "processed"},
             triggered_listener_ids=[1, 2],
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
         # Get the created event ID
@@ -919,13 +919,13 @@ async def test_events_source_icons_display(
         await db_context.events.store_event(
             source_id="home_assistant",
             event_data={"test": "data"},
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
         await db_context.events.store_event(
             source_id="indexing",
             event_data={"test": "data"},
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
     # Navigate to events page
@@ -966,7 +966,7 @@ async def test_events_metadata_display(
         await db_context.events.store_event(
             source_id="home_assistant",
             event_data={"entity_id": "test.entity"},
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
         # Get the created event ID

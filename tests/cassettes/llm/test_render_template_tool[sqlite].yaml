@@ -1,0 +1,31 @@
+interactions:
+  - request:
+      body:
+        template: '{{ states(''input_boolean.test_switch'') }}'
+      headers:
+        Content-Type:
+          - application/json
+      method: POST
+      uri: http://localhost:58237/api/template
+    response:
+      body:
+        string: 'off'
+      headers:
+        Content-Length:
+          - '3'
+        Content-Type:
+          - text/plain; charset=utf-8
+        Date:
+          - Fri, 31 Oct 2025 03:40:16 GMT
+        Referrer-Policy:
+          - no-referrer
+        Server:
+          - ''
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+      status:
+        code: 200
+        message: OK
+version: 1

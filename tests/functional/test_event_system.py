@@ -5,7 +5,7 @@ Functional tests for the event listener system.
 import asyncio
 import json
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -69,7 +69,7 @@ class MockState:
     def __init__(self, state: str) -> None:
         self.state = state
         self.attributes = {"friendly_name": f"Test {state}"}
-        self.last_changed = datetime.now(timezone.utc).isoformat()
+        self.last_changed = datetime.now(UTC).isoformat()
 
 
 def safe_json_loads(data: str | dict | list) -> Any:  # noqa: ANN401  # JSON can be any type
@@ -267,7 +267,7 @@ async def test_test_event_listener_tool_matches_person_coming_home(
     async with get_db_context(db_engine) as db_ctx:
         await db_ctx.execute_with_retry(text("DELETE FROM recent_events"))
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         events_to_insert = [
             {
                 "event_id": "test_1",
@@ -355,7 +355,7 @@ async def test_test_event_listener_tool_no_match_wrong_state(
     async with get_db_context(db_engine) as db_ctx:
         await db_ctx.execute_with_retry(text("DELETE FROM recent_events"))
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         await db_ctx.execute_with_retry(
             text("""INSERT INTO recent_events 
                    (event_id, source_id, event_data, timestamp)
@@ -450,7 +450,7 @@ async def test_event_type_matching(db_engine: AsyncEngine) -> None:
     async with get_db_context(db_engine) as db_ctx:
         await db_ctx.execute_with_retry(text("DELETE FROM recent_events"))
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Store a state_changed event
         await db_ctx.execute_with_retry(
@@ -560,7 +560,7 @@ async def test_cleanup_old_events(db_engine: AsyncEngine) -> None:
     # Arrange - create events with different ages
     async with get_db_context(db_engine) as db_ctx:
         # Store events with different timestamps
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Use EventStorage to store events
         storage = EventStorage(
@@ -669,7 +669,7 @@ async def test_end_to_end_event_listener_wakes_llm(
         "new_state": {
             "state": "on",
             "attributes": {"friendly_name": "Hallway Motion Sensor"},
-            "last_changed": datetime.now(timezone.utc).isoformat(),
+            "last_changed": datetime.now(UTC).isoformat(),
         },
     }
 

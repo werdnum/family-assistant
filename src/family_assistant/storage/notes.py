@@ -5,7 +5,7 @@ Handles storage and retrieval of notes.
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import (
@@ -44,13 +44,13 @@ notes_table = Table(
     Column(
         "created_at",
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
     ),
     Column(
         "updated_at",
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     ),
 )
 
@@ -190,7 +190,7 @@ async def add_or_update_note(
     include_in_prompt: bool = True,
 ) -> str:
     """Adds a new note or updates an existing note with the given title (upsert)."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     if db_context.engine.dialect.name == "postgresql":
         # Use PostgreSQL's ON CONFLICT DO UPDATE for atomic upsert

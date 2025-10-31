@@ -8,7 +8,7 @@ import logging
 import re
 import time
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import homeassistant_api as ha_api
@@ -323,7 +323,7 @@ class HomeAssistantSource(BaseEventSource, EventSource):
                     event = await asyncio.wait_for(
                         self._event_queue.async_q.get(), timeout=1.0
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # No event within timeout, continue loop to check _running
                     continue
 
@@ -508,7 +508,7 @@ class HomeAssistantSource(BaseEventSource, EventSource):
             if state_fields_to_check:
                 try:
                     # Get entity history for the last 7 days (typical HA history retention)
-                    end_time = datetime.now(timezone.utc)
+                    end_time = datetime.now(UTC)
                     start_time = end_time - timedelta(days=7)
 
                     # Get entity histories

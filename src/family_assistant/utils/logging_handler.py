@@ -98,7 +98,7 @@ class SQLAlchemyErrorHandler(logging.Handler):
                 asyncio.gather(*self._pending_tasks, return_exceptions=True),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Cancel remaining tasks
             for task in self._pending_tasks:
                 if not task.done():

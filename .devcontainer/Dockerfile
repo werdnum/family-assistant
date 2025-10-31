@@ -20,6 +20,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         curl git wget gnupg ca-certificates lsb-release \
         ripgrep fd-find micro unzip build-essential \
         python3 python3-pip python3-venv \
+        ffmpeg libturbojpeg0-dev \
     && ln -s /usr/bin/fdfind /usr/bin/fd
 
 # PostgreSQL repository and client

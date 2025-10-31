@@ -8,7 +8,7 @@ import pathlib  # Add import for pathlib
 import shutil  # Add import for shutil
 import uuid
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -73,7 +73,7 @@ class MockDocumentImpl(DocumentProtocol):
         self._source_id = source_id
         self._title = title
         self._created_at = (
-            created_at.astimezone(timezone.utc)
+            created_at.astimezone(UTC)
             if created_at and created_at.tzinfo is None
             else created_at
         )
@@ -174,7 +174,7 @@ async def indexing_task_worker(
             try:
                 await asyncio.wait_for(worker_task_handle, timeout=5.0)
                 logger.info("Background task worker (fixture) stopped.")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("Timeout stopping worker task (fixture). Cancelling.")
                 worker_task_handle.cancel()
                 try:

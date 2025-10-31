@@ -7,7 +7,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -108,7 +108,7 @@ class MockDocument:
 
     def __post_init__(self) -> None:
         if self.created_at is None:
-            self.created_at = datetime.now(timezone.utc)
+            self.created_at = datetime.now(UTC)
         # Don't default metadata to {} - keep it as None if that's what was passed
 
 
@@ -219,7 +219,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                 task = await db_ctx.tasks.dequeue(
                     task_types=["embed_and_store_batch"],
                     worker_id="test-worker",
-                    current_time=datetime.now(timezone.utc),
+                    current_time=datetime.now(UTC),
                 )
                 if task is None:
                     # Give a moment for tasks to become available
@@ -330,7 +330,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
         first_task = await db_ctx.tasks.dequeue(
             task_types=["embed_and_store_batch"],
             worker_id="test-worker",
-            current_time=datetime.now(timezone.utc),
+            current_time=datetime.now(UTC),
         )
         assert first_task is not None
 
@@ -446,7 +446,7 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
         task = await db_ctx.tasks.dequeue(
             task_types=["embed_and_store_batch"],
             worker_id="test-worker",
-            current_time=datetime.now(timezone.utc),
+            current_time=datetime.now(UTC),
         )
 
         assert task is not None
@@ -571,7 +571,7 @@ async def test_document_ready_event_includes_rich_metadata(
             task = await db_ctx.tasks.dequeue(
                 task_types=["embed_and_store_batch"],
                 worker_id="test-worker",
-                current_time=datetime.now(timezone.utc),
+                current_time=datetime.now(UTC),
             )
 
             assert task is not None
@@ -690,7 +690,7 @@ async def test_document_ready_event_handles_none_metadata(
             task = await db_ctx.tasks.dequeue(
                 task_types=["embed_and_store_batch"],
                 worker_id="test-worker",
-                current_time=datetime.now(timezone.utc),
+                current_time=datetime.now(UTC),
             )
 
             assert task is not None

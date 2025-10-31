@@ -145,7 +145,7 @@ def vite_and_api_ports() -> tuple[int, int]:
 
 
 @pytest.fixture(scope="function")
-def api_socket_and_port() -> Generator[tuple[int, socket.socket], None, None]:
+def api_socket_and_port() -> Generator[tuple[int, socket.socket]]:
     """Get a bound socket and port for the API server to prevent race conditions."""
     port, sock = find_free_port_with_socket()
     try:
@@ -283,7 +283,7 @@ async def _create_web_assistant(
     api_socket_and_port: tuple[int, socket.socket],
     mock_llm_client: RuleBasedMockLLMClient,
     scope_label: str = "",
-) -> AsyncGenerator[Assistant, None]:
+) -> AsyncGenerator[Assistant]:
     """Helper function to create a web-only Assistant instance.
 
     Args:
@@ -454,7 +454,7 @@ async def _create_web_assistant(
     try:
         await asyncio.wait_for(start_task, timeout=10.0)
         print(f"{log_prefix}start_task completed successfully")
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print(f"Timeout waiting for {log_prefix}start_task, cancelling...")
         start_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -467,7 +467,7 @@ async def _create_web_assistant(
 
 
 @pytest_asyncio.fixture(scope="session")
-async def session_db_engine() -> AsyncGenerator[AsyncEngine, None]:
+async def session_db_engine() -> AsyncGenerator[AsyncEngine]:
     """Create a session-scoped SQLite database for read-only tests.
 
     Uses a file-based database (not in-memory) to work correctly with
@@ -502,7 +502,7 @@ async def session_db_engine() -> AsyncGenerator[AsyncEngine, None]:
 
 
 @pytest.fixture(scope="session")
-def session_api_socket_and_port() -> Generator[tuple[int, socket.socket], None, None]:
+def session_api_socket_and_port() -> Generator[tuple[int, socket.socket]]:
     """Create a session-scoped socket and port for the API server."""
     api_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     api_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -534,7 +534,7 @@ async def web_readonly_assistant(
     session_api_socket_and_port: tuple[int, socket.socket],
     build_frontend_assets: None,  # Ensure assets are built
     session_mock_llm_client: RuleBasedMockLLMClient,
-) -> AsyncGenerator[Assistant, None]:
+) -> AsyncGenerator[Assistant]:
     """Session-scoped Assistant for read-only tests.
 
     This fixture creates a single Assistant instance shared across all read-only tests.
@@ -576,7 +576,7 @@ async def web_only_assistant(
     api_socket_and_port: tuple[int, socket.socket],
     build_frontend_assets: None,  # Ensure assets are built
     mock_llm_client: RuleBasedMockLLMClient,
-) -> AsyncGenerator[Assistant, None]:
+) -> AsyncGenerator[Assistant]:
     """Start Assistant in web-only mode for testing."""
     async for assistant in _create_web_assistant(
         db_engine,
@@ -592,7 +592,7 @@ async def web_test_fixture(
     web_only_assistant: Assistant,
     api_socket_and_port: tuple[int, socket.socket],
     build_frontend_assets: None,  # Ensure frontend is built before tests
-) -> AsyncGenerator[WebTestFixture, None]:
+) -> AsyncGenerator[WebTestFixture]:
     """Combined fixture providing all web test dependencies."""
 
     # Set up console message logging for debugging
@@ -654,7 +654,7 @@ async def web_test_fixture_readonly(
     web_readonly_assistant: Assistant,
     session_api_socket_and_port: tuple[int, socket.socket],
     build_frontend_assets: None,  # Ensure frontend is built before tests
-) -> AsyncGenerator[WebTestFixture, None]:
+) -> AsyncGenerator[WebTestFixture]:
     """Combined fixture providing web test dependencies with session-scoped Assistant.
 
     This fixture uses a session-scoped Assistant instance for better performance.
@@ -837,7 +837,7 @@ def console_error_checker(web_test_fixture: WebTestFixture) -> ConsoleErrorColle
 async def web_test_with_console_check(
     web_test_fixture: WebTestFixture,
     console_error_checker: ConsoleErrorCollector,
-) -> AsyncGenerator[WebTestFixture, None]:
+) -> AsyncGenerator[WebTestFixture]:
     """Web test fixture with automatic console error checking after page cleanup.
 
     This fixture ensures proper sequencing:
@@ -865,7 +865,7 @@ async def web_test_with_console_check(
 async def web_test_readonly_with_console_check(
     web_test_fixture_readonly: WebTestFixture,
     console_error_checker: ConsoleErrorCollector,
-) -> AsyncGenerator[WebTestFixture, None]:
+) -> AsyncGenerator[WebTestFixture]:
     """Readonly web test fixture with automatic console error checking after page cleanup.
 
     This fixture ensures proper sequencing:
@@ -913,7 +913,7 @@ def connect_options() -> dict[str, str] | None:
 @pytest_asyncio.fixture(scope="session")
 async def browser(
     launch_browser: Any,  # noqa: ANN401  # From playwright's fixtures
-) -> AsyncGenerator[Any, None]:  # noqa: ANN401  # playwright browser object
+) -> AsyncGenerator[Any]:  # noqa: ANN401  # playwright browser object
     """Override playwright's browser fixture to add timeout on close.
 
     This prevents the test suite from hanging when browser.close() gets stuck
@@ -932,14 +932,14 @@ async def browser(
     try:
         await asyncio.wait_for(browser.close(), timeout=10.0)
         print("\n=== Browser closed successfully ===")
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print("\n=== WARNING: Browser close timed out after 10s, forcing cleanup ===")
     # If timeout occurs, we let pytest-playwright handle any remaining cleanup
 
 
 # Override the playwright fixture to add timeout on stop
 @pytest_asyncio.fixture(scope="session")
-async def playwright() -> AsyncGenerator[Any, None]:
+async def playwright() -> AsyncGenerator[Any]:
     """Override playwright's main fixture to add timeout on stop.
 
     This prevents the test suite from hanging when playwright.stop() gets stuck
@@ -960,7 +960,7 @@ async def playwright() -> AsyncGenerator[Any, None]:
             pw_context_manager.__aexit__(None, None, None), timeout=10.0
         )
         print("\n=== Playwright stopped successfully ===")
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print("\n=== WARNING: Playwright stop timed out after 10s, forcing cleanup ===")
 
 
@@ -970,7 +970,7 @@ async def playwright() -> AsyncGenerator[Any, None]:
 @pytest_asyncio.fixture(scope="function")
 async def api_db_context(
     db_engine: AsyncEngine,
-) -> AsyncGenerator[DatabaseContext, None]:
+) -> AsyncGenerator[DatabaseContext]:
     """Provides a DatabaseContext for API tests."""
     async with get_db_context(engine=db_engine) as ctx:
         yield ctx
@@ -1163,7 +1163,7 @@ async def app_fixture(
 
 
 @pytest_asyncio.fixture(scope="function")
-async def api_test_client(app_fixture: FastAPI) -> AsyncGenerator[AsyncClient, None]:
+async def api_test_client(app_fixture: FastAPI) -> AsyncGenerator[AsyncClient]:
     """Provides an HTTPX AsyncClient for the test FastAPI app."""
     transport = ASGITransport(app=app_fixture)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:

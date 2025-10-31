@@ -4,7 +4,7 @@ Functional tests for the vector storage module using PostgreSQL.
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import numpy as np  # Using numpy for easy random vector generation
@@ -68,7 +68,7 @@ class MockDocumentImpl(Document):
         self._title = title
         # Ensure datetime is timezone-aware if provided
         self._created_at = (
-            created_at.astimezone(timezone.utc)
+            created_at.astimezone(UTC)
             if created_at and created_at.tzinfo is None
             else created_at
         )
@@ -128,7 +128,7 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine: AsyncEngine) -> No
     test_source_type = "test_functional"
     test_title = f"Functional Test Document {uuid.uuid4()}"
     test_metadata = {"category": "functional_test", "run_id": str(uuid.uuid4())}
-    test_created_at = datetime.now(timezone.utc)  # Use timezone-aware datetime
+    test_created_at = datetime.now(UTC)  # Use timezone-aware datetime
 
     # Create a sample embedding (ensure dimension matches the index)
     test_embedding_vector = (
@@ -464,7 +464,7 @@ async def test_get_full_document_content_with_raw_content(
 
         @property
         def created_at(self) -> datetime | None:
-            return datetime.now(timezone.utc)
+            return datetime.now(UTC)
 
         @property
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types

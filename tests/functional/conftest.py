@@ -28,10 +28,10 @@ os.environ["SESSION_SECRET_KEY"] = ""
 @pytest.fixture
 async def api_client(
     db_engine: AsyncEngine,
-) -> AsyncGenerator[httpx.AsyncClient, None]:
+) -> AsyncGenerator[httpx.AsyncClient]:
     """Provide an HTTP client for testing FastAPI endpoints."""
 
-    async def override_get_db() -> AsyncGenerator[DatabaseContext, None]:
+    async def override_get_db() -> AsyncGenerator[DatabaseContext]:
         async with DatabaseContext(engine=db_engine) as db:
             yield db
 

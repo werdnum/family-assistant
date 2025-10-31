@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -107,7 +107,7 @@ async def vector_search_form(
             "distinct_metadata_keys": distinct_metadata_keys,  # Pass keys to template
             "user": get_user_from_request(request),
             "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
-            "now_utc": datetime.now(timezone.utc),  # Pass to base template
+            "now_utc": datetime.now(UTC),  # Pass to base template
             "float_inf": float("inf"),
             "float_neg_inf": -float("inf"),
         },
@@ -194,7 +194,7 @@ async def document_detail_view(
             "full_text_warning": full_text_warning,
             "user": get_user_from_request(request),
             "AUTH_ENABLED": AUTH_ENABLED,
-            "now_utc": datetime.now(timezone.utc),
+            "now_utc": datetime.now(UTC),
         },
     )
 
@@ -280,7 +280,7 @@ async def handle_vector_search(
             try:
                 # Assume YYYY-MM-DD, make it timezone-aware (start of day UTC)
                 created_after_dt = datetime.strptime(created_after, "%Y-%m-%d").replace(
-                    tzinfo=timezone.utc
+                    tzinfo=UTC
                 )
             except ValueError:
                 raise ValueError(
@@ -294,7 +294,7 @@ async def handle_vector_search(
                 # Simpler: use the date directly, SQL query uses <=
                 created_before_dt = datetime.strptime(
                     created_before, "%Y-%m-%d"
-                ).replace(tzinfo=timezone.utc)
+                ).replace(tzinfo=UTC)
             except ValueError:
                 raise ValueError(
                     "Invalid 'Created Before' date format. Use YYYY-MM-DD."
@@ -509,7 +509,7 @@ async def handle_vector_search(
             "distinct_metadata_keys": distinct_metadata_keys,  # Pass keys
             "user": get_user_from_request(request),
             "AUTH_ENABLED": AUTH_ENABLED,  # Pass to base template
-            "now_utc": datetime.now(timezone.utc),  # Pass to base template
+            "now_utc": datetime.now(UTC),  # Pass to base template
             "float_inf": float("inf"),
             "float_neg_inf": -float("inf"),
         },

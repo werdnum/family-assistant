@@ -1,6 +1,6 @@
 """Test that the error column fix works correctly in the tasks repository."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -23,7 +23,7 @@ async def test_reschedule_for_retry_uses_correct_error_column(
         )
 
         # Reschedule it for retry with an error message
-        next_time = datetime.now(timezone.utc) + timedelta(minutes=1)
+        next_time = datetime.now(UTC) + timedelta(minutes=1)
         error_msg = "Test error message"
 
         # This should work now that we fixed the column name

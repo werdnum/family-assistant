@@ -3,7 +3,7 @@ import logging
 import os
 import re
 import uuid  # For generating unique IDs for attachment paths
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 import aiofiles
@@ -53,7 +53,7 @@ async def handle_mail_webhook(
 
     try:
         os.makedirs(mailbox_raw_dir_to_use, exist_ok=True)
-        now_dt = datetime.now(timezone.utc)
+        now_dt = datetime.now(UTC)
         timestamp_str = now_dt.strftime("%Y%m%d_%H%M%S_%f")
         content_type_header = request.headers.get(
             "content-type", "unknown_content_type"
@@ -84,7 +84,7 @@ async def handle_mail_webhook(
             try:
                 email_date_parsed = parse_datetime(email_date_str)
                 if email_date_parsed.tzinfo is None:
-                    email_date_parsed = email_date_parsed.replace(tzinfo=timezone.utc)
+                    email_date_parsed = email_date_parsed.replace(tzinfo=UTC)
             except Exception as e:
                 logger.warning(
                     f"Could not parse email Date header '{email_date_str}': {e}"

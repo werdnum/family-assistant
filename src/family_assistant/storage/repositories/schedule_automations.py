@@ -1,7 +1,7 @@
 """Repository for schedule-based automations operations."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from dateutil import rrule
@@ -74,7 +74,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         """
         try:
             if after is None:
-                after = datetime.now(timezone.utc)
+                after = datetime.now(UTC)
 
             # Parse the RRULE
             rule = rrule.rrulestr(recurrence_rule, dtstart=after)
@@ -139,7 +139,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                     conversation_id=conversation_id,
                     interface_type=interface_type,
                     enabled=enabled,
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                     execution_count=0,
                 )
                 .returning(schedule_automations_table.c.id)

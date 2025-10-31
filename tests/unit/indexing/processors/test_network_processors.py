@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
 
 
-from datetime import datetime, timezone  # Added for MockDocumentImpl
+from datetime import UTC, datetime  # Added for MockDocumentImpl
 from typing import Any  # Added for MockDocumentImpl
 
 # --- Mocks and Fixtures ---
@@ -46,7 +46,7 @@ class MockDocumentImpl:  # Copied from tests/functional/indexing/test_indexing_p
         self._source_id = source_id
         self._title = title
         self._created_at = (
-            created_at.astimezone(timezone.utc)
+            created_at.astimezone(UTC)
             if created_at and created_at.tzinfo is None
             else created_at
         )

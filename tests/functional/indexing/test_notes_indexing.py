@@ -399,7 +399,7 @@ async def test_notes_indexing_e2e(
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
             logger.info(f"Background task worker {worker_id} stopped.")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"Timeout stopping worker task {worker_id}. Cancelling.")
             worker_task.cancel()
             try:
@@ -687,7 +687,7 @@ async def test_note_update_reindexing_e2e(
         test_shutdown_event.set()
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             worker_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await worker_task
@@ -908,7 +908,7 @@ async def test_notes_indexing_graceful_degradation(
         test_shutdown_event.set()
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             worker_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await worker_task

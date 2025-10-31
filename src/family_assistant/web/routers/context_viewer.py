@@ -1,6 +1,6 @@
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from string import Formatter
 from typing import Annotated
 
@@ -79,7 +79,7 @@ async def view_context_page(
                 ],
                 "user": get_user_from_request(request),
                 "AUTH_ENABLED": AUTH_ENABLED,
-                "now_utc": datetime.now(timezone.utc),
+                "now_utc": datetime.now(UTC),
             },
         )
     except Exception as e:
@@ -151,9 +151,7 @@ async def _get_context_data(
 
         format_args = {
             "user_name": user_name,
-            "current_time": datetime.now(timezone.utc).strftime(
-                "%Y-%m-%d %H:%M:%S UTC"
-            ),
+            "current_time": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
             "aggregated_other_context": aggregated_context,
             "server_url": target_service.server_url,
             "profile_id": target_service.service_config.id,

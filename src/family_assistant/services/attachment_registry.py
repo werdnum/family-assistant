@@ -13,7 +13,7 @@ import logging
 import mimetypes
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -73,7 +73,7 @@ class AttachmentMetadata:
         self.storage_path = storage_path
         self.conversation_id = conversation_id
         self.message_id = message_id
-        self.created_at = created_at or datetime.now(timezone.utc)
+        self.created_at = created_at or datetime.now(UTC)
         self.accessed_at = accessed_at
         self.metadata = metadata or {}
 
@@ -540,7 +540,7 @@ class AttachmentRegistry:
             update_stmt = (
                 update(attachment_metadata_table)
                 .where(attachment_metadata_table.c.attachment_id == attachment_id)
-                .values(accessed_at=datetime.now(timezone.utc))
+                .values(accessed_at=datetime.now(UTC))
             )
             await db_context.execute_with_retry(update_stmt)
         except asyncio.CancelledError:
@@ -659,7 +659,7 @@ class AttachmentRegistry:
             )
             .values(
                 conversation_id=conversation_id,
-                accessed_at=datetime.now(timezone.utc),
+                accessed_at=datetime.now(UTC),
             )
         )
 

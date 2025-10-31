@@ -1,0 +1,27 @@
+homeassistant:
+  # Use standard homeassistant auth provider for onboarding
+  auth_providers:
+    - type: homeassistant
+
+# Enable required APIs
+api:
+websocket_api:
+onboarding:
+
+# Enable history component for integration tests
+history:
+
+# Demo integration provides test entities including cameras
+demo:
+
+# Test entities
+input_boolean:
+  test_switch:
+    name: Test Switch
+    initial: off
+
+input_text:
+  test_sensor:
+    name: Test Sensor
+    initial: "test_value"
+

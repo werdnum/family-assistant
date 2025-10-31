@@ -10,7 +10,7 @@ authors = [
 ]
 description = "A family assistant bot using Telegram, LLMs, and background tasks."
 readme = "README.md" # Assuming you might create one later
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License", # TODO: Choose your license
@@ -98,6 +98,7 @@ dependencies = [
     "pywebpush>=2.1.1",
     "vl-convert-python>=1.6.0",
     # For rendering Vega/Vega-Lite specs to PNG
+    "homeassistant>=2025.4.4",
 ]
 
 [project.optional-dependencies]
@@ -106,13 +107,13 @@ dev = [
     "pytest-asyncio>=0.26.0",
     "pytest-cov>=6.1.1",
     "pytest-flakefinder>=1.1.0",
-    "pytest-recording>=0.13.0",  # VCR.py integration for pytest
-    "pytest-xdist>=3.8.0",  # Parallel test execution
-    "pytest-rerunfailures>=16.0.1",  # Enable @pytest.mark.flaky reruns in CI
-    "vcrpy>=7.0.0",  # HTTP record/replay for testing - v7 fixes urllib3 conflicts
+    "pytest-recording>=0.13.0", # VCR.py integration for pytest
+    "pytest-xdist>=3.8.0", # Parallel test execution
+    "pytest-rerunfailures>=16.0.1", # Enable @pytest.mark.flaky reruns in CI
+    "vcrpy>=7.0.0", # HTTP record/replay for testing - v7 fixes urllib3 conflicts
     "aiosqlite",
     "assertpy>=1.1", # Add assertpy
-    "ast-grep-cli>=0.39.0",  # For code pattern matching and transformations
+    "ast-grep-cli>=0.39.0", # For code pattern matching and transformations
     "pytest-mock",
     "asyncpg>=0.29.0",
     "types-aiofiles",
@@ -148,14 +149,16 @@ dev = [
     "llm-fragments-github>=0.4.0",
     "hupper>=1.12.1",
     "watchdog>=3.0.0",
-    "pytest-playwright-asyncio>=0.2.0"
+    "pytest-playwright-asyncio>=0.2.0",
+    "homeassistant>=2025.4.4",
+    "pixeltable-pgserver>=0.4.0",
 ]
 local-embeddings = [
     "sentence-transformers>=3.0.1",
     "torch>=2.4.0",
 ]
 pgserver = [
-    "pgserver>=0.1.0",  # PostgreSQL test server (requires Python <=3.12)
+    "pixeltable-pgserver>=0.4.0",  # PostgreSQL test server (supports Python 3.13+)
 ]
 
 [project.scripts]
@@ -363,6 +366,8 @@ ignore = [
         "PLW0108",
         "PLW0602",
         "PLW0603",
+        # Allow timeout parameters in function signatures (helpers, protocols)
+        "ASYNC109",
 ]
 
 [tool.pyright]
