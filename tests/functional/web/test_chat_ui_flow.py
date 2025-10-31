@@ -916,6 +916,9 @@ async def test_mobile_chat_input_visibility(
         await chat_page.send_message(f"Additional test message {i + 1}")
         await chat_page.wait_for_assistant_response(timeout=15000)
 
+    # Wait until all user/assistant message pairs have rendered to avoid race conditions
+    await chat_page.wait_for_message_count(8, timeout=20000)
+
     # Get all message elements
     message_elements = await page.query_selector_all(
         '[data-testid="user-message"], [data-testid="assistant-message"]'
