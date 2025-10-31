@@ -28,25 +28,26 @@ The integration testing system supports three modes:
    - Starts a real Home Assistant subprocess
    - Executes tests against the live instance
    - Records all HTTP interactions as VCR cassettes
+The integration testing system supports three modes:
+
+1. **Record Mode** (`--vcr-record=once` or `--vcr-record=all`):
+
+   - Starts a real Home Assistant subprocess
+   - Executes tests against the live instance
+   - Records all HTTP interactions as VCR cassettes
    - **When to use**: Creating new tests or updating existing ones
 
-2. **Replay Mode** (`--record-mode=none`):
+2. **Replay Mode** (`--vcr-record=none`):
 
    - Skips starting Home Assistant entirely
    - Replays recorded HTTP interactions from cassettes
    - Fast, deterministic, no external dependencies
    - **When to use**: CI/CD pipelines, normal development
 
-3. **Rewrite Mode** (`--record-mode=all`):
+3. **Rewrite Mode** (`--vcr-record=all`):
 
    - Like record mode but overwrites existing cassettes
    - **When to use**: Updating all tests after API changes
-
-### Components
-
-```
-tests/
-├── integration/
 │   ├── conftest.py              # HA subprocess fixture
 │   ├── home_assistant/
 │   │   └── test_history.py      # HA history integration tests
