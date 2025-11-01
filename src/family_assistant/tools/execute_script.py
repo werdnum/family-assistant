@@ -7,14 +7,18 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from typing import TYPE_CHECKING, Any
 
+from family_assistant.scripting.apis.attachments import ScriptAttachment
+from family_assistant.scripting.apis.tools import ScriptToolResult
 from family_assistant.scripting.engine import StarlarkConfig, StarlarkEngine
 from family_assistant.scripting.errors import (
     ScriptExecutionError,
     ScriptSyntaxError,
     ScriptTimeoutError,
 )
+from family_assistant.tools.types import ToolAttachment, ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
@@ -22,12 +26,81 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _is_valid_uuid(value: str) -> bool:
+    """Check if string is a valid UUID."""
+    try:
+        uuid.UUID(value)
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+def _extract_ids_from_list(items: list[Any]) -> list[str]:  # noqa: ANN401
+    """Extract attachment IDs from a list of items."""
+    ids = []
+    for item in items:
+        if isinstance(item, ScriptAttachment):
+            ids.append(item.get_id())
+        elif isinstance(item, str) and _is_valid_uuid(item):
+            ids.append(item)  # Backward compatibility
+    return ids
+
+
+def _extract_attachment_ids_from_result(result: Any) -> list[str]:  # noqa: ANN401
+    """
+    Extract attachment IDs from script return value.
+
+    Supports:
+    - ScriptAttachment object
+    - ScriptToolResult object
+    - List of ScriptAttachments
+    - UUID strings (backward compatibility)
+    - Dicts with attachments/attachment_ids keys (backward compatibility)
+
+    Args:
+        result: The script return value
+
+    Returns:
+        List of attachment UUIDs (deduplicated)
+    """
+    # Single ScriptAttachment
+    if isinstance(result, ScriptAttachment):
+        return [result.get_id()]
+
+    # ScriptToolResult
+    if isinstance(result, ScriptToolResult):
+        return [att.get_id() for att in result.get_attachments()]
+
+    # List of attachments or UUIDs
+    if isinstance(result, list):
+        return _extract_ids_from_list(result)
+
+    # Dict with attachments (backward compatibility)
+    if isinstance(result, dict):
+        ids = []
+        # Check for attachments key
+        if "attachments" in result and isinstance(result["attachments"], list):
+            ids.extend(_extract_ids_from_list(result["attachments"]))
+
+        # Check for attachment_ids key (legacy)
+        if "attachment_ids" in result and isinstance(result["attachment_ids"], list):
+            ids.extend(_extract_ids_from_list(result["attachment_ids"]))
+
+        return list(dict.fromkeys(ids))  # Deduplicate preserving order
+
+    # Single UUID string (backward compatibility)
+    if isinstance(result, str) and _is_valid_uuid(result):
+        return [result]
+
+    return []
+
+
 async def execute_script_tool(
     exec_context: ToolExecutionContext,
     script: str,
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     globals: dict[str, Any] | None = None,
-) -> str:
+) -> ToolResult:
     """
     Execute a Starlark script in a sandboxed environment.
 
@@ -37,7 +110,7 @@ async def execute_script_tool(
         globals: Optional dictionary of global variables to inject into the script
 
     Returns:
-        A string containing the script result or error message
+        ToolResult with text and any attachments returned by the script
     """
     try:
         # Create a configuration with reasonable defaults
@@ -87,6 +160,9 @@ async def execute_script_tool(
             else None,  # Only pass context if we have tools
         )
 
+        # Extract attachment IDs from return value
+        attachment_ids = _extract_attachment_ids_from_result(result)
+
         # Check for any wake_llm contexts
         wake_contexts = engine.get_pending_wake_contexts()
 
@@ -115,7 +191,31 @@ async def execute_script_tool(
                     f"Context: {json.dumps(wake_context.get('context', {}), indent=2)}"
                 )
 
-        return "\n".join(response_parts)
+        response_text = "\n".join(response_parts)
+
+        # Build ToolResult with attachments
+        attachments = None
+        if attachment_ids:
+            # For attachment references (ID only), mime_type is a placeholder
+            attachments = [
+                ToolAttachment(
+                    mime_type="application/octet-stream",  # Placeholder for references
+                    attachment_id=aid,
+                )
+                for aid in attachment_ids
+            ]
+
+        # Prepare data field (typed as dict or list or None)
+        # ast-grep-ignore: no-dict-any - Script results can be arbitrary structures
+        result_data: dict[str, Any] | str | None = None
+        if isinstance(result, (dict, list)):
+            result_data = result  # type: ignore[assignment]
+
+        return ToolResult(
+            text=response_text,
+            attachments=attachments,
+            data=result_data,
+        )
 
     except ScriptSyntaxError as e:
         error_msg = "Syntax error in script"
@@ -123,21 +223,21 @@ async def execute_script_tool(
             error_msg += f" at line {e.line}"
         error_msg += f": {str(e)}"
         logger.error(error_msg)
-        return f"Error: {error_msg}"
+        return ToolResult(text=f"Error: {error_msg}")
 
     except ScriptTimeoutError as e:
         error_msg = f"Script execution timed out after {e.timeout_seconds} seconds"
         logger.error(error_msg)
-        return f"Error: {error_msg}"
+        return ToolResult(text=f"Error: {error_msg}")
 
     except ScriptExecutionError as e:
         error_msg = f"Script execution failed: {str(e)}"
         logger.error(error_msg)
-        return f"Error: {error_msg}"
+        return ToolResult(text=f"Error: {error_msg}")
 
     except Exception as e:
         logger.error(f"Unexpected error executing script: {e}", exc_info=True)
-        return f"Error: Unexpected error executing script: {e}"
+        return ToolResult(text=f"Error: Unexpected error executing script: {e}")
 
 
 # Tool Definition

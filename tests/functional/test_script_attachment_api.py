@@ -262,7 +262,7 @@ class TestAttachmentAPI:
         )
 
         content = "Hello, world!"
-        attachment_id = await api._create_async(
+        metadata = await api._create_async(
             content=content,
             filename="test.txt",
             description="Test text file",
@@ -270,23 +270,24 @@ class TestAttachmentAPI:
         )
 
         # Verify attachment was created
-        assert attachment_id is not None
-        assert len(attachment_id) == 36  # UUID format
+        assert metadata is not None
+        assert metadata.attachment_id is not None
+        assert len(metadata.attachment_id) == 36  # UUID format
 
         # Verify we can retrieve it
         async with DatabaseContext(engine=db_engine) as db_context:
-            metadata = await attachment_registry.get_attachment(
-                db_context, attachment_id
+            retrieved_metadata = await attachment_registry.get_attachment(
+                db_context, metadata.attachment_id
             )
-            assert metadata is not None
-            assert metadata.source_type == "script"
-            assert metadata.mime_type == "text/plain"
-            assert metadata.description == "Test text file"
-            assert metadata.conversation_id == "test_conversation"
+            assert retrieved_metadata is not None
+            assert retrieved_metadata.source_type == "script"
+            assert retrieved_metadata.mime_type == "text/plain"
+            assert retrieved_metadata.description == "Test text file"
+            assert retrieved_metadata.conversation_id == "test_conversation"
 
             # Verify content
             retrieved_content = await attachment_registry.get_attachment_content(
-                db_context, attachment_id
+                db_context, metadata.attachment_id
             )
             assert retrieved_content == content.encode("utf-8")
 
@@ -304,7 +305,7 @@ class TestAttachmentAPI:
         )
 
         content = b"Binary data here"
-        attachment_id = await api._create_async(
+        metadata = await api._create_async(
             content=content,
             filename="binary.txt",
             description="Binary file",
@@ -312,12 +313,13 @@ class TestAttachmentAPI:
         )
 
         # Verify attachment was created
-        assert attachment_id is not None
+        assert metadata is not None
+        assert metadata.attachment_id is not None
 
         # Verify content
         async with DatabaseContext(engine=db_engine) as db_context:
             retrieved_content = await attachment_registry.get_attachment_content(
-                db_context, attachment_id
+                db_context, metadata.attachment_id
             )
             assert retrieved_content == content
 
@@ -337,7 +339,7 @@ class TestAttachmentAPI:
         json_data = {"key": "value", "number": 42, "list": [1, 2, 3]}
         content = json.dumps(json_data)
 
-        attachment_id = await api._create_async(
+        metadata = await api._create_async(
             content=content,
             filename="data.json",
             description="JSON data",
@@ -347,7 +349,7 @@ class TestAttachmentAPI:
         # Verify attachment was created and content is correct
         async with DatabaseContext(engine=db_engine) as db_context:
             retrieved_content = await attachment_registry.get_attachment_content(
-                db_context, attachment_id
+                db_context, metadata.attachment_id
             )
             assert retrieved_content is not None
             retrieved_data = json.loads(retrieved_content.decode("utf-8"))
@@ -366,7 +368,7 @@ class TestAttachmentAPI:
             db_engine=db_engine,
         )
 
-        attachment_id = await api._create_async(
+        metadata = await api._create_async(
             content="Test content",
             filename="test.txt",
             description="Test file",
@@ -380,7 +382,7 @@ class TestAttachmentAPI:
             main_loop=None,
             db_engine=db_engine,
         )
-        result = await same_api._get_async(attachment_id)
+        result = await same_api._get_async(metadata.attachment_id)
         assert result is not None
 
         # Verify it's NOT accessible from a different conversation
@@ -390,7 +392,7 @@ class TestAttachmentAPI:
             main_loop=None,
             db_engine=db_engine,
         )
-        result = await different_api._get_async(attachment_id)
+        result = await different_api._get_async(metadata.attachment_id)
         assert result is None
 
 
