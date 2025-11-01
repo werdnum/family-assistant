@@ -132,6 +132,22 @@ class GoogleGenAIClient(BaseLLMClient):
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """Create user message with attachment for Gemini"""
+        # Handle JSON/text attachments using base class logic first
+        if (
+            attachment.content
+            and attachment.mime_type
+            and (
+                attachment.mime_type in {"application/json", "text/csv"}
+                or attachment.mime_type.startswith("text/")
+            )
+        ):
+            # Delegate to base class for intelligent JSON/text handling
+            base_message = super()._create_attachment_injection(attachment)
+            # Convert base class format {"role": "user", "content": "..."}
+            # to Gemini format {"role": "user", "parts": [{"text": "..."}]}
+            return {"role": "user", "parts": [{"text": base_message["content"]}]}
+
+        # Handle multimodal content (images/PDFs) with provider-specific format
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         parts: list[dict[str, Any] | types.Part] = [
             {"text": "[System: File from previous tool response]"}

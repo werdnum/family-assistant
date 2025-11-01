@@ -335,11 +335,19 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         if first_photo_bytes:
             try:
-                attachment_metadata = await self.telegram_service.attachment_registry._store_file_only(
-                    file_content=first_photo_bytes,
-                    filename=f"telegram_photo_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.jpg",
-                    content_type="image/jpeg",
-                )
+                # Register user attachment with database record for cross-turn access
+                async with self.get_db_context() as db_context:
+                    user_id_str = str(user.id) if user else "unknown"
+                    attachment_metadata = await self.telegram_service.attachment_registry.register_user_attachment(
+                        db_context=db_context,
+                        content=first_photo_bytes,
+                        filename=f"telegram_photo_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.jpg",
+                        mime_type="image/jpeg",
+                        conversation_id=str(chat_id),
+                        message_id=reply_target_message_id,
+                        user_id=user_id_str,
+                        description=f"Telegram photo from {user_name}",
+                    )
 
                 trigger_content_parts.append({
                     "type": "image_url",
