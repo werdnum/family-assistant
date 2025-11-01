@@ -121,14 +121,12 @@ async def jq_query_tool(
             jq_compiled = jq.compile(jq_program)
             result = jq_compiled.input(json_data).all()
 
-            # Format result as JSON
+            # Return structured data - ToolResult handles conversion to text for LLM
             # If single result, unwrap from list
             if len(result) == 1:
-                output = json.dumps(result[0], indent=2, ensure_ascii=False)
+                return ToolResult(data=result[0])
             else:
-                output = json.dumps(result, indent=2, ensure_ascii=False)
-
-            return ToolResult(text=f"Query result:\n{output}")
+                return ToolResult(data=result)
 
         except ValueError as e:
             # jq compilation or execution error

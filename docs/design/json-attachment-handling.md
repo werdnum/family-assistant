@@ -109,16 +109,15 @@ Using `jq.py` library:
 
 ```python
 import jq
-import json
 
 jq_compiled = jq.compile(jq_program)
 result = jq_compiled.input(json_data).all()
 
-# Format result as JSON (preserves structure)
+# Return structured data - ToolResult handles text conversion for LLM
 if len(result) == 1:
-    output = json.dumps(result[0], indent=2, ensure_ascii=False)
+    return ToolResult(data=result[0])  # Unwrap single results
 else:
-    output = json.dumps(result, indent=2, ensure_ascii=False)
+    return ToolResult(data=result)
 ```
 
 Tool provides safe interface:
@@ -127,7 +126,8 @@ Tool provides safe interface:
 - Conversation-scoped access control
 - JSON parsing with error handling
 - jq compilation and execution with error handling
-- Formatted JSON output (preserves structure, not plain text)
+- Returns structured data directly (ToolResult auto-converts to JSON text for LLM)
+- Scripts receive native Python objects (lists, dicts, primitives)
 
 ## Future Considerations
 
