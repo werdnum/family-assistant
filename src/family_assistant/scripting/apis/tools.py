@@ -49,6 +49,30 @@ class ToolInfo:
     parameters: dict[str, Any]
 
 
+@dataclass
+class ScriptToolResult:
+    """
+    Result from a tool execution in a script context.
+
+    This wraps ToolResult to provide script-friendly types:
+    - Text as string
+    - Attachments as list of ScriptAttachment objects (not UUIDs)
+
+    Can be returned directly from scripts to propagate attachments.
+    """
+
+    text: str | None = None
+    attachments: list[ScriptAttachment] | None = None
+
+    def get_text(self) -> str | None:
+        """Get the text result."""
+        return self.text
+
+    def get_attachments(self) -> list[ScriptAttachment]:
+        """Get all attachments (empty list if none)."""
+        return self.attachments or []
+
+
 class ToolsAPI:
     """
     Provides tools access to Starlark scripts.
@@ -367,8 +391,7 @@ class ToolsAPI:
         tool_name: str,
         *args: Any,  # noqa: ANN401
         **kwargs: Any,  # noqa: ANN401
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> str | dict[str, Any]:
+    ) -> str | ScriptAttachment | ScriptToolResult:
         """
         Execute a tool with the given arguments.
 
@@ -378,7 +401,7 @@ class ToolsAPI:
             **kwargs: Keyword arguments to pass to the tool
 
         Returns:
-            String result from tool execution
+            Tool execution result as string, ScriptAttachment, or ScriptToolResult
 
         Raises:
             Exception: If tool execution fails or is not allowed
@@ -498,27 +521,36 @@ class ToolsAPI:
                                 f"Tool '{tool_name}' returned reference to attachment {attachment.attachment_id}"
                             )
 
-                    # Return appropriate format based on number of attachments
-                    if len(attachment_ids) == 1:
-                        # Single attachment: return ID string if no text, otherwise return dict
-                        if not result.text or not result.text.strip():
-                            # No meaningful text, return just the ID for convenience
-                            logger.debug(
-                                f"Returning single attachment ID: {attachment_ids[0]}"
+                    # Convert stored attachment IDs to ScriptAttachment objects
+                    script_attachments = []
+                    for attachment_id in attachment_ids:
+                        script_att = self._run_async(
+                            fetch_attachment_object(
+                                attachment_id, self.execution_context
                             )
-                            return attachment_ids[0]
+                        )
+                        if script_att:
+                            script_attachments.append(script_att)
                         else:
-                            # Has text, return dict to preserve both
-                            return {
-                                "text": result.text,
-                                "attachment_id": attachment_ids[0],
-                            }
-                    elif len(attachment_ids) > 1:
-                        # Multiple attachments: return dict with text and IDs
-                        return {
-                            "text": result.text,
-                            "attachment_ids": attachment_ids,
-                        }
+                            logger.warning(
+                                f"Could not fetch stored attachment {attachment_id}"
+                            )
+
+                    # Return appropriate type based on content
+                    if len(script_attachments) == 1 and not (
+                        result.text and result.text.strip()
+                    ):
+                        # Single attachment, no meaningful text → return ScriptAttachment
+                        logger.debug(
+                            f"Returning single ScriptAttachment from '{tool_name}'"
+                        )
+                        return script_attachments[0]
+                    elif script_attachments:
+                        # Text + attachments or multiple attachments → return ScriptToolResult
+                        return ScriptToolResult(
+                            text=result.text,
+                            attachments=script_attachments,
+                        )
                     else:
                         # No attachments were successfully stored
                         return result.to_string()
@@ -537,8 +569,9 @@ class ToolsAPI:
             logger.error(error_msg, exc_info=True)
             raise RuntimeError(error_msg) from e
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def execute_json(self, tool_name: str, args_json: str) -> str | dict[str, Any]:
+    def execute_json(
+        self, tool_name: str, args_json: str
+    ) -> str | ScriptAttachment | ScriptToolResult:
         """
         Execute a tool with JSON-encoded arguments.
 
@@ -549,7 +582,7 @@ class ToolsAPI:
             args_json: JSON string containing the arguments
 
         Returns:
-            String or dict result from tool execution
+            Tool execution result as string, ScriptAttachment, or ScriptToolResult
 
         Raises:
             Exception: If tool execution fails or JSON is invalid
@@ -612,13 +645,13 @@ class StarlarkToolsAPI:
         tool_name: str,
         *args: Any,  # noqa: ANN401
         **kwargs: Any,  # noqa: ANN401
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> str | dict[str, Any]:
+    ) -> str | ScriptAttachment | ScriptToolResult:
         """Execute a tool."""
         return self._api.execute(tool_name, *args, **kwargs)
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def execute_json(self, tool_name: str, args_json: str) -> str | dict[str, Any]:
+    def execute_json(
+        self, tool_name: str, args_json: str
+    ) -> str | ScriptAttachment | ScriptToolResult:
         """Execute a tool with JSON arguments."""
         return self._api.execute_json(tool_name, args_json)
 

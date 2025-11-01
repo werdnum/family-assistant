@@ -34,12 +34,17 @@ async def test_execute_script_without_tools_provider(db_engine: AsyncEngine) -> 
 
         # Simple script should work
         result = await execute_script_tool(ctx, 'print("Hello")')
-        assert "Script executed successfully" in result or "Hello" in result
+        assert result.text is not None
+        assert "Script executed successfully" in result.text or "Hello" in result.text
 
         # Script using tools should fail
         result = await execute_script_tool(ctx, "tools_list()")
-        assert "Error:" in result
-        assert "not found" in result
+        assert result.text is not None
+
+        assert "Error:" in result.text
+        assert result.text is not None
+
+        assert "not found" in result.text
 
 
 @pytest.mark.asyncio
@@ -74,7 +79,9 @@ tools = tools_list()
 len(tools)
 """,
         )
-        assert "Script result: 0" in result
+        assert result.text is not None
+
+        assert "Script result: 0" in result.text
 
 
 @pytest.mark.asyncio
@@ -132,7 +139,9 @@ tools = tools_list()
 [tool["name"] for tool in tools]
 """,
         )
-        assert '"echo"' in result  # Just check that echo is in the result
+        assert result.text is not None
+
+        assert '"echo"' in result.text  # Just check that echo is in the result
 
         # Test executing tool
         result = await execute_script_tool(
@@ -141,7 +150,9 @@ tools = tools_list()
 echo(message="Hello from Starlark!")
 """,
         )
-        assert "Echo: Hello from Starlark!" in result
+        assert result.text is not None
+
+        assert "Echo: Hello from Starlark!" in result.text
 
 
 @pytest.mark.asyncio
@@ -163,8 +174,10 @@ async def test_execute_script_syntax_error(db_engine: AsyncEngine) -> None:
 
         # Invalid syntax
         result = await execute_script_tool(ctx, "if true")
-        assert "Error:" in result
-        assert "syntax" in result.lower() or "parse" in result.lower()
+        assert result.text is not None
+
+        assert "Error:" in result.text
+        assert "syntax" in result.text.lower() or "parse" in result.text.lower()
 
 
 @pytest.mark.asyncio
@@ -190,7 +203,9 @@ async def test_execute_script_with_globals(db_engine: AsyncEngine) -> None:
             'user_name + " says " + str(count)',
             globals={"user_name": "Alice", "count": 42},
         )
-        assert "Alice says 42" in result
+        assert result.text is not None
+
+        assert "Alice says 42" in result.text
 
 
 @pytest.mark.asyncio
@@ -218,11 +233,21 @@ wake_llm({"message": "Hello from script!", "priority": "high"})
 "Script completed"
 """,
         )
-        assert "Script result: Script completed" in result
-        assert "Wake LLM Contexts" in result
-        assert "Hello from script!" in result
-        assert "priority" in result
-        assert "high" in result
+        assert result.text is not None
+
+        assert "Script result: Script completed" in result.text
+        assert result.text is not None
+
+        assert "Wake LLM Contexts" in result.text
+        assert result.text is not None
+
+        assert "Hello from script!" in result.text
+        assert result.text is not None
+
+        assert "priority" in result.text
+        assert result.text is not None
+
+        assert "high" in result.text
 
         # Test multiple wake_llm calls
         result = await execute_script_tool(
@@ -233,13 +258,27 @@ wake_llm({"action": "second_call", "value": 2}, include_event=False)
 {"status": "done", "wake_count": 2}
 """,
         )
-        assert "Wake Context 1:" in result
-        assert "Wake Context 2:" in result
-        assert '"action": "first_call"' in result
-        assert '"action": "second_call"' in result
-        assert "Include Event: True" in result  # First call
-        assert "Include Event: False" in result  # Second call
-        assert '"wake_count": 2' in result
+        assert result.text is not None
+
+        assert "Wake Context 1:" in result.text
+        assert result.text is not None
+
+        assert "Wake Context 2:" in result.text
+        assert result.text is not None
+
+        assert '"action": "first_call"' in result.text
+        assert result.text is not None
+
+        assert '"action": "second_call"' in result.text
+        assert result.text is not None
+
+        assert "Include Event: True" in result.text  # First call
+        assert result.text is not None
+
+        assert "Include Event: False" in result.text  # Second call
+        assert result.text is not None
+
+        assert '"wake_count": 2' in result.text
 
         # Test script without wake_llm
         result = await execute_script_tool(
@@ -250,8 +289,14 @@ result = 10 + 20
 result
 """,
         )
-        assert "Script result: 30" in result
-        assert "Wake LLM Contexts" not in result  # Should not appear if no wake calls
+        assert result.text is not None
+
+        assert "Script result: 30" in result.text
+        assert result.text is not None
+
+        assert (
+            "Wake LLM Contexts" not in result.text
+        )  # Should not appear if no wake calls
 
         # Test wake_llm with string context
         result = await execute_script_tool(
@@ -262,9 +307,21 @@ wake_llm("Please review the results", include_event=False)
 "Done"
 """,
         )
-        assert "Script result: Done" in result
-        assert "Wake LLM Contexts" in result
-        assert '"message": "Task completed successfully!"' in result
-        assert '"message": "Please review the results"' in result
-        assert "Include Event: True" in result  # First call
-        assert "Include Event: False" in result  # Second call
+        assert result.text is not None
+
+        assert "Script result: Done" in result.text
+        assert result.text is not None
+
+        assert "Wake LLM Contexts" in result.text
+        assert result.text is not None
+
+        assert '"message": "Task completed successfully!"' in result.text
+        assert result.text is not None
+
+        assert '"message": "Please review the results"' in result.text
+        assert result.text is not None
+
+        assert "Include Event: True" in result.text  # First call
+        assert result.text is not None
+
+        assert "Include Event: False" in result.text  # Second call
