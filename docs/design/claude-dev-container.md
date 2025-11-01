@@ -69,8 +69,7 @@ The setup script creates a completely isolated environment:
 2. **Python Environment**
 
    - Always creates fresh virtual environment
-   - Installs all dependencies with `uv pip install -e .[dev]`
-   - Installs additional tools (poethepoet, pytest-xdist)
+   - Installs all dependencies with `uv sync --extra dev`
 
 3. **Frontend Setup**
 

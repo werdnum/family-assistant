@@ -965,7 +965,7 @@ A comprehensive family information management and automation platform.
 
 \`\`\`bash
 # Install dependencies
-uv pip install -e '.[dev]'
+uv sync --extra dev
 
 # Run development server
 poe dev

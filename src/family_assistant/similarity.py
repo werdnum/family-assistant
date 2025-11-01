@@ -107,7 +107,7 @@ class EmbeddingSimilarityStrategy:
         except ImportError as e:
             raise ImportError(
                 "sentence-transformers library is not installed. "
-                "Install with: uv pip install -e '.[local-embeddings]'"
+                "Install with: uv sync --extra local-embeddings"
             ) from e
 
         self.model_name = model_name
