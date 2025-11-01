@@ -57,8 +57,7 @@ poe test
 The setup script will:
 
 - Create a virtual environment (`.venv`)
-- Install all Python dependencies using `uv sync --extra dev`
-- Install development tools (`poethepoet`, `pytest-xdist`, `pre-commit`)
+- Install all Python dependencies using `uv sync --extra dev` (includes all dev tools)
 - Install pre-commit hooks
 - Install frontend dependencies (`npm ci --prefix frontend`)
 - Install Playwright browsers
@@ -72,11 +71,8 @@ If you prefer to set up manually:
 uv venv .venv
 source .venv/bin/activate
 
-# Install Python dependencies
+# Install Python dependencies (includes dev dependencies)
 uv sync --extra dev
-
-# Install additional dev tools
-uv pip install poethepoet pytest-xdist pre-commit
 
 # Install pre-commit hooks
 .venv/bin/pre-commit install
@@ -89,13 +85,65 @@ npm ci --prefix frontend
 
 # Optional: Install local embedding model support (adds ~450MB of dependencies)
 # Only needed if you want to use local sentence transformer models instead of cloud APIs
-uv pip install -e '.[dev,local-embeddings]'
+uv sync --extra dev --extra local-embeddings
 
-# Optional: Install pgserver for PostgreSQL testing (requires Python <=3.12)
+# Optional: Install pgserver for PostgreSQL testing
 # Only needed if TEST_DATABASE_URL is unset (e.g., cloud coding environments)
 # Not needed if you have access to an external PostgreSQL database
-uv pip install -e '.[pgserver]'
+uv sync --extra dev --extra pgserver
 ```
+
+## Dependency Management
+
+This project uses [uv](https://docs.astral.sh/uv/) for Python dependency management. Dependencies
+are declared in `pyproject.toml` and locked in `uv.lock`.
+
+### Adding Dependencies
+
+```bash
+# Add a production dependency
+uv add <package-name>
+
+# Add a development dependency (to the [dev] extra)
+uv add --dev <package-name>
+
+# Add a dependency with version constraints
+uv add "package-name>=1.0.0,<2.0.0"
+
+# Add an optional dependency group
+uv add --optional local-embeddings sentence-transformers
+```
+
+### Removing Dependencies
+
+```bash
+# Remove a dependency
+uv remove <package-name>
+
+# Remove a development dependency
+uv remove --dev <package-name>
+```
+
+### Updating Dependencies
+
+```bash
+# Update all dependencies to their latest compatible versions
+uv lock --upgrade
+
+# Update a specific package
+uv lock --upgrade-package <package-name>
+
+# Sync your virtual environment with the lockfile
+uv sync --extra dev
+```
+
+### Important Notes
+
+- **NEVER use `uv pip install`** - This bypasses uv's dependency resolution and lockfile management
+- **Use `uv add`/`uv remove`** - These commands update both `pyproject.toml` and `uv.lock`
+- **Run `uv sync --extra dev`** after pulling changes to ensure your environment matches the
+  lockfile
+- **Commit `uv.lock`** to version control to ensure reproducible builds across all environments
 
 ## Frontend Development
 

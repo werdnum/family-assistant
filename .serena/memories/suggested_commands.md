@@ -4,7 +4,7 @@
 
 ```bash
 # Install the project in development mode with all dependencies
-uv pip install -e '.[dev]'
+uv sync --extra dev
 ```
 
 ## Linting and Code Quality

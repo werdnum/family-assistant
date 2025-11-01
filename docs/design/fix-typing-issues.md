@@ -54,7 +54,7 @@ should resolve a broad class of errors.
   // litellm and playwright should ship with types, but we'll address usage issues below
   ```
 
-  Then run `uv pip install .[dev]` to install them.
+  Then run `uv sync --extra dev` to install them.
 
 - **File to change:**`src/family_assistant/llm.py`
 

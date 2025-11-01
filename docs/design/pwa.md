@@ -282,8 +282,7 @@ in a way that is consistent with the existing architecture and best practices.
 
 1. **Install Dependency:**
 
-   - Add `py-vapid` to the project's Python dependencies in `pyproject.toml`.
-   - Run `uv pip install -e .` to install it.
+   - Add `py-vapid` to the project's Python dependencies using `uv add py-vapid`.
 
 2. **Create Key Generation Script:**
 

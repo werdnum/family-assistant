@@ -146,6 +146,7 @@ dev = [
     "llm-gemini>=0.23.0",
     "llm-openrouter>=0.4.1",
     "llm-fragments-github>=0.4.0",
+    "llm-fragments-reader>=0.1",
     "hupper>=1.12.1",
     "watchdog>=3.0.0",
     "pytest-playwright-asyncio>=0.2.0",
@@ -389,13 +390,6 @@ typeCheckingMode = "basic"
 
 
 [tool.uv]
-dev-dependencies = [
-    "llm-fragments-github>=0.4",
-    "llm-fragments-reader>=0.1",
-    "llm-openrouter",
-    "pytest-rerunfailures>=16.0.1",
-    "pytest-xdist>=3.7.0",
-]
 
 [[tool.uv.index]]
 name = "torch-cpu"
