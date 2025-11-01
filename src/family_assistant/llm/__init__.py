@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import aiofiles  # type: ignore[import-untyped] # For async file operations
 import litellm  # Import litellm
+from genson import SchemaBuilder  # For JSON schema generation
 from litellm import acompletion
 from litellm.exceptions import (
     APIConnectionError,
@@ -60,8 +61,99 @@ class BaseLLMClient:
     ) -> dict[str, Any]:
         """Create a message to inject attachment content after tool response
 
+        For JSON/text attachments:
+        - Small files (≤10KiB): Inject full content inline
+        - Large files (>10KiB): Inject schema + metadata for symbolic querying via jq
+
         Override in subclasses to handle provider-specific formats.
         """
+        # Size threshold for inline vs symbolic (10KiB = 10240 bytes)
+        SIZE_THRESHOLD = 10 * 1024
+
+        # Handle JSON/text attachments intelligently
+        if (
+            attachment.content
+            and attachment.mime_type
+            and (
+                attachment.mime_type in {"application/json", "text/csv"}
+                or attachment.mime_type.startswith("text/")
+            )
+        ):
+            content_size = len(attachment.content)
+
+            if content_size <= SIZE_THRESHOLD:
+                # Small file: inject full content inline
+                try:
+                    decoded_content = attachment.content.decode("utf-8")
+                    content = "[System: File from previous tool response]\n"
+                    if attachment.description:
+                        content += f"[Description: {attachment.description}]\n"
+                    if attachment.attachment_id:
+                        content += f"[Attachment ID: {attachment.attachment_id}]\n"
+                    content += f"[Content ({content_size} bytes)]:\n{decoded_content}"
+                    return {
+                        "role": "user",
+                        "content": content,
+                    }
+                except UnicodeDecodeError:
+                    # Fall through to default handling
+                    pass
+            else:
+                # Large file: inject schema for symbolic querying
+                try:
+                    decoded_content = attachment.content.decode("utf-8")
+
+                    # Generate schema for JSON
+                    if attachment.mime_type == "application/json":
+                        try:
+                            json_data = json.loads(decoded_content)
+
+                            # Use genson to generate schema
+                            builder = SchemaBuilder()
+                            builder.add_object(json_data)
+                            schema = builder.to_json(indent=2)
+
+                            content = "[System: Large data attachment from previous tool response]\n"
+                            if attachment.description:
+                                content += f"[Description: {attachment.description}]\n"
+                            content += f"[Size: {content_size} bytes ({content_size / 1024:.1f} KB)]\n"
+                            if attachment.attachment_id:
+                                content += (
+                                    f"[Attachment ID: {attachment.attachment_id}]\n"
+                                )
+                            content += f"\nData structure (JSON Schema):\n{schema}\n"
+                            content += "\nNote: Use the 'jq' tool to query this data symbolically. "
+                            content += f"Reference attachment ID {attachment.attachment_id} in tool calls."
+
+                            return {
+                                "role": "user",
+                                "content": content,
+                            }
+                        except json.JSONDecodeError:
+                            # Not valid JSON, fall through to text handling
+                            pass
+
+                    # For large CSV or other text, provide summary
+                    content = "[System: Large text file from previous tool response]\n"
+                    if attachment.description:
+                        content += f"[Description: {attachment.description}]\n"
+                    content += (
+                        f"[Size: {content_size} bytes ({content_size / 1024:.1f} KB)]\n"
+                    )
+                    if attachment.attachment_id:
+                        content += f"[Attachment ID: {attachment.attachment_id}]\n"
+                    content += f"[MIME type: {attachment.mime_type}]\n"
+                    content += "\nNote: Content too large for inline display. Use tools to access this data."
+
+                    return {
+                        "role": "user",
+                        "content": content,
+                    }
+                except UnicodeDecodeError:
+                    # Fall through to default handling
+                    pass
+
+        # Default handling for other attachment types
         content = (
             f"[System: File from previous tool response - {attachment.description}]"
         )
