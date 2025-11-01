@@ -135,7 +135,7 @@ default_profile_settings:
     # Web-specific history settings for better conversation context
     # web_max_history_messages: 100  # Uncomment to override default of 100
     # web_history_max_age_hours: 720  # Uncomment to override default of 720 (30 days)
-    max_iterations: 5 # Maximum number of tool call iterations
+    max_iterations: 10 # Maximum number of tool call iterations
     delegation_security_level: "confirm" # Default: "blocked", "confirm", or "unrestricted"
   tools_config:
     # `enable_local_tools` are not explicitly listed here for the default profile.
@@ -251,6 +251,7 @@ service_profiles:
   - id: "data_visualization"
     description: "Assistant profile optimized for creating data visualizations and charts. Uses Vega/Vega-Lite to generate professional charts from user data."
     processing_config:
+      max_iterations: 20
       delegation_security_level: "unrestricted"
       include_system_docs:
         - "data_visualization.md"
