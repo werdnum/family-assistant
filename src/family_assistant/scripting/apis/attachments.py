@@ -405,7 +405,7 @@ class AttachmentAPI:
         filename: str,
         description: str = "",
         mime_type: str = "application/octet-stream",
-    ) -> str:
+    ) -> ScriptAttachment:
         """
         Create a new attachment from script-generated content.
 
@@ -416,7 +416,7 @@ class AttachmentAPI:
             mime_type: MIME type of the content (default: application/octet-stream)
 
         Returns:
-            The attachment_id (UUID) of the created attachment
+            ScriptAttachment object (not UUID string)
 
         Raises:
             ValueError: If content validation fails or storage fails
@@ -428,12 +428,19 @@ class AttachmentAPI:
                     self._create_async(content, filename, description, mime_type),
                     self.main_loop,
                 )
-                return future.result(timeout=30)
+                attachment_metadata = future.result(timeout=30)
             else:
                 # No main loop provided, use asyncio.run (works in tests and standalone contexts)
-                return asyncio.run(
+                attachment_metadata = asyncio.run(
                     self._create_async(content, filename, description, mime_type)
                 )
+
+            # Return ScriptAttachment instead of UUID string
+            return ScriptAttachment(
+                metadata=attachment_metadata,
+                registry=self.attachment_registry,
+                db_context_getter=lambda: DatabaseContext(engine=self.db_engine),
+            )
 
         except Exception as e:
             logger.error(f"Error creating attachment: {e}")
@@ -445,8 +452,8 @@ class AttachmentAPI:
         filename: str,
         description: str,
         mime_type: str,
-    ) -> str:
-        """Async implementation of create."""
+    ) -> AttachmentMetadata:
+        """Async implementation of create - returns metadata."""
         # Convert string content to bytes if needed
         content_bytes = content.encode("utf-8") if isinstance(content, str) else content
 
@@ -478,7 +485,7 @@ class AttachmentAPI:
             f"Script created attachment {attachment_metadata.attachment_id}: {filename}"
         )
 
-        return attachment_metadata.attachment_id
+        return attachment_metadata
 
 
 def create_attachment_api(
