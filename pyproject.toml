@@ -98,6 +98,8 @@ dependencies = [
     "pywebpush>=2.1.1",
     "vl-convert-python>=1.6.0",
     # For rendering Vega/Vega-Lite specs to PNG
+    "genson>=1.3.0",
+    "jq>=1.10.0",
 ]
 
 [project.optional-dependencies]

@@ -3,6 +3,7 @@ Unit tests for LLM provider multimodal message processing.
 """
 
 import base64
+import json
 from unittest.mock import patch
 
 from family_assistant.llm import BaseLLMClient, LiteLLMClient
@@ -489,3 +490,214 @@ class TestLiteLLMClient:
         assert result[0]["role"] == "tool"
         assert "[File content in following message]" in result[0]["content"]
         assert result[1]["role"] == "user"  # Injected message
+
+    def test_create_attachment_injection_small_json(self) -> None:
+        """Test small JSON files (≤10KiB) are inlined fully"""
+        client = BaseLLMClient()
+
+        # Small JSON object (< 10KB)
+        json_data = {"items": [{"id": i, "value": f"item_{i}"} for i in range(100)]}
+        json_bytes = json.dumps(json_data).encode("utf-8")
+        assert len(json_bytes) < 10 * 1024  # Verify it's under threshold
+
+        attachment = ToolAttachment(
+            mime_type="application/json",
+            content=json_bytes,
+            description="Small dataset",
+            attachment_id="test-123",
+        )
+
+        result = client._create_attachment_injection(attachment)
+
+        assert result["role"] == "user"
+        content = result["content"]
+        assert "[System: File from previous tool response]" in content
+        assert "[Description: Small dataset]" in content
+        assert "[Attachment ID: test-123]" in content
+        assert f"[Content ({len(json_bytes)} bytes)]:" in content
+        # Full JSON should be present
+        assert '"items"' in content
+        assert '"id"' in content
+        # Should NOT have schema or jq note
+        assert "JSON Schema" not in content
+        assert "jq" not in content
+
+    def test_create_attachment_injection_large_json(self) -> None:
+        """Test large JSON files (>10KiB) get schema injection with jq note"""
+        client = BaseLLMClient()
+
+        # Large JSON object (> 10KB)
+        json_data = {
+            "items": [
+                {
+                    "id": i,
+                    "name": f"Item {i}",
+                    "description": f"Description for item {i} with some padding text to make it larger",
+                    "timestamp": "2025-01-01T00:00:00Z",
+                    "metadata": {"category": "test", "priority": i % 10},
+                }
+                for i in range(200)
+            ]
+        }
+        json_bytes = json.dumps(json_data).encode("utf-8")
+        assert len(json_bytes) > 10 * 1024  # Verify it's over threshold
+
+        attachment = ToolAttachment(
+            mime_type="application/json",
+            content=json_bytes,
+            description="Large dataset",
+            attachment_id="test-456",
+        )
+
+        result = client._create_attachment_injection(attachment)
+
+        assert result["role"] == "user"
+        content = result["content"]
+        assert "[System: Large data attachment from previous tool response]" in content
+        assert "[Description: Large dataset]" in content
+        assert f"[Size: {len(json_bytes)} bytes" in content
+        assert "[Attachment ID: test-456]" in content
+        assert "Data structure (JSON Schema):" in content
+        # Should have schema structure indicators
+        assert '"type"' in content
+        assert '"properties"' in content or '"items"' in content
+        # Should have jq usage note
+        assert "jq" in content
+        assert "test-456" in content  # Reference to attachment ID in jq note
+        # Should NOT have full JSON data
+        assert "Description for item" not in content
+
+    def test_create_attachment_injection_small_text(self) -> None:
+        """Test small text files (≤10KiB) are inlined fully"""
+        client = BaseLLMClient()
+
+        # Small text content
+        text_content = "This is a small text file.\n" * 100
+        text_bytes = text_content.encode("utf-8")
+        assert len(text_bytes) < 10 * 1024
+
+        attachment = ToolAttachment(
+            mime_type="text/plain",
+            content=text_bytes,
+            description="Small notes",
+            attachment_id="text-123",
+        )
+
+        result = client._create_attachment_injection(attachment)
+
+        assert result["role"] == "user"
+        content = result["content"]
+        assert "[System: File from previous tool response]" in content
+        assert "[Description: Small notes]" in content
+        assert "[Attachment ID: text-123]" in content
+        assert f"[Content ({len(text_bytes)} bytes)]:" in content
+        # Full text should be present
+        assert "This is a small text file." in content
+
+    def test_create_attachment_injection_large_text(self) -> None:
+        """Test large text files (>10KiB) get summary without inline content"""
+        client = BaseLLMClient()
+
+        # Large text content
+        text_content = "This is a large text file with lots of content.\n" * 300
+        text_bytes = text_content.encode("utf-8")
+        assert len(text_bytes) > 10 * 1024
+
+        attachment = ToolAttachment(
+            mime_type="text/plain",
+            content=text_bytes,
+            description="Large document",
+            attachment_id="text-456",
+        )
+
+        result = client._create_attachment_injection(attachment)
+
+        assert result["role"] == "user"
+        content = result["content"]
+        assert "[System: Large text file from previous tool response]" in content
+        assert "[Description: Large document]" in content
+        assert f"[Size: {len(text_bytes)} bytes" in content
+        assert "[Attachment ID: text-456]" in content
+        assert "[MIME type: text/plain]" in content
+        assert "Content too large for inline display" in content
+        # Should NOT have full text content
+        assert "This is a large text file with lots of content." not in content
+
+    def test_create_attachment_injection_small_csv(self) -> None:
+        """Test small CSV files (≤10KiB) are inlined fully"""
+        client = BaseLLMClient()
+
+        # Small CSV content
+        csv_content = "id,name,value\n" + "\n".join([
+            f"{i},Item{i},{i * 10}" for i in range(100)
+        ])
+        csv_bytes = csv_content.encode("utf-8")
+        assert len(csv_bytes) < 10 * 1024
+
+        attachment = ToolAttachment(
+            mime_type="text/csv",
+            content=csv_bytes,
+            description="Small CSV",
+            attachment_id="csv-123",
+        )
+
+        result = client._create_attachment_injection(attachment)
+
+        assert result["role"] == "user"
+        content = result["content"]
+        assert "[System: File from previous tool response]" in content
+        assert "[Description: Small CSV]" in content
+        assert "id,name,value" in content
+
+    def test_create_attachment_injection_large_csv(self) -> None:
+        """Test large CSV files (>10KiB) get summary"""
+        client = BaseLLMClient()
+
+        # Large CSV content
+        csv_content = "id,name,value,description\n" + "\n".join([
+            f"{i},Item{i},{i * 10},Description for item {i}" for i in range(500)
+        ])
+        csv_bytes = csv_content.encode("utf-8")
+        assert len(csv_bytes) > 10 * 1024
+
+        attachment = ToolAttachment(
+            mime_type="text/csv",
+            content=csv_bytes,
+            description="Large CSV",
+            attachment_id="csv-456",
+        )
+
+        result = client._create_attachment_injection(attachment)
+
+        assert result["role"] == "user"
+        content = result["content"]
+        assert "[System: Large text file from previous tool response]" in content
+        assert "[Description: Large CSV]" in content
+        assert f"[Size: {len(csv_bytes)} bytes" in content
+        assert "[MIME type: text/csv]" in content
+        assert "Content too large for inline display" in content
+
+    def test_create_attachment_injection_invalid_json(self) -> None:
+        """Test malformed JSON large files fall back to text summary"""
+        client = BaseLLMClient()
+
+        # Invalid JSON (> 10KB)
+        invalid_json = '{"broken": invalid json' * 1000
+        json_bytes = invalid_json.encode("utf-8")
+        assert len(json_bytes) > 10 * 1024
+
+        attachment = ToolAttachment(
+            mime_type="application/json",
+            content=json_bytes,
+            description="Malformed JSON",
+            attachment_id="broken-123",
+        )
+
+        result = client._create_attachment_injection(attachment)
+
+        assert result["role"] == "user"
+        content = result["content"]
+        # Should fall back to text summary (not schema)
+        assert "[System: Large text file from previous tool response]" in content
+        assert "Content too large for inline display" in content
+        assert "JSON Schema" not in content

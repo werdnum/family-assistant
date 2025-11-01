@@ -1519,12 +1519,14 @@ dependencies = [
     { name = "caldav" },
     { name = "fastapi" },
     { name = "filetype" },
+    { name = "genson" },
     { name = "google-genai" },
     { name = "homeassistant-api" },
     { name = "httpx" },
     { name = "itsdangerous" },
     { name = "janus" },
     { name = "jinja2" },
+    { name = "jq" },
     { name = "json-schema-for-humans" },
     { name = "linkify-it-py" },
     { name = "litellm" },
@@ -1571,6 +1573,7 @@ dev = [
     { name = "hupper" },
     { name = "llm" },
     { name = "llm-fragments-github" },
+    { name = "llm-fragments-reader" },
     { name = "llm-gemini" },
     { name = "llm-openrouter" },
     { name = "mcp-proxy" },
@@ -1619,15 +1622,6 @@ pgserver = [
     { name = "pixeltable-pgserver" },
 ]
 
-[package.dev-dependencies]
-dev = [
-    { name = "llm-fragments-github" },
-    { name = "llm-fragments-reader" },
-    { name = "llm-openrouter" },
-    { name = "pytest-rerunfailures" },
-    { name = "pytest-xdist" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "aiofiles", specifier = ">=23.2.1" },
@@ -1644,6 +1638,7 @@ requires-dist = [
     { name = "caldav", specifier = ">=1.2.0" },
     { name = "fastapi", specifier = ">=0.111.0" },
     { name = "filetype", specifier = ">=1.2.0" },
+    { name = "genson", specifier = ">=1.3.0" },
     { name = "google-genai", specifier = ">=0.4.0" },
     { name = "homeassistant", marker = "extra == 'dev'", specifier = ">=2025.4.4" },
     { name = "homeassistant-api", specifier = ">=5.0.0" },
@@ -1653,12 +1648,14 @@ requires-dist = [
     { name = "itsdangerous", specifier = ">=2.1.0" },
     { name = "janus", specifier = ">=1.0.0" },
     { name = "jinja2", specifier = ">=3.1.4" },
+    { name = "jq", specifier = ">=1.10.0" },
     { name = "json-schema-for-humans", specifier = ">=0.53.10" },
     { name = "linkify-it-py", specifier = ">=2.0.0" },
     { name = "litellm", specifier = ">=1.75.0" },
     { name = "llm", specifier = ">=0.27.1" },
     { name = "llm", marker = "extra == 'dev'", specifier = ">=0.26.0" },
     { name = "llm-fragments-github", marker = "extra == 'dev'", specifier = ">=0.4.0" },
+    { name = "llm-fragments-reader", marker = "extra == 'dev'", specifier = ">=0.1" },
     { name = "llm-gemini", marker = "extra == 'dev'", specifier = ">=0.23.0" },
     { name = "llm-openrouter", marker = "extra == 'dev'", specifier = ">=0.4.1" },
     { name = "markdown-it-py", specifier = ">=3.0.0" },
@@ -1726,15 +1723,6 @@ requires-dist = [
     { name = "watchdog", marker = "extra == 'dev'", specifier = ">=3.0.0" },
 ]
 provides-extras = ["dev", "local-embeddings", "pgserver"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "llm-fragments-github", specifier = ">=0.4" },
-    { name = "llm-fragments-reader", specifier = ">=0.1" },
-    { name = "llm-openrouter" },
-    { name = "pytest-rerunfailures", specifier = ">=16.0.1" },
-    { name = "pytest-xdist", specifier = ">=3.7.0" },
-]
 
 [[package]]
 name = "fastapi"
@@ -1901,6 +1889,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/00/f7/27f15d41f0ed38e8fcc488584b57e902b331da7f7c6dcda53721b15838fc/fsspec-2025.5.1.tar.gz", hash = "sha256:2e55e47a540b91843b755e83ded97c6e897fa0942b11490113f09e9c443c2475", size = 303033, upload-time = "2025-05-24T12:03:23.792Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/bb/61/78c7b3851add1481b048b5fdc29067397a1784e2910592bc81bb3f608635/fsspec-2025.5.1-py3-none-any.whl", hash = "sha256:24d3a2e663d5fc735ab256263c4075f374a174c3410c0b25e5bd1970bceaa462", size = 199052, upload-time = "2025-05-24T12:03:21.66Z" },
+]
+
+[[package]]
+name = "genson"
+version = "1.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c5/cf/2303c8ad276dcf5ee2ad6cf69c4338fd86ef0f471a5207b069adf7a393cf/genson-1.3.0.tar.gz", hash = "sha256:e02db9ac2e3fd29e65b5286f7135762e2cd8a986537c075b06fc5f1517308e37", size = 34919, upload-time = "2024-05-15T22:08:49.123Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f8/5c/e226de133afd8bb267ec27eead9ae3d784b95b39a287ed404caab39a5f50/genson-1.3.0-py3-none-any.whl", hash = "sha256:468feccd00274cc7e4c09e84b08704270ba8d95232aa280f65b986139cec67f7", size = 21470, upload-time = "2024-05-15T22:08:47.056Z" },
 ]
 
 [[package]]
@@ -2730,6 +2727,24 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/7f/ad/6f520aee9cc9618d33430380741e9ef859b2c560b1e7915e755c084f6bc0/josepy-2.2.0.tar.gz", hash = "sha256:74c033151337c854f83efe5305a291686cef723b4b970c43cfe7270cf4a677a9", size = 56500, upload-time = "2025-10-14T14:54:42.108Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f8/b2/b5caed897fbb1cc286c62c01feca977e08d99a17230ff3055b9a98eccf1d/josepy-2.2.0-py3-none-any.whl", hash = "sha256:63e9dd116d4078778c25ca88f880cc5d95f1cab0099bebe3a34c2e299f65d10b", size = 29211, upload-time = "2025-10-14T14:54:41.144Z" },
+]
+
+[[package]]
+name = "jq"
+version = "1.10.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5c/86/6935afb6c1789d4c6ba5343607e2d2f473069eaac29fac555dbbd154c2d7/jq-1.10.0.tar.gz", hash = "sha256:fc38803075dbf1867e1b4ed268fef501feecb0c50f3555985a500faedfa70f08", size = 2031308, upload-time = "2025-07-14T18:54:53.679Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f2/fe/eeede83103e90e8f5fd9b610514a4c714957d6575e03987ebeb77aafeafa/jq-1.10.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:b11d6e115ebad15d738d49932c3a8b9bb302b928e0fb79acc80987598d147a43", size = 419325, upload-time = "2025-07-14T18:53:01.854Z" },
+    { url = "https://files.pythonhosted.org/packages/09/12/8b39293715d7721b2999facd4a05ca3328fe4a68cf1c094667789867aac1/jq-1.10.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:df278904c5727dfe5bc678131a0636d731cd944879d890adf2fc6de35214b19b", size = 425344, upload-time = "2025-07-14T18:53:03.528Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/f4/ace0c853d4462f1d28798d5696619d2fb68c8e1db228ef5517365a0f3c1c/jq-1.10.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:ab4c1ec69fd7719fb1356e2ade7bd2b5a63d6f0eaf5a90fdc5c9f6145f0474ce", size = 735874, upload-time = "2025-07-14T18:53:05.406Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/b0/7882035062771686bd7e62db019fa0900fd9a3720b7ad8f7af65ee628484/jq-1.10.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:fd24dc21c8afcbe5aa812878251cfafa6f1dc6e1126c35d460cc7e67eb331018", size = 754355, upload-time = "2025-07-14T18:53:07.487Z" },
+    { url = "https://files.pythonhosted.org/packages/df/7d/b759a764c5d05c6829e95733a8b26f7e9b14df245ec2a325c0de049393ca/jq-1.10.0-cp313-cp313-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:8c0d3e89cd239c340c3a54e145ddf52fe63de31866cb73368d22a66bfe7e823f", size = 742546, upload-time = "2025-07-14T18:53:11.756Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/6b/483ddb82939d4f2f9b0486887666c67a966434cc8bc72acd851fc8063f50/jq-1.10.0-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:76710b280e4c464395c3d8e656b849e2704bd06e950a4ebd767860572bbf67df", size = 738777, upload-time = "2025-07-14T18:53:14.856Z" },
+    { url = "https://files.pythonhosted.org/packages/0c/72/4d0fc965a8e57f55291763bb236a5aee91430f97c844ee328667b34af19e/jq-1.10.0-cp313-cp313-musllinux_1_2_i686.whl", hash = "sha256:b11a56f1fb6e2985fd3627dbd8a0637f62b1a704f7b19705733d461dafa26429", size = 765307, upload-time = "2025-07-14T18:53:17.611Z" },
+    { url = "https://files.pythonhosted.org/packages/0b/a6/aca82622d8d20ea02bbcac8aaa92daaadd55a18c2a3ca54b2e63d98336d2/jq-1.10.0-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:ac05ae44d9aa1e462329e1510e0b5139ac4446de650c7bdfdab226aafdc978ec", size = 769830, upload-time = "2025-07-14T18:53:19.937Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/e3/a19aeada32dde0839e3a4d77f2f0d63f2764c579b57f405ff4b91a58a8db/jq-1.10.0-cp313-cp313-win32.whl", hash = "sha256:0bad90f5734e2fc9d09c4116ae9102c357a4d75efa60a85758b0ba633774eddb", size = 410285, upload-time = "2025-07-14T18:53:21.631Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/32/df4eb81cf371654d91b6779d3f0005e86519977e19068638c266a9c88af7/jq-1.10.0-cp313-cp313-win_amd64.whl", hash = "sha256:4ec3fbca80a9dfb5349cdc2531faf14dd832e1847499513cf1fc477bcf46a479", size = 423094, upload-time = "2025-07-14T18:53:23.687Z" },
 ]
 
 [[package]]
