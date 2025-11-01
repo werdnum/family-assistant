@@ -4,8 +4,10 @@
 
 ## Summary
 
-Enable attachments created by scripts (via `attachment_create()` or tool calls) to be automatically
-propagated in the `ToolResult` returned by `execute_script`, making them visible to the LLM.
+Enable attachments created by scripts (via `attachment_create()` or tool calls) to be propagated in
+the `ToolResult` returned by `execute_script`, making them visible to the LLM. Scripts explicitly
+return attachments using proper types (`ScriptAttachment`, `ScriptToolResult`) rather than raw UUID
+strings.
 
 ## Problem Statement
 
@@ -13,19 +15,17 @@ propagated in the `ToolResult` returned by `execute_script`, making them visible
 
 Scripts can create attachments in two ways:
 
-1. **Direct creation**: `attachment_create(content, filename, description, mime_type)`
-2. **Tool results**: `tools_execute(tool_name, **kwargs)` where the tool returns `ToolResult` with
-   attachments
+1. **Direct creation**: `attachment_create(content, filename, description, mime_type)` → returns
+   UUID string
+2. **Tool calls**: `create_vega_chart(spec=spec)` → returns UUID string (if tool returns ToolResult
+   with attachments)
 
-Both methods store attachments successfully and return UUIDs to the script. However, the
-`execute_script` tool:
+However, the `execute_script` tool:
 
 - Returns only a string (line 30 in `execute_script.py`)
 - Formats results as text (lines 94-118)
 - **Does NOT propagate attachments** created during execution
 - LLM never sees that attachments were created
-
-### Impact
 
 **Example scenario:**
 
@@ -38,7 +38,7 @@ chart_id = attachment_create(
 )
 
 # Script calls analysis tool
-analysis_id = tools_execute("analyze_data", data=my_data)
+analysis_id = create_data_analysis(data=my_data)
 
 return "Created chart and analysis"
 ```
@@ -49,9 +49,9 @@ return "Created chart and analysis"
 "Script result: Created chart and analysis"
 ```
 
-**What the LLM should receive:**
+**What the LLM SHOULD receive:**
 
-```
+```python
 ToolResult(
     text="Script result: Created chart and analysis",
     attachments=[
@@ -64,355 +64,322 @@ ToolResult(
 The attachments exist in the database but the LLM has no way to know they were created or to
 reference them.
 
-## Requirements
+## Design Principles
 
-### Functional Requirements
+### 1. Explicit Returns (Not Auto-Tracking)
 
-1. **Automatic Propagation**: Attachments created via `attachment_create()` must automatically
-   appear in the `execute_script` ToolResult
-2. **Tool Result Propagation**: Attachments returned by tools called via `tools_execute()` must
-   automatically appear in the ToolResult
-3. **Explicit Control**: Scripts must be able to explicitly specify which attachments to return
-   (optional)
-4. **Backward Compatibility**: Existing scripts without attachments must continue working unchanged
-5. **Deduplication**: If the same attachment is referenced multiple times, it should appear only
-   once
+**Decision**: Scripts explicitly return what they want visible via return statements.
 
-### Non-Functional Requirements
+**Rationale**:
 
-1. **Transparency**: Script authors shouldn't need to add special code for automatic propagation
-2. **Consistency**: Follow existing patterns (e.g., `wake_llm` tracking)
-3. **Performance**: Minimal overhead for scripts without attachments
-4. **Maintainability**: Clean separation of concerns
+- Scripts are **deterministic code** written by LLMs, not interactive LLM calls
+- The **return statement** makes visibility explicit
+- Auto-tracking adds complexity without clear benefit
+- Scripts that don't return attachments intentionally don't want them visible
 
-## Current Architecture
+**Contrast with LLM auto-attach pattern** (from `multimodal-manipulation.md`):
 
-### Key Components
+- LLMs can "forget" to call `attach_to_response` → needs auto-attach
+- Scripts can't "forget" → explicit returns are sufficient
 
-#### 1. execute_script Tool
+### 2. Proper Types (Not dict[str, Any])
 
-**Location**: `src/family_assistant/tools/execute_script.py:25-140`
+**Decision**: Use typed objects (`ScriptAttachment`, `ScriptToolResult`) instead of raw UUID strings
+or dicts.
 
-```python
-async def execute_script_tool(
-    exec_context: ToolExecutionContext,
-    script: str,
-    globals: dict[str, Any] | None = None,
-) -> str:  # ⚠️ Returns only string
-    # Creates StarlarkEngine
-    # Executes script
-    # Formats result as string
-    # Returns text only
+**Rationale**:
+
+- Avoids `dict[str, Any]` antipattern
+- Clear type semantics (attachment vs string)
+- Enables functional composition
+- Consistent with existing munging pattern
+
+**Existing munging pattern**:
+
+- **Input**: UUID strings → `ScriptAttachment` objects (via `process_attachment_arguments`)
+- **Output**: ToolResult → `ScriptAttachment`/`ScriptToolResult` (proposed)
+
+### 3. Functional Composition
+
+**Target use case** (data visualization profile):
+
+```starlark
+return highlight_image(
+    image=create_vega_chart(
+        spec=spec,
+        data=jq(".[].foo", input_attachment)
+    ),
+    regions=[{"x": 10, "y": 20}]
+)
 ```
 
-#### 2. StarlarkEngine
-
-**Location**: `src/family_assistant/scripting/engine.py:47-436`
-
-- Executes Starlark scripts in sandboxed environment
-- Provides APIs to scripts: time, JSON, attachments, tools
-- Already tracks `wake_llm` contexts (lines 183-295)
-
-#### 3. AttachmentAPI
-
-**Location**: `src/family_assistant/scripting/apis/attachments.py:402-481`
-
-```python
-class AttachmentAPI:
-    def create(self, content, filename, description, mime_type) -> str:
-        # Stores file content
-        # Registers in database with source_type="script"
-        # Returns attachment UUID
-```
-
-#### 4. ToolsAPI
-
-**Location**: `src/family_assistant/scripting/apis/tools.py:365-538`
-
-```python
-class ToolsAPI:
-    def execute(self, tool_name, *args, **kwargs) -> str | dict[str, Any]:
-        # Executes tool
-        # If ToolResult has attachments:
-        #   - Stores them via store_and_register_tool_attachment
-        #   - Returns attachment ID(s) to script
-```
-
-### Existing Pattern: wake_llm
-
-The codebase already implements a similar pattern for `wake_llm`:
-
-**StarlarkEngine tracking (lines 183-295):**
-
-```python
-# Initialize accumulator
-self._wake_llm_contexts: list[dict[str, Any]] = []
-
-# Function that appends to accumulator
-def wake_llm_impl(context, include_event=True):
-    self._wake_llm_contexts.append({
-        "context": context,
-        "include_event": include_event
-    })
-
-# Retrieve after execution
-def get_pending_wake_contexts(self) -> list[dict[str, Any]]:
-    return self._pending_wake_contexts.copy()
-```
-
-**execute_script usage (lines 90-116):**
-
-```python
-# After execution
-wake_contexts = engine.get_pending_wake_contexts()
-
-if wake_contexts:
-    # Include in response text
-    response_parts.append("\n--- Wake LLM Contexts ---")
-    # ... format contexts
-```
-
-**Key insight**: This establishes the pattern of **accumulate-during-execution, retrieve-after**.
+This natural functional composition should work seamlessly.
 
 ## Proposed Solution
 
-### Design Overview
+### Architecture Overview
 
-Implement attachment tracking using the same pattern as `wake_llm`:
+1. **ScriptToolResult** - New type for tool results in scripts
+2. **ToolsAPI.execute()** - Munge ToolResult → ScriptToolResult/ScriptAttachment
+3. **AttachmentAPI.create()** - Return ScriptAttachment (not UUID string)
+4. **execute_script_tool** - Extract attachments from return value, return ToolResult
 
-1. **Track** attachment IDs during script execution
-2. **Retrieve** tracked IDs after execution
-3. **Include** in ToolResult returned by execute_script
+### Component Changes
 
-### Architecture Changes
+#### 1. New Type: ScriptToolResult
 
-#### 1. StarlarkEngine: Add Attachment Tracking
-
-**Location**: `src/family_assistant/scripting/engine.py`
-
-Add tracking similar to `wake_llm_contexts`:
+**Location**: `src/family_assistant/scripting/apis/tools.py` (or new `types.py`)
 
 ```python
-class StarlarkEngine:
-    def __init__(self, ...):
-        # Existing
-        self._wake_llm_contexts: list[dict[str, Any]] = []
+from dataclasses import dataclass
+from family_assistant.scripting.apis.attachments import ScriptAttachment
 
-        # New: Track created attachments
-        self._created_attachments: list[str] = []
+@dataclass
+class ScriptToolResult:
+    """
+    Result from a tool execution in a script context.
 
-    def register_attachment(self, attachment_id: str) -> None:
-        """
-        Register an attachment created during script execution.
+    This wraps ToolResult to provide script-friendly types:
+    - Text as string
+    - Attachments as list of ScriptAttachment objects (not UUIDs)
 
-        Called by AttachmentAPI and ToolsAPI when attachments are created.
-        """
-        if attachment_id and attachment_id not in self._created_attachments:
-            self._created_attachments.append(attachment_id)
-            logger.debug(f"Registered attachment: {attachment_id}")
+    Can be returned directly from scripts to propagate attachments.
+    """
+    text: str | None = None
+    attachments: list[ScriptAttachment] | None = None
 
-    def get_created_attachments(self) -> list[str]:
-        """
-        Get all attachments created during script execution.
+    def get_text(self) -> str | None:
+        """Get the text result."""
+        return self.text
 
-        Returns:
-            List of attachment IDs (UUIDs)
-        """
-        return self._created_attachments.copy()
+    def get_attachments(self) -> list[ScriptAttachment]:
+        """Get all attachments (empty list if none)."""
+        return self.attachments or []
 ```
 
-**Placement**: Add after `get_pending_wake_contexts()` method (~line 436)
+**Design notes**:
 
-#### 2. AttachmentAPI: Register Created Attachments
+- Only `attachments` (plural), not `attachment` (singular) - consistent naming
+- Provides getter methods for Starlark-friendly access
+- Simple dataclass, no complex logic
 
-**Location**: `src/family_assistant/scripting/apis/attachments.py`
+#### 2. Update ToolsAPI.execute() Return Type
 
-Modify to accept and use engine reference:
+**Location**: `src/family_assistant/scripting/apis/tools.py:365-538`
 
-```python
-class AttachmentAPI:
-    def __init__(
-        self,
-        attachment_registry: AttachmentRegistry,
-        conversation_id: str,
-        db_engine: AsyncEngine,
-        main_loop: asyncio.AbstractEventLoop | None = None,
-        engine: StarlarkEngine | None = None,  # New parameter
-    ):
-        self.attachment_registry = attachment_registry
-        self.conversation_id = conversation_id
-        self.db_engine = db_engine
-        self.main_loop = main_loop
-        self.engine = engine  # New field
+**Current behavior**:
 
-    def create(
-        self,
-        content: bytes | str,
-        filename: str,
-        description: str = "",
-        mime_type: str = "application/octet-stream",
-    ) -> str:
-        """Create a new attachment from script-generated content."""
-        # ... existing storage logic ...
+- Stores ToolResult attachments, returns UUID string or dict
 
-        attachment_id = # ... returned from _create_async
+**New behavior**:
 
-        # Register with engine for propagation
-        if self.engine:
-            self.engine.register_attachment(attachment_id)
-
-        return attachment_id
-```
-
-Update factory function:
+- Stores ToolResult attachments, returns ScriptAttachment or ScriptToolResult
 
 ```python
-def create_attachment_api(
-    execution_context: ToolExecutionContext,
-    main_loop: asyncio.AbstractEventLoop | None = None,
-    engine: StarlarkEngine | None = None,  # New parameter
-) -> AttachmentAPI:
-    """Create an AttachmentAPI instance from execution context."""
-    # ... existing validation ...
+def execute(
+    self,
+    tool_name: str,
+    *args: Any,
+    **kwargs: Any,
+) -> str | ScriptAttachment | ScriptToolResult:  # Changed return type
+    """Execute a tool with the given arguments."""
 
-    return AttachmentAPI(
-        attachment_registry=execution_context.attachment_registry,
-        conversation_id=execution_context.conversation_id,
-        db_engine=execution_context.db_engine,
-        main_loop=main_loop,
-        engine=engine,  # Pass engine
+    # ... existing security checks and argument processing ...
+
+    # Execute tool
+    result = self._run_async(
+        self.tools_provider.execute_tool(
+            name=tool_name,
+            arguments=processed_kwargs,
+            context=self.execution_context,
+        )
     )
+
+    logger.debug(f"Tool '{tool_name}' executed successfully")
+
+    # Handle ToolResult with attachments
+    if isinstance(result, ToolResult):
+        if result.attachments:
+            attachment_registry = self.execution_context.attachment_registry
+            if not attachment_registry:
+                logger.warning(
+                    f"Tool '{tool_name}' returned attachments but attachment_registry not available"
+                )
+                return result.to_string()
+
+            # Store attachments and collect IDs (existing logic)
+            attachment_ids = []
+            for attachment in result.attachments:
+                # ... existing storage logic ...
+                attachment_ids.append(registered_metadata.attachment_id)
+
+            # NEW: Convert stored attachment IDs to ScriptAttachment objects
+            script_attachments = []
+            for attachment_id in attachment_ids:
+                script_att = self._run_async(
+                    fetch_attachment_object(attachment_id, self.execution_context)
+                )
+                if script_att:
+                    script_attachments.append(script_att)
+                else:
+                    logger.warning(f"Could not fetch stored attachment {attachment_id}")
+
+            # Return appropriate type based on content
+            if len(script_attachments) == 1 and not (result.text and result.text.strip()):
+                # Single attachment, no meaningful text → return ScriptAttachment
+                logger.debug(f"Returning single ScriptAttachment from '{tool_name}'")
+                return script_attachments[0]
+            else:
+                # Text + attachments or multiple attachments → return ScriptToolResult
+                return ScriptToolResult(
+                    text=result.text,
+                    attachments=script_attachments if script_attachments else None
+                )
+        else:
+            # ToolResult with no attachments → return text
+            return result.to_string()
+
+    # Convert result to JSON string if it's a dict or list (existing logic)
+    elif isinstance(result, dict | list):
+        return json.dumps(result)
+    else:
+        return str(result)
 ```
 
-**Key change**: Add `engine` parameter and call `register_attachment()` after creating.
+**Key changes**:
 
-#### 3. ToolsAPI: Register Tool Result Attachments
+- Fetch `ScriptAttachment` objects using `fetch_attachment_object()` (existing utility)
+- Return `ScriptAttachment` for single attachment with no text
+- Return `ScriptToolResult` for text + attachments or multiple attachments
+- Return text string for no attachments
 
-**Location**: `src/family_assistant/scripting/apis/tools.py`
+#### 3. Update AttachmentAPI.create() Return Type
 
-Modify to accept and use engine reference:
+**Location**: `src/family_assistant/scripting/apis/attachments.py:402-481`
+
+**Current**: Returns UUID string **New**: Returns ScriptAttachment object
 
 ```python
-class ToolsAPI:
-    def __init__(
-        self,
-        tools_provider: ToolsProvider,
-        execution_context: ToolExecutionContext,
-        allowed_tools: set[str] | None = None,
-        deny_all_tools: bool = False,
-        main_loop: asyncio.AbstractEventLoop | None = None,
-        engine: StarlarkEngine | None = None,  # New parameter
-    ):
-        self.tools_provider = tools_provider
-        self.execution_context = execution_context
-        self.allowed_tools = allowed_tools
-        self.deny_all_tools = deny_all_tools
-        self.main_loop = main_loop
-        self.engine = engine  # New field
+def create(
+    self,
+    content: bytes | str,
+    filename: str,
+    description: str = "",
+    mime_type: str = "application/octet-stream",
+) -> ScriptAttachment:  # Changed from -> str
+    """
+    Create a new attachment from script-generated content.
 
-    def execute(self, tool_name, *args, **kwargs) -> str | dict[str, Any]:
-        """Execute a tool with the given arguments."""
-        # ... existing execution logic ...
+    Returns:
+        ScriptAttachment object (not UUID string)
+    """
+    try:
+        # Existing async execution logic...
+        if self.main_loop:
+            future = asyncio.run_coroutine_threadsafe(
+                self._create_async(content, filename, description, mime_type),
+                self.main_loop,
+            )
+            attachment_metadata = future.result(timeout=30)
+        else:
+            attachment_metadata = asyncio.run(
+                self._create_async(content, filename, description, mime_type)
+            )
 
-        # When storing attachment (around line 463-483):
-        registered_metadata = self._run_async(
-            attachment_registry.store_and_register_tool_attachment(...)
+        # NEW: Return ScriptAttachment instead of UUID string
+        return ScriptAttachment(
+            metadata=attachment_metadata,
+            registry=self.attachment_registry,
+            db_context_getter=lambda: DatabaseContext(engine=self.db_engine),
         )
 
-        # Register with engine for propagation
-        if self.engine:
-            self.engine.register_attachment(registered_metadata.attachment_id)
+    except Exception as e:
+        logger.error(f"Error creating attachment: {e}")
+        raise ValueError(f"Failed to create attachment: {e}") from e
 
-        attachment_ids.append(registered_metadata.attachment_id)
-        # ... rest of existing code ...
+async def _create_async(
+    self,
+    content: bytes | str,
+    filename: str,
+    description: str,
+    mime_type: str,
+) -> AttachmentMetadata:  # Changed return type for clarity
+    """Async implementation of create - returns metadata."""
+    # ... existing implementation ...
+    return attachment_metadata
 ```
 
-Update factory function:
+**Key changes**:
+
+- Return `ScriptAttachment` object wrapping the metadata
+- `_create_async` returns `AttachmentMetadata` for clarity
+- Maintains existing storage logic
+
+#### 4. Update Tool Wrapper in StarlarkEngine
+
+**Location**: `src/family_assistant/scripting/engine.py:237-269`
+
+**Current**: Wrappers call `tools_api.execute()` and return `str | dict[str, Any]` **New**: Update
+return type annotation to match new behavior
 
 ```python
-def create_tools_api(
-    tools_provider: ToolsProvider,
-    execution_context: ToolExecutionContext,
-    allowed_tools: set[str] | None = None,
-    deny_all_tools: bool = False,
-    main_loop: asyncio.AbstractEventLoop | None = None,
-    engine: StarlarkEngine | None = None,  # New parameter
-) -> ToolsAPI:
-    """Create a ToolsAPI instance."""
-    return ToolsAPI(
-        tools_provider=tools_provider,
-        execution_context=execution_context,
-        allowed_tools=allowed_tools,
-        deny_all_tools=deny_all_tools,
-        main_loop=main_loop,
-        engine=engine,  # Pass engine
-    )
+# In StarlarkEngine.evaluate() around line 243
+def make_tool_wrapper(
+    name: str,
+) -> Callable[..., str | ScriptAttachment | ScriptToolResult]:  # Updated annotation
+    def tool_wrapper(
+        *args: Any,
+        **kwargs: Any,
+    ) -> str | ScriptAttachment | ScriptToolResult:  # Updated annotation
+        """Execute the tool with the given arguments."""
+        if args:
+            return tools_api.execute(name, *args, **kwargs)
+        return tools_api.execute(name, **kwargs)
+
+    return tool_wrapper
 ```
 
-**Key change**: Add `engine` parameter and call `register_attachment()` after storing tool result
-attachments.
+**Note**: This is just a type annotation update. The wrapper still calls `tools_api.execute()` which
+now returns proper types.
 
-#### 4. StarlarkEngine: Wire Up Engine References
+#### 5. Update execute_script_tool Return Type
 
-**Location**: `src/family_assistant/scripting/engine.py` (in `evaluate()` method)
+**Location**: `src/family_assistant/tools/execute_script.py:25-140`
 
-Pass `self` to API factory functions:
-
-```python
-# Around line 194 (attachment API creation):
-attachment_api = create_attachment_api(
-    execution_context,
-    main_loop=self._main_loop,
-    engine=self,  # Add this
-)
-
-# Around line 213 (tools API creation):
-tools_api = create_tools_api(
-    self.tools_provider,
-    execution_context,
-    allowed_tools=self.config.allowed_tools,
-    deny_all_tools=self.config.deny_all_tools,
-    main_loop=self._main_loop,
-    engine=self,  # Add this
-)
-```
-
-#### 5. execute_script: Return ToolResult with Attachments
-
-**Location**: `src/family_assistant/tools/execute_script.py`
-
-Change return type and build ToolResult:
+**Current**: Returns `str` **New**: Returns `ToolResult`
 
 ```python
 from family_assistant.tools.types import ToolResult, ToolAttachment
+from family_assistant.scripting.apis.attachments import ScriptAttachment
+from family_assistant.scripting.apis.tools import ScriptToolResult
 
 async def execute_script_tool(
     exec_context: ToolExecutionContext,
     script: str,
     globals: dict[str, Any] | None = None,
-) -> ToolResult:  # ⚠️ Changed from -> str
-    """Execute a Starlark script in a sandboxed environment."""
+) -> ToolResult:  # Changed from -> str
+    """
+    Execute a Starlark script in a sandboxed environment.
+
+    Returns:
+        ToolResult with text and any attachments returned by the script
+    """
     try:
-        # ... existing execution logic ...
-        result = await engine.evaluate_async(...)
+        # ... existing engine creation and execution ...
+        result = await engine.evaluate_async(
+            script=script,
+            globals_dict=globals,
+            execution_context=exec_context if tools_provider else None,
+        )
 
-        # Get created attachments from engine
-        created_attachment_ids = engine.get_created_attachments()
+        # Extract attachment IDs from return value
+        attachment_ids = _extract_attachment_ids_from_result(result)
 
-        # Parse script result for explicit attachment IDs
-        result_attachment_ids = _extract_attachment_ids_from_result(result)
-
-        # Combine and deduplicate
-        all_attachment_ids = list(dict.fromkeys(
-            created_attachment_ids + result_attachment_ids
-        ))
-
-        # Check for any wake_llm contexts
+        # Check for wake_llm contexts (existing logic)
         wake_contexts = engine.get_pending_wake_contexts()
 
-        # Format the text response (existing logic)
+        # Format text response (existing logic)
         response_parts = []
-
         if result is None:
             response_parts.append("Script executed successfully with no return value.")
         elif isinstance(result, dict | list):
@@ -426,12 +393,12 @@ async def execute_script_tool(
 
         response_text = "\n".join(response_parts)
 
-        # Build ToolResult
+        # Build ToolResult with attachments
         attachments = None
-        if all_attachment_ids:
+        if attachment_ids:
             attachments = [
-                ToolAttachment(attachment_id=att_id)
-                for att_id in all_attachment_ids
+                ToolAttachment(attachment_id=aid)
+                for aid in attachment_ids
             ]
 
         return ToolResult(
@@ -442,13 +409,38 @@ async def execute_script_tool(
 
     except ScriptSyntaxError as e:
         # Return errors as ToolResult with text only
-        error_msg = # ... existing error formatting ...
+        error_msg = f"Syntax error in script"
+        if e.line:
+            error_msg += f" at line {e.line}"
+        error_msg += f": {str(e)}"
+        logger.error(error_msg)
         return ToolResult(text=f"Error: {error_msg}")
 
-    # ... other exception handlers ...
+    except ScriptTimeoutError as e:
+        error_msg = f"Script execution timed out after {e.timeout_seconds} seconds"
+        logger.error(error_msg)
+        return ToolResult(text=f"Error: {error_msg}")
+
+    except ScriptExecutionError as e:
+        error_msg = f"Script execution failed: {str(e)}"
+        logger.error(error_msg)
+        return ToolResult(text=f"Error: {error_msg}")
+
+    except Exception as e:
+        logger.error(f"Unexpected error executing script: {e}", exc_info=True)
+        return ToolResult(text=f"Error: Unexpected error executing script: {e}")
 ```
 
-Add helper function:
+**Key changes**:
+
+- Return `ToolResult` instead of string
+- Extract attachment IDs from script return value
+- Build `ToolResult` with attachments
+- All error cases return `ToolResult` with text only
+
+#### 6. Helper Function: Extract Attachment IDs
+
+**Location**: `src/family_assistant/tools/execute_script.py` (new function)
 
 ```python
 def _extract_attachment_ids_from_result(result: Any) -> list[str]:
@@ -456,37 +448,66 @@ def _extract_attachment_ids_from_result(result: Any) -> list[str]:
     Extract attachment IDs from script return value.
 
     Supports:
-    - Single UUID string: "550e8400-e29b-41d4-a716-446655440000"
-    - Dict with attachment_id: {"text": "...", "attachment_id": "uuid"}
-    - Dict with attachment_ids: {"text": "...", "attachment_ids": ["uuid1", "uuid2"]}
+    - ScriptAttachment object
+    - ScriptToolResult object
+    - List of ScriptAttachments
+    - UUID strings (backward compatibility)
+    - Dicts with attachments/attachment_ids keys (backward compatibility)
+
+    Args:
+        result: The script return value
 
     Returns:
-        List of attachment IDs found in result
+        List of attachment UUIDs (deduplicated)
     """
     ids = []
 
-    # Single UUID string
-    if isinstance(result, str) and _is_valid_uuid(result):
-        ids.append(result)
+    # Single ScriptAttachment
+    if isinstance(result, ScriptAttachment):
+        return [result.get_id()]
 
-    # Dict with attachment_id or attachment_ids
-    elif isinstance(result, dict):
-        # Single attachment_id
-        if "attachment_id" in result:
-            aid = result["attachment_id"]
-            if isinstance(aid, str) and _is_valid_uuid(aid):
-                ids.append(aid)
+    # ScriptToolResult
+    if isinstance(result, ScriptToolResult):
+        return [att.get_id() for att in result.get_attachments()]
 
-        # Multiple attachment_ids
+    # List of attachments or UUIDs
+    if isinstance(result, list):
+        for item in result:
+            if isinstance(item, ScriptAttachment):
+                ids.append(item.get_id())
+            elif isinstance(item, str) and _is_valid_uuid(item):
+                ids.append(item)  # Backward compatibility
+        return ids
+
+    # Dict with attachments (backward compatibility)
+    if isinstance(result, dict):
+        # Check for attachments key
+        if "attachments" in result:
+            items = result["attachments"]
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, ScriptAttachment):
+                        ids.append(item.get_id())
+                    elif isinstance(item, str) and _is_valid_uuid(item):
+                        ids.append(item)
+
+        # Check for attachment_ids key (legacy)
         if "attachment_ids" in result:
-            aid_list = result["attachment_ids"]
-            if isinstance(aid_list, list):
-                ids.extend([
-                    aid for aid in aid_list
-                    if isinstance(aid, str) and _is_valid_uuid(aid)
-                ])
+            items = result["attachment_ids"]
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, ScriptAttachment):
+                        ids.append(item.get_id())
+                    elif isinstance(item, str) and _is_valid_uuid(item):
+                        ids.append(item)
 
-    return ids
+        return list(dict.fromkeys(ids))  # Deduplicate preserving order
+
+    # Single UUID string (backward compatibility)
+    if isinstance(result, str) and _is_valid_uuid(result):
+        return [result]
+
+    return []
 
 
 def _is_valid_uuid(value: str) -> bool:
@@ -494,99 +515,140 @@ def _is_valid_uuid(value: str) -> bool:
     try:
         uuid.UUID(value)
         return True
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, TypeError):
         return False
 ```
 
-### Behavior Specification
+## Script Usage Examples
 
-#### Automatic Propagation (Default)
-
-All attachments created during script execution are automatically included:
+### Example 1: Simple Attachment Creation
 
 ```starlark
-# Script
-chart_id = attachment_create(content=data, filename="chart.png")
-analysis_id = tools_execute("analyze_data", data=my_data)
-return "Created visualizations"
+# Create attachment - returns ScriptAttachment
+chart = attachment_create(
+    content=chart_data,
+    filename="sales_chart.png",
+    description="Q4 Sales Chart",
+    mime_type="image/png"
+)
+
+# Return it to make it visible to LLM
+return chart
 ```
 
-**Result:**
+**Result**:
 
 ```python
 ToolResult(
-    text="Script result: Created visualizations",
+    text="Script result: <ScriptAttachment object>",
+    attachments=[ToolAttachment(attachment_id=chart.get_id())]
+)
+```
+
+### Example 2: Tool Call Returns Attachment
+
+```starlark
+# Tool returns ScriptAttachment
+chart = create_vega_chart(
+    spec={"mark": "bar", ...},
+    data=sales_data
+)
+
+# Return it
+return chart
+```
+
+### Example 3: Functional Composition (Target Use Case)
+
+```starlark
+# Compose tools naturally
+return highlight_image(
+    image=create_vega_chart(
+        spec=vega_spec,
+        data=jq(".[].revenue", input_attachment)
+    ),
+    regions=[{"x": 10, "y": 20, "width": 100, "height": 50}]
+)
+```
+
+**This works because**:
+
+- `jq()` processes input attachment
+- `create_vega_chart()` returns `ScriptAttachment`
+- `highlight_image()` accepts `ScriptAttachment` as parameter
+- Final result is `ScriptAttachment` that gets propagated
+
+### Example 4: Multiple Attachments
+
+```starlark
+# Create multiple visualizations
+sales_chart = create_chart(data=sales, type="bar")
+revenue_chart = create_chart(data=revenue, type="line")
+growth_chart = create_chart(data=growth, type="area")
+
+# Return list to show all
+return [sales_chart, revenue_chart, growth_chart]
+```
+
+**Result**:
+
+```python
+ToolResult(
+    text="Script result: [<ScriptAttachment>, <ScriptAttachment>, <ScriptAttachment>]",
     attachments=[
-        ToolAttachment(attachment_id=chart_id),
-        ToolAttachment(attachment_id=analysis_id)
+        ToolAttachment(attachment_id=sales_chart.get_id()),
+        ToolAttachment(attachment_id=revenue_chart.get_id()),
+        ToolAttachment(attachment_id=growth_chart.get_id())
     ]
 )
 ```
 
-#### Explicit Control (Optional)
-
-Scripts can explicitly specify attachments in return value:
+### Example 5: Tool Result with Text
 
 ```starlark
-# Script creates 3 attachments
-id1 = attachment_create(content=data1, filename="file1.txt")
-id2 = attachment_create(content=data2, filename="file2.txt")
-id3 = attachment_create(content=data3, filename="file3.txt")
+# Tool returns ScriptToolResult with text + attachments
+result = analyze_and_visualize(data=sales_data)
 
-# Return only specific ones
-return {
-    "text": "Created 3 files, returning first 2",
-    "attachment_ids": [id1, id2]
-}
+# result.text = "Analysis: Sales up 25%"
+# result.attachments = [chart_attachment]
+
+# Return the whole result
+return result
 ```
 
-**Design Decision: Union Behavior**
-
-When script explicitly returns attachment IDs, the result includes:
-
-- **All auto-tracked attachments** (id1, id2, id3 - created during execution)
-- **Plus explicit return** (id1, id2 - specified in return value)
-- **After deduplication**: [id1, id2, id3]
-
-**Rationale**: Scripts shouldn't need to track every attachment manually. The explicit return is for
-adding context/priority, not restricting visibility.
-
-**Alternative considered and rejected**: Only return explicit IDs. This would require scripts to
-manually track all attachments they create, defeating the purpose of automatic propagation.
-
-#### No Attachments Case
-
-Scripts without attachments work unchanged:
-
-```starlark
-# Script
-result = search_notes(query="TODO")
-return f"Found {len(result)} items"
-```
-
-**Result:**
+**Result**:
 
 ```python
 ToolResult(
-    text="Script result: Found 5 items",
-    attachments=None  # No attachments
+    text="Script result:\n{...json representation...}",
+    attachments=[ToolAttachment(attachment_id=chart.get_id())]
 )
 ```
 
-### Error Handling
+### Example 6: Selective Returns (Intermediate Results)
 
-Errors continue to return text-only ToolResult:
+```starlark
+# Create multiple attachments during processing
+raw_data = attachment_create(content=raw, filename="raw.json")
+intermediate = attachment_create(content=processed, filename="intermediate.json")
+final_chart = create_chart(data=processed)
 
-```python
-# Syntax error
-ToolResult(text="Error: Syntax error in script at line 5: ...")
+# Only return final result
+return final_chart
 
-# Timeout error
-ToolResult(text="Error: Script execution timed out after 600 seconds")
-
-# Execution error
-ToolResult(text="Error: Script execution failed: ...")
+# raw_data and intermediate are NOT visible to LLM (not returned)
+# They exist in the database but won't be propagated
 ```
+
+### Example 7: Backward Compatibility (UUID Strings)
+
+```starlark
+# Old-style: return UUID string (still works)
+chart_id = str(create_chart(data=sales).get_id())
+return chart_id  # String UUID
+```
+
+**Still supported** for backward compatibility, but discouraged.
 
 ## Testing Plan
 
@@ -594,42 +656,41 @@ ToolResult(text="Error: Script execution failed: ...")
 
 **File**: `tests/functional/tools/test_execute_script.py`
 
-#### 1. Test Automatic Attachment Creation Propagation
+#### 1. Test Single ScriptAttachment Return
 
 ```python
-async def test_attachment_create_propagation(
+async def test_script_returns_single_attachment(
     processing_service, test_conversation_id
 ):
-    """Test that attachments created via attachment_create are propagated."""
+    """Test script that returns a single ScriptAttachment."""
     script = """
-chart_id = attachment_create(
+chart = attachment_create(
     content="chart data",
     filename="chart.png",
-    description="Sales chart",
+    description="Test chart",
     mime_type="image/png"
 )
-return "Created chart"
+return chart
 """
 
     result = await execute_script_tool(exec_context, script)
 
     assert isinstance(result, ToolResult)
-    assert result.text == "Script result: Created chart"
     assert result.attachments is not None
     assert len(result.attachments) == 1
     assert result.attachments[0].attachment_id  # Valid UUID
 ```
 
-#### 2. Test Tool Result Attachment Propagation
+#### 2. Test Tool Result with Attachment
 
 ```python
-async def test_tool_result_attachment_propagation(
+async def test_tool_returns_attachment(
     processing_service, mock_tool_with_attachment
 ):
-    """Test that attachments from tool results are propagated."""
+    """Test tool that returns ToolResult with attachment."""
     script = """
-result = tools_execute("generate_report", data="test")
-return "Generated report"
+chart = create_vega_chart(spec={"mark": "bar"}, data=[1, 2, 3])
+return chart
 """
 
     result = await execute_script_tool(exec_context, script)
@@ -639,63 +700,114 @@ return "Generated report"
     assert len(result.attachments) == 1
 ```
 
-#### 3. Test Multiple Attachments
+#### 3. Test Multiple Attachments List
 
 ```python
-async def test_multiple_attachments(processing_service, test_conversation_id):
-    """Test that multiple attachments are all propagated."""
+async def test_script_returns_attachment_list(
+    processing_service, test_conversation_id
+):
+    """Test script that returns list of attachments."""
     script = """
-id1 = attachment_create(content="data1", filename="file1.txt")
-id2 = attachment_create(content="data2", filename="file2.txt")
-id3 = tools_execute("generate_chart", data="test")
-return "Created 3 attachments"
+chart1 = attachment_create(content="data1", filename="chart1.png")
+chart2 = attachment_create(content="data2", filename="chart2.png")
+chart3 = attachment_create(content="data3", filename="chart3.png")
+return [chart1, chart2, chart3]
 """
 
     result = await execute_script_tool(exec_context, script)
 
+    assert isinstance(result, ToolResult)
     assert result.attachments is not None
     assert len(result.attachments) == 3
 ```
 
-#### 4. Test Explicit Attachment Return
+#### 4. Test ScriptToolResult Return
 
 ```python
-async def test_explicit_attachment_return(
-    processing_service, test_conversation_id
+async def test_tool_returns_script_tool_result(
+    processing_service, mock_tool_returning_text_and_attachment
 ):
-    """Test explicit attachment_ids in return value."""
+    """Test tool that returns ScriptToolResult with text and attachments."""
     script = """
-id1 = attachment_create(content="data1", filename="file1.txt")
-id2 = attachment_create(content="data2", filename="file2.txt")
-return {"text": "Created files", "attachment_ids": [id1]}
+result = analyze_and_chart(data=[1, 2, 3, 4, 5])
+# result is ScriptToolResult with text and attachments
+return result
 """
 
     result = await execute_script_tool(exec_context, script)
 
-    # Should include both auto-tracked AND explicit (union)
+    assert isinstance(result, ToolResult)
     assert result.attachments is not None
-    assert len(result.attachments) == 2  # Both id1 and id2
+    assert len(result.attachments) >= 1
+    assert "analysis" in result.text.lower()  # Contains text from tool
 ```
 
-#### 5. Test Deduplication
+#### 5. Test Functional Composition
 
 ```python
-async def test_attachment_deduplication(
-    processing_service, test_conversation_id
+async def test_functional_composition(
+    processing_service, mock_chart_and_highlight_tools
 ):
-    """Test that duplicate attachment IDs are deduplicated."""
+    """Test functional composition of tools returning attachments."""
     script = """
-id1 = attachment_create(content="data", filename="file.txt")
-return {"attachment_ids": [id1, id1, id1]}  # Same ID 3 times
+return highlight_image(
+    image=create_vega_chart(spec={"mark": "bar"}, data=[1, 2, 3]),
+    regions=[{"x": 10, "y": 20, "width": 100, "height": 50}]
+)
 """
 
     result = await execute_script_tool(exec_context, script)
 
+    assert isinstance(result, ToolResult)
     assert result.attachments is not None
-    assert len(result.attachments) == 1  # Deduplicated
+    assert len(result.attachments) == 1  # Final highlighted image
 ```
 
-#### 6. Test No Attachments
+#### 6. Test Selective Return (Not All Attachments)
+
+```python
+async def test_selective_attachment_return(
+    processing_service, test_conversation_id
+):
+    """Test that only returned attachments are visible."""
+    script = """
+# Create 3 attachments
+temp1 = attachment_create(content="temp1", filename="temp1.txt")
+temp2 = attachment_create(content="temp2", filename="temp2.txt")
+final = attachment_create(content="final", filename="final.txt")
+
+# Only return final
+return final
+"""
+
+    result = await execute_script_tool(exec_context, script)
+
+    assert isinstance(result, ToolResult)
+    assert result.attachments is not None
+    assert len(result.attachments) == 1  # Only final, not temp1/temp2
+```
+
+#### 7. Test Backward Compatibility (UUID Strings)
+
+```python
+async def test_backward_compat_uuid_string(
+    processing_service, test_conversation_id
+):
+    """Test backward compatibility with UUID string returns."""
+    script = """
+chart = attachment_create(content="data", filename="chart.png")
+# Return UUID string (old style)
+return chart.get_id()
+"""
+
+    result = await execute_script_tool(exec_context, script)
+
+    assert isinstance(result, ToolResult)
+    assert result.attachments is not None
+    assert len(result.attachments) == 1
+```
+
+#### 8. Test No Attachments
 
 ```python
 async def test_no_attachments(processing_service):
@@ -709,29 +821,10 @@ return f"Result is {result}"
 
     assert isinstance(result, ToolResult)
     assert result.text == "Script result: Result is 4"
-    assert result.attachments is None
-```
-
-#### 7. Test Backward Compatibility
-
-```python
-async def test_backward_compatibility(processing_service):
-    """Test existing scripts continue working."""
-    # This is the same as test_no_attachments but with realistic script
-    script = """
-notes = json_decode(search_notes(query="TODO"))
-count = len(notes) if notes else 0
-return f"Found {count} TODO items"
-"""
-
-    result = await execute_script_tool(exec_context, script)
-
-    assert isinstance(result, ToolResult)
-    assert "TODO items" in result.text
     assert result.attachments is None or len(result.attachments) == 0
 ```
 
-#### 8. Test Error Cases
+#### 9. Test Error Cases Return Text-Only
 
 ```python
 async def test_error_returns_text_only(processing_service):
@@ -745,249 +838,135 @@ async def test_error_returns_text_only(processing_service):
     assert result.attachments is None
 ```
 
-### Integration Testing
+#### 10. Test Deduplication
 
-Verify end-to-end behavior:
+```python
+async def test_attachment_deduplication(
+    processing_service, test_conversation_id
+):
+    """Test that duplicate attachments in lists are deduplicated."""
+    script = """
+chart = attachment_create(content="data", filename="chart.png")
+# Return same attachment multiple times
+return [chart, chart, chart]
+"""
 
-1. **LLM receives attachments**: Test that LLM gets attachment references
-2. **Attachment accessibility**: Test that LLM can reference attachments by ID
-3. **Multi-turn conversations**: Test attachments work across conversation turns
+    result = await execute_script_tool(exec_context, script)
 
-## Migration Plan
+    assert isinstance(result, ToolResult)
+    assert result.attachments is not None
+    assert len(result.attachments) == 1  # Deduplicated
+```
 
-### Phase 1: Implementation (Breaking Change)
+## Implementation Plan
 
-1. **Add tracking to StarlarkEngine**
+### Phase 1: Type Definitions and Core Changes
 
-   - Add `_created_attachments` list
-   - Add `register_attachment()` method
-   - Add `get_created_attachments()` method
+1. ✅ **Add ScriptToolResult type** to `scripting/apis/tools.py`
+2. ✅ **Update ToolsAPI.execute()** to return proper types
+3. ✅ **Update AttachmentAPI.create()** to return ScriptAttachment
+4. ✅ **Update tool wrapper** type annotations in StarlarkEngine
 
-2. **Update AttachmentAPI**
+### Phase 2: execute_script Changes
 
-   - Add `engine` parameter
-   - Call `engine.register_attachment()` in `create()`
-   - Update factory function
+5. ✅ **Add \_extract_attachment_ids_from_result()** helper function
+6. ✅ **Add \_is_valid_uuid()** helper function
+7. ✅ **Update execute_script_tool()** to return ToolResult with attachments
+8. ✅ **Update error handling** to return ToolResult
 
-3. **Update ToolsAPI**
+### Phase 3: Testing
 
-   - Add `engine` parameter
-   - Call `engine.register_attachment()` in `execute()`
-   - Update factory function
+09. ✅ **Add unit tests** for new types and helper functions
+10. ✅ **Add integration tests** for execute_script with attachments
+11. ✅ **Run full test suite** to verify backward compatibility
+12. ✅ **Manual testing** with real scripts
 
-4. **Wire up engine in StarlarkEngine.evaluate()**
+### Phase 4: Documentation
 
-   - Pass `engine=self` to `create_attachment_api()`
-   - Pass `engine=self` to `create_tools_api()`
+13. ✅ **Update execute_script tool description** to include typed examples
+14. ✅ **Update scripting.md** user documentation with new patterns
+15. ✅ **Add examples** of functional composition
 
-5. **Update execute_script_tool**
-
-   - Change return type to `ToolResult`
-   - Add `_extract_attachment_ids_from_result()` helper
-   - Add `_is_valid_uuid()` helper
-   - Build ToolResult with attachments
-   - Update error handling to return ToolResult
-
-### Phase 2: Testing
-
-1. **Add unit tests** for new methods
-2. **Add integration tests** for execute_script
-3. **Run full test suite** to verify backward compatibility
-4. **Manual testing** with real scripts
-
-### Phase 3: Documentation
-
-1. **Update execute_script tool description** to mention automatic attachment propagation
-2. **Update scripting.md** user documentation
-3. **Add examples** of attachment propagation to docs
-
-### Breaking Changes
+## Breaking Changes
 
 **execute_script return type change**: `str` → `ToolResult`
 
-**Impact analysis:**
+**Impact analysis**:
 
 - ✅ Tool infrastructure handles ToolResult natively (no changes needed)
 - ✅ LLM receives ToolResult messages (already supported)
 - ⚠️ Tests expect string results (need updates)
-- ⚠️ Any direct callers of `execute_script_tool()` (need updates)
+- ⚠️ Any direct callers of `execute_script_tool()` (need updates - search codebase)
 
-**Mitigation:**
+**Mitigation**:
 
 - Update all tests in same PR
-- Search codebase for direct calls to `execute_script_tool()`
+- Search codebase for direct calls: `git grep "execute_script_tool"`
 - ToolResult.text provides backward-compatible text content
+- Infrastructure already handles ToolResult properly
 
-## Open Questions
+**Script compatibility**:
 
-### 1. Explicit Return Behavior
+- ✅ Scripts that return strings/numbers/dicts still work
+- ✅ Scripts that don't return attachments unchanged
+- ✅ Backward compatible with UUID string returns
+- ✅ New typed returns are additive (opt-in)
 
-**Question**: When script explicitly returns `attachment_ids`, should we:
+## Benefits
 
-- **Option A**: Return only explicit IDs (ignore auto-tracked)
-- **Option B**: Return only auto-tracked IDs (ignore explicit)
-- **Option C**: Return union of both (deduplicated)
+1. **Explicit Control**: Scripts control visibility via return values (no magic auto-tracking)
+2. **Proper Types**: No `dict[str, Any]` antipattern - clear type semantics
+3. **Functional Composition**: Natural composition like `highlight_image(create_vega_chart(...))`
+4. **Backward Compatible**: UUID strings still work
+5. **Simple Implementation**: No complex tracking infrastructure needed
+6. **Consistent Pattern**: Matches existing munging (UUID → ScriptAttachment on input)
+7. **LLM-Friendly**: Few-shot examples guide LLM to use proper patterns
 
-**Recommendation**: **Option C (Union)** - Provides maximum flexibility without requiring scripts to
-track everything manually.
+## Tool Description Updates
 
-**Decision**: Pending approval ✅
+Update `execute_script` tool description to include typed examples:
 
-### 2. Attachment Metadata
-
-**Question**: Should ToolAttachment include more metadata (mime_type, description, filename)?
-
-**Current**: Only `attachment_id` is included in ToolAttachment
-
-**Pros of adding metadata:**
-
-- LLM can see what the attachment is without fetching
-- Richer context for decision-making
-
-**Cons:**
-
-- Increased payload size
-- Need to fetch metadata from database
-- Duplicates data already available via attachment API
-
-**Recommendation**: Start with IDs only, add metadata if needed later.
-
-**Decision**: Pending approval ✅
-
-### 3. Performance Impact
-
-**Question**: Does fetching attachment metadata add significant overhead?
-
-**Analysis**:
-
-- Tracking: O(1) per attachment creation (just append to list)
-- Retrieval: O(n) where n = number of attachments (typically < 10)
-- Deduplication: O(n) using dict.fromkeys()
-- No database queries needed (IDs already available)
-
-**Recommendation**: Negligible performance impact.
-
-### 4. Tool Description Update
-
-**Question**: How much detail about attachment propagation should be in the tool description?
-
-**Options:**
-
-- Minimal: "Attachments created during execution are automatically included"
-- Detailed: Full explanation with examples
-
-**Recommendation**: Brief mention in main description + example in "Working with attachments"
-section.
-
-**Decision**: Pending approval ✅
-
-## Security Considerations
-
-### Attachment Access Control
-
-**Question**: Should scripts be able to return attachments they didn't create?
-
-**Current behavior**: Scripts can only:
-
-- Create new attachments (via `attachment_create`)
-- Access attachments in their conversation (via `attachment_get`)
-- Pass attachment IDs to tools
-
-**Proposed behavior**: Same as current - no changes to access control.
-
-**Security boundary**: Conversation-scoped attachment access remains enforced.
-
-### ID Validation
-
-**Question**: Should we validate that returned attachment IDs exist and belong to the conversation?
-
-**Recommendation**: No validation in execute_script (trust attachment registry).
-
-**Rationale:**
-
-- Attachment access is already conversation-scoped in AttachmentRegistry
-- Invalid IDs will fail when LLM tries to access them
-- Validation would require database query per attachment
-- Error handling exists at access time
-
-## Alternative Designs Considered
-
-### Alternative 1: Explicit Return Only
-
-**Design**: Only propagate attachments explicitly returned by script
-
-**Pros:**
-
-- Explicit control for script author
-- No "magic" behavior
-
-**Cons:**
-
-- Scripts must track all attachment IDs manually
-- Easy to forget to include attachments
-- Defeats purpose of simplifying script authoring
-
-**Rejected**: Too burdensome for script authors
-
-### Alternative 2: Global Registry
-
-**Design**: Use global registry instead of engine tracking
-
-**Pros:**
-
-- No need to pass engine reference
-- Simpler wiring
-
-**Cons:**
-
-- Violates "no mutable global state" principle
-- Harder to test (need to clean up between tests)
-- Thread safety concerns
-- Goes against project architecture guidelines
-
-**Rejected**: Violates core design principles
-
-### Alternative 3: Context Manager Pattern
-
-**Design**: Use context manager to track attachments
-
-```python
-with attachment_tracker() as tracker:
-    result = execute_script(...)
-    attachments = tracker.get_attachments()
-```
-
-**Pros:**
-
-- Clear scope of tracking
-- Automatic cleanup
-
-**Cons:**
-
-- More complex wiring
-- Overkill for this use case
-- StarlarkEngine already manages lifecycle
-
-**Rejected**: Unnecessary complexity
+````python
+"**Returning Attachments:**\n"
+"To make attachments visible to the LLM and user, return them from your script:\n\n"
+"```starlark\n"
+"# Single attachment\n"
+"chart = attachment_create(content=data, filename='chart.png')\n"
+"return chart  # Attachment displayed to user\n\n"
+"# Multiple attachments\n"
+"chart1 = create_chart(data=sales)\n"
+"chart2 = create_chart(data=revenue)\n"
+"return [chart1, chart2]  # Both displayed\n\n"
+"# Functional composition\n"
+"return highlight_image(\n"
+"    image=create_vega_chart(spec=spec, data=data),\n"
+"    regions=[{'x': 10, 'y': 20, 'width': 100, 'height': 50}]\n"
+")\n"
+"```\n\n"
+"**Important:** Only returned attachments are visible to the LLM.\n"
+"Attachments not returned are stored but not propagated.\n"
+````
 
 ## Success Criteria
 
 ### Implementation Complete When:
 
-1. ✅ All code changes implemented
-2. ✅ All tests pass (existing + new)
-3. ✅ Linters pass (ruff, basedpyright, pylint)
-4. ✅ Documentation updated
-5. ✅ Manual testing confirms expected behavior
+1. ✅ ScriptToolResult type added
+2. ✅ ToolsAPI.execute() returns proper types
+3. ✅ AttachmentAPI.create() returns ScriptAttachment
+4. ✅ execute_script returns ToolResult with attachments
+5. ✅ All tests pass (existing + new)
+6. ✅ Linters pass (ruff, basedpyright, pylint)
+7. ✅ Documentation updated
 
 ### Acceptance Criteria:
 
-1. **Automatic propagation works**: Attachments created via `attachment_create()` appear in
-   ToolResult
-2. **Tool results work**: Attachments from tool calls appear in ToolResult
-3. **Explicit control works**: Scripts can specify attachment_ids in return value
-4. **Deduplication works**: Duplicate IDs appear only once
-5. **Backward compatible**: Existing scripts without attachments work unchanged
+1. **Explicit returns work**: Scripts that return ScriptAttachment/ScriptToolResult propagate
+   attachments
+2. **Tool composition works**: Functional composition like `highlight(create_chart(...))` works
+3. **Multiple attachments work**: Lists of attachments propagated correctly
+4. **Backward compatible**: Existing scripts without attachments work unchanged
+5. **UUID strings work**: Old-style UUID string returns still supported
 6. **Errors handled**: Error cases return text-only ToolResult
 7. **LLM receives attachments**: Integration test confirms LLM can see and use attachments
 
@@ -995,20 +974,17 @@ with attachment_tracker() as tracker:
 
 ### Potential Improvements:
 
-1. **Attachment metadata in ToolResult**: Include mime_type, description, filename
-2. **Attachment filtering**: Allow scripts to mark attachments as "internal only" vs "return to LLM"
-3. **Attachment ordering**: Preserve order or allow scripts to specify priority
-4. **Attachment grouping**: Group related attachments together
-5. **Lazy loading**: Only fetch attachment metadata when LLM requests it
-6. **Size limits**: Warn or fail if too many attachments created
+1. **Attachment metadata in ToolResult**: Include mime_type, description without LLM fetching
+2. **Lazy evaluation**: Only fetch attachment content when accessed
+3. **Attachment streaming**: Support for large attachments
+4. **Rich result types**: More structured result types beyond ScriptToolResult
 
 ### Not in Scope:
 
+- Auto-tracking (explicitly rejected - scripts use explicit returns)
 - Attachment editing or deletion from scripts
-- Attachment permissions beyond conversation scope
 - Cross-conversation attachment sharing
 - Attachment versioning
-- Streaming attachments
 
 ## References
 
@@ -1016,130 +992,25 @@ with attachment_tracker() as tracker:
 
 - `src/family_assistant/tools/execute_script.py` - Tool implementation
 - `src/family_assistant/scripting/engine.py` - Script execution engine
-- `src/family_assistant/scripting/apis/attachments.py` - Attachment API
-- `src/family_assistant/scripting/apis/tools.py` - Tools API
+- `src/family_assistant/scripting/apis/attachments.py` - Attachment API and ScriptAttachment
+- `src/family_assistant/scripting/apis/tools.py` - Tools API (to add ScriptToolResult)
+- `src/family_assistant/tools/attachment_utils.py` - Attachment munging utilities
 - `src/family_assistant/tools/types.py` - ToolResult and ToolAttachment
 - `tests/functional/tools/test_execute_script.py` - Existing tests
 - `tests/functional/test_script_attachment_api.py` - Attachment API tests
 
 ### Related Design Docs
 
+- `docs/design/multimodal-manipulation.md` - Attachment system and LLM auto-attach pattern
+  (contrast)
 - `docs/design/multimodal-tool-results.md` - ToolResult design
-- `docs/design/auto-attachment-display.md` - Attachment display
+- `docs/design/auto-attachment-display.md` - LLM auto-attach (not applicable to scripts)
 - `docs/design/json-attachment-handling.md` - JSON attachment handling
 - `docs/design/scripting/` - Scripting system design
 
 ### User Documentation
 
-- `docs/user/scripting.md` - Scripting guide for users
-
-## Appendix: Code Examples
-
-### Example 1: Simple Attachment Creation
-
-```starlark
-# Script creates a report
-report_content = "# Report\n\nGenerated at: " + time_now()
-report_id = attachment_create(
-    content=report_content,
-    filename="report.md",
-    description="Weekly report",
-    mime_type="text/markdown"
-)
-
-return "Report generated successfully"
-```
-
-**Result sent to LLM:**
-
-```python
-ToolResult(
-    text="Script result: Report generated successfully",
-    attachments=[ToolAttachment(attachment_id=report_id)]
-)
-```
-
-### Example 2: Tool with Attachment Result
-
-```starlark
-# Script calls visualization tool
-chart_result = tools_execute(
-    "create_chart",
-    data=[1, 2, 3, 4, 5],
-    chart_type="line"
-)
-
-return "Chart created: " + chart_result
-```
-
-**Result sent to LLM:**
-
-```python
-ToolResult(
-    text="Script result: Chart created: {attachment_id}",
-    attachments=[ToolAttachment(attachment_id=chart_id)]
-)
-```
-
-### Example 3: Multiple Attachments
-
-```starlark
-# Script creates multiple visualizations
-results = []
-
-for metric in ["sales", "revenue", "growth"]:
-    chart_id = tools_execute(
-        "create_chart",
-        metric=metric,
-        period="monthly"
-    )
-    results.append({"metric": metric, "chart_id": chart_id})
-
-return {"created_charts": results}
-```
-
-**Result sent to LLM:**
-
-```python
-ToolResult(
-    text="Script result:\n{...json...}",
-    attachments=[
-        ToolAttachment(attachment_id=chart_id_1),
-        ToolAttachment(attachment_id=chart_id_2),
-        ToolAttachment(attachment_id=chart_id_3)
-    ],
-    data={"created_charts": [...]}
-)
-```
-
-### Example 4: Explicit Control
-
-```starlark
-# Script creates temporary and final attachments
-temp_id = attachment_create(content="temp", filename="temp.txt")
-intermediate_id = attachment_create(content="intermediate", filename="intermediate.txt")
-final_id = attachment_create(content="final", filename="final.txt")
-
-# Only return the final result
-return {
-    "text": "Processing complete",
-    "attachment_ids": [final_id]
-}
-```
-
-**Result sent to LLM:**
-
-```python
-ToolResult(
-    text="Script result:\n{...json...}",
-    attachments=[
-        # Union of auto-tracked and explicit
-        ToolAttachment(attachment_id=temp_id),
-        ToolAttachment(attachment_id=intermediate_id),
-        ToolAttachment(attachment_id=final_id)
-    ]
-)
-```
+- `docs/user/scripting.md` - Scripting guide for users (needs updates)
 
 ______________________________________________________________________
 
