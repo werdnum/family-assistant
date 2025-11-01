@@ -421,7 +421,8 @@ class AttachmentAPI:
         filename: str,
         description: str = "",
         mime_type: str = "application/octet-stream",
-    ) -> str:
+        # ast-grep-ignore: no-dict-any - Return dict for Starlark JSON compatibility
+    ) -> dict[str, Any]:
         """
         Create a new attachment from script-generated content.
 
@@ -432,7 +433,7 @@ class AttachmentAPI:
             mime_type: MIME type of the content (default: application/octet-stream)
 
         Returns:
-            UUID string of the created attachment (for Starlark compatibility)
+            Dict with attachment metadata: {"id": uuid, "mime_type": str, "filename": str, "size": int, "description": str}
 
         Raises:
             ValueError: If content validation fails or storage fails
@@ -451,9 +452,18 @@ class AttachmentAPI:
                     self._create_async(content, filename, description, mime_type)
                 )
 
-            # Return UUID string for Starlark compatibility
-            # (Starlark can't serialize custom Python objects like ScriptAttachment)
-            return attachment_metadata.attachment_id
+            # Return dict with attachment metadata for Starlark compatibility
+            # Dict is JSON-serializable and provides good UX with direct field access
+            # Users can access: att["id"], att["filename"], att["mime_type"], etc.
+            return {
+                "id": attachment_metadata.attachment_id,
+                "filename": attachment_metadata.metadata.get(
+                    "original_filename", "unknown"
+                ),
+                "mime_type": attachment_metadata.mime_type,
+                "size": attachment_metadata.size,
+                "description": attachment_metadata.description,
+            }
 
         except Exception as e:
             logger.error(f"Error creating attachment: {e}")

@@ -391,7 +391,7 @@ class ToolsAPI:
         tool_name: str,
         *args: Any,  # noqa: ANN401
         **kwargs: Any,  # noqa: ANN401
-        # ast-grep-ignore: no-dict-any - Return dict for Starlark compatibility (can't serialize dataclasses)
+        # ast-grep-ignore: no-dict-any - Return dict for Starlark JSON compatibility
     ) -> str | dict[str, Any]:
         """
         Execute a tool with the given arguments.
@@ -402,7 +402,11 @@ class ToolsAPI:
             **kwargs: Keyword arguments to pass to the tool
 
         Returns:
-            Tool execution result as string (including UUID strings), or dict with "text" and "attachments" keys
+            Tool execution result as string or dict with attachment metadata.
+            For tools that return attachments:
+            - Single attachment: {"id": uuid, "mime_type": str, "filename": str, ...}
+            - Multiple attachments: {"text": str, "attachments": [dict, ...]}
+            For text-only results: string
 
         Raises:
             Exception: If tool execution fails or is not allowed
@@ -541,17 +545,33 @@ class ToolsAPI:
                     if len(script_attachments) == 1 and not (
                         result.text and result.text.strip()
                     ):
-                        # Single attachment, no meaningful text → return UUID string for Starlark compatibility
+                        # Single attachment, no meaningful text → return attachment dict
                         logger.debug(
-                            f"Returning single attachment UUID from '{tool_name}'"
+                            f"Returning single attachment dict from '{tool_name}'"
                         )
-                        return script_attachments[0].get_id()
+                        att = script_attachments[0]
+                        return {
+                            "id": att.get_id(),
+                            "mime_type": att.get_mime_type(),
+                            "description": att.get_description(),
+                            "size": att.get_size(),
+                            "filename": att.get_filename(),
+                        }
                     elif script_attachments:
-                        # Text + attachments or multiple attachments → return dict for Starlark compatibility
-                        # (Starlark can't serialize custom Python objects)
+                        # Text + attachments or multiple attachments → return dict
+                        # For Starlark JSON compatibility
                         return {
                             "text": result.text,
-                            "attachments": [att.get_id() for att in script_attachments],
+                            "attachments": [
+                                {
+                                    "id": att.get_id(),
+                                    "mime_type": att.get_mime_type(),
+                                    "description": att.get_description(),
+                                    "size": att.get_size(),
+                                    "filename": att.get_filename(),
+                                }
+                                for att in script_attachments
+                            ],
                         }
                     else:
                         # No attachments were successfully stored
@@ -575,7 +595,7 @@ class ToolsAPI:
         self,
         tool_name: str,
         args_json: str,
-        # ast-grep-ignore: no-dict-any - Return dict for Starlark compatibility (can't serialize dataclasses)
+        # ast-grep-ignore: no-dict-any - Return dict for Starlark JSON compatibility
     ) -> str | dict[str, Any]:
         """
         Execute a tool with JSON-encoded arguments.
@@ -587,7 +607,11 @@ class ToolsAPI:
             args_json: JSON string containing the arguments
 
         Returns:
-            Tool execution result as string (including UUID strings), or dict with "text" and "attachments" keys
+            Tool execution result as string or dict with attachment metadata.
+            For tools that return attachments:
+            - Single attachment: {"id": uuid, "mime_type": str, "filename": str, ...}
+            - Multiple attachments: {"text": str, "attachments": [dict, ...]}
+            For text-only results: string
 
         Raises:
             Exception: If tool execution fails or JSON is invalid
@@ -650,7 +674,7 @@ class StarlarkToolsAPI:
         tool_name: str,
         *args: Any,  # noqa: ANN401
         **kwargs: Any,  # noqa: ANN401
-        # ast-grep-ignore: no-dict-any - Return dict for Starlark compatibility (can't serialize dataclasses)
+        # ast-grep-ignore: no-dict-any - Return dict for Starlark JSON compatibility
     ) -> str | dict[str, Any]:
         """Execute a tool."""
         return self._api.execute(tool_name, *args, **kwargs)
@@ -659,7 +683,7 @@ class StarlarkToolsAPI:
         self,
         tool_name: str,
         args_json: str,
-        # ast-grep-ignore: no-dict-any - Return dict for Starlark compatibility (can't serialize dataclasses)
+        # ast-grep-ignore: no-dict-any - Return dict for Starlark JSON compatibility
     ) -> str | dict[str, Any]:
         """Execute a tool with JSON arguments."""
         return self._api.execute_json(tool_name, args_json)
