@@ -109,15 +109,25 @@ Using `jq.py` library:
 
 ```python
 import jq
-result = jq.compile(jq_program).input(json_data).text()
+import json
+
+jq_compiled = jq.compile(jq_program)
+result = jq_compiled.input(json_data).all()
+
+# Format result as JSON (preserves structure)
+if len(result) == 1:
+    output = json.dumps(result[0], indent=2, ensure_ascii=False)
+else:
+    output = json.dumps(result, indent=2, ensure_ascii=False)
 ```
 
 Tool provides safe interface:
 
 - Attachment ID validation
-- JSON parsing
-- jq error handling
-- Formatted output
+- Conversation-scoped access control
+- JSON parsing with error handling
+- jq compilation and execution with error handling
+- Formatted JSON output (preserves structure, not plain text)
 
 ## Future Considerations
 
