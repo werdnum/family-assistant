@@ -1,6 +1,7 @@
 # Data Visualization Guide
 
-This document provides guidance for creating data visualizations using the `create_vega_chart` tool.
+This document provides guidance for creating data visualizations using the `create_vega_chart` tool
+and scripts for advanced workflows.
 
 ## Overview
 
@@ -21,7 +22,65 @@ Data can come from multiple sources:
 3. **Home Assistant**: Use `download_state_history` or other Home Assistant tools to fetch data
 4. **User-provided**: Small inline data from the user's message
 
-### Workflow for Large Data Attachments
+## Recommended Workflows
+
+### Script-Based Workflow (Recommended for Complex Visualizations)
+
+For data transformations, multi-step processing, or functional composition, use **scripts** that
+automatically propagate attachments:
+
+```starlark
+# Script automatically returns attachments created by tools
+chart = create_vega_chart(
+    spec=spec_json,
+    data_attachments=[attachment_id]
+)
+# Attachment automatically appears to LLM - no manual attach_to_response needed!
+chart
+```
+
+**Key benefits:**
+
+- **Attachment propagation**: Attachments created by tools or `attachment_create()` are
+  automatically returned
+- **Functional composition**: Chain tools naturally with typed objects
+- **Clean code**: No manual attachment tracking needed
+
+**Example: Transform and visualize with functional composition**
+
+```starlark
+# Process data with jq, create chart, and return result
+create_vega_chart(
+    spec=spec_json,
+    data_attachments=[jq_query(source_attachment, ".[] | select(.value > 10)")]
+)
+```
+
+**Example: Create multiple related charts**
+
+```starlark
+# All charts automatically available to LLM
+temp_chart = create_vega_chart(temp_spec, data_attachments=[sensor_data])
+humidity_chart = create_vega_chart(humidity_spec, data_attachments=[sensor_data])
+[temp_chart, humidity_chart]
+```
+
+### Direct Tool Call Workflow (For Simple Cases)
+
+For simple, single-chart visualizations, call `create_vega_chart` directly:
+
+```python
+create_vega_chart(
+    spec=spec_json,
+    data_attachments=[attachment_id],
+    title="Temperature Over Time"
+)
+```
+
+The attachment is auto-displayed. No need for `attach_to_response` unless you want to control which
+specific attachments are shown.
+
+## Workflow for Large Data Attachments
 
 When you receive a large JSON dataset (>10KB), it will appear as:
 
@@ -76,6 +135,103 @@ create_vega_chart(
   title="Pool Temperature Over 5 Days"
 )
 ```
+
+### Script-Based Workflow Example
+
+For the same scenario using scripts (recommended for complex processing):
+
+```starlark
+# Define the Vega spec
+spec = {
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "data": {"name": "pool_data"},
+  "mark": "line",
+  "encoding": {
+    "x": {"field": "last_changed", "type": "temporal"},
+    "y": {"field": "state", "type": "quantitative"}
+  }
+}
+
+# Create and return chart - attachment automatically propagates
+create_vega_chart(
+  spec=json_encode(spec),
+  data_attachments=["636058f3-..."],
+  title="Pool Temperature Over 5 Days"
+)
+```
+
+**Advanced: Filter data with jq and create chart in one expression**
+
+```starlark
+# Functional composition - filter and visualize
+filtered_data = jq_query("636058f3-...", "[.[] | select(.state != null)]")
+
+spec = {
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "data": {"name": "filtered_data"},
+  "mark": {"type": "line", "point": true},
+  "encoding": {
+    "x": {"field": "last_changed", "type": "temporal"},
+    "y": {"field": "state", "type": "quantitative"}
+  }
+}
+
+create_vega_chart(
+  spec=json_encode(spec),
+  data_attachments=[filtered_data],
+  title="Pool Temperature (Cleaned)"
+)
+```
+
+### Multi-Chart Dashboard Example
+
+Create multiple related charts in a single script:
+
+```starlark
+# Fetch sensor data
+temp_data = download_state_history(
+  entity_ids=["sensor.pool_temp"],
+  start_time=time_subtract_days(time_now(), 7)
+)
+ph_data = download_state_history(
+  entity_ids=["sensor.pool_ph"],
+  start_time=time_subtract_days(time_now(), 7)
+)
+
+# Create temperature chart
+temp_spec = {
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "data": {"name": "temp_data"},
+  "mark": "line",
+  "encoding": {
+    "x": {"field": "last_changed", "type": "temporal"},
+    "y": {"field": "state", "type": "quantitative", "title": "Temperature (°F)"}
+  },
+  "title": "Pool Temperature"
+}
+
+# Create pH chart
+ph_spec = {
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "data": {"name": "ph_data"},
+  "mark": "line",
+  "encoding": {
+    "x": {"field": "last_changed", "type": "temporal"},
+    "y": {"field": "state", "type": "quantitative", "title": "pH"}
+  },
+  "title": "Pool pH Levels"
+}
+
+# Create both charts - both automatically available to LLM
+temp_chart = create_vega_chart(spec=json_encode(temp_spec), data_attachments=[temp_data])
+ph_chart = create_vega_chart(spec=json_encode(ph_spec), data_attachments=[ph_data])
+
+# Return both charts
+[temp_chart, ph_chart]
+```
+
+The script automatically makes both charts available. The LLM will see both attachments and can
+describe the results to the user.
 
 ## When to Use This Tool
 

@@ -391,7 +391,8 @@ class ToolsAPI:
         tool_name: str,
         *args: Any,  # noqa: ANN401
         **kwargs: Any,  # noqa: ANN401
-    ) -> str | ScriptAttachment | ScriptToolResult:
+        # ast-grep-ignore: no-dict-any - Return type for Starlark compatibility (dataclasses not JSON-serializable)
+    ) -> str | ScriptAttachment | dict[str, Any]:
         """
         Execute a tool with the given arguments.
 
@@ -401,7 +402,7 @@ class ToolsAPI:
             **kwargs: Keyword arguments to pass to the tool
 
         Returns:
-            Tool execution result as string, ScriptAttachment, or ScriptToolResult
+            Tool execution result as string, ScriptAttachment, or dict with "text" and "attachments" keys
 
         Raises:
             Exception: If tool execution fails or is not allowed
@@ -546,11 +547,12 @@ class ToolsAPI:
                         )
                         return script_attachments[0]
                     elif script_attachments:
-                        # Text + attachments or multiple attachments → return ScriptToolResult
-                        return ScriptToolResult(
-                            text=result.text,
-                            attachments=script_attachments,
-                        )
+                        # Text + attachments or multiple attachments → return dict
+                        # (dicts are Starlark-compatible, dataclasses are not JSON-serializable)
+                        return {
+                            "text": result.text,
+                            "attachments": script_attachments,
+                        }
                     else:
                         # No attachments were successfully stored
                         return result.to_string()
@@ -570,8 +572,11 @@ class ToolsAPI:
             raise RuntimeError(error_msg) from e
 
     def execute_json(
-        self, tool_name: str, args_json: str
-    ) -> str | ScriptAttachment | ScriptToolResult:
+        self,
+        tool_name: str,
+        args_json: str,
+        # ast-grep-ignore: no-dict-any - Return type for Starlark compatibility (dataclasses not JSON-serializable)
+    ) -> str | ScriptAttachment | dict[str, Any]:
         """
         Execute a tool with JSON-encoded arguments.
 
@@ -582,7 +587,7 @@ class ToolsAPI:
             args_json: JSON string containing the arguments
 
         Returns:
-            Tool execution result as string, ScriptAttachment, or ScriptToolResult
+            Tool execution result as string, ScriptAttachment, or dict with "text" and "attachments" keys
 
         Raises:
             Exception: If tool execution fails or JSON is invalid
@@ -645,13 +650,17 @@ class StarlarkToolsAPI:
         tool_name: str,
         *args: Any,  # noqa: ANN401
         **kwargs: Any,  # noqa: ANN401
-    ) -> str | ScriptAttachment | ScriptToolResult:
+        # ast-grep-ignore: no-dict-any - Return type for Starlark compatibility (dataclasses not JSON-serializable)
+    ) -> str | ScriptAttachment | dict[str, Any]:
         """Execute a tool."""
         return self._api.execute(tool_name, *args, **kwargs)
 
     def execute_json(
-        self, tool_name: str, args_json: str
-    ) -> str | ScriptAttachment | ScriptToolResult:
+        self,
+        tool_name: str,
+        args_json: str,
+        # ast-grep-ignore: no-dict-any - Return type for Starlark compatibility (dataclasses not JSON-serializable)
+    ) -> str | ScriptAttachment | dict[str, Any]:
         """Execute a tool with JSON arguments."""
         return self._api.execute_json(tool_name, args_json)
 

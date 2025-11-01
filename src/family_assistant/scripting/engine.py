@@ -18,7 +18,7 @@ import starlark
 
 from .apis import time as time_api
 from .apis.attachments import ScriptAttachment, create_attachment_api
-from .apis.tools import ScriptToolResult, create_tools_api
+from .apis.tools import create_tools_api
 from .errors import ScriptExecutionError, ScriptSyntaxError, ScriptTimeoutError
 
 if TYPE_CHECKING:
@@ -242,11 +242,13 @@ class StarlarkEngine:
                     # Create a closure to capture the tool name
                     def make_tool_wrapper(
                         name: str,
-                    ) -> Callable[..., str | ScriptAttachment | ScriptToolResult]:
+                        # ast-grep-ignore: no-dict-any - Return type for Starlark compatibility
+                    ) -> Callable[..., str | ScriptAttachment | dict[str, Any]]:
                         def tool_wrapper(
                             *args: Any,  # noqa: ANN401 # Tool args can be any type
                             **kwargs: Any,  # noqa: ANN401
-                        ) -> str | ScriptAttachment | ScriptToolResult:
+                            # ast-grep-ignore: no-dict-any - Return type for Starlark compatibility
+                        ) -> str | ScriptAttachment | dict[str, Any]:
                             """Execute the tool with the given arguments."""
                             # If positional args are provided, we need to map them to kwargs
                             # This requires knowing the parameter names of the tool
