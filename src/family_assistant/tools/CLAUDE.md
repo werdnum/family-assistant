@@ -82,7 +82,7 @@ async def tool_name_tool(
     exec_context: ToolExecutionContext,
     param1: str,
     param2: int = 10,
-) -> str:
+) -> ToolResult:
     """
     Implementation of the tool.
 
@@ -92,7 +92,7 @@ async def tool_name_tool(
         param2: Description with default
 
     Returns:
-        A string result (all tools must return strings)
+        ToolResult with structured data (preferred) or text message
     """
     logger.info(f"Executing tool with param1={param1}, param2={param2}")
 
@@ -101,7 +101,8 @@ async def tool_name_tool(
     # Access user info: exec_context.user_name, exec_context.conversation_id
     # Send messages: exec_context.chat_interface
 
-    return "Success message or result"
+    # Prefer returning structured data for programmatic access
+    return ToolResult(data={"status": "success", "param1": param1, "param2": param2})
 ```
 
 ### Step 2: Export the Tool in `__init__.py`
@@ -216,6 +217,10 @@ maintaining human-readable text for the LLM. The `ToolResult` class supports thr
 1. **Data-only**: For simple operations where structured data is sufficient
 2. **Both text and data**: When human-readable text adds significant context
 3. **Text-only**: For simple messages or backward compatibility
+
+**Important**: When you return `ToolResult(data=...)`, the LLM automatically receives the data as
+formatted JSON text (via `get_text()`), while scripts and tests can access the native Python objects
+directly (via `get_data()` or `.data` attribute).
 
 ### Three Patterns
 
@@ -361,9 +366,11 @@ See `src/family_assistant/tools/automations.py` for comprehensive examples:
 
 ## Best Practices
 
-1. **Return ToolResult**: Tools should return `ToolResult` objects. Use appropriate pattern
-   (data-only, both fields, or text-only) based on whether structured data or human context is
-   needed. For backward compatibility, returning plain strings is still supported.
+1. **Return ToolResult with Structured Data**: Tools should return `ToolResult` objects with
+   structured data. The `data` field is automatically stringified as JSON for the LLM, while
+   scripts/tests can access the structured data directly. Use appropriate pattern (data-only, both
+   fields, or text-only) based on whether structured data or human context is needed. For backward
+   compatibility, returning plain strings is still supported.
 2. **Error Handling**: Return errors with structured data when possible:
    `ToolResult(data={"error": "message"})` or
    `ToolResult(text="Error: message", data={"error": "message"})`
