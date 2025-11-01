@@ -78,6 +78,321 @@ result = tools_execute_json("send_email", args_json)
 
 ```
 
+### Attachment API
+
+Scripts can create and manipulate attachments (files, images, charts, etc.) that are automatically
+propagated back to the assistant and shown to the user.
+
+#### Understanding Attachment Objects
+
+When you create or receive attachments in scripts, they are represented as **dictionaries** with
+metadata fields:
+
+```starlark
+# Example attachment dict structure
+{
+    "id": "550e8400-e29b-41d4-a716-446655440000",  # UUID for referencing
+    "filename": "chart.png",                        # Original filename
+    "mime_type": "image/png",                       # Content type
+    "size": 1024,                                   # Size in bytes
+    "description": "Temperature chart"              # Human-readable description
+}
+```
+
+You can access fields directly: `attachment["id"]`, `attachment["filename"]`, etc.
+
+#### Creating Attachments
+
+Use `attachment_create()` to create new attachments from script-generated content:
+
+```starlark
+# Create a text file attachment
+data_file = attachment_create(
+    content="Temperature readings: 72, 75, 73, 71",
+    filename="temp_data.txt",
+    description="Temperature sensor data",
+    mime_type="text/plain"
+)
+
+# Last expression is returned, so this attachment is sent to the assistant
+data_file
+```
+
+```starlark
+# Create a CSV file attachment
+csv_content = "date,temperature,humidity\n2024-01-01,72,45\n2024-01-02,75,48"
+csv_file = attachment_create(
+    content=csv_content,
+    filename="sensor_data.csv",
+    description="Daily sensor readings",
+    mime_type="text/csv"
+)
+csv_file
+```
+
+**Parameters:**
+
+- `content` (bytes or str): File content (strings are UTF-8 encoded automatically)
+- `filename` (str): Filename for the attachment
+- `description` (str, optional): Human-readable description
+- `mime_type` (str, optional): MIME type (default: "application/octet-stream")
+
+**Returns:** Dictionary with attachment metadata (id, filename, mime_type, size, description)
+
+#### Working with Tool-Returned Attachments
+
+Many tools return attachments (charts, reports, images, etc.). These come in two forms:
+
+**Single attachment (no text):**
+
+```starlark
+# Tool that returns just an attachment
+chart = create_vega_chart(
+    spec='{"mark": "line", ...}',
+    data_attachments=[data_file]
+)
+
+# chart is a dict with: id, filename, mime_type, size, description
+print("Created chart: " + chart["filename"])
+chart  # Return it to make it visible to the assistant
+```
+
+**Attachment(s) with text:**
+
+```starlark
+# Tool that returns text and attachments
+result = process_documents(query="invoices")
+
+# result is a dict with: {"text": "...", "attachments": [{...}, {...}]}
+print(result["text"])  # "Found 2 invoices"
+
+# Access attachments
+for att in result["attachments"]:
+    print("- " + att["filename"] + " (" + att["mime_type"] + ")")
+```
+
+#### Returning Multiple Attachments
+
+Return a list to send multiple attachments to the assistant:
+
+```starlark
+# Create multiple charts
+chart1 = create_vega_chart(spec=temperature_spec, data_attachments=[temp_data])
+chart2 = create_vega_chart(spec=humidity_spec, data_attachments=[humidity_data])
+
+# Return both as a list
+[chart1, chart2]
+```
+
+```starlark
+# Mix manual and tool-created attachments
+data_file = attachment_create(
+    content="Raw data: 1,2,3",
+    filename="raw.txt",
+    mime_type="text/plain"
+)
+
+report = generate_report(title="Analysis Report")
+
+# Return both
+[data_file, report]
+```
+
+#### Functional Composition with Attachments
+
+One of the most powerful patterns is passing attachments from one tool to another:
+
+```starlark
+# Process data, then visualize - all in one expression
+chart = create_vega_chart(
+    spec='{"mark": "bar", "encoding": {...}}',
+    data_attachments=[
+        jq_query(raw_data_attachment, '.[] | select(.value > 10)')
+    ]
+)
+chart
+```
+
+```starlark
+# Multi-step data pipeline
+# 1. Query and filter data
+filtered_data = jq_query(
+    source_attachment,
+    '.items[] | select(.category == "temperature")'
+)
+
+# 2. Transform the filtered data
+transformed = jq_query(
+    filtered_data,
+    'map({date: .timestamp, value: .reading})'
+)
+
+# 3. Create visualization
+chart = create_vega_chart(
+    spec='{"mark": "line", ...}',
+    data_attachments=[transformed]
+)
+
+chart  # Final chart is sent to assistant
+```
+
+#### Practical Examples
+
+##### Example 1: Generate CSV Report
+
+```starlark
+# Query notes and generate CSV report
+def create_task_report():
+    result_str = search_notes(query="TODO")
+    notes = json_decode(result_str) if result_str else []
+
+    if len(notes) == 0:
+        return "No tasks found"
+
+    # Build CSV content
+    csv = "title,created,status\n"
+    for note in notes:
+        csv += note["title"] + ","
+        csv += note.get("created_at", "unknown") + ","
+        csv += "pending\n"
+
+    # Create attachment
+    report = attachment_create(
+        content=csv,
+        filename="tasks.csv",
+        description="Task report with " + str(len(notes)) + " items",
+        mime_type="text/csv"
+    )
+
+    return report
+
+create_task_report()
+```
+
+##### Example 2: Data Visualization Pipeline
+
+```starlark
+# Fetch data, transform it, and create a chart
+def visualize_temperature_trend(days=7):
+    # Get calendar events (example data source)
+    events_str = get_calendar_events(days_ahead=days)
+    events = json_decode(events_str) if events_str else []
+
+    # Transform to JSON array for chart
+    data = []
+    for event in events:
+        if "temp" in event.get("summary", "").lower():
+            data.append({
+                "date": event["start"],
+                "temperature": 72  # Would extract from event
+            })
+
+    # Create data attachment
+    data_json = json_encode(data)
+    data_file = attachment_create(
+        content=data_json,
+        filename="temp_data.json",
+        description="Temperature data for past " + str(days) + " days",
+        mime_type="application/json"
+    )
+
+    # Create chart from data
+    chart_spec = json_encode({
+        "mark": "line",
+        "encoding": {
+            "x": {"field": "date", "type": "temporal"},
+            "y": {"field": "temperature", "type": "quantitative"}
+        }
+    })
+
+    chart = create_vega_chart(
+        spec=chart_spec,
+        data_attachments=[data_file]
+    )
+
+    # Return chart (data_file not returned, chart includes it)
+    return chart
+
+visualize_temperature_trend(7)
+```
+
+##### Example 3: Multiple Related Files
+
+```starlark
+# Generate multiple related reports
+def generate_weekly_reports():
+    # Create summary
+    summary = attachment_create(
+        content="Weekly Summary\nTotal events: 42\nCompleted: 38",
+        filename="summary.txt",
+        mime_type="text/plain"
+    )
+
+    # Create detailed CSV
+    csv_content = "day,events,completed\nMon,10,9\nTue,8,8\n..."
+    details = attachment_create(
+        content=csv_content,
+        filename="details.csv",
+        mime_type="text/csv"
+    )
+
+    # Return both files
+    return [summary, details]
+
+generate_weekly_reports()
+```
+
+##### Example 4: Tool Attachment Passthrough
+
+```starlark
+# Use attachment IDs to pass between tools
+def analyze_and_chart(query):
+    # Get data from one tool
+    data_result = jq_query(source_data, query)
+
+    # data_result is a dict with attachment info
+    print("Filtered data: " + data_result["filename"])
+
+    # Pass the attachment to chart tool using the data dict directly
+    # The tool will extract the ID automatically
+    chart = create_vega_chart(
+        spec=chart_spec,
+        data_attachments=[data_result]  # Pass the whole dict
+    )
+
+    return chart
+
+analyze_and_chart('.[] | select(.value > 100)')
+```
+
+#### Best Practices
+
+1. **Always provide descriptive filenames**: Use meaningful names like "temperature_report.csv"
+   instead of "data.csv"
+
+2. **Set appropriate MIME types**: This helps tools and the assistant handle attachments correctly
+
+3. **Use functional composition**: When possible, chain tools together rather than creating
+   intermediate attachments
+
+4. **Return attachments as the last expression**: The last expression in your script is what gets
+   sent to the assistant
+
+5. **Access fields safely**: Use `.get()` when working with tool results:
+   `result.get("attachments", [])`
+
+#### Important Notes
+
+- **Automatic propagation**: Any attachment dict returned from your script (as the final expression)
+  is automatically sent to the assistant with the correct metadata
+- **Nested lists**: You can return `[[att1, att2], att3]` - all attachments are extracted
+  automatically
+- **Tool compatibility**: Tools that accept attachment IDs can receive attachment dicts directly -
+  they'll extract the ID automatically
+- **Storage**: Attachments are stored and tracked - the assistant can reference them in future
+  messages
+- **Size limits**: Check your configuration for attachment size limits (typically 100MB max)
+
 ### JSON Functions
 
 ```starlark

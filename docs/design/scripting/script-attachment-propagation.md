@@ -1,6 +1,7 @@
 # Script Attachment Propagation Design
 
-**Status**: Proposed **Date**: 2025-11-01 **Author**: Claude (via GitHub Issue)
+**Status**: Implemented with modifications **Date**: 2025-11-01 **Author**: Claude (via GitHub
+Issue) **Updated**: 2025-11-01
 
 ## Summary
 
@@ -342,6 +343,146 @@ def make_tool_wrapper(
 **Note**: This is just a type annotation update. The wrapper still calls `tools_api.execute()` which
 now returns proper types.
 
+## Implementation Challenges and Alternatives
+
+### Challenge: Starlark JSON Serialization Constraint
+
+During implementation, we discovered a **critical constraint** with starlark-pyo3: it uses JSON as
+an intermediate format for serialization between Python and Starlark.
+
+**From starlark-pyo3 documentation:**
+
+> "To convert values between starlark and Python, JSON is currently being used as an intermediate
+> format"
+
+**Implication**: Only JSON-serializable Python types can cross the Python↔Starlark boundary:
+
+- ✅ Strings, numbers, booleans, None
+- ✅ Lists and dicts with JSON-serializable contents
+- ❌ Custom Python objects (like `ScriptAttachment`, `ScriptToolResult`)
+
+**Error encountered** when returning `ScriptAttachment` objects:
+
+```python
+TypeError: Object of type ScriptAttachment is not JSON serializable
+```
+
+This error occurs **inside starlark-pyo3** when it tries to serialize the script's return value, not
+in our display code. There's no way to provide a custom JSON encoder for this process.
+
+### Alternatives Explored
+
+#### Option 1: Make dataclasses JSON-serializable (Rejected)
+
+**Approach**: Add `.to_dict()` methods or use libraries like `dataclasses-json`/`pydantic`
+
+**Why rejected:**
+
+- We don't control starlark-pyo3's internal JSON serialization
+- Would require scripts to manually call `.to_dict()` before returning
+- Error-prone for script authors (easy to forget)
+- Doesn't solve the fundamental starlark-pyo3 constraint
+
+**Example of error-prone pattern:**
+
+```starlark
+# Easy to forget .to_dict()
+att = attachment_create(...)
+att  # ERROR: not JSON serializable
+
+# Must remember:
+att.to_dict()  # Works, but error-prone
+```
+
+#### Option 2: Return plain UUID strings (Rejected)
+
+**Approach**: Return just the attachment UUID as a string
+
+**Why rejected:**
+
+- Loses all metadata (filename, mime_type, size, description)
+- Poor developer UX - scripts can't access attachment info
+- Makes functional composition awkward
+- Harder for LLM to understand what was created
+
+**Example of poor UX:**
+
+```starlark
+# What is this? Can't tell without fetching metadata
+att = attachment_create(...)  # Returns "550e8400-..."
+print(att)  # Just a UUID string, no context
+
+# Can't access filename, mime_type, etc.
+```
+
+#### Option 3: Dict-based API (Chosen)
+
+**Approach**: Return dictionaries with structured metadata fields
+
+**Why chosen:**
+
+- ✅ **JSON-serializable**: Works seamlessly with starlark-pyo3
+- ✅ **Good UX**: Scripts can access fields like `att["filename"]`, `att["mime_type"]`
+- ✅ **Functional composition**: Pass dicts directly to other tools
+- ✅ **Clear structure**: LLM can see what was created
+- ✅ **Type safety where possible**: Keep typed classes for internal Python code
+
+**Implementation pattern:**
+
+```starlark
+# Returns dict with full metadata
+att = attachment_create(
+    content="data",
+    filename="chart.png",
+    mime_type="image/png"
+)
+
+# att = {"id": "550e...", "filename": "chart.png", "mime_type": "image/png", ...}
+
+# Can access fields
+print("Created: " + att["filename"])
+
+# Pass to other tools directly
+chart = create_vega_chart(
+    spec=spec,
+    data_attachments=[att]  # Tools extract ID automatically
+)
+```
+
+### Final Architecture: Hybrid Approach
+
+**At Starlark boundary** (what scripts see):
+
+- `attachment_create()` returns: `dict[str, Any]` with
+  `{"id", "filename", "mime_type", "size", "description"}`
+- Tools return: `str | dict[str, Any]` (either text or attachment dict/multi-attachment dict)
+
+**Internally** (Python code):
+
+- Keep `ScriptAttachment` class for type safety and IDE support
+- Keep `ScriptToolResult` class for documentation clarity
+- Use these types for internal Python code that doesn't cross Starlark boundary
+
+**Extraction** (execute_script.py):
+
+- Extract IDs from dicts with `"id"` field
+- Handle both legacy formats and new dict format
+- Build `ToolResult` with proper `ToolAttachment` objects
+
+**Benefits of hybrid approach:**
+
+1. **Works around starlark-pyo3 constraints**: Dicts are JSON-serializable
+2. **Maintains type safety**: Internal Python code uses typed classes
+3. **Good script UX**: Structured dicts with clear fields
+4. **Backward compatible**: Can still extract from various formats
+5. **Documentation clarity**: Design docs can describe ideal types, implementation uses dicts
+
+**Trade-offs accepted:**
+
+- Can't use Python type hints in starlark (Starlark doesn't have type hints anyway)
+- Dict fields accessed via strings (`att["id"]`) instead of attributes (`att.id`)
+- ast-grep requires exemptions for `dict[str, Any]` at Starlark boundary (justified by constraint)
+
 #### 5. Update execute_script_tool Return Type
 
 **Location**: `src/family_assistant/tools/execute_script.py:25-140`
@@ -519,12 +660,12 @@ def _is_valid_uuid(value: str) -> bool:
         return False
 ```
 
-## Script Usage Examples
+## Script Usage Examples (As Implemented)
 
 ### Example 1: Simple Attachment Creation
 
 ```starlark
-# Create attachment - returns ScriptAttachment
+# Create attachment - returns dict with metadata
 chart = attachment_create(
     content=chart_data,
     filename="sales_chart.png",
@@ -532,51 +673,64 @@ chart = attachment_create(
     mime_type="image/png"
 )
 
+# chart = {"id": "550e...", "filename": "sales_chart.png", "mime_type": "image/png", ...}
+
 # Return it to make it visible to LLM
-return chart
+chart  # Last expression is returned
 ```
 
 **Result**:
 
 ```python
 ToolResult(
-    text="Script result: <ScriptAttachment object>",
-    attachments=[ToolAttachment(attachment_id=chart.get_id())]
+    text="Script result: Attachment(id=550e..., mime_type=image/png, size=1024 bytes)",
+    attachments=[ToolAttachment(mime_type="image/png", attachment_id="550e...")]
 )
 ```
 
 ### Example 2: Tool Call Returns Attachment
 
 ```starlark
-# Tool returns ScriptAttachment
+# Tool returns dict with attachment info
 chart = create_vega_chart(
-    spec={"mark": "bar", ...},
-    data=sales_data
+    spec='{"mark": "bar", ...}',
+    data_attachments=[sales_data]
 )
 
+# chart = {"id": "...", "filename": "chart.png", "mime_type": "image/png", ...}
+
+# Access fields
+print("Created: " + chart["filename"])
+
 # Return it
-return chart
+chart
 ```
 
 ### Example 3: Functional Composition (Target Use Case)
 
 ```starlark
-# Compose tools naturally
-return highlight_image(
-    image=create_vega_chart(
-        spec=vega_spec,
-        data=jq(".[].revenue", input_attachment)
-    ),
+# Compose tools naturally - dicts pass through seamlessly
+chart = create_vega_chart(
+    spec=vega_spec,
+    data_attachments=[jq_query(input_attachment, ".[].revenue")]
+)
+
+# Highlight the chart (accepts dict, extracts ID automatically)
+highlighted = highlight_image(
+    image=chart,
     regions=[{"x": 10, "y": 20, "width": 100, "height": 50}]
 )
+
+highlighted  # Return final result
 ```
 
 **This works because**:
 
-- `jq()` processes input attachment
-- `create_vega_chart()` returns `ScriptAttachment`
-- `highlight_image()` accepts `ScriptAttachment` as parameter
-- Final result is `ScriptAttachment` that gets propagated
+- `jq_query()` processes input attachment and returns dict
+- `create_vega_chart()` accepts dict in `data_attachments`, extracts ID
+- `create_vega_chart()` returns dict with new attachment
+- `highlight_image()` accepts dict as `image` parameter, extracts ID
+- Final result is dict that gets propagated with correct metadata
 
 ### Example 4: Multiple Attachments
 
@@ -586,42 +740,48 @@ sales_chart = create_chart(data=sales, type="bar")
 revenue_chart = create_chart(data=revenue, type="line")
 growth_chart = create_chart(data=growth, type="area")
 
+# All are dicts: {"id": "...", "filename": "...", ...}
+
 # Return list to show all
-return [sales_chart, revenue_chart, growth_chart]
+[sales_chart, revenue_chart, growth_chart]
 ```
 
 **Result**:
 
 ```python
 ToolResult(
-    text="Script result: [<ScriptAttachment>, <ScriptAttachment>, <ScriptAttachment>]",
+    text="Script result: [multiple attachments listed]",
     attachments=[
-        ToolAttachment(attachment_id=sales_chart.get_id()),
-        ToolAttachment(attachment_id=revenue_chart.get_id()),
-        ToolAttachment(attachment_id=growth_chart.get_id())
+        ToolAttachment(mime_type="image/png", attachment_id=sales_chart["id"]),
+        ToolAttachment(mime_type="image/png", attachment_id=revenue_chart["id"]),
+        ToolAttachment(mime_type="image/png", attachment_id=growth_chart["id"])
     ]
 )
 ```
 
-### Example 5: Tool Result with Text
+### Example 5: Tool Result with Text and Attachments
 
 ```starlark
-# Tool returns ScriptToolResult with text + attachments
+# Tool returns dict with text + attachments
 result = analyze_and_visualize(data=sales_data)
 
-# result.text = "Analysis: Sales up 25%"
-# result.attachments = [chart_attachment]
+# result = {"text": "Analysis: Sales up 25%", "attachments": [{...}, {...}]}
 
-# Return the whole result
-return result
+# Access fields
+print(result["text"])
+for att in result["attachments"]:
+    print("- " + att["filename"])
+
+# Return the whole result (all attachments extracted)
+result
 ```
 
 **Result**:
 
 ```python
 ToolResult(
-    text="Script result:\n{...json representation...}",
-    attachments=[ToolAttachment(attachment_id=chart.get_id())]
+    text="Script result: [dict with text and attachments]",
+    attachments=[ToolAttachment(...), ToolAttachment(...)]  # All extracted
 )
 ```
 
@@ -633,22 +793,38 @@ raw_data = attachment_create(content=raw, filename="raw.json")
 intermediate = attachment_create(content=processed, filename="intermediate.json")
 final_chart = create_chart(data=processed)
 
-# Only return final result
-return final_chart
+# All are dicts, but only return final
+final_chart  # Only this is visible to LLM
 
 # raw_data and intermediate are NOT visible to LLM (not returned)
 # They exist in the database but won't be propagated
 ```
 
-### Example 7: Backward Compatibility (UUID Strings)
+### Example 7: Accessing Attachment Metadata
 
 ```starlark
-# Old-style: return UUID string (still works)
-chart_id = str(create_chart(data=sales).get_id())
-return chart_id  # String UUID
-```
+# Create attachment
+data_file = attachment_create(
+    content="Temperature readings: 72, 75, 73",
+    filename="temp_data.txt",
+    description="Temperature sensor data",
+    mime_type="text/plain"
+)
 
-**Still supported** for backward compatibility, but discouraged.
+# Access metadata fields
+print("Created: " + data_file["filename"])
+print("Type: " + data_file["mime_type"])
+print("Size: " + str(data_file["size"]) + " bytes")
+print("ID: " + data_file["id"])
+
+# Pass to tool
+chart = create_chart(data_source=data_file["id"])
+
+# Or pass whole dict (tool extracts ID)
+chart = create_chart(data_source=data_file)
+
+chart
+```
 
 ## Testing Plan
 
