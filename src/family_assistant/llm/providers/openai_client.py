@@ -74,6 +74,25 @@ class OpenAIClient(BaseLLMClient):
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> dict[str, Any]:
         """Create user message with attachment for OpenAI"""
+        # Handle JSON/text attachments using base class logic first
+        if (
+            attachment.content
+            and attachment.mime_type
+            and (
+                attachment.mime_type in {"application/json", "text/csv"}
+                or attachment.mime_type.startswith("text/")
+            )
+        ):
+            # Delegate to base class for intelligent JSON/text handling
+            base_message = super()._create_attachment_injection(attachment)
+            # Convert base class format {"role": "user", "content": "..."}
+            # to OpenAI format {"role": "user", "content": [{"type": "text", "text": "..."}]}
+            return {
+                "role": "user",
+                "content": [{"type": "text", "text": base_message["content"]}],
+            }
+
+        # Handle multimodal content (images) with provider-specific format
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         content: list[dict[str, Any]] = [
             {"type": "text", "text": "[System: File from previous tool response]"}
