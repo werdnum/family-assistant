@@ -59,7 +59,8 @@ async def test_execute_script_return_single_attachment(
 attachment = attachment_create(
     content="Test data for chart",
     filename="test_data.txt",
-    description="Test data"
+    description="Test data",
+    mime_type="text/plain"
 )
 attachment
 """,
@@ -69,7 +70,7 @@ attachment
         assert isinstance(result, ToolResult)
         assert result.attachments is not None
         assert len(result.attachments) == 1
-        assert result.attachments[0].mime_type == "application/octet-stream"
+        assert result.attachments[0].mime_type == "text/plain"
         assert result.attachments[0].attachment_id is not None
 
 
@@ -99,12 +100,14 @@ async def test_execute_script_return_multiple_attachments_list(
 att1 = attachment_create(
     content="First chart data",
     filename="chart1.txt",
-    description="First chart"
+    description="First chart",
+    mime_type="text/plain"
 )
 att2 = attachment_create(
     content="Second chart data",
     filename="chart2.txt",
-    description="Second chart"
+    description="Second chart",
+    mime_type="text/plain"
 )
 [att1, att2]
 """,
@@ -115,6 +118,7 @@ att2 = attachment_create(
         assert result.attachments is not None
         assert len(result.attachments) == 2
         assert all(att.attachment_id is not None for att in result.attachments)
+        assert all(att.mime_type == "text/plain" for att in result.attachments)
 
 
 @pytest.mark.asyncio
@@ -411,7 +415,8 @@ async def test_execute_script_mixed_attachment_sources(
 data_file = attachment_create(
     content="Raw data: 1,2,3,4,5",
     filename="data.csv",
-    description="Dataset"
+    description="Dataset",
+    mime_type="text/plain"
 )
 
 # Generate a report using a tool
@@ -429,7 +434,7 @@ report = generate_report(title="Monthly Analysis")
 
         # Find attachments by mime type
         mime_types = {att.mime_type for att in result.attachments}
-        assert "application/octet-stream" in mime_types  # from attachment_create
+        assert "text/plain" in mime_types  # from attachment_create
         assert "application/pdf" in mime_types  # from generate_report
 
 
@@ -456,9 +461,9 @@ async def test_execute_script_nested_list_attachments(
         result = await execute_script_tool(
             ctx,
             """
-att1 = attachment_create(content="Data 1", filename="d1.txt")
-att2 = attachment_create(content="Data 2", filename="d2.txt")
-att3 = attachment_create(content="Data 3", filename="d3.txt")
+att1 = attachment_create(content="Data 1", filename="d1.txt", mime_type="text/plain")
+att2 = attachment_create(content="Data 2", filename="d2.txt", mime_type="text/plain")
+att3 = attachment_create(content="Data 3", filename="d3.txt", mime_type="text/plain")
 
 # Return nested list structure
 [[att1, att2], att3]
