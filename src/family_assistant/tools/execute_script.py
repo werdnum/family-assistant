@@ -40,8 +40,14 @@ def _extract_ids_from_list(items: list[Any]) -> list[str]:  # noqa: ANN401
     ids = []
     for item in items:
         if isinstance(item, ScriptAttachment):
+            # Legacy: ScriptAttachment object (keeping for backwards compatibility)
             ids.append(item.get_id())
+        elif isinstance(item, dict) and "id" in item:
+            # New: Attachment dict from attachment_create() or tools
+            if _is_valid_uuid(item["id"]):
+                ids.append(item["id"])
         elif isinstance(item, str) and _is_valid_uuid(item):
+            # Legacy: UUID string
             ids.append(item)
         elif isinstance(item, list):
             # Recursively extract from nested lists
@@ -51,7 +57,7 @@ def _extract_ids_from_list(items: list[Any]) -> list[str]:  # noqa: ANN401
             and "attachments" in item
             and isinstance(item["attachments"], list)
         ):
-            # Handle dicts with attachments field (from tools that return dicts)
+            # Handle dicts with attachments field (from tools that return multiple attachments)
             ids.extend(_extract_ids_from_list(item["attachments"]))
     return ids
 
@@ -63,7 +69,8 @@ def _extract_attachment_ids_from_result(result: Any) -> list[str]:  # noqa: ANN4
     Supports:
     - ScriptAttachment object
     - ScriptToolResult object
-    - List of ScriptAttachments
+    - List of ScriptAttachments or dicts with "id" field
+    - Dict with "id" field (from attachment_create())
     - UUID strings (backward compatibility)
     - Dicts with attachments/attachment_ids keys (backward compatibility)
 
@@ -88,6 +95,11 @@ def _extract_attachment_ids_from_result(result: Any) -> list[str]:  # noqa: ANN4
     # Dict with attachments (backward compatibility)
     if isinstance(result, dict):
         ids = []
+
+        # Check if this dict itself is an attachment (has "id" field with valid UUID)
+        if "id" in result and _is_valid_uuid(result["id"]):
+            ids.append(result["id"])
+
         # Check for attachments key
         if "attachments" in result and isinstance(result["attachments"], list):
             ids.extend(_extract_ids_from_list(result["attachments"]))
@@ -179,12 +191,44 @@ async def execute_script_tool(
         # Format the response
         response_parts = []
 
-        # Add the script result
+        # Add the script result (but skip if it's just an attachment dict being propagated)
         if result is None:
             response_parts.append("Script executed successfully with no return value.")
+        elif isinstance(result, ScriptAttachment):
+            # Legacy: ScriptAttachment - show metadata
+            response_parts.append(
+                f"Script result: Attachment(id={result.get_id()}, "
+                f"mime_type={result.get_mime_type()}, size={result.get_size()})"
+            )
+        elif isinstance(result, ScriptToolResult):
+            # Legacy: ScriptToolResult - show text and attachment count
+            text_preview = (
+                result.text[:100] + "..."
+                if result.text and len(result.text) > 100
+                else result.text
+            )
+            att_count = len(result.get_attachments())
+            response_parts.append(
+                f"Script result: ToolResult(text={text_preview!r}, {att_count} attachment(s))"
+            )
+        elif (
+            isinstance(result, dict)
+            and "id" in result
+            and _is_valid_uuid(result.get("id", ""))
+        ):
+            # Attachment dict - show summary
+            response_parts.append(
+                f"Script result: Attachment(id={result['id']}, "
+                f"mime_type={result.get('mime_type', 'unknown')}, "
+                f"size={result.get('size', 0)} bytes)"
+            )
         elif isinstance(result, dict | list):
             # Pretty-print JSON-serializable structures
-            response_parts.append(f"Script result:\n{json.dumps(result, indent=2)}")
+            try:
+                response_parts.append(f"Script result:\n{json.dumps(result, indent=2)}")
+            except TypeError:
+                # Contains non-serializable objects, show string representation
+                response_parts.append(f"Script result: {result}")
         else:
             # Convert other types to string
             response_parts.append(f"Script result: {result}")
