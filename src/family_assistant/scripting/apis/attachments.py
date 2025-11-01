@@ -198,6 +198,22 @@ class ScriptAttachment:
         """Developer representation of the attachment."""
         return self.__str__()
 
+    # Make this object Starlark-compatible by providing dict-like access
+    def __getitem__(self, key: str) -> Any:  # noqa: ANN401
+        """Allow dict-like access for Starlark compatibility."""
+        dict_repr = {
+            "id": self.get_id(),
+            "mime_type": self.get_mime_type(),
+            "description": self.get_description(),
+            "size": self.get_size(),
+            "filename": self.get_filename(),
+        }
+        return dict_repr[key]
+
+    def keys(self) -> list[str]:
+        """Return dict keys for Starlark compatibility."""
+        return ["id", "mime_type", "description", "size", "filename"]
+
 
 class AttachmentAPI:
     """API for attachment operations in Starlark scripts."""
@@ -405,7 +421,7 @@ class AttachmentAPI:
         filename: str,
         description: str = "",
         mime_type: str = "application/octet-stream",
-    ) -> ScriptAttachment:
+    ) -> str:
         """
         Create a new attachment from script-generated content.
 
@@ -416,7 +432,7 @@ class AttachmentAPI:
             mime_type: MIME type of the content (default: application/octet-stream)
 
         Returns:
-            ScriptAttachment object (not UUID string)
+            UUID string of the created attachment (for Starlark compatibility)
 
         Raises:
             ValueError: If content validation fails or storage fails
@@ -435,12 +451,9 @@ class AttachmentAPI:
                     self._create_async(content, filename, description, mime_type)
                 )
 
-            # Return ScriptAttachment instead of UUID string
-            return ScriptAttachment(
-                metadata=attachment_metadata,
-                registry=self.attachment_registry,
-                db_context_getter=lambda: DatabaseContext(engine=self.db_engine),
-            )
+            # Return UUID string for Starlark compatibility
+            # (Starlark can't serialize custom Python objects like ScriptAttachment)
+            return attachment_metadata.attachment_id
 
         except Exception as e:
             logger.error(f"Error creating attachment: {e}")

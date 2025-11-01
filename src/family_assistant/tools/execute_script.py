@@ -36,13 +36,23 @@ def _is_valid_uuid(value: str) -> bool:
 
 
 def _extract_ids_from_list(items: list[Any]) -> list[str]:  # noqa: ANN401
-    """Extract attachment IDs from a list of items."""
+    """Extract attachment IDs from a list of items (recursively handles nested lists)."""
     ids = []
     for item in items:
         if isinstance(item, ScriptAttachment):
             ids.append(item.get_id())
         elif isinstance(item, str) and _is_valid_uuid(item):
-            ids.append(item)  # Backward compatibility
+            ids.append(item)
+        elif isinstance(item, list):
+            # Recursively extract from nested lists
+            ids.extend(_extract_ids_from_list(item))
+        elif (
+            isinstance(item, dict)
+            and "attachments" in item
+            and isinstance(item["attachments"], list)
+        ):
+            # Handle dicts with attachments field (from tools that return dicts)
+            ids.extend(_extract_ids_from_list(item["attachments"]))
     return ids
 
 
@@ -196,14 +206,32 @@ async def execute_script_tool(
         # Build ToolResult with attachments
         attachments = None
         if attachment_ids:
-            # For attachment references (ID only), mime_type is a placeholder
-            attachments = [
-                ToolAttachment(
-                    mime_type="application/octet-stream",  # Placeholder for references
-                    attachment_id=aid,
+            # Fetch actual metadata for each attachment to get correct mime_type
+            attachments = []
+            for aid in attachment_ids:
+                mime_type = "application/octet-stream"  # Default fallback
+
+                # Try to fetch actual metadata if we have attachment_registry
+                if exec_context.attachment_registry and exec_context.db_context:
+                    try:
+                        metadata = (
+                            await exec_context.attachment_registry.get_attachment(
+                                exec_context.db_context, aid
+                            )
+                        )
+                        if metadata:
+                            mime_type = metadata.mime_type
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to fetch metadata for attachment {aid}: {e}"
+                        )
+
+                attachments.append(
+                    ToolAttachment(
+                        mime_type=mime_type,
+                        attachment_id=aid,
+                    )
                 )
-                for aid in attachment_ids
-            ]
 
         # Prepare data field (typed as dict or list or None)
         # ast-grep-ignore: no-dict-any - Script results can be arbitrary structures
