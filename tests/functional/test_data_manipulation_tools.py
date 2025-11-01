@@ -126,12 +126,19 @@ class TestJqQueryTool:
                 exec_context, attachment_id=attachment_id, jq_program=".items"
             )
 
-            assert result.text is not None
-            assert "Query result:" in result.text
-            # Should contain the items array
-            assert "Alice" in result.text
-            assert "Bob" in result.text
-            assert "Charlie" in result.text
+            # Check structured data (returned directly for scripts)
+            assert result.data is not None
+            assert isinstance(result.data, list)
+            assert len(result.data) == 3
+            assert result.data[0]["name"] == "Alice"  # type: ignore[index,call-overload]
+            assert result.data[1]["name"] == "Bob"  # type: ignore[index,call-overload]
+            assert result.data[2]["name"] == "Charlie"  # type: ignore[index,call-overload]
+
+            # Check text representation (auto-generated for LLM)
+            text = result.get_text()
+            assert "Alice" in text
+            assert "Bob" in text
+            assert "Charlie" in text
 
     async def test_jq_query_count(
         self,
@@ -160,9 +167,12 @@ class TestJqQueryTool:
                 exec_context, attachment_id=attachment_id, jq_program=".items | length"
             )
 
-            assert result.text is not None
-            assert "Query result:" in result.text
-            assert "3" in result.text
+            # Check structured data (single value unwrapped)
+            assert result.data == 3
+
+            # Check text representation
+            text = result.get_text()
+            assert "3" in text
 
     async def test_jq_query_first_item(
         self,
@@ -191,11 +201,17 @@ class TestJqQueryTool:
                 exec_context, attachment_id=attachment_id, jq_program=".items[0]"
             )
 
-            assert result.text is not None
-            assert "Alice" in result.text
-            assert "New York" in result.text
-            # Should not contain other items
-            assert "Bob" not in result.text
+            # Check structured data (single item unwrapped)
+            assert result.data is not None
+            assert isinstance(result.data, dict)
+            assert result.data["name"] == "Alice"  # type: ignore[call-overload]
+            assert result.data["city"] == "New York"  # type: ignore[call-overload]
+
+            # Check text representation
+            text = result.get_text()
+            assert "Alice" in text
+            assert "New York" in text
+            assert "Bob" not in text
 
     async def test_jq_query_map_field(
         self,
@@ -226,13 +242,16 @@ class TestJqQueryTool:
                 jq_program=".items | map(.name)",
             )
 
-            assert result.text is not None
-            assert "Alice" in result.text
-            assert "Bob" in result.text
-            assert "Charlie" in result.text
-            # Should be an array
-            assert "[" in result.text
-            assert "]" in result.text
+            # Check structured data (list of names)
+            assert result.data is not None
+            assert isinstance(result.data, list)
+            assert result.data == ["Alice", "Bob", "Charlie"]
+
+            # Check text representation
+            text = result.get_text()
+            assert "Alice" in text
+            assert "Bob" in text
+            assert "Charlie" in text
 
     async def test_jq_query_date_range(
         self,
@@ -263,9 +282,15 @@ class TestJqQueryTool:
                 jq_program="[.items[0].id, .items[-1].id]",
             )
 
-            assert result.text is not None
-            assert "1" in result.text  # First ID
-            assert "3" in result.text  # Last ID
+            # Check structured data (list of IDs)
+            assert result.data is not None
+            assert isinstance(result.data, list)
+            assert result.data == [1, 3]
+
+            # Check text representation
+            text = result.get_text()
+            assert "1" in text
+            assert "3" in text
 
     async def test_jq_query_invalid_program(
         self,
