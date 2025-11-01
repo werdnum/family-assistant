@@ -44,6 +44,10 @@ from family_assistant.tools.confirmation import (
     render_delete_calendar_event_confirmation,
     render_modify_calendar_event_confirmation,
 )
+from family_assistant.tools.data_manipulation import (
+    DATA_MANIPULATION_TOOLS_DEFINITION,
+    jq_query_tool,
+)
 from family_assistant.tools.data_visualization import (
     DATA_VISUALIZATION_TOOLS_DEFINITION,
     create_vega_chart_tool,
@@ -193,6 +197,8 @@ __all__ = [
     "download_state_history_tool",
     "DATA_VISUALIZATION_TOOLS_DEFINITION",
     "create_vega_chart_tool",
+    "DATA_MANIPULATION_TOOLS_DEFINITION",
+    "jq_query_tool",
 ]
 
 
@@ -264,6 +270,8 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "transform_image": transform_image_tool,
     # Data visualization tools
     "create_vega_chart": create_vega_chart_tool,
+    # Data manipulation tools
+    "jq_query": jq_query_tool,
     # Automation tools (unified event + schedule)
     "create_automation": create_automation_tool,
     "list_automations": list_automations_tool,
@@ -293,5 +301,6 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
     + IMAGE_TOOLS_DEFINITION
     + IMAGE_GENERATION_TOOLS_DEFINITION
     + DATA_VISUALIZATION_TOOLS_DEFINITION
+    + DATA_MANIPULATION_TOOLS_DEFINITION
     + MOCK_IMAGE_TOOLS_DEFINITION
 )

@@ -258,6 +258,7 @@ service_profiles:
     tools_config:
       enable_local_tools:
         - "create_vega_chart"
+        - "jq_query"
         - "attach_to_response"
         - "get_attachment_info"
         - "search_documents"
