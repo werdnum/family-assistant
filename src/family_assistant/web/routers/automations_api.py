@@ -376,10 +376,10 @@ async def update_automation(
     automation_id: int,
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     request_body: Annotated[dict[str, Any], Body(...)],
-    conversation_id: Annotated[
-        str, Query(description="Conversation ID for permission check")
-    ],
     db: Annotated[DatabaseContext, Depends(get_db)],
+    conversation_id: Annotated[
+        str | None, Query(description="Conversation ID for permission check")
+    ] = None,
 ) -> AutomationResponse:
     """Update an existing automation."""
     # Validate automation_type
@@ -410,8 +410,8 @@ async def update_automation(
     if not existing:
         raise HTTPException(status_code=404, detail="Automation not found")
 
-    # Verify conversation_id matches for security
-    if existing.conversation_id != conversation_id:
+    # Verify conversation_id matches for security (if provided)
+    if conversation_id is not None and existing.conversation_id != conversation_id:
         raise HTTPException(status_code=403, detail="Access denied")
 
     # Check name uniqueness if name is being changed
@@ -422,7 +422,7 @@ async def update_automation(
     ):
         is_available, error_msg = await db.automations.check_name_available(
             name=cast("str", request.name),
-            conversation_id=conversation_id,
+            conversation_id=existing.conversation_id,  # Use existing conversation_id
             exclude_id=automation_id,
             exclude_type=automation_type,  # type: ignore[arg-type]
         )
