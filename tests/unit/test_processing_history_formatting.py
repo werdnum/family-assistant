@@ -7,11 +7,14 @@ import json
 from collections.abc import AsyncIterator
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, Mock
 
 import pytest
 from PIL import Image
+
+if TYPE_CHECKING:
+    from family_assistant.tools.types import ToolAttachment
 
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -48,6 +51,17 @@ class MockLLMClient:
     ) -> dict[str, Any]:
         # Return a simple dict structure, content not important for these tests
         return {"role": "user", "content": prompt_text or ""}
+
+    def create_attachment_injection(
+        self,
+        attachment: "ToolAttachment",
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    ) -> dict[str, Any]:
+        """Mock implementation - not needed for these tests."""
+        return {
+            "role": "user",
+            "content": "[System: File from previous tool response]",
+        }
 
 
 class MockToolsProvider:

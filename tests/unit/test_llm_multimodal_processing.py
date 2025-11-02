@@ -27,7 +27,7 @@ class TestBaseLLMClient:
             mime_type="image/png", content=b"fake image data", description="Test image"
         )
 
-        result = client._create_attachment_injection(attachment)
+        result = client.create_attachment_injection(attachment)
 
         assert result["role"] == "user"
         assert "Test image" in result["content"]
@@ -129,7 +129,7 @@ class TestGoogleGenAIClient:
                 mime_type="image/png", content=b"fake png data", description="Test PNG"
             )
 
-            result = client._create_attachment_injection(attachment)
+            result = client.create_attachment_injection(attachment)
 
             assert result["role"] == "user"
             assert "parts" in result
@@ -160,7 +160,7 @@ class TestGoogleGenAIClient:
                 description="Test PDF document",
             )
 
-            result = client._create_attachment_injection(attachment)
+            result = client.create_attachment_injection(attachment)
 
             assert result["role"] == "user"
             assert len(result["parts"]) == 2
@@ -190,7 +190,7 @@ class TestGoogleGenAIClient:
                 description="Test ZIP archive",
             )
 
-            result = client._create_attachment_injection(attachment)
+            result = client.create_attachment_injection(attachment)
 
             assert result["role"] == "user"
             assert len(result["parts"]) == 2
@@ -213,7 +213,7 @@ class TestGoogleGenAIClient:
                 description="File reference",
             )
 
-            result = client._create_attachment_injection(attachment)
+            result = client.create_attachment_injection(attachment)
 
             assert result["role"] == "user"
             assert len(result["parts"]) == 2
@@ -239,7 +239,7 @@ class TestOpenAIClient:
             mime_type="image/jpeg", content=b"fake jpeg data", description="Test JPEG"
         )
 
-        result = client._create_attachment_injection(attachment)
+        result = client.create_attachment_injection(attachment)
 
         assert result["role"] == "user"
         assert isinstance(result["content"], list)
@@ -269,7 +269,7 @@ class TestOpenAIClient:
             mime_type="application/pdf", content=fake_data, description="Test document"
         )
 
-        result = client._create_attachment_injection(attachment)
+        result = client.create_attachment_injection(attachment)
 
         assert result["role"] == "user"
         assert len(result["content"]) == 2
@@ -295,7 +295,7 @@ class TestOpenAIClient:
             mime_type="application/zip", content=fake_data, description="Test archive"
         )
 
-        result = client._create_attachment_injection(attachment)
+        result = client.create_attachment_injection(attachment)
 
         assert result["role"] == "user"
         assert len(result["content"]) == 2
@@ -316,7 +316,7 @@ class TestOpenAIClient:
             mime_type="text/plain", file_path="/path/to/file.txt"
         )
 
-        result = client._create_attachment_injection(attachment)
+        result = client.create_attachment_injection(attachment)
 
         assert result["role"] == "user"
         assert len(result["content"]) == 2
@@ -507,7 +507,7 @@ class TestLiteLLMClient:
             attachment_id="test-123",
         )
 
-        result = client._create_attachment_injection(attachment)
+        result = client.create_attachment_injection(attachment)
 
         assert result["role"] == "user"
         content = result["content"]
@@ -549,7 +549,7 @@ class TestLiteLLMClient:
             attachment_id="test-456",
         )
 
-        result = client._create_attachment_injection(attachment)
+        result = client.create_attachment_injection(attachment)
 
         assert result["role"] == "user"
         content = result["content"]
@@ -583,7 +583,7 @@ class TestLiteLLMClient:
             attachment_id="text-123",
         )
 
-        result = client._create_attachment_injection(attachment)
+        result = client.create_attachment_injection(attachment)
 
         assert result["role"] == "user"
         content = result["content"]
@@ -610,7 +610,7 @@ class TestLiteLLMClient:
             attachment_id="text-456",
         )
 
-        result = client._create_attachment_injection(attachment)
+        result = client.create_attachment_injection(attachment)
 
         assert result["role"] == "user"
         content = result["content"]
@@ -641,7 +641,7 @@ class TestLiteLLMClient:
             attachment_id="csv-123",
         )
 
-        result = client._create_attachment_injection(attachment)
+        result = client.create_attachment_injection(attachment)
 
         assert result["role"] == "user"
         content = result["content"]
@@ -667,7 +667,7 @@ class TestLiteLLMClient:
             attachment_id="csv-456",
         )
 
-        result = client._create_attachment_injection(attachment)
+        result = client.create_attachment_injection(attachment)
 
         assert result["role"] == "user"
         content = result["content"]
@@ -693,7 +693,7 @@ class TestLiteLLMClient:
             attachment_id="broken-123",
         )
 
-        result = client._create_attachment_injection(attachment)
+        result = client.create_attachment_injection(attachment)
 
         assert result["role"] == "user"
         content = result["content"]
