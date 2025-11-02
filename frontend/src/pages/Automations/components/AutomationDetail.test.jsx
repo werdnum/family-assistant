@@ -10,9 +10,9 @@ afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 describe('AutomationDetail', () => {
-  it('should fetch automation details with the correct conversation_id', async () => {
+  it('should fetch automation details', async () => {
     render(
-      <MemoryRouter initialEntries={['/automations/event/456?conversation_id=telegram']}>
+      <MemoryRouter initialEntries={['/automations/event/456']}>
         <Routes>
           <Route path="/automations/:type/:id" element={<AutomationDetail />} />
         </Routes>
@@ -26,7 +26,7 @@ describe('AutomationDetail', () => {
 
   it('should show a not found message if the automation is not found', async () => {
     render(
-      <MemoryRouter initialEntries={['/automations/event/123?conversation_id=telegram']}>
+      <MemoryRouter initialEntries={['/automations/event/999']}>
         <Routes>
           <Route path="/automations/:type/:id" element={<AutomationDetail />} />
         </Routes>

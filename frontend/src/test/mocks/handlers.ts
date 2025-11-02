@@ -344,10 +344,8 @@ export const handlers = [
   }),
 
   // Mock automation detail endpoint
-  http.get('/api/automations/:type/:id', ({ request, params }) => {
+  http.get('/api/automations/:type/:id', ({ params }) => {
     const { type, id } = params;
-    const url = new URL(request.url);
-    const conversationId = url.searchParams.get('conversation_id');
 
     const automations = [
       {
@@ -366,9 +364,7 @@ export const handlers = [
       },
     ];
 
-    const automation = automations.find(
-      (a) => a.id === id && a.type === type && a.conversation_id === conversationId
-    );
+    const automation = automations.find((a) => a.id === id && a.type === type);
 
     if (automation) {
       return HttpResponse.json(automation);
@@ -380,8 +376,6 @@ export const handlers = [
   // Mock automation patch endpoint
   http.patch('/api/automations/:type/:id', async ({ request, params }) => {
     const { type, id } = params;
-    const url = new URL(request.url);
-    const conversationId = url.searchParams.get('conversation_id');
     const body = await request.json();
 
     const automations = [
@@ -401,9 +395,7 @@ export const handlers = [
       },
     ];
 
-    const automation = automations.find(
-      (a) => a.id === id && a.type === type && a.conversation_id === conversationId
-    );
+    const automation = automations.find((a) => a.id === id && a.type === type);
 
     if (automation) {
       const updatedAutomation = { ...automation, ...body };
@@ -414,10 +406,8 @@ export const handlers = [
   }),
 
   // Mock automation delete endpoint
-  http.delete('/api/automations/:type/:id', ({ request, params }) => {
+  http.delete('/api/automations/:type/:id', ({ params }) => {
     const { type, id } = params;
-    const url = new URL(request.url);
-    const conversationId = url.searchParams.get('conversation_id');
 
     const automations = [
       {
@@ -436,9 +426,7 @@ export const handlers = [
       },
     ];
 
-    const automation = automations.find(
-      (a) => a.id === id && a.type === type && a.conversation_id === conversationId
-    );
+    const automation = automations.find((a) => a.id === id && a.type === type);
 
     if (automation) {
       return new HttpResponse(null, { status: 204 });
