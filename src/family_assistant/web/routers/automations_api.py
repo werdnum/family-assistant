@@ -377,9 +377,6 @@ async def update_automation(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     request_body: Annotated[dict[str, Any], Body(...)],
     db: Annotated[DatabaseContext, Depends(get_db)],
-    conversation_id: Annotated[
-        str | None, Query(description="Conversation ID for permission check")
-    ] = None,
 ) -> AutomationResponse:
     """Update an existing automation."""
     # Validate automation_type
@@ -401,18 +398,14 @@ async def update_automation(
             detail=f"Invalid request body: {str(e)}",
         ) from e
 
-    # Check if automation exists and belongs to the conversation
+    # Check if automation exists (web UI has access to all automations)
     existing = await db.automations.get_by_id(
         automation_id=automation_id,
         automation_type=automation_type,  # type: ignore[arg-type]
-        conversation_id=conversation_id,
+        conversation_id=None,  # None = fetch from any conversation
     )
     if not existing:
         raise HTTPException(status_code=404, detail="Automation not found")
-
-    # Verify conversation_id matches for security (if provided)
-    if conversation_id is not None and existing.conversation_id != conversation_id:
-        raise HTTPException(status_code=403, detail="Access denied")
 
     # Check name uniqueness if name is being changed
     if (
@@ -569,9 +562,6 @@ async def update_automation_enabled(
 async def delete_automation(
     automation_type: str,
     automation_id: int,
-    conversation_id: Annotated[
-        str, Query(description="Conversation ID for permission check")
-    ],
     db: Annotated[DatabaseContext, Depends(get_db)],
 ) -> dict[str, str]:
     """Delete an automation."""
@@ -582,23 +572,19 @@ async def delete_automation(
             detail="automation_type must be 'event' or 'schedule'",
         )
 
-    # Check if automation exists and belongs to the conversation
+    # Check if automation exists (web UI has access to all automations)
     automation = await db.automations.get_by_id(
         automation_id=automation_id,
         automation_type=automation_type,  # type: ignore[arg-type]
-        conversation_id=conversation_id,
+        conversation_id=None,  # None = fetch from any conversation
     )
     if not automation:
         raise HTTPException(status_code=404, detail="Automation not found")
 
-    # Verify conversation_id matches for security
-    if automation.conversation_id != conversation_id:
-        raise HTTPException(status_code=403, detail="Access denied")
-
     success = await db.automations.delete(
         automation_id=automation_id,
         automation_type=automation_type,  # type: ignore[arg-type]
-        conversation_id=conversation_id,
+        conversation_id=automation.conversation_id,  # Use actual conversation_id for deletion
     )
 
     if not success:
