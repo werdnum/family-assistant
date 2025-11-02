@@ -39,7 +39,7 @@ from .storage.context import DatabaseContext, get_db_context
 
 # Import ToolsProvider interface and context
 from .tools import ToolExecutionContext, ToolNotFoundError, ToolsProvider
-from .tools.types import ToolResult
+from .tools.types import ToolAttachment, ToolResult
 from .utils.clock import Clock, SystemClock
 
 logger = logging.getLogger(__name__)
@@ -1102,6 +1102,115 @@ class ProcessingService:
                 auto_attachment_ids=None,  # No attachments for error cases
             )
 
+    async def _process_attachment_content_parts(
+        self,
+        db_context: DatabaseContext,
+        conversation_id: str,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        content_parts: list[dict[str, Any]],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """
+        Process attachment content parts by fetching and injecting them as user messages.
+
+        This handles {"type": "attachment", "attachment_id": "..."} content parts,
+        which are created when attachments are passed through delegate_to_service.
+        It converts them into proper LLM-visible attachment injections.
+
+        Args:
+            db_context: Database context for attachment queries
+            conversation_id: Current conversation ID for security validation
+            content_parts: List of content parts that may contain attachment references
+
+        Returns:
+            Tuple of (modified_content_parts, injection_messages)
+        """
+        logger.info(
+            f"_process_attachment_content_parts called with {len(content_parts)} parts, "
+            f"attachment_registry={'present' if self.attachment_registry else 'MISSING'}"
+        )
+        if not self.attachment_registry:
+            logger.warning(
+                "Attachment registry not available - skipping attachment content part processing"
+            )
+            return content_parts, []
+
+        modified_parts = []
+        injection_messages = []
+
+        for part in content_parts:
+            logger.debug(f"Processing content part: {part}")
+            if part.get("type") == "attachment":
+                attachment_id = part.get("attachment_id")
+                if not attachment_id:
+                    logger.warning(
+                        "Attachment content part missing attachment_id, skipping"
+                    )
+                    continue
+
+                try:
+                    # Fetch attachment metadata
+                    attachment_metadata = await self.attachment_registry.get_attachment(
+                        db_context, attachment_id
+                    )
+
+                    if not attachment_metadata:
+                        logger.warning(
+                            f"Attachment {attachment_id} not found in registry, skipping"
+                        )
+                        continue
+
+                    # Security: Verify conversation scoping
+                    if attachment_metadata.conversation_id != conversation_id:
+                        logger.error(
+                            f"Security violation: Attachment {attachment_id} from conversation "
+                            f"{attachment_metadata.conversation_id} not accessible from "
+                            f"conversation {conversation_id}"
+                        )
+                        continue
+
+                    # Fetch attachment content
+                    content = await self.attachment_registry.get_attachment_content(
+                        db_context, attachment_id, conversation_id
+                    )
+
+                    if content is None:
+                        logger.warning(
+                            f"Could not retrieve content for attachment {attachment_id}"
+                        )
+                        continue
+
+                    # Create ToolAttachment object
+                    tool_attachment = ToolAttachment(
+                        content=content,
+                        mime_type=attachment_metadata.mime_type,
+                        attachment_id=attachment_id,
+                        description=attachment_metadata.description or "Attachment",
+                    )
+
+                    # Generate injection message using LLM client's logic
+                    # Type ignore: _create_attachment_injection is internal but used for framework-level injection
+                    injection_msg = self.llm_client._create_attachment_injection(  # type: ignore[attr-defined]
+                        tool_attachment
+                    )
+                    injection_messages.append(injection_msg)
+
+                    logger.info(
+                        f"Processed attachment content part {attachment_id} for LLM injection"
+                    )
+
+                except Exception as e:
+                    logger.error(
+                        f"Error processing attachment content part {attachment_id}: {e}",
+                        exc_info=True,
+                    )
+                    continue
+            else:
+                # Not an attachment part, keep as-is
+                modified_parts.append(part)
+
+        return modified_parts, injection_messages
+
     async def _convert_attachment_urls_to_data_uris(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
@@ -1778,9 +1887,20 @@ class ProcessingService:
                     0, {"role": "system", "content": final_system_prompt}
                 )
 
+            # Process attachment content parts from delegation
+            (
+                processed_trigger_parts,
+                attachment_injection_messages,
+            ) = await self._process_attachment_content_parts(
+                db_context, conversation_id, trigger_content_parts
+            )
+
+            # Add attachment injection messages before user message
+            messages_for_llm.extend(attachment_injection_messages)
+
             # Convert attachment URLs to data URIs before sending to LLM
             converted_trigger_parts = await self._convert_attachment_urls_to_data_uris(
-                trigger_content_parts
+                processed_trigger_parts
             )
 
             # Add current user trigger message
@@ -2144,9 +2264,20 @@ class ProcessingService:
                     0, {"role": "system", "content": final_system_prompt}
                 )
 
+            # Process attachment content parts from delegation
+            (
+                processed_trigger_parts,
+                attachment_injection_messages,
+            ) = await self._process_attachment_content_parts(
+                db_context, conversation_id, trigger_content_parts
+            )
+
+            # Add attachment injection messages before user message
+            messages_for_llm.extend(attachment_injection_messages)
+
             # Convert attachment URLs to data URIs before sending to LLM
             converted_trigger_parts = await self._convert_attachment_urls_to_data_uris(
-                trigger_content_parts
+                processed_trigger_parts
             )
 
             # Add inline attachment metadata if there are trigger attachments
