@@ -1189,8 +1189,7 @@ class ProcessingService:
                     )
 
                     # Generate injection message using LLM client's logic
-                    # Type ignore: _create_attachment_injection is internal but used for framework-level injection
-                    injection_msg = self.llm_client._create_attachment_injection(  # type: ignore[attr-defined]
+                    injection_msg = self.llm_client.create_attachment_injection(
                         tool_attachment
                     )
                     injection_messages.append(injection_msg)

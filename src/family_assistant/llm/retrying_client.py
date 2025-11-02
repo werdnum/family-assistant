@@ -9,7 +9,10 @@ This implementation mimics LiteLLM's simple retry strategy:
 
 import logging
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from family_assistant.tools.types import ToolAttachment
 
 from . import LLMInterface, LLMOutput, LLMStreamEvent
 from .base import (
@@ -223,3 +226,11 @@ class RetryingLLMClient:
         return await self.primary_client.format_user_message_with_file(
             prompt_text, file_path, mime_type, max_text_length
         )
+
+    def create_attachment_injection(
+        self,
+        attachment: "ToolAttachment",
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    ) -> dict[str, Any]:
+        """Create attachment injection - delegates to primary client."""
+        return self.primary_client.create_attachment_injection(attachment)
