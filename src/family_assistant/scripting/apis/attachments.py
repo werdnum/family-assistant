@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.storage.context import DatabaseContext
@@ -199,20 +200,25 @@ class ScriptAttachment:
         return self.__str__()
 
     # Make this object Starlark-compatible by providing dict-like access
-    def __getitem__(self, key: str) -> Any:  # noqa: ANN401
-        """Allow dict-like access for Starlark compatibility."""
-        dict_repr = {
+    @cached_property
+    # ast-grep-ignore: no-dict-any - Mixed types for Starlark
+    def _dict_repr(self) -> dict[str, Any]:
+        """Cached dictionary representation for efficient dict-like access."""
+        return {
             "id": self.get_id(),
             "mime_type": self.get_mime_type(),
             "description": self.get_description(),
             "size": self.get_size(),
             "filename": self.get_filename(),
         }
-        return dict_repr[key]
+
+    def __getitem__(self, key: str) -> Any:  # noqa: ANN401
+        """Allow dict-like access for Starlark compatibility."""
+        return self._dict_repr[key]
 
     def keys(self) -> list[str]:
         """Return dict keys for Starlark compatibility."""
-        return ["id", "mime_type", "description", "size", "filename"]
+        return list(self._dict_repr.keys())
 
 
 class AttachmentAPI:

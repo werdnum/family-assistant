@@ -97,8 +97,10 @@ def _extract_attachment_ids_from_result(result: Any) -> list[str]:  # noqa: ANN4
         ids = []
 
         # Check if this dict itself is an attachment (has "id" field with valid UUID)
-        if "id" in result and _is_valid_uuid(result["id"]):
-            ids.append(result["id"])
+        # Safely get the ID and check its type before validation
+        attachment_id = result.get("id")
+        if isinstance(attachment_id, str) and _is_valid_uuid(attachment_id):
+            ids.append(attachment_id)
 
         # Check for attachments key
         if "attachments" in result and isinstance(result["attachments"], list):
