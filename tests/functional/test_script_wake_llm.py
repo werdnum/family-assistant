@@ -796,11 +796,25 @@ async def test_script_tool_result_attachment_to_wake_llm(
                 action_type=EventActionType.script,
                 action_config={
                     "script_code": """
-# Get camera snapshot - returns ToolResult with attachment
+# Get camera snapshot - returns dict with text + attachments
 snapshot_result = get_camera_snapshot()
 
-# Extract attachment_id from the result (dict with text and attachment_id)
-attachment_id = snapshot_result["attachment_id"] if type(snapshot_result) == "dict" else snapshot_result
+# Extract attachment ID from the result dict
+# Tools that return text + attachments return: {"text": "...", "attachments": [{...}, ...]}
+# Tools that return single attachment with no text return: {"id": uuid, "mime_type": ..., ...}
+# Note: Using type() comparison because Starlark doesn't have isinstance()
+if type(snapshot_result) == type({}):
+    if "id" in snapshot_result:
+        # Single attachment, no text
+        attachment_id = snapshot_result["id"]
+    elif "attachments" in snapshot_result and len(snapshot_result["attachments"]) > 0:
+        # Text + attachments - get first attachment
+        attachment_id = snapshot_result["attachments"][0]["id"]
+    else:
+        attachment_id = None
+else:
+    # Fallback for string UUID
+    attachment_id = snapshot_result
 
 # Wake LLM with the snapshot attachment
 wake_llm({
