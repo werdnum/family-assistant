@@ -215,7 +215,7 @@ class RuleBasedMockLLMClient(LLMInterface):
 
         return _stream()
 
-    def _create_attachment_injection(
+    def create_attachment_injection(
         self,
         attachment: "ToolAttachment",
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types

@@ -2,10 +2,13 @@
 
 import base64
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
+
+if TYPE_CHECKING:
+    from family_assistant.tools.types import ToolAttachment
 
 from family_assistant.llm import (
     LLMOutput,
@@ -144,6 +147,17 @@ class MockLLMWithThoughtSignatures:
         """Mock implementation - not needed for these tests."""
         return {"role": "user", "content": prompt_text or ""}
 
+    def create_attachment_injection(
+        self,
+        attachment: "ToolAttachment",
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    ) -> dict[str, Any]:
+        """Mock implementation - not needed for these tests."""
+        return {
+            "role": "user",
+            "content": "[System: File from previous tool response]",
+        }
+
 
 class MockLLMWithThoughtSignaturesNoToolCalls:
     """Mock LLM client that returns thought signatures without tool calls."""
@@ -208,6 +222,17 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
     ) -> dict[str, Any]:
         """Mock implementation - not needed for these tests."""
         return {"role": "user", "content": prompt_text or ""}
+
+    def create_attachment_injection(
+        self,
+        attachment: "ToolAttachment",
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    ) -> dict[str, Any]:
+        """Mock implementation - not needed for these tests."""
+        return {
+            "role": "user",
+            "content": "[System: File from previous tool response]",
+        }
 
 
 @pytest.mark.asyncio

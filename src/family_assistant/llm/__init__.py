@@ -54,7 +54,7 @@ class BaseLLMClient:
         # Default implementation - override in subclasses
         return False
 
-    def _create_attachment_injection(
+    def create_attachment_injection(
         self,
         attachment: "ToolAttachment",
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
@@ -198,7 +198,7 @@ class BaseLLMClient:
             # Inject attachments after tool message if needed
             if pending_attachments and not self._supports_multimodal_tools():
                 for attachment in pending_attachments:
-                    injection_msg = self._create_attachment_injection(attachment)
+                    injection_msg = self.create_attachment_injection(attachment)
                     processed.append(injection_msg)
                 pending_attachments = []
 
@@ -536,6 +536,30 @@ class LLMInterface(Protocol):
         """
         ...
 
+    def create_attachment_injection(
+        self,
+        attachment: "ToolAttachment",
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    ) -> dict[str, Any]:
+        """
+        Create a message to inject attachment content into the conversation.
+
+        This method is used to format attachments so they are visible to the LLM.
+        Implementations should format the attachment appropriately for their
+        specific provider (e.g., Gemini vs OpenAI message formats).
+
+        For JSON/text attachments:
+        - Small files (≤10KiB): Inject full content inline
+        - Large files (>10KiB): Inject schema + metadata for symbolic querying
+
+        Args:
+            attachment: The attachment to inject
+
+        Returns:
+            A dictionary representing a user message with the attachment content
+        """
+        ...
+
 
 class LiteLLMClient(BaseLLMClient):
     """LLM client implementation using the LiteLLM library."""
@@ -649,7 +673,7 @@ class LiteLLMClient(BaseLLMClient):
                         content[0]["text"] += "\n[File content in following message]"
                         # Fall back to base class injection method
                         injection_msgs.append(
-                            self._create_attachment_injection(attachment)
+                            self.create_attachment_injection(attachment)
                         )
                 msg["content"] = content
                 processed.append(msg)

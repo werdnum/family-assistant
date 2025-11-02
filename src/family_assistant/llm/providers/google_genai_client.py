@@ -126,7 +126,7 @@ class GoogleGenAIClient(BaseLLMClient):
         """Gemini doesn't support multimodal tool responses"""
         return False
 
-    def _create_attachment_injection(
+    def create_attachment_injection(
         self,
         attachment: "ToolAttachment",
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
@@ -142,7 +142,7 @@ class GoogleGenAIClient(BaseLLMClient):
             )
         ):
             # Delegate to base class for intelligent JSON/text handling
-            base_message = super()._create_attachment_injection(attachment)
+            base_message = super().create_attachment_injection(attachment)
             # Convert base class format {"role": "user", "content": "..."}
             # to Gemini format {"role": "user", "parts": [{"text": "..."}]}
             return {"role": "user", "parts": [{"text": base_message["content"]}]}
