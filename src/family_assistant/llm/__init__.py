@@ -11,7 +11,7 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass, field  # Added asdict
-from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
 
 import aiofiles  # type: ignore[import-untyped] # For async file operations
 import litellm  # Import litellm
@@ -43,6 +43,31 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+
+# TypedDict definitions for message content structures
+class TextContentPart(TypedDict):
+    """Text content part in a multimodal message"""
+
+    type: Literal["text"]
+    text: str
+
+
+class ImageUrlDict(TypedDict):
+    """Image URL dictionary for image content parts"""
+
+    url: str
+
+
+class ImageContentPart(TypedDict):
+    """Image content part in a multimodal message"""
+
+    type: Literal["image_url"]
+    image_url: ImageUrlDict
+
+
+# Union type for content parts used in attachment injection
+ContentPart = TextContentPart | ImageContentPart
 
 
 class BaseLLMClient:
@@ -462,21 +487,17 @@ class LiteLLMClient(BaseLLMClient):
             return base_message
 
         base_text = str(base_message.get("content", ""))
-        injection_parts: list[dict[str, Any]] = [
-            {"type": "text", "text": base_text}
-        ]
+        injection_parts: list[ContentPart] = [{"type": "text", "text": base_text}]
 
         if attachment.mime_type.startswith("image/"):
             image_b64 = attachment.get_content_as_base64()
             if image_b64:
-                injection_parts.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{attachment.mime_type};base64,{image_b64}"
-                        },
-                    }
-                )
+                injection_parts.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{attachment.mime_type};base64,{image_b64}"
+                    },
+                })
             else:
                 logger.warning(
                     "LiteLLM attachment injection: Unable to encode image attachment. "
@@ -485,29 +506,25 @@ class LiteLLMClient(BaseLLMClient):
         elif attachment.mime_type == "application/pdf":
             size_kb = len(attachment.content) / 1024
             description = attachment.description or "PDF document"
-            injection_parts.append(
-                {
-                    "type": "text",
-                    "text": (
-                        f"[PDF Document: {description} ({size_kb:.1f} KB). "
-                        "Inline PDF previews are not supported via LiteLLM; "
-                        "use the attachment metadata or provide a summary.]"
-                    ),
-                }
-            )
+            injection_parts.append({
+                "type": "text",
+                "text": (
+                    f"[PDF Document: {description} ({size_kb:.1f} KB). "
+                    "Inline PDF previews are not supported via LiteLLM; "
+                    "use the attachment metadata or provide a summary.]"
+                ),
+            })
         else:
             size_kb = len(attachment.content) / 1024
             description = attachment.description or attachment.mime_type
-            injection_parts.append(
-                {
-                    "type": "text",
-                    "text": (
-                        f"[File content available: {description} "
-                        f"({attachment.mime_type}, {size_kb:.1f} KB). "
-                        "Inline preview not supported; refer to attachment metadata.]"
-                    ),
-                }
-            )
+            injection_parts.append({
+                "type": "text",
+                "text": (
+                    f"[File content available: {description} "
+                    f"({attachment.mime_type}, {size_kb:.1f} KB). "
+                    "Inline preview not supported; refer to attachment metadata.]"
+                ),
+            })
 
         return {"role": "user", "content": injection_parts}
 
