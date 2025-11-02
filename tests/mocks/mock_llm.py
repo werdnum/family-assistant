@@ -7,7 +7,10 @@ import json
 import logging
 import os
 from collections.abc import AsyncIterator, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from family_assistant.tools.types import ToolAttachment
 
 from family_assistant.llm import LLMInterface, LLMOutput, LLMStreamEvent
 
@@ -211,6 +214,31 @@ class RuleBasedMockLLMClient(LLMInterface):
             yield LLMStreamEvent(type="done", metadata=response.reasoning_info)
 
         return _stream()
+
+    def _create_attachment_injection(
+        self,
+        attachment: "ToolAttachment",
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    ) -> dict[str, Any]:
+        """
+        Mock implementation of attachment injection for testing.
+        Creates a simple user message with attachment information.
+        """
+        content = "[System: File from previous tool response]\n"
+        if hasattr(attachment, "description") and attachment.description:
+            content += f"[Description: {attachment.description}]\n"
+        if hasattr(attachment, "attachment_id") and attachment.attachment_id:
+            content += f"[Attachment ID: {attachment.attachment_id}]\n"
+        if hasattr(attachment, "mime_type") and attachment.mime_type:
+            content += f"[MIME Type: {attachment.mime_type}]\n"
+        if hasattr(attachment, "content") and attachment.content:
+            content_size = len(attachment.content)
+            content += f"[Size: {content_size} bytes]\n"
+
+        return {
+            "role": "user",
+            "content": content,
+        }
 
     async def format_user_message_with_file(
         self,

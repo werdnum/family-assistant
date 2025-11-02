@@ -875,6 +875,7 @@ async def test_delegate_to_service_with_attachments(
         app_config={},
         context_providers=[],
         server_url=None,
+        attachment_registry=attachment_registry,
     )
 
     specialized_service = ProcessingService(
@@ -892,6 +893,7 @@ async def test_delegate_to_service_with_attachments(
         app_config={},
         context_providers=[],
         server_url=None,
+        attachment_registry=attachment_registry,
     )
 
     # Set up registry
@@ -926,6 +928,34 @@ async def test_delegate_to_service_with_attachments(
     assert error is None, f"Error during attachment delegation: {error}"
     assert final_reply is not None
     assert "delegate this task with the attachment" in final_reply
+
+    # Verify that the delegated LLM actually saw the attachment metadata
+    specialized_llm_calls = llm_client.get_calls()
+    assert len(specialized_llm_calls) > 0, "No LLM calls made to specialized service"
+
+    # Get the messages sent to the delegated LLM
+    messages_to_specialized = specialized_llm_calls[0]["kwargs"]["messages"]
+
+    # Verify attachment was properly injected into LLM messages
+    found_attachment_injection = False
+    for msg in messages_to_specialized:
+        if msg.get("role") == "user":
+            content = msg.get("content", "")
+            # Check for attachment injection markers that should be present
+            # when an attachment is properly processed
+            if isinstance(content, str) and (
+                f"[Attachment ID: {test_attachment_id}]" in content
+                or ("[System:" in content and test_attachment_id in content)
+            ):
+                found_attachment_injection = True
+                logger.info(f"Found attachment injection in message: {content[:200]}")
+                break
+
+    assert found_attachment_injection, (
+        f"Attachment {test_attachment_id} was not properly injected into delegated LLM messages. "
+        f"Expected to find '[Attachment ID: {test_attachment_id}]' or similar marker "
+        f"but messages were: {json.dumps(messages_to_specialized, indent=2)}"
+    )
 
     logger.info("Attachment delegation test completed successfully")
 
