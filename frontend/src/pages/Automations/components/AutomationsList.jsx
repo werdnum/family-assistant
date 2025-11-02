@@ -142,15 +142,18 @@ const AutomationsList = () => {
     setSearchParams({});
   };
 
-  const toggleEnabled = async (automationType, automationId, currentEnabled) => {
+  const toggleEnabled = async (automationType, automationId, conversationId, currentEnabled) => {
     try {
-      const response = await fetch(`/api/automations/${automationType}/${automationId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ enabled: !currentEnabled }),
-      });
+      const response = await fetch(
+        `/api/automations/${automationType}/${automationId}?conversation_id=${encodeURIComponent(conversationId)}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ enabled: !currentEnabled }),
+        }
+      );
 
       if (!response.ok) {
         throw new Error('Failed to update automation');
@@ -452,7 +455,12 @@ const AutomationsList = () => {
                           size="sm"
                           variant="outline"
                           onClick={() =>
-                            toggleEnabled(automation.type, automation.id, automation.enabled)
+                            toggleEnabled(
+                              automation.type,
+                              automation.id,
+                              automation.conversation_id,
+                              automation.enabled
+                            )
                           }
                         >
                           {automation.enabled ? 'Disable' : 'Enable'}
