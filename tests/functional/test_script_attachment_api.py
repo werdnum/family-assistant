@@ -670,13 +670,23 @@ attachment_id
                 execution_context=execution_context,
             )
 
-            # Verify result is a valid UUID
-            assert isinstance(result, str)
-            assert len(result) == 36  # UUID format
+            # Verify result is a dict with metadata
+            assert isinstance(result, dict)
+            assert "id" in result
+            assert "filename" in result
+            assert "mime_type" in result
+            assert result["filename"] == "script-output.txt"
+            assert result["mime_type"] == "text/plain"
+
+            # Extract the attachment ID
+            attachment_id = result["id"]
+            assert len(attachment_id) == 36  # UUID format
 
         # Verify the attachment exists and has correct metadata
         async with DatabaseContext(engine=db_engine) as verify_context:
-            metadata = await attachment_registry.get_attachment(verify_context, result)
+            metadata = await attachment_registry.get_attachment(
+                verify_context, attachment_id
+            )
             assert metadata is not None
             assert metadata.source_type == "script"
             assert metadata.mime_type == "text/plain"
@@ -685,7 +695,7 @@ attachment_id
 
             # Verify content
             content = await attachment_registry.get_attachment_content(
-                verify_context, result
+                verify_context, attachment_id
             )
             assert content == b"Hello from script!"
 
@@ -741,14 +751,20 @@ attachment_id
                 execution_context=execution_context,
             )
 
-            # Verify result is a valid UUID
-            assert isinstance(result, str)
-            assert len(result) == 36  # UUID format
+            # Verify result is a dict with metadata
+            assert isinstance(result, dict)
+            assert "id" in result
+            assert "filename" in result
+            assert result["filename"] == "data.json"
+
+            # Extract the attachment ID
+            attachment_id = result["id"]
+            assert len(attachment_id) == 36  # UUID format
 
         # Verify the attachment content is valid JSON
         async with DatabaseContext(engine=db_engine) as verify_context:
             content = await attachment_registry.get_attachment_content(
-                verify_context, result
+                verify_context, attachment_id
             )
             assert content is not None
             data = json.loads(content.decode("utf-8"))
@@ -781,21 +797,24 @@ attachment_id
 
             # Script that creates an attachment and retrieves it
             script = """
-# Create attachment
-attachment_id = attachment_create(
+# Create attachment (returns dict with metadata)
+attachment_dict = attachment_create(
     content="Test content",
     filename="test.txt",
     description="Test file",
     mime_type="text/plain"
 )
 
-# Retrieve metadata
+# Extract ID from the dict
+attachment_id = attachment_dict["id"]
+
+# Retrieve metadata using the ID
 metadata = attachment_get(attachment_id)
 
-# Return both ID and description
+# Return both ID and description from the original dict
 {
     "id": attachment_id,
-    "description": metadata.get("description") if metadata else None
+    "description": attachment_dict.get("description")
 }
 """
 
