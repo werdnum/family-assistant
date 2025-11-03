@@ -6,8 +6,10 @@ from unittest.mock import Mock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.tools import AVAILABLE_FUNCTIONS, TOOLS_DEFINITION
 from family_assistant.tools.execute_script import execute_script_tool
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
@@ -18,6 +20,7 @@ from family_assistant.tools.types import (
     ToolExecutionContext,
     ToolResult,
 )
+from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 
 @pytest.fixture
@@ -474,3 +477,95 @@ att3 = attachment_create(content="Data 3", filename="d3.txt", mime_type="text/pl
         assert isinstance(result, ToolResult)
         assert result.attachments is not None
         assert len(result.attachments) == 3
+
+
+@pytest.mark.asyncio
+async def test_tool_chaining_json_query_workflow(
+    db_engine: AsyncEngine, attachment_registry: AttachmentRegistry
+) -> None:
+    """Test realistic workflow: Create JSON attachment → query with jq_query.
+
+    This test would have caught the ScriptAttachment type mismatch bug where
+    jq_query's attachment_id parameter was incorrectly declared as 'string'
+    instead of 'attachment', causing type conversion issues when called from scripts.
+    """
+    # Create a real processing service with tools provider
+    tools_provider = LocalToolsProvider(
+        definitions=TOOLS_DEFINITION,
+        implementations=AVAILABLE_FUNCTIONS,
+    )
+
+    service_config = ProcessingServiceConfig(
+        prompts={},
+        timezone_str="UTC",
+        max_history_messages=10,
+        history_max_age_hours=24,
+        tools_config={},  # type: ignore[arg-type]
+        delegation_security_level="confirm",
+        id="test_workflow",
+    )
+
+    llm_client = RuleBasedMockLLMClient(rules=[], default_response=None)
+    dummy_app_config: dict = {}
+
+    processing_service = ProcessingService(
+        llm_client=llm_client,
+        tools_provider=tools_provider,
+        context_providers=[],
+        service_config=service_config,
+        server_url=None,
+        app_config=dummy_app_config,
+    )
+
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-conv",
+            user_name="test",
+            turn_id=None,
+            db_context=db,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=attachment_registry,
+            processing_service=processing_service,
+        )
+
+        # Script that creates JSON data and queries it with jq_query
+        script = """
+# Create JSON data as an attachment (use text/plain since JSON is not in allowed types)
+json_data = json_encode({
+    "users": [
+        {"name": "Alice", "age": 30},
+        {"name": "Bob", "age": 25},
+        {"name": "Charlie", "age": 35}
+    ]
+})
+
+data_attachment = attachment_create(
+    content=json_data,
+    filename="users.json",
+    mime_type="text/plain"
+)
+
+# Query the JSON attachment with jq_query
+names = jq_query(
+    attachment_id=data_attachment["id"],
+    jq_program=".users | map(.name)"
+)
+
+# Return the queried data
+names
+"""
+
+        result = await execute_script_tool(ctx, script)
+
+        # Verify the script executed successfully
+        assert isinstance(result, ToolResult)
+        assert result.text is not None
+        assert "Error" not in result.text
+
+        # Verify jq_query worked correctly
+        data = result.get_data()
+        assert isinstance(data, list)
+        assert data == ["Alice", "Bob", "Charlie"]

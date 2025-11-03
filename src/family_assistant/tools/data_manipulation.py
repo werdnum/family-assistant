@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import jq
 
+from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.tools.types import ToolResult
 
 if TYPE_CHECKING:
@@ -31,7 +32,7 @@ DATA_MANIPULATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "attachment_id": {
-                        "type": "string",
+                        "type": "attachment",
                         "description": "The UUID of the attachment containing JSON data to query.",
                     },
                     "jq_program": {
@@ -48,7 +49,7 @@ DATA_MANIPULATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
 
 async def jq_query_tool(
     exec_context: ToolExecutionContext,
-    attachment_id: str,
+    attachment_id: ScriptAttachment | str,
     jq_program: str,
 ) -> ToolResult:
     """
@@ -56,13 +57,19 @@ async def jq_query_tool(
 
     Args:
         exec_context: The execution context
-        attachment_id: UUID of the attachment containing JSON data
+        attachment_id: UUID of the attachment or ScriptAttachment object
         jq_program: The jq query program to execute
 
     Returns:
         ToolResult with the query result as formatted JSON
     """
-    logger.info(f"Executing jq query on attachment {attachment_id}: {jq_program}")
+    # Extract ID from ScriptAttachment if needed
+    if isinstance(attachment_id, ScriptAttachment):
+        attachment_id_str = attachment_id.get_id()
+    else:
+        attachment_id_str = attachment_id
+
+    logger.info(f"Executing jq query on attachment {attachment_id_str}: {jq_program}")
 
     db_context = exec_context.db_context
 
@@ -74,7 +81,9 @@ async def jq_query_tool(
         attachment_registry = exec_context.attachment_registry
 
         # Retrieve attachment metadata
-        attachment = await attachment_registry.get_attachment(db_context, attachment_id)
+        attachment = await attachment_registry.get_attachment(
+            db_context, attachment_id_str
+        )
 
         if not attachment:
             logger.warning(f"Attachment {attachment_id} not found")
@@ -96,7 +105,7 @@ async def jq_query_tool(
             )
 
         # Get attachment content
-        file_path = attachment_registry.get_attachment_path(attachment_id)
+        file_path = attachment_registry.get_attachment_path(attachment_id_str)
         if not file_path or not file_path.exists():
             logger.error(f"Attachment file not found for {attachment_id}")
             return ToolResult(
