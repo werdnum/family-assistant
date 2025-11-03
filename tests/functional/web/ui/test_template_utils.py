@@ -19,7 +19,7 @@ class TestTemplateUtils:
     def test_manifest_exists(self) -> None:
         """Test that the manifest.json file exists after npm build."""
         manifest_path = (
-            Path(__file__).parent.parent.parent.parent
+            Path(__file__).parent.parent.parent.parent.parent
             / "src"
             / "family_assistant"
             / "static"
@@ -35,7 +35,7 @@ class TestTemplateUtils:
     def test_manifest_structure(self) -> None:
         """Test that the manifest.json has the expected structure."""
         manifest_path = (
-            Path(__file__).parent.parent.parent.parent
+            Path(__file__).parent.parent.parent.parent.parent
             / "src"
             / "family_assistant"
             / "static"
@@ -166,7 +166,7 @@ class TestTemplateUtils:
     def test_real_manifest_content_matches_build(self) -> None:
         """Test that the actual manifest content matches what's in the build directory."""
         manifest_path = (
-            Path(__file__).parent.parent.parent.parent
+            Path(__file__).parent.parent.parent.parent.parent
             / "src"
             / "family_assistant"
             / "static"
@@ -212,7 +212,7 @@ class TestTemplateUtils:
 
         # Also log what's in the manifest
         manifest_path = (
-            Path(__file__).parent.parent.parent.parent
+            Path(__file__).parent.parent.parent.parent.parent
             / "src"
             / "family_assistant"
             / "static"
