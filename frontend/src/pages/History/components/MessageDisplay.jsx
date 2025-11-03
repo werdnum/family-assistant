@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import styles from './MessageDisplay.module.css';
 import { getAttachmentKey } from '../../../types/attachments';
+import ToolDisplay from '@/components/tools/ToolDisplay';
 
 const MessageDisplay = ({ message }) => {
   const [expandedToolCalls, setExpandedToolCalls] = useState(new Set());
@@ -16,6 +17,18 @@ const MessageDisplay = ({ message }) => {
       newExpanded.add(index);
     }
     setExpandedToolCalls(newExpanded);
+  };
+
+  const parseToolArguments = (args) => {
+    if (typeof args !== 'string') {
+      return args;
+    }
+    try {
+      return JSON.parse(args);
+    } catch (error) {
+      console.error('Failed to parse tool arguments:', error);
+      return { _raw: args, _parse_error: true };
+    }
   };
 
   const formatTimestamp = (timestamp) => {
@@ -50,14 +63,6 @@ const MessageDisplay = ({ message }) => {
         return 'System';
       default:
         return role.charAt(0).toUpperCase() + role.slice(1);
-    }
-  };
-
-  const formatJson = (obj) => {
-    try {
-      return JSON.stringify(obj, null, 2);
-    } catch {
-      return String(obj);
     }
   };
 
@@ -113,16 +118,17 @@ const MessageDisplay = ({ message }) => {
                         <strong>Type:</strong> {toolCall.type}
                       </div>
                     )}
-                    {(toolCall.function?.arguments || toolCall.arguments) && (
-                      <div className={styles.toolCallField}>
-                        <strong>Arguments:</strong>
-                        <pre className={styles.jsonPre}>
-                          {typeof (toolCall.function?.arguments || toolCall.arguments) === 'string'
-                            ? toolCall.function?.arguments || toolCall.arguments
-                            : formatJson(toolCall.function?.arguments || toolCall.arguments)}
-                        </pre>
-                      </div>
-                    )}
+                    <div className={styles.toolCallField}>
+                      <ToolDisplay
+                        toolName={toolCall.function?.name || toolCall.name || 'Unknown Tool'}
+                        args={parseToolArguments(
+                          toolCall.function?.arguments || toolCall.arguments
+                        )}
+                        result={null}
+                        status={null}
+                        attachments={[]}
+                      />
+                    </div>
                   </div>
                 )}
               </div>
