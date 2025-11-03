@@ -40,16 +40,30 @@ const ToolParameterViewer = ({ data, toolName }) => {
       return;
     }
 
+    // Prevent double initialization
+    if (editorRef.current) {
+      return;
+    }
+
+    // Clear any existing content before initializing
+    containerRef.current.innerHTML = '';
+
     // Dynamically import and initialize the JSON editor
     const initEditor = async () => {
       try {
         const { JSONEditor } = await import('vanilla-jsoneditor');
+
+        // Double-check we haven't initialized in the meantime
+        if (editorRef.current) {
+          return;
+        }
+
         editorRef.current = new JSONEditor({
           target: containerRef.current,
           props: {
             content: { json: data },
             readOnly: true,
-            mode: 'text',
+            mode: 'tree',
             mainMenuBar: false,
             navigationBar: false,
             statusBar: false,
@@ -70,6 +84,10 @@ const ToolParameterViewer = ({ data, toolName }) => {
       if (editorRef.current) {
         editorRef.current.destroy();
         editorRef.current = null;
+      }
+      // Clear the container to prevent duplication when remounting
+      if (containerRef.current) {
+        containerRef.current.innerHTML = '';
       }
     };
   }, [isExpanded]);
