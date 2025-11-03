@@ -3,6 +3,7 @@ import { CheckCircleIcon, ClockIcon, AlertCircleIcon, DownloadIcon } from 'lucid
 import { Button } from '@/components/ui/button';
 import { getAttachmentKey } from '../types/attachments';
 import { AttachToResponseTool } from './AttachToResponseTool';
+import ToolParameterViewer from '@/components/tools/ToolParameterViewer';
 
 // Simple attachment display component for tool results
 const ToolAttachmentDisplay = ({ attachment }) => {
@@ -73,8 +74,7 @@ const ToolFallback = ({ toolName, args, result, status, attachments }) => {
 
       {args && Object.keys(args).length > 0 && (
         <div className="tool-call-args">
-          <div className="tool-section-label">Arguments:</div>
-          <pre className="tool-code-block">{JSON.stringify(args, null, 2)}</pre>
+          <ToolParameterViewer data={args} toolName={toolName} />
         </div>
       )}
 
