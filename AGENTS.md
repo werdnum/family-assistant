@@ -401,8 +401,8 @@ When evaluating input trust levels:
   - Web-scraped content or external API responses
   - Any content from unauthenticated sources
 
-#### Implementation Strategy
-
+- This approach requires enforcing strong authentication and authorization at the interface
+  boundaries
 The current architecture primarily operates in **[BC]** mode:
 
 - Input filtering and authentication ensure only authorized users can interact with the system
