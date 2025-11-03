@@ -383,3 +383,294 @@ See `src/family_assistant/tools/automations.py` for comprehensive examples:
 
 Tools can be tested through the web UI at `/tools` or programmatically in tests. See the functional
 tests in `tests/functional/` for examples.
+
+## Creating Custom Tool UIs
+
+### Overview
+
+After implementing a tool, consider creating a custom UI component to enhance the user experience.
+While the generic `/tools` page provides automatic form generation for all tools, custom UIs offer
+significant benefits:
+
+- **Better User Experience**: Rich input widgets (date pickers, file uploads, code editors)
+- **Validation & Feedback**: Context-specific validation and helpful error messages
+- **Visualization**: Display results in domain-specific formats (charts, timelines, previews)
+- **Syntax Highlighting**: Show scripts and code with proper highlighting for debugging
+- **Integration**: Seamlessly integrate with other UI components and workflows
+
+### When to Create a Custom UI
+
+**Create a custom UI when:**
+
+- The tool is frequently used by end users
+- The tool has complex parameters (scripts, schedules, JSON configs)
+- Results need special formatting or visualization
+- The tool is part of a larger feature (automations, calendar, tasks)
+- Scripts or code need syntax highlighting for debugging
+
+**Skip custom UIs for:**
+
+- Internal/diagnostic tools primarily used by the LLM
+- Simple tools with 1-2 basic parameters
+- Rarely used administrative tools
+- Tools that work well with generic JSON input
+
+### Frontend Tool UI Architecture
+
+Custom tool UIs are React components in `frontend/src/chat/ToolUI.jsx`. The system automatically
+displays these UIs when tools appear in chat messages.
+
+**Key Components:**
+
+1. **ToolUI.jsx**: Main component that routes tool names to custom renderers
+2. **ToolFallback**: Generic renderer using `ToolParameterViewer` for JSON display
+3. **Individual Tool Components**: Custom renderers for specific tools
+
+Example structure in ToolUI.jsx:
+
+```jsx
+// In ToolUI.jsx
+export function ToolUI({ tool }) {
+  const toolName = tool.name || tool.tool_name;
+
+  switch (toolName) {
+    case 'my_tool':
+      return <MyToolUI tool={tool} />;
+    default:
+      return <ToolFallback tool={tool} />;
+  }
+}
+
+// Custom tool component
+function MyToolUI({ tool }) {
+  const args = tool.arguments || tool.args || {};
+
+  return (
+    <div className="tool-ui">
+      <div className="tool-header">
+        <StatusIcon status={tool.status} />
+        <span className="tool-name">{tool.name}</span>
+      </div>
+
+      {/* Display parameters with custom formatting */}
+      <div className="tool-parameters">
+        <label>Parameter:</label>
+        <span>{args.param1}</span>
+      </div>
+
+      {/* Display result with custom visualization */}
+      {tool.result && (
+        <div className="tool-result">
+          {/* Custom result rendering */}
+        </div>
+      )}
+
+      {/* Show attachments if present */}
+      {tool.attachments && tool.attachments.length > 0 && (
+        <AttachmentDisplay attachments={tool.attachments} />
+      )}
+    </div>
+  );
+}
+```
+
+### Script and Code Display
+
+**For tools that work with scripts or code, ALWAYS include syntax highlighting:**
+
+```jsx
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+
+function ScriptToolUI({ tool }) {
+  const args = tool.arguments || tool.args || {};
+  const scriptCode = args.script_code || args.code;
+
+  return (
+    <div className="script-tool">
+      <label>Script:</label>
+      <SyntaxHighlighter
+        language="python"
+        style={vscDarkPlus}
+        customStyle={{
+          margin: 0,
+          borderRadius: '4px',
+          fontSize: '0.875rem',
+        }}
+      >
+        {scriptCode}
+      </SyntaxHighlighter>
+    </div>
+  );
+}
+```
+
+This is crucial for debugging - seeing script syntax highlighted makes it much easier to spot
+errors.
+
+### Displaying Tool Parameters
+
+The project recently standardized on using `ToolParameterViewer` for displaying parameters in the
+fallback UI. This provides:
+
+- Rich JSON viewer with syntax highlighting
+- Collapsible sections for complex objects
+- Proper handling of arrays and nested structures
+
+For custom UIs, you can use `ToolParameterViewer` for complex parameters while providing custom
+displays for key parameters:
+
+```jsx
+import { ToolParameterViewer } from './ToolParameterViewer';
+
+function MyToolUI({ tool }) {
+  const args = tool.arguments || tool.args || {};
+
+  return (
+    <div>
+      {/* Custom display for important parameters */}
+      <div className="key-params">
+        <span>{args.name}</span>
+      </div>
+
+      {/* Use ToolParameterViewer for complex/all parameters */}
+      <details>
+        <summary>All Parameters</summary>
+        <ToolParameterViewer parameters={args} />
+      </details>
+    </div>
+  );
+}
+```
+
+### Fallback UI and Message History
+
+The generic `ToolFallback` component is used for:
+
+1. Tools without custom UIs
+2. Displaying all parameters comprehensively (even for tools with custom UIs, when expanded)
+3. Message history debugging
+
+Tools with custom UIs still benefit from the fallback display for detailed debugging. The custom UI
+should focus on the most important aspects while ensuring all data is accessible.
+
+### Complete Example: Automation Tool UI
+
+Here's a comprehensive example showing script highlighting, parameter display, and result
+formatting:
+
+```jsx
+function CreateAutomationUI({ tool }) {
+  const args = tool.arguments || tool.args || {};
+  const { name, automation_type, trigger_config, action_type, action_config } = args;
+
+  return (
+    <div className="automation-tool">
+      <div className="automation-header">
+        <StatusIcon status={tool.status} />
+        <strong>{name}</strong>
+        <span className="type-badge">{automation_type}</span>
+      </div>
+
+      <div className="automation-config">
+        {/* Trigger Display */}
+        <section>
+          <h4>Trigger</h4>
+          {automation_type === 'schedule' ? (
+            <div>
+              <label>Schedule:</label>
+              <code>{trigger_config?.recurrence_rule}</code>
+            </div>
+          ) : (
+            <div>
+              <label>Event Source:</label>
+              <span>{trigger_config?.event_source}</span>
+            </div>
+          )}
+        </section>
+
+        {/* Action Display with Script Highlighting */}
+        <section>
+          <h4>Action: {action_type}</h4>
+          {action_type === 'script' && action_config?.script_code && (
+            <SyntaxHighlighter language="python" style={vscDarkPlus}>
+              {action_config.script_code}
+            </SyntaxHighlighter>
+          )}
+          {action_type === 'wake_llm' && (
+            <div>
+              <label>Context:</label>
+              <p>{action_config?.context}</p>
+            </div>
+          )}
+        </section>
+      </div>
+
+      {/* Result Display */}
+      {tool.result && (
+        <div className="tool-result">
+          {typeof tool.result === 'string' ? (
+            <p>{tool.result}</p>
+          ) : (
+            <ToolParameterViewer parameters={tool.result} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+### Testing Custom Tool UIs
+
+Test your custom UIs using the patterns in `frontend/CLAUDE.md`:
+
+1. **Component Tests**: Use Vitest and React Testing Library
+2. **MSW Mocks**: Mock API responses for tool execution
+3. **Visual Testing**: Manually test in the chat interface and message history
+4. **Edge Cases**: Test with missing parameters, errors, complex data
+
+Example test:
+
+```javascript
+import { render, screen } from '@testing-library/react';
+import { ToolUI } from './ToolUI';
+
+test('displays script with syntax highlighting', () => {
+  const tool = {
+    name: 'create_automation',
+    arguments: {
+      action_type: 'script',
+      action_config: {
+        script_code: 'print("Hello")'
+      }
+    },
+    status: 'success'
+  };
+
+  render(<ToolUI tool={tool} />);
+  expect(screen.getByText(/print/)).toBeInTheDocument();
+});
+```
+
+### Best Practices
+
+1. **Always Highlight Code**: Use syntax highlighting for scripts, code, and structured configs
+2. **Show Status**: Include status icons (pending, success, error)
+3. **Handle Errors**: Display error messages prominently
+4. **Progressive Disclosure**: Show key info first, detailed params in expandable sections
+5. **Consistent Styling**: Follow existing UI patterns for consistency
+6. **Accessibility**: Use semantic HTML and ARIA labels
+7. **Performance**: Lazy-load syntax highlighter for better initial load
+8. **Testing**: Test with real data from actual tool executions
+
+### Integration with Generic Tool UI
+
+The `/tools` page provides automatic form generation for ALL tools. This is useful for:
+
+- Testing new tools during development
+- Accessing rarely-used tools without custom UIs
+- Administrative/diagnostic operations
+- Exploring tool capabilities
+
+Custom UIs complement this by providing optimized experiences for frequently-used or complex tools.
