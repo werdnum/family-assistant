@@ -368,6 +368,60 @@ overview of:
 - **Retry Logic**: Built-in retry mechanisms for transient failures
 - **Event-Driven**: Loosely coupled components communicate via events
 
+## Security Considerations
+
+### Rule of Two for AI Agent Security
+
+Family Assistant follows the **"Rule of Two"** principle from
+[Meta's practical AI agent security framework](https://ai.meta.com/blog/practical-ai-agent-security/).
+This principle helps mitigate prompt injection vulnerabilities by ensuring agents satisfy no more
+than two of the following three properties in any given session:
+
+1. **[A]** Processing untrustworthy inputs
+2. **[B]** Accessing sensitive systems or private data
+3. **[C]** Changing state or communicating externally
+
+By restricting agents to any two properties simultaneously, we prevent complete exploit chains that
+could lead to data exfiltration or unauthorized actions.
+
+#### Trust Boundaries in Family Assistant
+
+When evaluating input trust levels:
+
+- **Trusted inputs**: Content directly created or fully vetted by authorized users
+
+  - Direct messages from authorized users via Telegram or Web UI
+  - Notes, tasks, and calendar events created by the user
+  - Forwarded messages from known contacts (user has implicitly vetted the content)
+
+- **Untrusted inputs**: Content from external sources that may not have been fully vetted
+
+  - Emails received via webhooks (sender may be forged, content may contain injections)
+  - Forwarded emails (original sender unknown, headers may be manipulated)
+  - Web-scraped content or external API responses
+  - Any content from unauthenticated sources
+
+#### Implementation Strategy
+
+The current architecture primarily operates in **[BC]** mode:
+
+- Input filtering and authentication ensure only authorized users can interact with the system
+- The agent can access sensitive data (notes, calendar, contacts) and take actions (creating tasks,
+  sending notifications)
+- This approach requires maintaining strong authentication and authorization at the interface
+  boundaries
+
+**Important Limitations**: The Rule of Two specifically addresses prompt injection risks. It does
+not protect against other AI agent vulnerabilities such as:
+
+- Hallucinations or incorrect information
+- Excessive privileges or over-permissioned tools
+- Agent mistakes or unintended actions
+- Traditional security vulnerabilities (SQL injection, XSS, etc.)
+
+The Rule of Two complements—rather than replaces—traditional security practices like least-privilege
+access, input validation, and defense-in-depth approaches.
+
 ## Development Guidelines
 
 - ALWAYS make a plan before you make any nontrivial changes.
