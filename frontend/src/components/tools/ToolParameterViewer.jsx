@@ -9,8 +9,17 @@ import { Button } from '@/components/ui/button';
  * @param {string} toolName - Optional name of the tool for display purposes
  * @param {string} className - Optional CSS class name to apply to the container
  * @param {object} style - Optional inline styles to apply to the container
+ * @param {string} minHeight - Optional minimum height for the editor container (default: '200px')
+ * @param {string} maxHeight - Optional maximum height for the editor container (default: '400px')
  */
-const ToolParameterViewer = ({ data, toolName, className = '', style = {} }) => {
+const ToolParameterViewer = ({
+  data,
+  toolName,
+  className = '',
+  style = {},
+  minHeight = '200px',
+  maxHeight = '400px',
+}) => {
   const containerRef = useRef(null);
   const editorRef = useRef(null);
   const copyTimeoutRef = useRef(null);
@@ -161,8 +170,8 @@ const ToolParameterViewer = ({ data, toolName, className = '', style = {} }) => 
   };
 
   const editorContainerStyle = {
-    minHeight: '200px',
-    maxHeight: '400px',
+    minHeight: minHeight,
+    maxHeight: maxHeight,
     overflow: 'auto',
     border: `1px solid ${isDarkMode ? '#374151' : '#ddd'}`,
     borderRadius: '3px',

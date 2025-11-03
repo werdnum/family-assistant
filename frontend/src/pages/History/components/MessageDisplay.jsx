@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import styles from './MessageDisplay.module.css';
 import { getAttachmentKey } from '../../../types/attachments';
 import ToolDisplay from '@/components/tools/ToolDisplay';
+import { parseToolArguments } from '../../../utils/toolUtils';
 
 const MessageDisplay = ({ message }) => {
   const [expandedToolCalls, setExpandedToolCalls] = useState(new Set());
@@ -17,19 +18,6 @@ const MessageDisplay = ({ message }) => {
       newExpanded.add(index);
     }
     setExpandedToolCalls(newExpanded);
-  };
-
-  const parseToolArguments = (args) => {
-    if (typeof args !== 'string') {
-      return args;
-    }
-    try {
-      return JSON.parse(args);
-    } catch (error) {
-      console.error('Failed to parse tool arguments:', error, 'Raw args:', args);
-      // Return the raw string for display - the viewer will handle it
-      return args;
-    }
   };
 
   const formatTimestamp = (timestamp) => {

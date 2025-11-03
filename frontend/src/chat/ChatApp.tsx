@@ -26,20 +26,7 @@ import ProfileSelector from './ProfileSelector';
 import { useNotifications } from './useNotifications';
 import { NotificationSettings } from './NotificationSettings';
 import { PushNotificationButton } from './PushNotificationButton';
-
-// Helper function to parse tool arguments
-const parseToolArguments = (args: unknown): unknown => {
-  if (typeof args === 'string') {
-    try {
-      return JSON.parse(args);
-    } catch (e) {
-      console.error('Failed to parse tool arguments:', e, 'Raw args:', args);
-      // Return the raw string for display - the viewer will handle it
-      return args;
-    }
-  }
-  return args;
-};
+import { parseToolArguments } from '../utils/toolUtils';
 
 const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) => {
   const [messages, setMessages] = useState<Message[]>([]);
