@@ -28,13 +28,14 @@ import { NotificationSettings } from './NotificationSettings';
 import { PushNotificationButton } from './PushNotificationButton';
 
 // Helper function to parse tool arguments
-const parseToolArguments = (args: unknown): Record<string, unknown> => {
+const parseToolArguments = (args: unknown): unknown => {
   if (typeof args === 'string') {
     try {
       return JSON.parse(args);
     } catch (e) {
-      console.error('Failed to parse tool arguments:', e);
-      return { raw: args };
+      console.error('Failed to parse tool arguments:', e, 'Raw args:', args);
+      // Return the raw string for display - the viewer will handle it
+      return args;
     }
   }
   return args;
