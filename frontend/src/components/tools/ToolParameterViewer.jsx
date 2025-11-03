@@ -4,8 +4,13 @@ import { Button } from '@/components/ui/button';
 /**
  * Displays tool parameters as structured JSON with copy and rich editor features.
  * Wraps the JsonPayloadViewer functionality but customized for tool arguments display.
+ *
+ * @param {object|string} data - The tool arguments to display. Can be an object, array, or unparsed JSON string
+ * @param {string} toolName - Optional name of the tool for display purposes
+ * @param {string} className - Optional CSS class name to apply to the container
+ * @param {object} style - Optional inline styles to apply to the container
  */
-const ToolParameterViewer = ({ data, toolName }) => {
+const ToolParameterViewer = ({ data, toolName, className = '', style = {} }) => {
   const containerRef = useRef(null);
   const editorRef = useRef(null);
   const copyTimeoutRef = useRef(null);
@@ -136,12 +141,13 @@ const ToolParameterViewer = ({ data, toolName }) => {
     setIsExpanded(!isExpanded);
   };
 
-  // Dynamic styles based on dark mode
+  // Dynamic styles based on dark mode - merge with custom styles
   const containerStyle = {
     border: `1px solid ${isDarkMode ? '#374151' : '#ddd'}`,
     borderRadius: '3px',
     backgroundColor: isDarkMode ? '#1f2937' : '#f8f9fa',
     marginTop: '0.5rem',
+    ...style, // Allow custom styles to override defaults
   };
 
   const headerStyle = {
@@ -163,7 +169,7 @@ const ToolParameterViewer = ({ data, toolName }) => {
   };
 
   return (
-    <div style={containerStyle}>
+    <div style={containerStyle} className={className}>
       {/* Control buttons */}
       <div style={headerStyle}>
         <div style={{ fontSize: '0.9rem', fontWeight: 'bold' }}>
