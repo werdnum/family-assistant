@@ -1,9 +1,44 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { CheckCircleIcon, ClockIcon, AlertCircleIcon, DownloadIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getAttachmentKey } from '../types/attachments';
 import { AttachToResponseTool } from './AttachToResponseTool';
 import ToolParameterViewer from '@/components/tools/ToolParameterViewer';
+
+// Lazy load syntax highlighter to reduce initial bundle size
+const LazyPrism = lazy(() =>
+  import('react-syntax-highlighter').then((mod) => ({ default: mod.Prism }))
+);
+
+// Wrapper component for lazy-loaded syntax highlighter
+const CodeHighlight = ({ code, language = 'python', showLineNumbers = true, customStyle = {} }) => {
+  const [style, setStyle] = React.useState(null);
+
+  React.useEffect(() => {
+    // Dynamically import the style object
+    import('react-syntax-highlighter/dist/esm/styles/prism').then((mod) => {
+      setStyle(mod.vscDarkPlus);
+    });
+  }, []);
+
+  return (
+    <Suspense fallback={<pre className="tool-code-block">{code}</pre>}>
+      <LazyPrism
+        language={language}
+        style={style}
+        customStyle={{
+          margin: 0,
+          borderRadius: '4px',
+          fontSize: '0.875rem',
+          ...customStyle,
+        }}
+        showLineNumbers={showLineNumbers}
+      >
+        {code}
+      </LazyPrism>
+    </Suspense>
+  );
+};
 
 // Simple attachment display component for tool results
 const ToolAttachmentDisplay = ({ attachment }) => {
@@ -120,6 +155,15 @@ export const AddOrUpdateNoteToolUI = ({ args, result, status }) => {
       <div className="tool-note-content">
         {args?.title && <h4 className="tool-note-title">{args.title}</h4>}
         {args?.content && <p className="tool-note-text">{args.content}</p>}
+
+        <div className="tool-note-options">
+          {args?.include_in_prompt !== undefined && (
+            <span className="tool-note-option">
+              {args.include_in_prompt ? '✅' : '❌'} Include in prompt
+            </span>
+          )}
+          {args?.append && <span className="tool-note-option">➕ Append mode</span>}
+        </div>
       </div>
 
       {result && (
@@ -143,6 +187,18 @@ export const SearchDocumentsToolUI = ({ args, result, status }) => {
       {args?.query && (
         <div className="tool-search-query">
           Searching for: <strong>{args.query}</strong>
+        </div>
+      )}
+
+      {(args?.source_types || args?.embedding_types || args?.limit) && (
+        <div className="tool-search-filters">
+          {args.source_types && args.source_types.length > 0 && (
+            <span className="tool-search-filter">📁 Sources: {args.source_types.join(', ')}</span>
+          )}
+          {args.embedding_types && args.embedding_types.length > 0 && (
+            <span className="tool-search-filter">🏷️ Types: {args.embedding_types.join(', ')}</span>
+          )}
+          {args.limit && <span className="tool-search-filter">🔢 Limit: {args.limit}</span>}
         </div>
       )}
 
@@ -2007,805 +2063,6 @@ export const TestEventListenerToolUI = ({ args, result, status }) => {
     </div>
   );
 };
-// Tool UI for create_event_listener
-export const CreateEventListenerToolUI = ({ args, result, status }) => {
-  // Parse the result JSON if it's a string
-  let parsedResult = null;
-  let _parseError = false;
-
-  if (result && typeof result === 'string') {
-    try {
-      parsedResult = JSON.parse(result);
-    } catch (_e) {
-      _parseError = true;
-    }
-  } else if (result && typeof result === 'object') {
-    parsedResult = result;
-  }
-
-  // Helper function to get source icon
-  const getSourceIcon = (source) => {
-    switch (source?.toLowerCase()) {
-      case 'home_assistant':
-        return '🏠';
-      case 'indexing':
-        return '📚';
-      case 'webhook':
-        return '🔗';
-      default:
-        return '📡';
-    }
-  };
-
-  // Helper function to get action type icon
-  const getActionTypeIcon = (actionType) => {
-    switch (actionType?.toLowerCase()) {
-      case 'wake_llm':
-        return '🧠';
-      case 'script':
-        return '📜';
-      default:
-        return '⚡';
-    }
-  };
-
-  // Helper function to format match conditions for display
-  const formatMatchConditions = (conditions) => {
-    if (!conditions || typeof conditions !== 'object') {
-      return null;
-    }
-
-    const entries = Object.entries(conditions);
-    if (entries.length === 0) {
-      return null;
-    }
-
-    return entries.map(([key, value]) => (
-      <div key={key} className="tool-match-condition-item">
-        <strong>{key}:</strong> {typeof value === 'object' ? JSON.stringify(value) : String(value)}
-      </div>
-    ));
-  };
-
-  // Check if the operation was successful
-  const isSuccess = parsedResult?.success === true;
-  const isError = parsedResult?.success === false || status?.type === 'incomplete';
-
-  // Determine status icon and classes
-  let statusIcon = null;
-  let statusClass = '';
-
-  if (status?.type === 'running') {
-    statusIcon = <ClockIcon size={16} className="animate-spin" />;
-    statusClass = 'tool-running';
-  } else if (status?.type === 'complete') {
-    if (isError) {
-      statusIcon = <AlertCircleIcon size={16} />;
-      statusClass = 'tool-error';
-    } else {
-      statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
-      statusClass = 'tool-complete';
-    }
-  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
-    statusIcon = <AlertCircleIcon size={16} />;
-    statusClass = 'tool-error';
-  }
-
-  return (
-    <div
-      className={`tool-call-container tool-create-listener ${statusClass}`}
-      data-ui="tool-call-content"
-    >
-      <div className="tool-call-header">
-        <span className="tool-name">➕ Create Event Listener</span>
-        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
-      </div>
-
-      <div className="tool-create-listener-content">
-        {args?.name && (
-          <div className="tool-listener-name">
-            <strong>{args.name}</strong>
-          </div>
-        )}
-
-        <div className="tool-listener-config">
-          {args?.source && (
-            <div className="tool-listener-source">
-              {getSourceIcon(args.source)} Source: <strong>{args.source}</strong>
-            </div>
-          )}
-
-          {args?.action_type && (
-            <div className="tool-listener-action">
-              {getActionTypeIcon(args.action_type)} Action: <strong>{args.action_type}</strong>
-            </div>
-          )}
-
-          {args?.one_time && (
-            <div className="tool-listener-one-time">
-              🔄 One-time listener (auto-disable after trigger)
-            </div>
-          )}
-        </div>
-
-        {args?.listener_config?.match_conditions &&
-          Object.keys(args.listener_config.match_conditions).length > 0 && (
-            <div className="tool-listener-conditions">
-              <div className="tool-section-label">Match Conditions:</div>
-              <div className="tool-match-conditions-list">
-                {formatMatchConditions(args.listener_config.match_conditions)}
-              </div>
-            </div>
-          )}
-
-        {args?.condition_script && (
-          <div className="tool-listener-condition-script">
-            <div className="tool-section-label">Condition Script:</div>
-            <pre className="tool-code-block">{args.condition_script}</pre>
-          </div>
-        )}
-
-        {args?.script_code && (
-          <div className="tool-listener-script">
-            <div className="tool-section-label">Action Script:</div>
-            <pre className="tool-code-block">
-              {args.script_code.substring(0, 200)}
-              {args.script_code.length > 200 ? '...' : ''}
-            </pre>
-          </div>
-        )}
-
-        {args?.listener_config?.action_config &&
-          Object.keys(args.listener_config.action_config).length > 0 && (
-            <div className="tool-listener-action-config">
-              <div className="tool-section-label">Action Configuration:</div>
-              <pre className="tool-code-block">
-                {JSON.stringify(args.listener_config.action_config, null, 2)}
-              </pre>
-            </div>
-          )}
-      </div>
-
-      {result && (
-        <div className="tool-create-listener-result">
-          {isError ? (
-            <div className="tool-create-error">
-              ❌ {parsedResult?.message || result}
-              {parsedResult?.validation_errors && (
-                <div className="tool-validation-errors">
-                  <div className="tool-section-label">Validation Errors:</div>
-                  {parsedResult.validation_errors.map((error, index) => (
-                    <div key={index} className="tool-validation-error">
-                      <strong>{error.field}:</strong> {error.error}
-                      {error.suggestion && (
-                        <div className="tool-validation-suggestion">💡 {error.suggestion}</div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : isSuccess ? (
-            <div className="tool-create-success">
-              ✅ {parsedResult.message}
-              {parsedResult.listener_id && (
-                <div className="tool-listener-id">🆔 Listener ID: {parsedResult.listener_id}</div>
-              )}
-            </div>
-          ) : (
-            <div className="tool-create-info">
-              {typeof result === 'string' ? result : JSON.stringify(result)}
-            </div>
-          )}
-        </div>
-      )}
-
-      {status?.type === 'running' && (
-        <div className="tool-running-message">Creating event listener...</div>
-      )}
-    </div>
-  );
-};
-// Tool UI for list_event_listeners
-export const ListEventListenersToolUI = ({ args, result, status }) => {
-  // Parse the result JSON if it's a string
-  let parsedResult = null;
-  let parseError = false;
-
-  if (result && typeof result === 'string') {
-    try {
-      parsedResult = JSON.parse(result);
-    } catch (_e) {
-      parseError = true;
-    }
-  } else if (result && typeof result === 'object') {
-    parsedResult = result;
-  }
-
-  // Helper function to format timestamp
-  const formatTimestamp = (timestamp) => {
-    if (!timestamp) {
-      return 'Never';
-    }
-    try {
-      const date = new Date(timestamp);
-      return date.toLocaleString(undefined, {
-        weekday: 'short',
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-    } catch (_e) {
-      return timestamp; // fallback to raw string if parsing fails
-    }
-  };
-
-  // Helper function to get source icon
-  const getSourceIcon = (source) => {
-    switch (source?.toLowerCase()) {
-      case 'home_assistant':
-        return '🏠';
-      case 'indexing':
-        return '📚';
-      case 'webhook':
-        return '🔗';
-      default:
-        return '📡';
-    }
-  };
-
-  // Helper function to get status icon
-  const getListenerStatusIcon = (enabled, oneTime) => {
-    if (!enabled) {
-      return '⏸️';
-    }
-    if (oneTime) {
-      return '1️⃣';
-    }
-    return '▶️';
-  };
-
-  // Check if the operation was successful
-  const _isSuccess = parsedResult?.success === true;
-  const isError = parsedResult?.success === false || status?.type === 'incomplete';
-
-  // Determine status icon and classes
-  let statusIcon = null;
-  let statusClass = '';
-
-  if (status?.type === 'running') {
-    statusIcon = <ClockIcon size={16} className="animate-spin" />;
-    statusClass = 'tool-running';
-  } else if (status?.type === 'complete') {
-    if (isError) {
-      statusIcon = <AlertCircleIcon size={16} />;
-      statusClass = 'tool-error';
-    } else {
-      statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
-      statusClass = 'tool-complete';
-    }
-  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
-    statusIcon = <AlertCircleIcon size={16} />;
-    statusClass = 'tool-error';
-  }
-
-  const listeners = parsedResult?.listeners || [];
-
-  return (
-    <div
-      className={`tool-call-container tool-list-listeners ${statusClass}`}
-      data-ui="tool-call-content"
-    >
-      <div className="tool-call-header">
-        <span className="tool-name">📋 List Event Listeners</span>
-        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
-      </div>
-
-      <div className="tool-list-listeners-params">
-        {args?.source && (
-          <div className="tool-filter-indicator">
-            {getSourceIcon(args.source)} Source: <strong>{args.source}</strong>
-          </div>
-        )}
-        {args?.enabled !== undefined && (
-          <div className="tool-filter-indicator">
-            {args.enabled ? '▶️' : '⏸️'} Status:{' '}
-            <strong>{args.enabled ? 'Enabled' : 'Disabled'}</strong>
-          </div>
-        )}
-      </div>
-
-      {result && !parseError && (
-        <div className="tool-list-listeners-results">
-          {isError ? (
-            <div className="tool-error-message">❌ {parsedResult?.message || result}</div>
-          ) : listeners.length > 0 ? (
-            <div className="tool-listeners-list">
-              <div className="tool-results-count">
-                Found {parsedResult.count || listeners.length} listener
-                {listeners.length !== 1 ? 's' : ''}:
-              </div>
-              {listeners.map((listener, index) => (
-                <div
-                  key={index}
-                  className={`tool-listener-item ${!listener.enabled ? 'tool-listener-disabled' : ''}`}
-                >
-                  <div className="tool-listener-header">
-                    <div className="tool-listener-name">
-                      {getListenerStatusIcon(listener.enabled, listener.one_time)}{' '}
-                      <strong>{listener.name}</strong>
-                    </div>
-                    <div className="tool-listener-id">ID: {listener.id}</div>
-                  </div>
-
-                  <div className="tool-listener-details">
-                    <div className="tool-listener-source">
-                      {getSourceIcon(listener.source)} {listener.source}
-                    </div>
-
-                    <div className="tool-listener-status-info">
-                      Status: <strong>{listener.enabled ? 'Enabled' : 'Disabled'}</strong>
-                      {listener.one_time && (
-                        <span className="tool-listener-one-time-badge">One-time</span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="tool-listener-stats">
-                    <div className="tool-listener-executions">
-                      📊 {listener.daily_executions} execution
-                      {listener.daily_executions !== 1 ? 's' : ''} today
-                    </div>
-
-                    <div className="tool-listener-last-run">
-                      🕐 Last run: {formatTimestamp(listener.last_execution_at)}
-                    </div>
-
-                    <div className="tool-listener-created">
-                      📅 Created: {formatTimestamp(listener.created_at)}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="tool-no-results">No event listeners found.</div>
-          )}
-        </div>
-      )}
-
-      {result && parseError && (
-        <div className="tool-list-listeners-raw-result">
-          <div className="tool-section-label">Result:</div>
-          <div className="tool-result-text">{result}</div>
-        </div>
-      )}
-
-      {status?.type === 'running' && (
-        <div className="tool-running-message">Loading event listeners...</div>
-      )}
-    </div>
-  );
-};
-// Tool UI for delete_event_listener
-export const DeleteEventListenerToolUI = ({ args, result, status }) => {
-  // Parse the result JSON if it's a string
-  let parsedResult = null;
-  let parseError = false;
-
-  if (result && typeof result === 'string') {
-    try {
-      parsedResult = JSON.parse(result);
-    } catch (_e) {
-      parseError = true;
-    }
-  } else if (result && typeof result === 'object') {
-    parsedResult = result;
-  }
-
-  // Check if the operation was successful
-  const isSuccess = parsedResult?.success === true;
-  const isError = parsedResult?.success === false || status?.type === 'incomplete';
-
-  // Determine status icon and classes
-  let statusIcon = null;
-  let statusClass = '';
-
-  if (status?.type === 'running') {
-    statusIcon = <ClockIcon size={16} className="animate-spin" />;
-    statusClass = 'tool-running';
-  } else if (status?.type === 'complete') {
-    if (isError) {
-      statusIcon = <AlertCircleIcon size={16} />;
-      statusClass = 'tool-error';
-    } else {
-      statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
-      statusClass = 'tool-complete';
-    }
-  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
-    statusIcon = <AlertCircleIcon size={16} />;
-    statusClass = 'tool-error';
-  }
-
-  return (
-    <div
-      className={`tool-call-container tool-delete-listener ${statusClass}`}
-      data-ui="tool-call-content"
-    >
-      <div className="tool-call-header">
-        <span className="tool-name">🗑️ Delete Event Listener</span>
-        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
-      </div>
-
-      <div className="tool-delete-listener-content">
-        {args?.listener_id && (
-          <div className="tool-listener-id-target">
-            Deleting Listener ID: <strong>{args.listener_id}</strong>
-          </div>
-        )}
-
-        {result && !parseError && (
-          <div className="tool-delete-listener-result">
-            {isError ? (
-              <div className="tool-delete-error">❌ {parsedResult?.message || result}</div>
-            ) : isSuccess ? (
-              <div className="tool-delete-success">✅ {parsedResult.message}</div>
-            ) : (
-              <div className="tool-delete-info">
-                {typeof result === 'string' ? result : JSON.stringify(result)}
-              </div>
-            )}
-          </div>
-        )}
-
-        {result && parseError && (
-          <div className="tool-delete-listener-raw-result">
-            <div className="tool-section-label">Result:</div>
-            <div className="tool-result-text">{result}</div>
-          </div>
-        )}
-      </div>
-
-      {status?.type === 'running' && (
-        <div className="tool-running-message">Deleting event listener...</div>
-      )}
-    </div>
-  );
-};
-// Tool UI for toggle_event_listener
-export const ToggleEventListenerToolUI = ({ args, result, status }) => {
-  // Parse the result JSON if it's a string
-  let parsedResult = null;
-  let parseError = false;
-
-  if (result && typeof result === 'string') {
-    try {
-      parsedResult = JSON.parse(result);
-    } catch (_e) {
-      parseError = true;
-    }
-  } else if (result && typeof result === 'object') {
-    parsedResult = result;
-  }
-
-  // Helper function to get status icon and text
-  const getStatusDisplay = (enabled) => {
-    if (enabled) {
-      return { icon: '▶️', text: 'Enable', action: 'Enabling' };
-    } else {
-      return { icon: '⏸️', text: 'Disable', action: 'Disabling' };
-    }
-  };
-
-  // Check if the operation was successful
-  const isSuccess = parsedResult?.success === true;
-  const isError = parsedResult?.success === false || status?.type === 'incomplete';
-
-  // Determine status icon and classes
-  let statusIcon = null;
-  let statusClass = '';
-
-  if (status?.type === 'running') {
-    statusIcon = <ClockIcon size={16} className="animate-spin" />;
-    statusClass = 'tool-running';
-  } else if (status?.type === 'complete') {
-    if (isError) {
-      statusIcon = <AlertCircleIcon size={16} />;
-      statusClass = 'tool-error';
-    } else {
-      statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
-      statusClass = 'tool-complete';
-    }
-  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
-    statusIcon = <AlertCircleIcon size={16} />;
-    statusClass = 'tool-error';
-  }
-
-  const statusDisplay =
-    args?.enabled !== undefined
-      ? getStatusDisplay(args.enabled)
-      : { icon: '🔄', text: 'Toggle', action: 'Toggling' };
-
-  return (
-    <div
-      className={`tool-call-container tool-toggle-listener ${statusClass}`}
-      data-ui="tool-call-content"
-    >
-      <div className="tool-call-header">
-        <span className="tool-name">{statusDisplay.icon} Toggle Event Listener</span>
-        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
-      </div>
-
-      <div className="tool-toggle-listener-content">
-        <div className="tool-toggle-action">
-          {args?.listener_id && (
-            <div className="tool-listener-id-target">
-              Listener ID: <strong>{args.listener_id}</strong>
-            </div>
-          )}
-
-          {args?.enabled !== undefined && (
-            <div className="tool-toggle-status">
-              Action: <strong>{statusDisplay.text}</strong> listener
-            </div>
-          )}
-        </div>
-
-        {result && !parseError && (
-          <div className="tool-toggle-listener-result">
-            {isError ? (
-              <div className="tool-toggle-error">❌ {parsedResult?.message || result}</div>
-            ) : isSuccess ? (
-              <div className="tool-toggle-success">✅ {parsedResult.message}</div>
-            ) : (
-              <div className="tool-toggle-info">
-                {typeof result === 'string' ? result : JSON.stringify(result)}
-              </div>
-            )}
-          </div>
-        )}
-
-        {result && parseError && (
-          <div className="tool-toggle-listener-raw-result">
-            <div className="tool-section-label">Result:</div>
-            <div className="tool-result-text">{result}</div>
-          </div>
-        )}
-      </div>
-
-      {status?.type === 'running' && (
-        <div className="tool-running-message">{statusDisplay.action} event listener...</div>
-      )}
-    </div>
-  );
-};
-// Tool UI for validate_event_listener_script
-export const ValidateEventListenerScriptToolUI = ({ args, result, status }) => {
-  // Parse the result JSON if it's a string
-  let parsedResult = null;
-  let parseError = false;
-
-  if (result && typeof result === 'string') {
-    try {
-      parsedResult = JSON.parse(result);
-    } catch (_e) {
-      parseError = true;
-    }
-  } else if (result && typeof result === 'object') {
-    parsedResult = result;
-  }
-
-  // Check if validation was successful
-  const isSuccess = parsedResult?.success === true;
-  const hasError = parsedResult?.success === false || parsedResult?.error;
-
-  // Determine status icon and classes
-  let statusIcon = null;
-  let statusClass = '';
-
-  if (status?.type === 'running') {
-    statusIcon = <ClockIcon size={16} className="animate-spin" />;
-    statusClass = 'tool-running';
-  } else if (status?.type === 'complete') {
-    if (hasError || parseError) {
-      statusIcon = <AlertCircleIcon size={16} />;
-      statusClass = 'tool-error';
-    } else {
-      statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
-      statusClass = 'tool-complete';
-    }
-  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
-    statusIcon = <AlertCircleIcon size={16} />;
-    statusClass = 'tool-error';
-  }
-
-  return (
-    <div
-      className={`tool-call-container tool-validate-script ${statusClass}`}
-      data-ui="tool-call-content"
-    >
-      <div className="tool-call-header">
-        <span className="tool-name">✅ Validate Script</span>
-        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
-      </div>
-
-      <div className="tool-validate-script-content">
-        {args?.script_code && (
-          <div className="tool-script-preview">
-            <div className="tool-section-label">Script Code:</div>
-            <pre className="tool-code-block">{args.script_code}</pre>
-          </div>
-        )}
-      </div>
-
-      {status?.type === 'running' && (
-        <div className="tool-running-message">Validating script syntax...</div>
-      )}
-
-      {result && (
-        <div className="tool-validation-results">
-          {parseError ? (
-            <div className="tool-result-text">{result}</div>
-          ) : parsedResult ? (
-            <div>
-              {isSuccess ? (
-                <div className="tool-validation-success">
-                  <div className="tool-success-message">
-                    ✅ <strong>Validation Successful:</strong> {parsedResult.message}
-                  </div>
-                </div>
-              ) : (
-                <div className="tool-validation-error">
-                  <div className="tool-error-message">
-                    ❌ <strong>Validation Failed:</strong>{' '}
-                    {parsedResult.error || parsedResult.message}
-                  </div>
-
-                  {parsedResult.line && (
-                    <div className="tool-error-line">
-                      📍 Error on line: <strong>{parsedResult.line}</strong>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="tool-result-text">{result}</div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-};
-// Tool UI for test_event_listener_script
-export const TestEventListenerScriptToolUI = ({ args, result, status }) => {
-  // Parse the result JSON if it's a string
-  let parsedResult = null;
-  let parseError = false;
-
-  if (result && typeof result === 'string') {
-    try {
-      parsedResult = JSON.parse(result);
-    } catch (_e) {
-      parseError = true;
-    }
-  } else if (result && typeof result === 'object') {
-    parsedResult = result;
-  }
-
-  // Check if test was successful
-  const isSuccess = parsedResult?.success === true;
-  const hasError = parsedResult?.success === false || parsedResult?.error;
-
-  // Determine status icon and classes
-  let statusIcon = null;
-  let statusClass = '';
-
-  if (status?.type === 'running') {
-    statusIcon = <ClockIcon size={16} className="animate-spin" />;
-    statusClass = 'tool-running';
-  } else if (status?.type === 'complete') {
-    if (hasError || parseError) {
-      statusIcon = <AlertCircleIcon size={16} />;
-      statusClass = 'tool-error';
-    } else {
-      statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
-      statusClass = 'tool-complete';
-    }
-  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
-    statusIcon = <AlertCircleIcon size={16} />;
-    statusClass = 'tool-error';
-  }
-
-  return (
-    <div
-      className={`tool-call-container tool-test-script ${statusClass}`}
-      data-ui="tool-call-content"
-    >
-      <div className="tool-call-header">
-        <span className="tool-name">🧪 Test Script</span>
-        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
-      </div>
-
-      <div className="tool-test-script-content">
-        {args?.script_code && (
-          <div className="tool-script-preview">
-            <div className="tool-section-label">Script Code:</div>
-            <pre className="tool-code-block">{args.script_code}</pre>
-          </div>
-        )}
-
-        {args?.sample_event && (
-          <div className="tool-sample-event">
-            <div className="tool-section-label">Sample Event:</div>
-            <pre className="tool-code-block">{JSON.stringify(args.sample_event, null, 2)}</pre>
-          </div>
-        )}
-
-        {args?.timeout && (
-          <div className="tool-test-timeout">
-            ⏱️ Timeout: <strong>{args.timeout} seconds</strong>
-          </div>
-        )}
-      </div>
-
-      {status?.type === 'running' && (
-        <div className="tool-running-message">Testing script execution...</div>
-      )}
-
-      {result && (
-        <div className="tool-test-script-results">
-          {parseError ? (
-            <div className="tool-result-text">{result}</div>
-          ) : parsedResult ? (
-            <div>
-              {isSuccess ? (
-                <div className="tool-test-success">
-                  <div className="tool-success-message">
-                    ✅ <strong>Test Successful:</strong> {parsedResult.message}
-                  </div>
-
-                  {parsedResult.result !== undefined && (
-                    <div className="tool-script-result">
-                      <div className="tool-section-label">Script Result:</div>
-                      <div className="tool-result-value">
-                        {typeof parsedResult.result === 'object' ? (
-                          <pre className="tool-code-block">
-                            {JSON.stringify(parsedResult.result, null, 2)}
-                          </pre>
-                        ) : (
-                          <code>{String(parsedResult.result)}</code>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="tool-test-error">
-                  <div className="tool-error-message">
-                    ❌ <strong>Test Failed:</strong>{' '}
-                    {parsedResult.message || 'Script execution failed'}
-                  </div>
-
-                  {parsedResult.error && (
-                    <div className="tool-script-error">
-                      <div className="tool-section-label">Error Details:</div>
-                      <div className="tool-error-details">{parsedResult.error}</div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="tool-result-text">{result}</div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-};
 // Tool UI for render_home_assistant_template
 export const RenderHomeAssistantTemplateToolUI = ({ args, result, status }) => {
   // Determine status icon and classes
@@ -3655,18 +2912,19 @@ export const ExecuteScriptToolUI = ({ args, result, status }) => {
         {args?.script && (
           <div className="tool-script-input">
             <div className="tool-section-label">Starlark Script:</div>
-            <pre className="tool-code-block">
-              {args.script.length > 500 ? (
-                <>
-                  {args.script.substring(0, 500)}...
-                  <div className="tool-content-truncated">
-                    Script truncated (showing first 500 characters of {args.script.length} total)
-                  </div>
-                </>
-              ) : (
-                args.script
-              )}
-            </pre>
+            <CodeHighlight
+              code={
+                args.script.length > 2000
+                  ? `${args.script.substring(0, 2000)}\n\n... Script truncated (showing first 2000 characters of ${args.script.length} total)`
+                  : args.script
+              }
+              language="python"
+              showLineNumbers={true}
+              customStyle={{
+                maxHeight: '400px',
+                overflow: 'auto',
+              }}
+            />
           </div>
         )}
 
@@ -3708,6 +2966,732 @@ export const ExecuteScriptToolUI = ({ args, result, status }) => {
   );
 };
 
+// Tool UI for create_automation
+export const CreateAutomationToolUI = ({ args, result, status }) => {
+  let statusIcon = null;
+  let statusClass = '';
+
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  const automationType = args?.automation_type === 'schedule' ? '🕐' : '🔔';
+  const actionType = args?.action?.type === 'wake_llm' ? 'Wake LLM' : 'Script';
+
+  return (
+    <div
+      className={`tool-call-container tool-automation ${statusClass}`}
+      data-ui="tool-call-content"
+    >
+      <div className="tool-call-header">
+        <span className="tool-name">{automationType} Create Automation</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+
+      <div className="tool-automation-content">
+        {args?.automation_name && (
+          <div className="tool-automation-item">
+            <span className="tool-label">Name:</span>
+            <span className="tool-value">{args.automation_name}</span>
+          </div>
+        )}
+
+        {args?.automation_type && (
+          <div className="tool-automation-item">
+            <span className="tool-label">Type:</span>
+            <span className={`tool-badge tool-badge-${args.automation_type}`}>
+              {args.automation_type}
+            </span>
+          </div>
+        )}
+
+        {args?.trigger && (
+          <div className="tool-automation-trigger">
+            <div className="tool-section-label">Trigger Configuration:</div>
+            {args.automation_type === 'event' ? (
+              <div className="tool-trigger-details">
+                {args.trigger?.event_source && (
+                  <div className="tool-detail-row">
+                    <span className="tool-label">Event Source:</span>
+                    <code className="tool-code-inline">{args.trigger.event_source}</code>
+                  </div>
+                )}
+                {args.trigger?.event_filter && (
+                  <div className="tool-detail-row">
+                    <span className="tool-label">Event Filter:</span>
+                    <code className="tool-code-inline">
+                      {JSON.stringify(args.trigger.event_filter)}
+                    </code>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="tool-trigger-details">
+                {args.trigger?.recurrence_rule && (
+                  <div className="tool-detail-row">
+                    <span className="tool-label">Schedule:</span>
+                    <code className="tool-code-inline" style={{ fontFamily: 'monospace' }}>
+                      {args.trigger.recurrence_rule}
+                    </code>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {args?.action && (
+          <div className="tool-automation-action">
+            <div className="tool-section-label">Action:</div>
+            <div className="tool-action-details">
+              <div className="tool-detail-row">
+                <span className="tool-label">Type:</span>
+                <span className="tool-badge tool-badge-action">{actionType}</span>
+              </div>
+
+              {args.action.type === 'wake_llm' && args.action?.context && (
+                <div className="tool-detail-row">
+                  <span className="tool-label">Context:</span>
+                  <div className="tool-code-block">{args.action.context}</div>
+                </div>
+              )}
+
+              {args.action.type === 'script' && args.action?.script_code && (
+                <div className="tool-script-content">
+                  <div className="tool-section-label">Script:</div>
+                  <CodeHighlight
+                    code={
+                      args.action.script_code.length > 2000
+                        ? `${args.action.script_code.substring(0, 2000)}\n\n... Script truncated (showing first 2000 characters of ${args.action.script_code.length} total)`
+                        : args.action.script_code
+                    }
+                    language="python"
+                    showLineNumbers={true}
+                    customStyle={{
+                      maxHeight: '400px',
+                      overflow: 'auto',
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {args?.description && (
+          <div className="tool-automation-description">
+            <span className="tool-label">Description:</span>
+            <span className="tool-value">{args.description}</span>
+          </div>
+        )}
+
+        {result && (
+          <div className="tool-automation-result">
+            <div className="tool-section-label">Result:</div>
+            {typeof result === 'string' ? (
+              <div className="tool-result-text">{result}</div>
+            ) : (
+              <pre className="tool-code-block">{JSON.stringify(result, null, 2)}</pre>
+            )}
+          </div>
+        )}
+      </div>
+
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Creating automation...</div>
+      )}
+    </div>
+  );
+};
+
+// Tool UI for list_automations
+export const ListAutomationsToolUI = ({ args, result, status }) => {
+  let statusIcon = null;
+  let statusClass = '';
+
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  let automations = [];
+  try {
+    if (typeof result === 'string') {
+      automations = JSON.parse(result);
+    } else if (Array.isArray(result)) {
+      automations = result;
+    }
+  } catch (_e) {
+    // Unable to parse result
+  }
+
+  return (
+    <div
+      className={`tool-call-container tool-automations-list ${statusClass}`}
+      data-ui="tool-call-content"
+    >
+      <div className="tool-call-header">
+        <span className="tool-name">📋 List Automations</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+
+      {(args?.automation_type || args?.enabled_only !== undefined) && (
+        <div className="tool-automations-filters">
+          <div className="tool-section-label">Filters:</div>
+          {args?.automation_type && (
+            <div className="tool-filter-item">
+              <span className="tool-label">Type:</span>
+              <span className={`tool-badge tool-badge-${args.automation_type}`}>
+                {args.automation_type}
+              </span>
+            </div>
+          )}
+          {args?.enabled_only !== undefined && (
+            <div className="tool-filter-item">
+              <span className="tool-label">Enabled Only:</span>
+              <span className="tool-value">{args.enabled_only ? 'Yes' : 'No'}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {result && (
+        <div className="tool-automations-result">
+          <div className="tool-section-label">Automations ({automations.length}):</div>
+          {automations.length === 0 ? (
+            <div className="tool-empty-result">No automations found</div>
+          ) : (
+            <div className="tool-automations-table">
+              {automations.map((automation, index) => (
+                <div key={index} className="tool-automation-row">
+                  <div className="tool-automation-name">{automation.name}</div>
+                  <div className="tool-automation-meta">
+                    <span className={`tool-badge tool-badge-${automation.type}`}>
+                      {automation.type}
+                    </span>
+                    <span
+                      className={`tool-badge ${
+                        automation.enabled ? 'tool-badge-enabled' : 'tool-badge-disabled'
+                      }`}
+                    >
+                      {automation.enabled ? '✓ Enabled' : '✗ Disabled'}
+                    </span>
+                    <span className="tool-badge tool-badge-action">
+                      {automation.action?.type === 'wake_llm' ? 'Wake LLM' : 'Script'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Fetching automations...</div>
+      )}
+    </div>
+  );
+};
+
+// Tool UI for get_automation
+export const GetAutomationToolUI = ({ args, result, status }) => {
+  let statusIcon = null;
+  let statusClass = '';
+
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  let automation = null;
+  try {
+    if (typeof result === 'string') {
+      automation = JSON.parse(result);
+    } else if (result && typeof result === 'object') {
+      automation = result;
+    }
+  } catch (_e) {
+    // Unable to parse result
+  }
+
+  const automationType = automation?.type === 'schedule' ? '🕐' : '🔔';
+
+  return (
+    <div
+      className={`tool-call-container tool-automation-detail ${statusClass}`}
+      data-ui="tool-call-content"
+    >
+      <div className="tool-call-header">
+        <span className="tool-name">{automationType} Get Automation</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+
+      {args?.automation_id && (
+        <div className="tool-automation-item">
+          <span className="tool-label">Automation ID:</span>
+          <code className="tool-code-inline">{args.automation_id}</code>
+        </div>
+      )}
+
+      {automation && (
+        <div className="tool-automation-detail-content">
+          {automation.name && (
+            <div className="tool-automation-item">
+              <span className="tool-label">Name:</span>
+              <span className="tool-value">{automation.name}</span>
+            </div>
+          )}
+
+          {automation.type && (
+            <div className="tool-automation-item">
+              <span className="tool-label">Type:</span>
+              <span className={`tool-badge tool-badge-${automation.type}`}>{automation.type}</span>
+            </div>
+          )}
+
+          {automation.enabled !== undefined && (
+            <div className="tool-automation-item">
+              <span className="tool-label">Status:</span>
+              <span
+                className={`tool-badge ${
+                  automation.enabled ? 'tool-badge-enabled' : 'tool-badge-disabled'
+                }`}
+              >
+                {automation.enabled ? '✓ Enabled' : '✗ Disabled'}
+              </span>
+            </div>
+          )}
+
+          {automation.trigger && (
+            <div className="tool-automation-trigger">
+              <div className="tool-section-label">Trigger Configuration:</div>
+              {automation.type === 'event' ? (
+                <div className="tool-trigger-details">
+                  {automation.trigger?.event_source && (
+                    <div className="tool-detail-row">
+                      <span className="tool-label">Event Source:</span>
+                      <code className="tool-code-inline">{automation.trigger.event_source}</code>
+                    </div>
+                  )}
+                  {automation.trigger?.event_filter && (
+                    <div className="tool-detail-row">
+                      <span className="tool-label">Event Filter:</span>
+                      <code className="tool-code-inline">
+                        {JSON.stringify(automation.trigger.event_filter)}
+                      </code>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="tool-trigger-details">
+                  {automation.trigger?.recurrence_rule && (
+                    <div className="tool-detail-row">
+                      <span className="tool-label">Schedule:</span>
+                      <code className="tool-code-inline" style={{ fontFamily: 'monospace' }}>
+                        {automation.trigger.recurrence_rule}
+                      </code>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {automation.action && (
+            <div className="tool-automation-action">
+              <div className="tool-section-label">Action:</div>
+              <div className="tool-action-details">
+                {automation.action.type && (
+                  <div className="tool-detail-row">
+                    <span className="tool-label">Type:</span>
+                    <span className="tool-badge tool-badge-action">
+                      {automation.action.type === 'wake_llm' ? 'Wake LLM' : 'Script'}
+                    </span>
+                  </div>
+                )}
+
+                {automation.action.type === 'wake_llm' && automation.action?.context && (
+                  <div className="tool-detail-row">
+                    <span className="tool-label">Context:</span>
+                    <div className="tool-code-block">{automation.action.context}</div>
+                  </div>
+                )}
+
+                {automation.action.type === 'script' && automation.action?.script_code && (
+                  <div className="tool-script-content">
+                    <div className="tool-section-label">Script:</div>
+                    <CodeHighlight
+                      code={
+                        automation.action.script_code.length > 2000
+                          ? `${automation.action.script_code.substring(0, 2000)}\n\n... Script truncated (showing first 2000 characters of ${automation.action.script_code.length} total)`
+                          : automation.action.script_code
+                      }
+                      language="python"
+                      showLineNumbers={true}
+                      customStyle={{
+                        maxHeight: '400px',
+                        overflow: 'auto',
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Fetching automation details...</div>
+      )}
+    </div>
+  );
+};
+
+// Tool UI for update_automation
+export const UpdateAutomationToolUI = ({ args, result, status }) => {
+  let statusIcon = null;
+  let statusClass = '';
+
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  return (
+    <div
+      className={`tool-call-container tool-automation-update ${statusClass}`}
+      data-ui="tool-call-content"
+    >
+      <div className="tool-call-header">
+        <span className="tool-name">✏️ Update Automation</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+
+      {args?.automation_id && (
+        <div className="tool-automation-item">
+          <span className="tool-label">Automation ID:</span>
+          <code className="tool-code-inline">{args.automation_id}</code>
+        </div>
+      )}
+
+      {args?.trigger_config && (
+        <div className="tool-automation-trigger">
+          <div className="tool-section-label">New Trigger Configuration:</div>
+          <pre className="tool-code-block">{JSON.stringify(args.trigger_config, null, 2)}</pre>
+        </div>
+      )}
+
+      {args?.action_config && (
+        <div className="tool-automation-action">
+          <div className="tool-section-label">New Action Configuration:</div>
+          {args.action_config?.script_code ? (
+            <div className="tool-script-content">
+              <CodeHighlight
+                code={
+                  args.action_config.script_code.length > 2000
+                    ? `${args.action_config.script_code.substring(0, 2000)}\n\n... Script truncated (showing first 2000 characters of ${args.action_config.script_code.length} total)`
+                    : args.action_config.script_code
+                }
+                language="python"
+                showLineNumbers={true}
+                customStyle={{
+                  maxHeight: '400px',
+                  overflow: 'auto',
+                }}
+              />
+            </div>
+          ) : (
+            <pre className="tool-code-block">{JSON.stringify(args.action_config, null, 2)}</pre>
+          )}
+        </div>
+      )}
+
+      {result && (
+        <div className="tool-automation-result">
+          <div className="tool-section-label">Result:</div>
+          {typeof result === 'string' ? (
+            <div className="tool-result-text">{result}</div>
+          ) : (
+            <pre className="tool-code-block">{JSON.stringify(result, null, 2)}</pre>
+          )}
+        </div>
+      )}
+
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Updating automation...</div>
+      )}
+    </div>
+  );
+};
+
+// Tool UI for enable_automation
+export const EnableAutomationToolUI = ({ args, result, status }) => {
+  let statusIcon = null;
+  let statusClass = '';
+
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  return (
+    <div
+      className={`tool-call-container tool-automation-enable ${statusClass}`}
+      data-ui="tool-call-content"
+    >
+      <div className="tool-call-header">
+        <span className="tool-name">✓ Enable Automation</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+
+      {args?.automation_id && (
+        <div className="tool-automation-item">
+          <span className="tool-label">Automation ID:</span>
+          <code className="tool-code-inline">{args.automation_id}</code>
+        </div>
+      )}
+
+      {result && (
+        <div className="tool-automation-result">
+          <div className="tool-success-message">
+            <CheckCircleIcon size={16} />
+            <span>{typeof result === 'string' ? result : 'Automation enabled'}</span>
+          </div>
+        </div>
+      )}
+
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Enabling automation...</div>
+      )}
+    </div>
+  );
+};
+
+// Tool UI for disable_automation
+export const DisableAutomationToolUI = ({ args, result, status }) => {
+  let statusIcon = null;
+  let statusClass = '';
+
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  return (
+    <div
+      className={`tool-call-container tool-automation-disable ${statusClass}`}
+      data-ui="tool-call-content"
+    >
+      <div className="tool-call-header">
+        <span className="tool-name">✕ Disable Automation</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+
+      {args?.automation_id && (
+        <div className="tool-automation-item">
+          <span className="tool-label">Automation ID:</span>
+          <code className="tool-code-inline">{args.automation_id}</code>
+        </div>
+      )}
+
+      {result && (
+        <div className="tool-automation-result">
+          <div className="tool-result-text">
+            {typeof result === 'string' ? result : 'Automation disabled'}
+          </div>
+        </div>
+      )}
+
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Disabling automation...</div>
+      )}
+    </div>
+  );
+};
+
+// Tool UI for delete_automation
+export const DeleteAutomationToolUI = ({ args, result, status }) => {
+  let statusIcon = null;
+  let statusClass = '';
+
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  return (
+    <div
+      className={`tool-call-container tool-automation-delete ${statusClass}`}
+      data-ui="tool-call-content"
+    >
+      <div className="tool-call-header">
+        <span className="tool-name">🗑️ Delete Automation</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+
+      {args?.automation_id && (
+        <div className="tool-automation-item">
+          <span className="tool-label">Automation ID:</span>
+          <code className="tool-code-inline">{args.automation_id}</code>
+        </div>
+      )}
+
+      {result && (
+        <div className="tool-automation-result">
+          {status?.type === 'incomplete' ? (
+            <div className="tool-error-message">
+              <AlertCircleIcon size={16} />
+              <span>{typeof result === 'string' ? result : 'Error deleting automation'}</span>
+            </div>
+          ) : (
+            <div className="tool-warning-message">
+              <span>{typeof result === 'string' ? result : 'Automation deleted'}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Deleting automation...</div>
+      )}
+    </div>
+  );
+};
+
+// Tool UI for get_automation_stats
+export const GetAutomationStatsToolUI = ({ result, status }) => {
+  let statusIcon = null;
+  let statusClass = '';
+
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  let stats = null;
+  try {
+    if (typeof result === 'string') {
+      stats = JSON.parse(result);
+    } else if (result && typeof result === 'object') {
+      stats = result;
+    }
+  } catch (_e) {
+    // Unable to parse result
+  }
+
+  return (
+    <div
+      className={`tool-call-container tool-automation-stats ${statusClass}`}
+      data-ui="tool-call-content"
+    >
+      <div className="tool-call-header">
+        <span className="tool-name">📊 Automation Statistics</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+
+      {stats && (
+        <div className="tool-automation-stats-content">
+          {stats.total !== undefined && (
+            <div className="tool-stat-item">
+              <span className="tool-stat-label">Total Automations:</span>
+              <span className="tool-stat-value">{stats.total}</span>
+            </div>
+          )}
+
+          {stats.enabled !== undefined && (
+            <div className="tool-stat-item">
+              <span className="tool-stat-label">Enabled:</span>
+              <span className="tool-stat-value tool-stat-enabled">{stats.enabled}</span>
+            </div>
+          )}
+
+          {stats.disabled !== undefined && (
+            <div className="tool-stat-item">
+              <span className="tool-stat-label">Disabled:</span>
+              <span className="tool-stat-value tool-stat-disabled">{stats.disabled}</span>
+            </div>
+          )}
+
+          {stats.by_type && typeof stats.by_type === 'object' && (
+            <div className="tool-stat-section">
+              <div className="tool-section-label">By Type:</div>
+              <div className="tool-stat-by-type">
+                {Object.entries(stats.by_type).map(([type, count]) => (
+                  <div key={type} className="tool-stat-type-item">
+                    <span className={`tool-badge tool-badge-${type}`}>{type}</span>
+                    <span className="tool-stat-count">{count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!stats && result && (
+        <div className="tool-automation-stats-content">
+          <pre className="tool-code-block">{JSON.stringify(result, null, 2)}</pre>
+        </div>
+      )}
+
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Fetching automation statistics...</div>
+      )}
+    </div>
+  );
+};
+
 // Create a map of tool UIs by name for easier access
 export const toolUIsByName = {
   // Implemented tool UIs
@@ -3733,12 +3717,6 @@ export const toolUIsByName = {
   get_user_documentation_content: GetUserDocumentationContentToolUI,
   query_recent_events: QueryRecentEventsToolUI,
   test_event_listener: TestEventListenerToolUI,
-  create_event_listener: CreateEventListenerToolUI,
-  list_event_listeners: ListEventListenersToolUI,
-  delete_event_listener: DeleteEventListenerToolUI,
-  toggle_event_listener: ToggleEventListenerToolUI,
-  validate_event_listener_script: ValidateEventListenerScriptToolUI,
-  test_event_listener_script: TestEventListenerScriptToolUI,
   render_home_assistant_template: RenderHomeAssistantTemplateToolUI,
   add_calendar_event: AddCalendarEventToolUI,
   search_calendar_events: SearchCalendarEventsToolUI,
@@ -3747,6 +3725,14 @@ export const toolUIsByName = {
   get_message_history: GetMessageHistoryToolUI,
   send_message_to_user: SendMessageToUserToolUI,
   execute_script: ExecuteScriptToolUI,
+  create_automation: CreateAutomationToolUI,
+  list_automations: ListAutomationsToolUI,
+  get_automation: GetAutomationToolUI,
+  update_automation: UpdateAutomationToolUI,
+  enable_automation: EnableAutomationToolUI,
+  disable_automation: DisableAutomationToolUI,
+  delete_automation: DeleteAutomationToolUI,
+  get_automation_stats: GetAutomationStatsToolUI,
 };
 
 // Export ToolFallback separately
