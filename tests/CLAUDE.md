@@ -2,6 +2,96 @@
 
 This file provides guidance for working with tests in this project.
 
+## Test Structure Overview
+
+The project uses a three-tier testing structure organized by test type and feature area:
+
+### Three-Tier Test Organization
+
+```
+tests/
+├── unit/                  # Unit tests - individual function/class behavior
+│   ├── attachments/
+│   ├── calendar/
+│   ├── events/
+│   ├── indexing/          # Document/email indexing logic
+│   ├── llm/
+│   ├── processing/
+│   ├── services/
+│   ├── storage/           # Database/storage layer
+│   ├── tools/
+│   └── web/
+├── integration/           # Integration tests - component interactions & external services
+│   ├── home_assistant/    # Home Assistant API integration
+│   ├── llm/               # LLM provider integrations (OpenAI, Gemini, etc)
+│   └── fixtures/          # Shared fixture configurations
+├── functional/            # Functional tests - end-to-end feature flows
+│   ├── attachments/
+│   ├── automations/       # Automation execution and event system
+│   ├── calendar/          # Calendar operations and reminders
+│   ├── events/
+│   ├── home_assistant/
+│   ├── indexing/          # Email/document indexing pipeline
+│   │   └── processors/    # Content processor tests
+│   ├── notes/
+│   ├── scripting/
+│   ├── storage/
+│   ├── tasks/
+│   ├── telegram/          # Telegram bot functionality
+│   ├── tools/
+│   ├── vector_search/
+│   └── web/               # Web API and UI tests
+│       ├── api/           # REST API endpoint tests
+│       ├── ui/            # Playwright end-to-end UI tests
+│       └── pages/         # Playwright Page Object Models
+└── mocks/                 # Mock utilities and fixtures
+
+```
+
+### Understanding Each Tier
+
+**Unit Tests** (`tests/unit/`)
+
+- Test individual functions, classes, or methods in isolation
+- Use mocks for external dependencies
+- Run quickly and detect regressions early
+- Located in directories matching `src/` structure
+- Example: Testing CalendarValidator logic without database access
+
+**Integration Tests** (`tests/integration/`)
+
+- Test interactions with external services (LLM APIs, Home Assistant, etc.)
+- Use VCR.py to record/replay HTTP interactions for reproducibility
+- Verify correct API usage and response handling
+- Located in `tests/integration/` subdirectories by service
+- Example: Testing that Home Assistant API calls work correctly
+
+**Functional Tests** (`tests/functional/`)
+
+- Test complete feature workflows end-to-end
+- Use real or fake dependencies to maximize coverage
+- Verify features work as users experience them
+- Organized by feature area, not implementation details
+- Example: Creating a calendar event, confirming it, verifying it appears in UI
+
+### Finding Tests for a Feature
+
+To find tests for a specific feature:
+
+1. **By Feature Name**: Look in `tests/functional/{feature}/` (e.g., calendar tests in
+   `tests/functional/calendar/`)
+2. **By Component**: Look in corresponding `tests/unit/{component}/` (e.g., storage tests in
+   `tests/unit/storage/`)
+3. **By API**: Look in `tests/functional/web/api/` for endpoint tests
+4. **By UI Page**: Look in `tests/functional/web/ui/test_{feature}*.py` for Playwright tests
+
+### Benefits of This Organization
+
+- **Discoverability**: Find tests quickly by feature or component
+- **Maintainability**: Group related tests together, making changes easier
+- **Performance**: Run unit tests quickly for fast feedback, save slower tests for CI
+- **Clarity**: Clear separation between test types helps understand test purpose
+
 ## Testing Principles
 
 - **Testing Philosophy: Prefer Real/Fake Dependencies Over Mocks**
