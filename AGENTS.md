@@ -411,6 +411,43 @@ The current architecture primarily operates in **[BC]** mode:
 - This approach requires maintaining strong authentication and authorization at the interface
   boundaries
 
+#### Processing Profiles
+
+**Processing profiles** provide a practical mechanism for implementing Rule of Two constraints by
+dynamically adjusting available tools and supervision requirements based on input trust level:
+
+1. **Trusted Profile [BC]**: Full tool access when processing input from authorized users
+
+   - All tools available (data access, state changes, communication)
+   - Used for direct user interactions via Telegram or Web UI
+   - Relies on strong authentication at interface boundaries
+
+2. **Untrusted-Readonly Profile [AB]**: Processing untrusted input with data access but no actions
+
+   - Can read sensitive data (notes, calendar, contacts)
+   - Cannot change state or communicate externally (tools disabled or require human approval)
+   - Useful for analyzing emails or external content while preventing exfiltration
+   - Example: "Summarize this email" - can read context but not send results anywhere
+
+3. **Untrusted-Sandboxed Profile [AC]**: Processing untrusted input with actions but no sensitive
+   data access
+
+   - Cannot access sensitive user data
+   - Can take actions or communicate (with appropriate scoping/rate limits)
+   - Useful for processing external content that doesn't require personal context
+   - Example: "What's the weather like?" - can call external APIs but not read user's calendar
+
+**Dynamic Profile Switching**: The system could switch profiles based on:
+
+- Input source detection (direct message vs forwarded email)
+- Explicit user commands ("analyze this untrusted email in readonly mode")
+- Tool invocation patterns (attempting to access sensitive data triggers confirmation prompt)
+- Content analysis (detecting potential injection attempts)
+
+**Future Considerations**: As the system evolves to handle more untrusted inputs (e.g., email
+analysis), implementing explicit processing profiles will become increasingly important for
+maintaining security boundaries while preserving functionality.
+
 **Important Limitations**: The Rule of Two specifically addresses prompt injection risks. It does
 not protect against other AI agent vulnerabilities such as:
 
