@@ -28,7 +28,6 @@ const ToolDisplay = ({ toolName, args, result, status, attachments }) => {
   // Fall back to ToolParameterViewer for unregistered tools
   return (
     <div>
-      <div style={{ marginBottom: '0.5rem', fontWeight: 'bold' }}>{toolName}</div>
       {args && Object.keys(args).length > 0 && (
         <ToolParameterViewer data={args} toolName={toolName} />
       )}
