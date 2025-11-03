@@ -242,13 +242,16 @@ class StarlarkEngine:
                     # Create a closure to capture the tool name
                     def make_tool_wrapper(
                         name: str,
+                    ) -> Callable[
+                        ...,
                         # ast-grep-ignore: no-dict-any - Return dict for Starlark JSON compatibility
-                    ) -> Callable[..., str | dict[str, Any]]:
+                        str | dict[str, Any] | list[Any] | int | float | bool,
+                    ]:
                         def tool_wrapper(
                             *args: Any,  # noqa: ANN401 # Tool args can be any type
                             **kwargs: Any,  # noqa: ANN401
                             # ast-grep-ignore: no-dict-any - Return dict for Starlark JSON compatibility
-                        ) -> str | dict[str, Any]:
+                        ) -> str | dict[str, Any] | list[Any] | int | float | bool:
                             """Execute the tool with the given arguments."""
                             # If positional args are provided, we need to map them to kwargs
                             # This requires knowing the parameter names of the tool

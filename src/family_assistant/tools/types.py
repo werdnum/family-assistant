@@ -171,7 +171,9 @@ class ToolResult:
         None  # List of attachments (can be references or new content)
     )
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    data: dict[str, Any] | str | None = None  # Structured data for tests/scripts
+    data: dict[str, Any] | list[Any] | str | int | float | bool | None = (
+        None  # Structured data for tests/scripts
+    )
 
     def __post_init__(self) -> None:
         """Ensure at least one of text or data is populated"""
@@ -197,7 +199,7 @@ class ToolResult:
         return ""
 
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def get_data(self) -> dict[str, Any] | str | None:
+    def get_data(self) -> dict[str, Any] | list[Any] | str | int | float | bool | None:
         """
         Get data, parsing from text if needed.
 
