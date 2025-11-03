@@ -279,11 +279,17 @@ async def execute_script_tool(
                     )
                 )
 
-        # Prepare data field (typed as dict or list or None)
+        # Prepare data field - preserve structured data for programmatic access
         # ast-grep-ignore: no-dict-any - Script results can be arbitrary structures
-        result_data: dict[str, Any] | str | None = None
-        if isinstance(result, (dict, list)):
+        result_data: dict[str, Any] | list[Any] | str | int | float | bool | None = None
+        if isinstance(result, (dict, list, int, float, bool, str)):
+            # Preserve structured data for programmatic access
             result_data = result  # type: ignore[assignment]
+        elif result is not None and not isinstance(
+            result, (ScriptAttachment, ScriptToolResult)
+        ):
+            # For other types, convert to string
+            result_data = str(result)
 
         return ToolResult(
             text=response_text,

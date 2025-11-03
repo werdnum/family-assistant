@@ -313,8 +313,19 @@ class ToolsAPI:
         Returns:
             Processed arguments with attachment content
         """
+        # Get tool definition to properly detect attachment parameters
+        tool_definition = None
+        raw_definitions = self._get_raw_tool_definitions()
+        for definition in raw_definitions:
+            # Tool definitions have a 'function' key with the function name
+            func_def = definition.get("function", {})
+            if func_def.get("name") == tool_name:
+                tool_definition = definition
+                break
 
-        return await process_attachment_arguments(kwargs, self.execution_context)
+        return await process_attachment_arguments(
+            kwargs, self.execution_context, tool_definition
+        )
 
     def list_tools(self) -> list[ToolInfo]:
         """
@@ -392,7 +403,7 @@ class ToolsAPI:
         *args: Any,  # noqa: ANN401
         **kwargs: Any,  # noqa: ANN401
         # ast-grep-ignore: no-dict-any - Return dict for Starlark JSON compatibility
-    ) -> str | dict[str, Any]:
+    ) -> str | dict[str, Any] | list[Any] | int | float | bool:
         """
         Execute a tool with the given arguments.
 
@@ -575,9 +586,15 @@ class ToolsAPI:
                         }
                     else:
                         # No attachments were successfully stored
+                        # Check if we have structured data to return
+                        if result.data is not None:
+                            return result.data
                         return result.to_string()
                 else:
-                    # ToolResult with no attachments, just return text
+                    # ToolResult with no attachments
+                    # Prefer returning structured data if available
+                    if result.data is not None:
+                        return result.data
                     return result.to_string()
 
             # Convert result to JSON string if it's a dict or list
@@ -596,7 +613,7 @@ class ToolsAPI:
         tool_name: str,
         args_json: str,
         # ast-grep-ignore: no-dict-any - Return dict for Starlark JSON compatibility
-    ) -> str | dict[str, Any]:
+    ) -> str | dict[str, Any] | list[Any] | int | float | bool:
         """
         Execute a tool with JSON-encoded arguments.
 
@@ -675,7 +692,7 @@ class StarlarkToolsAPI:
         *args: Any,  # noqa: ANN401
         **kwargs: Any,  # noqa: ANN401
         # ast-grep-ignore: no-dict-any - Return dict for Starlark JSON compatibility
-    ) -> str | dict[str, Any]:
+    ) -> "str | dict[str, Any] | list[Any] | int | float | bool":
         """Execute a tool."""
         return self._api.execute(tool_name, *args, **kwargs)
 
@@ -684,7 +701,7 @@ class StarlarkToolsAPI:
         tool_name: str,
         args_json: str,
         # ast-grep-ignore: no-dict-any - Return dict for Starlark JSON compatibility
-    ) -> str | dict[str, Any]:
+    ) -> "str | dict[str, Any] | list[Any] | int | float | bool":
         """Execute a tool with JSON arguments."""
         return self._api.execute_json(tool_name, args_json)
 
