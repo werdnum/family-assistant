@@ -26,8 +26,9 @@ const MessageDisplay = ({ message }) => {
     try {
       return JSON.parse(args);
     } catch (error) {
-      console.error('Failed to parse tool arguments:', error);
-      return { _raw: args, _parse_error: true };
+      console.error('Failed to parse tool arguments:', error, 'Raw args:', args);
+      // Return the raw string for display - the viewer will handle it
+      return args;
     }
   };
 
