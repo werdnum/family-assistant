@@ -1,11 +1,61 @@
-# Playwright Web Testing Guide
+# Web Testing Guide
 
-This file provides guidance for working with Playwright end-to-end tests for the web UI.
+This file provides guidance for working with web API and UI tests for the web application.
 
 ## Overview
 
+Web tests are organized into two categories:
+
+### API Tests (`tests/functional/web/api/`)
+
+REST API endpoint tests that verify the backend API works correctly. These tests:
+
+- Use the FastAPI test client to make HTTP requests
+- Test request/response handling, status codes, and data validation
+- Don't require Playwright or a browser
+- Run quickly and test API contracts
+- Include tests for automations, chat, file uploads, and more
+
+Example tests:
+
+- `test_chat_messages.py` - Chat API endpoint tests
+- `test_chat_streaming.py` - Streaming chat response tests
+- `test_automations_crud_api.py` - Automation CRUD operations
+- `test_endpoints.py` - General endpoint tests
+
+### UI Tests (`tests/functional/web/ui/`)
+
+End-to-end browser tests using Playwright that verify the complete web UI works correctly. These
+tests:
+
+- Use Playwright to interact with the web UI like a real user
+- Test page rendering, navigation, user interactions
+- Are marked with `@pytest.mark.playwright`
+- Include Page Object Models in `tests/functional/web/pages/` for reusable page interactions
+- Run slower but provide the highest confidence in UI functionality
+
+Example tests:
+
+- `test_chat_basic.py` - Basic chat functionality
+- `test_notes_ui.py` - Notes management
+- `test_events_list.py` - Event listing and filtering
+- `test_automations_ui.py` - Automation UI interactions
+
+### Page Object Models (`tests/functional/web/pages/`)
+
+Reusable Playwright page objects for common UI interactions. Helps maintain tests by abstracting
+page structure and interactions into reusable classes.
+
+Example page objects:
+
+- `pages/chat.py` - ChatPage for chat UI interactions
+- `pages/notes.py` - NotesPage for notes UI interactions
+- `pages/sidebar.py` - SidebarPage for navigation
+
+## Playwright UI Testing Guide
+
 End-to-end tests for the web UI are written using Playwright and can be found in
-`tests/functional/web/`. These tests are marked with `@pytest.mark.playwright`.
+`tests/functional/web/ui/`. These tests are marked with `@pytest.mark.playwright`.
 
 ## Debugging Playwright Tests
 
