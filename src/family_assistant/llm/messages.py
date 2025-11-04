@@ -276,33 +276,3 @@ def tool_result_to_llm_message(
         _attachments=result.attachments,  # Pass attachments to provider (using alias)
         attachments=attachments_metadata,  # Store metadata in database
     )
-
-
-def tool_result_to_history_message(
-    result: ToolResult,
-    tool_call_id: str,
-    function_name: str,
-    # ast-grep-ignore: no-dict-any - Database serialization format
-) -> dict[str, Any]:
-    """
-    Convert a ToolResult to a history message dict for database storage.
-
-    This creates a ToolMessage and then converts it to a dict.
-    Raw attachment data is excluded (only metadata is stored).
-
-    Args:
-        result: The ToolResult to convert
-        tool_call_id: The tool call ID
-        function_name: The function name
-
-    Returns:
-        Dictionary suitable for database storage
-    """
-    llm_message = tool_result_to_llm_message(result, tool_call_id, function_name)
-
-    # Convert to dict for database storage
-    # model_dump automatically excludes fields marked with exclude=True
-    history_message = message_to_dict(llm_message)
-    history_message["tool_name"] = function_name  # Store tool name for database
-
-    return history_message
