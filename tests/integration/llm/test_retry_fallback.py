@@ -15,6 +15,9 @@ from family_assistant.llm.base import (
     ServiceUnavailableError,
 )
 from family_assistant.llm.factory import LLMClientFactory
+from tests.factories.messages import (
+    create_user_message,
+)
 
 from .vcr_helpers import sanitize_response
 
@@ -70,7 +73,7 @@ async def test_successful_primary_response(
     ):
         client = await retry_client_factory("test", "test-model")
 
-        messages = [{"role": "user", "content": "Test message"}]
+        messages = [create_user_message("Test message")]
         response = await client.generate_response(messages)
 
         assert response.content == "Primary response"
@@ -99,7 +102,7 @@ async def test_retry_on_retriable_error(
     ):
         client = await retry_client_factory("test", "test-model")
 
-        messages = [{"role": "user", "content": "Test message"}]
+        messages = [create_user_message("Test message")]
         response = await client.generate_response(messages)
 
         assert response.content == "Success after retry"
@@ -146,7 +149,7 @@ async def test_fallback_after_primary_failures(
             "test", "test-model", "fallback", "fallback-model"
         )
 
-        messages = [{"role": "user", "content": "Test message"}]
+        messages = [create_user_message("Test message")]
         response = await client.generate_response(messages)
 
         assert response.content == "Fallback response"
@@ -174,7 +177,7 @@ async def test_all_retries_exhausted(
     ):
         client = await retry_client_factory("test", "test-model")
 
-        messages = [{"role": "user", "content": "Test message"}]
+        messages = [create_user_message("Test message")]
 
         with pytest.raises(ProviderTimeoutError) as exc_info:
             await client.generate_response(messages)
@@ -222,7 +225,7 @@ async def test_non_retriable_error_goes_to_fallback(
             "test", "test-model", "fallback", "fallback-model"
         )
 
-        messages = [{"role": "user", "content": "Test message"}]
+        messages = [create_user_message("Test message")]
         response = await client.generate_response(messages)
 
         assert response.content == "Fallback handled it"
@@ -288,12 +291,7 @@ async def test_real_provider_fallback(
 
     client = LLMClientFactory.create_client(config)
 
-    messages = [
-        {
-            "role": "user",
-            "content": "Reply with: 'Primary response received'",
-        }
-    ]
+    messages = [create_user_message("Reply with: 'Primary response received'")]
 
     response = await client.generate_response(messages)
 

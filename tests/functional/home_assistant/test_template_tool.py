@@ -91,9 +91,9 @@ async def test_render_home_assistant_template_success(
             return False
         last_message = messages[-1]
         return (
-            last_message.get("role") == "tool"
-            and last_message.get("tool_call_id") == tool_call_id
-            and expected_result in last_message.get("content", "")
+            last_message.role == "tool"
+            and last_message.tool_call_id == tool_call_id
+            and expected_result in (last_message.content or "")
         )
 
     final_llm_response = MockLLMOutput(
@@ -221,10 +221,10 @@ async def test_render_home_assistant_template_no_client(
             return False
         last_message = messages[-1]
         return (
-            last_message.get("role") == "tool"
-            and last_message.get("tool_call_id") == tool_call_id
-            and "Error:" in last_message.get("content", "")
-            and "not configured" in last_message.get("content", "")
+            last_message.role == "tool"
+            and last_message.tool_call_id == tool_call_id
+            and "Error:" in (last_message.content or "")
+            and "not configured" in (last_message.content or "")
         )
 
     error_llm_response = MockLLMOutput(
@@ -368,10 +368,10 @@ Status: Comfortable"""
             return False
         last_message = messages[-1]
         return (
-            last_message.get("role") == "tool"
-            and last_message.get("tool_call_id") == tool_call_id
-            and "18.5°C" in last_message.get("content", "")
-            and "Comfortable" in last_message.get("content", "")
+            last_message.role == "tool"
+            and last_message.tool_call_id == tool_call_id
+            and "18.5°C" in (last_message.content or "")
+            and "Comfortable" in (last_message.content or "")
         )
 
     weather_result_response = MockLLMOutput(
@@ -515,10 +515,10 @@ async def test_render_home_assistant_template_api_error(
             return False
         last_message = messages[-1]
         return (
-            last_message.get("role") == "tool"
-            and last_message.get("tool_call_id") == tool_call_id
-            and "Error:" in last_message.get("content", "")
-            and "Connection timeout" in last_message.get("content", "")
+            last_message.role == "tool"
+            and last_message.tool_call_id == tool_call_id
+            and "Error:" in (last_message.content or "")
+            and "Connection timeout" in (last_message.content or "")
         )
 
     api_error_response = MockLLMOutput(

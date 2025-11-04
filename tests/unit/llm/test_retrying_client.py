@@ -13,6 +13,9 @@ from family_assistant.llm.base import (
     ServiceUnavailableError,
 )
 from family_assistant.llm.retrying_client import RetryingLLMClient
+from tests.factories.messages import (
+    create_user_message,
+)
 
 
 @pytest.fixture
@@ -20,7 +23,7 @@ def mock_primary_client() -> AsyncMock:
     """Create a mock primary LLM client."""
     mock = AsyncMock()
     mock.format_user_message_with_file = AsyncMock(
-        return_value={"role": "user", "content": "test"}
+        return_value=create_user_message("test")
     )
     return mock
 
@@ -30,7 +33,7 @@ def mock_fallback_client() -> AsyncMock:
     """Create a mock fallback LLM client."""
     mock = AsyncMock()
     mock.format_user_message_with_file = AsyncMock(
-        return_value={"role": "user", "content": "test"}
+        return_value=create_user_message("test")
     )
     return mock
 
@@ -51,7 +54,7 @@ async def test_successful_primary_call(
         fallback_model="fallback-model",
     )
 
-    messages = [{"role": "user", "content": "test"}]
+    messages = [create_user_message("test")]
     response = await client.generate_response(messages)
 
     assert response.content == "Primary success"
@@ -79,7 +82,7 @@ async def test_retry_on_connection_error(
         fallback_model="fallback-model",
     )
 
-    messages = [{"role": "user", "content": "test"}]
+    messages = [create_user_message("test")]
     response = await client.generate_response(messages)
 
     assert response.content == "Success after retry"
@@ -103,7 +106,7 @@ async def test_retry_on_timeout_error(mock_primary_client: AsyncMock) -> None:
         fallback_client=None,  # No fallback
     )
 
-    messages = [{"role": "user", "content": "test"}]
+    messages = [create_user_message("test")]
     response = await client.generate_response(messages)
 
     assert response.content == "Success after timeout"
@@ -125,7 +128,7 @@ async def test_retry_on_rate_limit(mock_primary_client: AsyncMock) -> None:
         primary_model="test-model",
     )
 
-    messages = [{"role": "user", "content": "test"}]
+    messages = [create_user_message("test")]
     response = await client.generate_response(messages)
 
     assert response.content == "Success after rate limit"
@@ -147,7 +150,7 @@ async def test_retry_on_service_unavailable(mock_primary_client: AsyncMock) -> N
         primary_model="test-model",
     )
 
-    messages = [{"role": "user", "content": "test"}]
+    messages = [create_user_message("test")]
     response = await client.generate_response(messages)
 
     assert response.content == "Success after 503"
@@ -179,7 +182,7 @@ async def test_fallback_after_retry_failures(
         fallback_model="fallback-model",
     )
 
-    messages = [{"role": "user", "content": "test"}]
+    messages = [create_user_message("test")]
     response = await client.generate_response(messages)
 
     assert response.content == "Fallback success"
@@ -209,7 +212,7 @@ async def test_non_retriable_error_goes_to_fallback(
         fallback_model="fallback-model",
     )
 
-    messages = [{"role": "user", "content": "test"}]
+    messages = [create_user_message("test")]
     response = await client.generate_response(messages)
 
     assert response.content == "Fallback handled it"
@@ -241,7 +244,7 @@ async def test_all_attempts_fail(
         fallback_model="fallback-model",
     )
 
-    messages = [{"role": "user", "content": "test"}]
+    messages = [create_user_message("test")]
 
     with pytest.raises(RateLimitError) as exc_info:
         await client.generate_response(messages)
@@ -265,7 +268,7 @@ async def test_no_fallback_configured(mock_primary_client: AsyncMock) -> None:
         fallback_client=None,  # No fallback
     )
 
-    messages = [{"role": "user", "content": "test"}]
+    messages = [create_user_message("test")]
 
     with pytest.raises(RateLimitError):
         await client.generate_response(messages)
@@ -288,7 +291,7 @@ async def test_same_model_fallback_skipped(mock_primary_client: AsyncMock) -> No
         fallback_model="test-model",  # Same model
     )
 
-    messages = [{"role": "user", "content": "test"}]
+    messages = [create_user_message("test")]
 
     with pytest.raises(RateLimitError):
         await client.generate_response(messages)
@@ -302,7 +305,7 @@ async def test_format_user_message_with_file(
     mock_primary_client: AsyncMock, mock_fallback_client: AsyncMock
 ) -> None:
     """Test that format_user_message_with_file delegates to primary."""
-    expected_result = {"role": "user", "content": "file content"}
+    expected_result = create_user_message("file content")
     mock_primary_client.format_user_message_with_file = AsyncMock(
         return_value=expected_result
     )

@@ -106,9 +106,9 @@ async def test_confirmation_accepted(
     def success_result_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         return any(
-            msg.get("role") == "tool"
-            and msg.get("tool_call_id") == tool_call_id
-            and msg.get("content")
+            msg.role == "tool"
+            and msg.tool_call_id == tool_call_id
+            and msg.content
             == expected_tool_success_result  # Match exact success message
             for msg in messages
         )
@@ -244,9 +244,9 @@ async def test_confirmation_rejected(
     def cancel_result_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         return any(
-            msg.get("role") == "tool"
-            and msg.get("tool_call_id") == tool_call_id
-            and msg.get("content") == tool_cancel_result_text  # Match the exact string
+            msg.role == "tool"
+            and msg.tool_call_id == tool_call_id
+            and msg.content == tool_cancel_result_text  # Match the exact string
             for msg in messages
         )
 
@@ -376,9 +376,9 @@ async def test_confirmation_timed_out(
     def timeout_result_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         return any(
-            msg.get("role") == "tool"
-            and msg.get("tool_call_id") == tool_call_id
-            and msg.get("content") == tool_timeout_result_text  # Match the exact string
+            msg.role == "tool"
+            and msg.tool_call_id == tool_call_id
+            and msg.content == tool_timeout_result_text  # Match the exact string
             for msg in messages
         )
 

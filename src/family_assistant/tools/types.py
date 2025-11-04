@@ -223,54 +223,6 @@ class ToolResult:
         """Convert to string for backward compatibility"""
         return self.get_text()  # Use fallback mechanism
 
-    def to_llm_message(
-        self,
-        tool_call_id: str,
-        function_name: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
-        """Convert to message format for LLM (includes _attachment for provider handling)"""
-        message = {
-            "role": "tool",
-            "tool_call_id": tool_call_id,
-            "content": self.get_text(),  # Use fallback mechanism
-            "error_traceback": None,
-            "name": function_name,  # OpenAI API compatibility
-        }
-
-        # Add attachment metadata for provider to handle
-        if self.attachments:
-            # Pass all attachments to provider for proper multimodal handling
-            message["_attachments"] = self.attachments
-            # Store all attachments in history metadata
-            message["attachments"] = [
-                {
-                    "type": "tool_result",
-                    "mime_type": att.mime_type,
-                    "description": att.description,
-                    "attachment_id": att.attachment_id,  # Include ID for references
-                }
-                for att in self.attachments
-            ]
-
-        return message
-
-    def to_history_message(
-        self,
-        tool_call_id: str,
-        function_name: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
-        """Convert to message format for database history (excludes raw attachment data)"""
-        llm_message = self.to_llm_message(tool_call_id, function_name)
-        history_message = llm_message.copy()
-
-        # Remove raw attachment data but keep metadata
-        history_message.pop("_attachments", None)
-        history_message["tool_name"] = function_name  # Store tool name for database
-
-        return history_message
-
 
 # Type alias for tool function return types (backward compatibility)
 ToolReturnType = str | ToolResult

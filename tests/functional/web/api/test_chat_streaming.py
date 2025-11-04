@@ -240,7 +240,7 @@ async def test_api_chat_send_message_stream_minimal(
     # Configure mock LLM to respond to the prompt
     mock_llm_client.rules.append((
         lambda args: any(
-            msg.get("role") == "user" and user_prompt in str(msg.get("content", ""))
+            msg.role == "user" and user_prompt in str(msg.content or "")
             for msg in args.get("messages", [])
         ),
         LLMOutput(
@@ -332,10 +332,10 @@ async def test_api_chat_send_message_stream_with_tools(
         return (
             len(messages) >= 1
             and any(
-                msg.get("role") == "user" and user_prompt in str(msg.get("content", ""))
+                msg.role == "user" and user_prompt in str(msg.content or "")
                 for msg in messages
             )
-            and not any(msg.get("role") == "tool" for msg in messages)
+            and not any(msg.role == "tool" for msg in messages)
         )
 
     mock_llm_client.rules.append((
@@ -363,8 +363,7 @@ async def test_api_chat_send_message_stream_with_tools(
     def second_llm_call_matcher(args: MatcherArgs) -> bool:
         messages = args.get("messages", [])
         return any(
-            msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id
-            for msg in messages
+            msg.role == "tool" and msg.tool_call_id == tool_call_id for msg in messages
         )
 
     mock_llm_client.rules.append((

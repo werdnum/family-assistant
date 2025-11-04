@@ -282,8 +282,8 @@ async def test_end_to_end_event_listener_wakes_llm(
         if not messages:
             return False
         last_message = messages[-1]
-        if last_message.get("role") == "user":
-            content = last_message.get("content", "")
+        if last_message.role == "user":
+            content = last_message.content or ""
             return (
                 "System Callback Trigger:" in content
                 and "Motion Light Automation" in content

@@ -1,8 +1,9 @@
+from __future__ import annotations
+
 import json
 import logging
 import pathlib
 import tempfile
-from collections.abc import Generator
 from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 
@@ -12,13 +13,17 @@ from family_assistant.indexing.pipeline import IndexableContent
 from family_assistant.indexing.processors.llm_processors import (
     LLMIntelligenceProcessor,
 )
+from family_assistant.llm import ToolCallFunction, ToolCallItem
+from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
+    LLMOutput,
+    MatcherArgs,
+    RuleBasedMockLLMClient,
+)
 
-# Assuming RuleBasedMockLLMClient is correctly exposed or imported
-# Import LLMOutput from the same module as RuleBasedMockLLMClient to ensure type consistency for rules
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from family_assistant.llm import LLMInterface as RealLLMInterface
-from family_assistant.llm import ToolCallFunction, ToolCallItem  # Added imports
-from tests.mocks.mock_llm import LLMOutput, MatcherArgs, RuleBasedMockLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -59,38 +64,86 @@ async def test_llm_processor_with_file_input_summarization(
         system_message = messages[0]
         user_message = messages[1]
 
-        # Check system prompt
+        # Messages can be dicts or Pydantic objects (UserMessage, SystemMessage)
+        # Check system prompt (handle both dict and Pydantic model)
+        system_role = None
+        system_content = None
+        if isinstance(system_message, dict):
+            system_role = system_message.get("role")
+            system_content = system_message.get("content")
+        elif hasattr(system_message, "role") and hasattr(system_message, "content"):
+            system_role = system_message.role
+            system_content = system_message.content
+
         if (
-            system_message.get("role") != "system"
-            or system_message.get("content")
-            != "Extract a concise summary from the provided document."
+            system_role != "system"
+            or system_content != "Extract a concise summary from the provided document."
         ):
             return False
 
         # Check user message structure (assuming mock_format_user_message_with_file created this structure)
-        if user_message.get("role") != "user":
+        user_role = None
+        content = None
+        if isinstance(user_message, dict):
+            user_role = user_message.get("role")
+            content = user_message.get("content")
+        elif hasattr(user_message, "role") and hasattr(user_message, "content"):
+            user_role = user_message.role
+            content = user_message.content
+
+        if user_role != "user":
             return False
 
-        content = user_message.get("content")
         if not isinstance(content, list) or len(content) < 2:
             return False  # Expecting text part and file part
 
         text_part = content[0]
         file_part = content[1]
 
+        # Content parts can be dicts or Pydantic objects
+        # Extract type from text_part
+        text_type = None
+        text_text = None
+        if isinstance(text_part, dict):
+            text_type = text_part.get("type")
+            text_text = text_part.get("text")
+        elif hasattr(text_part, "type") and hasattr(text_part, "text"):
+            text_type = text_part.type
+            text_text = text_part.text
+
         if not (
-            text_part.get("type") == "text"
-            and text_part.get("text") == "Please summarize the attached file."
+            text_type == "text" and text_text == "Please summarize the attached file."
         ):
             return False
 
         # Check the mock file placeholder part
-        if not (
-            file_part.get("type") == "file_placeholder"
-            and file_part.get("file_reference", {}).get("file_path")
-            == str(temp_text_file)
-            and file_part.get("file_reference", {}).get("mime_type") == "text/plain"
+        file_type = None
+        file_reference = None
+        if isinstance(file_part, dict):
+            file_type = file_part.get("type")
+            file_reference = file_part.get("file_reference")
+        elif hasattr(file_part, "type") and hasattr(file_part, "file_reference"):
+            file_type = file_part.type
+            file_reference = file_part.file_reference
+
+        if file_type != "file_placeholder":
+            return False
+
+        # Handle file_reference whether it's a dict or not
+        file_path = None
+        mime_type = None
+        if isinstance(file_reference, dict):
+            file_path = file_reference.get("file_path")
+            mime_type = file_reference.get("mime_type")
+        elif (
+            file_reference is not None
+            and hasattr(file_reference, "file_path")
+            and hasattr(file_reference, "mime_type")
         ):
+            file_path = file_reference.file_path
+            mime_type = file_reference.mime_type
+
+        if not (file_path == str(temp_text_file) and mime_type == "text/plain"):
             return False
 
         # Check tool_choice argument
@@ -247,11 +300,17 @@ async def test_llm_processor_with_file_input_summarization(
 
     # Assert call to generate_response (already partially checked by matcher)
     generate_call_args = generate_call["kwargs"]
-    assert generate_call_args.get("messages")[0]["role"] == "system"  # type: ignore[index]
-    assert (
-        generate_call_args.get("messages")[0]["content"]
-        == "Extract a concise summary from the provided document."
-    )  # type: ignore[index]
+    messages = generate_call_args.get("messages")
+    system_msg = messages[0]
+    # Handle both dict and Pydantic model objects
+    system_role = (
+        system_msg["role"] if isinstance(system_msg, dict) else system_msg.role
+    )
+    system_content = (
+        system_msg["content"] if isinstance(system_msg, dict) else system_msg.content
+    )
+    assert system_role == "system"
+    assert system_content == "Extract a concise summary from the provided document."
     # User message structure is verified by the matcher.
     assert (
         generate_call_args.get("tools")[0]["function"]["name"]

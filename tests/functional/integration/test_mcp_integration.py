@@ -315,14 +315,13 @@ async def test_mcp_time_conversion_stdio(db_engine: AsyncEngine) -> None:
             (
                 m
                 for m in messages
-                if m.get("role") == "tool" and m.get("tool_call_id") == mcp_tool_call_id
+                if m.role == "tool" and m.tool_call_id == mcp_tool_call_id
             ),
             None,
         )
         # Check if the result contains the expected converted time (flexible check)
-        return (
-            tool_message is not None
-            and EXPECTED_CONVERTED_TIME_FRAGMENT in tool_message.get("content", "")
+        return tool_message is not None and EXPECTED_CONVERTED_TIME_FRAGMENT in (
+            tool_message.content or ""
         )
 
     final_response_text = f"Rule-based mock: {SOURCE_TIME} in {SOURCE_TZ} is approximately {EXPECTED_CONVERTED_TIME_FRAGMENT} in {TARGET_TZ}."
@@ -514,13 +513,12 @@ async def test_mcp_time_conversion_sse(
             (
                 m
                 for m in messages
-                if m.get("role") == "tool" and m.get("tool_call_id") == mcp_tool_call_id
+                if m.role == "tool" and m.tool_call_id == mcp_tool_call_id
             ),
             None,
         )
-        return (
-            tool_message is not None
-            and EXPECTED_CONVERTED_TIME_FRAGMENT in tool_message.get("content", "")
+        return tool_message is not None and EXPECTED_CONVERTED_TIME_FRAGMENT in (
+            tool_message.content or ""
         )
 
     final_response_text = f"Rule-based mock: {SOURCE_TIME} in {SOURCE_TZ} is approximately {EXPECTED_CONVERTED_TIME_FRAGMENT} in {TARGET_TZ} (via SSE)."

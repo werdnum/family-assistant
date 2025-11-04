@@ -86,7 +86,7 @@ async def test_delegate_to_service_with_attachments(
 
         # Check if this is the delegated request containing attachment reference
         last_message = messages[-1]
-        content = last_message.get("content", "")
+        content = last_message.content or ""
         return "DELEGATED_TASK_DESCRIPTION" in content and "test_image.png" in content
 
     llm_client = RuleBasedMockLLMClient(
@@ -217,8 +217,8 @@ async def test_delegate_to_service_with_attachments(
     # Verify attachment was properly injected into LLM messages
     found_attachment_injection = False
     for msg in messages_to_specialized:
-        if msg.get("role") == "user":
-            content = msg.get("content", "")
+        if msg.role == "user":
+            content = msg.content or ""
             # Check for attachment injection markers that should be present
             # when an attachment is properly processed
             if isinstance(content, str) and (
@@ -274,9 +274,9 @@ async def test_delegate_to_service_cross_conversation_attachment_denied(
         if not messages:
             return False
         last_message = messages[-1]
-        content = last_message.get("content", "")
+        content = last_message.content or ""
         return (
-            last_message.get("role") == "tool"
+            last_message.role == "tool"
             and "Error: Cannot delegate with attachment" in content
             and "cross-conversation attachment access is not allowed" in content
         )
@@ -286,9 +286,9 @@ async def test_delegate_to_service_cross_conversation_attachment_denied(
         if not messages:
             return False
         last_message = messages[-1]
-        return last_message.get(
-            "role"
-        ) == "user" and DELEGATED_TASK_DESCRIPTION in last_message.get("content", "")
+        return last_message.role == "user" and DELEGATED_TASK_DESCRIPTION in (
+            last_message.content or ""
+        )
 
     primary_llm_client = RuleBasedMockLLMClient(
         rules=[
@@ -434,9 +434,9 @@ async def test_delegate_to_service_propagates_generated_attachments(
         if not messages:
             return False
         last_message = messages[-1]
-        return last_message.get(
-            "role"
-        ) == "user" and DELEGATED_TASK_DESCRIPTION in last_message.get("content", "")
+        return last_message.role == "user" and DELEGATED_TASK_DESCRIPTION in (
+            last_message.content or ""
+        )
 
     # The delegated service will call mock_camera_snapshot which returns a ToolResult with attachment
     delegated_llm_client = RuleBasedMockLLMClient(
@@ -460,7 +460,7 @@ async def test_delegate_to_service_propagates_generated_attachments(
             # After tool executes, LLM provides final response
             (
                 lambda kwargs: any(
-                    msg.get("role") == "tool" for msg in kwargs.get("messages", [])
+                    msg.role == "tool" for msg in kwargs.get("messages", [])
                 ),
                 MockLLMOutput(
                     content="Here's the camera snapshot I captured for your request.",
@@ -477,8 +477,8 @@ async def test_delegate_to_service_propagates_generated_attachments(
             return False
         last_message = messages[-1]
         return (
-            last_message.get("role") == "user"
-            and "delegate" in last_message.get("content", "").lower()
+            last_message.role == "user"
+            and "delegate" in (last_message.content or "").lower()
         )
 
     primary_llm_client = RuleBasedMockLLMClient(
@@ -506,8 +506,7 @@ async def test_delegate_to_service_propagates_generated_attachments(
             # After delegation completes, primary LLM gets the response WITH attachment references
             (
                 lambda kwargs: any(
-                    msg.get("role") == "tool"
-                    and msg.get("name") == "delegate_to_service"
+                    msg.role == "tool" and msg.name == "delegate_to_service"
                     for msg in kwargs.get("messages", [])
                 ),
                 MockLLMOutput(

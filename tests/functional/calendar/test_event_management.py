@@ -210,10 +210,10 @@ async def test_modify_event(
             return False
         last_message = messages[-1]
         return (
-            last_message.get("role") == "tool"
-            and last_message.get("tool_call_id") == tool_call_id_add_original
-            and "OK. Event '" in last_message.get("content", "")
-            and f"'{original_summary}' added" in last_message.get("content", "")
+            last_message.role == "tool"
+            and last_message.tool_call_id == tool_call_id_add_original
+            and "OK. Event '" in (last_message.content or "")
+            and f"'{original_summary}' added" in (last_message.content or "")
         )
 
     final_llm_response_for_add_original_content = (
@@ -412,10 +412,10 @@ async def test_modify_event(
             return False
         last_message = messages[-1]
         return (
-            last_message.get("role") == "tool"
-            and last_message.get("tool_call_id") == tool_call_id_modify
-            and "OK. Event '" in last_message.get("content", "")
-            and "updated" in last_message.get("content", "")
+            last_message.role == "tool"
+            and last_message.tool_call_id == tool_call_id_modify
+            and "OK. Event '" in (last_message.content or "")
+            and "updated" in (last_message.content or "")
         )
 
     final_llm_response_for_modify_content = (
@@ -432,10 +432,10 @@ async def test_modify_event(
             return False
         last_message = messages[-1]
         return (
-            last_message.get("role") == "tool"
-            and last_message.get("tool_call_id") == tool_call_id_modify
-            and "Error:" in last_message.get("content", "")
-            and "not found" in last_message.get("content", "")
+            last_message.role == "tool"
+            and last_message.tool_call_id == tool_call_id_modify
+            and "Error:" in (last_message.content or "")
+            and "not found" in (last_message.content or "")
         )
 
     error_llm_response_for_modify = MockLLMOutput(
@@ -627,10 +627,10 @@ async def test_delete_event(
             return False
         last_message = messages[-1]
         return (
-            last_message.get("role") == "tool"
-            and last_message.get("tool_call_id") == tool_call_id_add_to_delete
-            and "OK. Event '" in last_message.get("content", "")
-            and f"'{event_to_delete_summary}' added" in last_message.get("content", "")
+            last_message.role == "tool"
+            and last_message.tool_call_id == tool_call_id_add_to_delete
+            and "OK. Event '" in (last_message.content or "")
+            and f"'{event_to_delete_summary}' added" in (last_message.content or "")
         )
 
     final_llm_response_for_add_to_delete_content = (
@@ -768,11 +768,10 @@ async def test_delete_event(
             return False
         last_message = messages[-1]
         return (
-            last_message.get("role") == "tool"
-            and last_message.get("tool_call_id") == tool_call_id_delete
-            and "OK. Event '" in last_message.get("content", "")
-            and f"'{event_to_delete_summary}' deleted"
-            in last_message.get("content", "")
+            last_message.role == "tool"
+            and last_message.tool_call_id == tool_call_id_delete
+            and "OK. Event '" in (last_message.content or "")
+            and f"'{event_to_delete_summary}' deleted" in (last_message.content or "")
         )
 
     final_llm_response_for_delete_content = (
@@ -953,9 +952,9 @@ async def test_search_events(
     def final_response_matcher_event1(kwargs: MatcherArgs) -> bool:
         last_msg = kwargs.get("messages", [])[-1]
         return (
-            last_msg.get("role") == "tool"
-            and last_msg.get("tool_call_id") == tool_call_id_add_event1
-            and "OK. Event '" in last_msg.get("content", "")
+            last_msg.role == "tool"
+            and last_msg.tool_call_id == tool_call_id_add_event1
+            and "OK. Event '" in (last_msg.content or "")
         )
 
     final_response_event1 = MockLLMOutput(
@@ -1019,9 +1018,9 @@ async def test_search_events(
     def final_response_matcher_event2(kwargs: MatcherArgs) -> bool:
         last_msg = kwargs.get("messages", [])[-1]
         return (
-            last_msg.get("role") == "tool"
-            and last_msg.get("tool_call_id") == tool_call_id_add_event2
-            and "OK. Event '" in last_msg.get("content", "")
+            last_msg.role == "tool"
+            and last_msg.tool_call_id == tool_call_id_add_event2
+            and "OK. Event '" in (last_msg.content or "")
         )
 
     final_response_event2 = MockLLMOutput(
@@ -1062,7 +1061,6 @@ async def test_search_events(
     # Rule 1: LLM decides to search
     def search_intent_matcher(kwargs: MatcherArgs) -> bool:
         last_text = get_last_message_text(kwargs.get("messages", [])).lower()
-        # User might ask generally, LLM decides to search for "Search Event"
         return (
             "what are my events" in last_text
             and "day after tomorrow plus two" in last_text
@@ -1115,12 +1113,11 @@ async def test_search_events(
 
         # Verify the assistant called the correct tool
         if not (
-            assistant_tool_call_message.get("role") == "assistant"
-            and assistant_tool_call_message.get("tool_calls")
-            and len(assistant_tool_call_message["tool_calls"]) == 1
-            and assistant_tool_call_message["tool_calls"][0]["id"]
-            == tool_call_id_search
-            and assistant_tool_call_message["tool_calls"][0]["function"]["name"]
+            assistant_tool_call_message.role == "assistant"
+            and assistant_tool_call_message.tool_calls
+            and len(assistant_tool_call_message.tool_calls) == 1
+            and assistant_tool_call_message.tool_calls[0].id == tool_call_id_search
+            and assistant_tool_call_message.tool_calls[0].function.name
             == "search_calendar_events"
         ):
             logger.debug(
@@ -1128,21 +1125,14 @@ async def test_search_events(
             )
             return False
 
-        # Verify the tool result message
-        tool_content_ok = (
-            tool_result_message.get("role") == "tool"
-            and tool_result_message.get("tool_call_id") == tool_call_id_search
-            and event1_summary.lower() in tool_result_message.get("content", "").lower()
-            and event2_summary.lower() in tool_result_message.get("content", "").lower()
+        # Verify the tool result message contains both event summaries
+        content = tool_result_message.content or ""
+        return (
+            tool_result_message.role == "tool"
+            and tool_result_message.tool_call_id == tool_call_id_search
+            and event1_summary.lower() in content.lower()
+            and event2_summary.lower() in content.lower()
         )
-        if not tool_content_ok:
-            logger.debug(
-                f"present_search_results_matcher: Tool result content verification failed. Content: {tool_result_message.get('content', '')}"
-            )
-            return False
-
-        logger.debug("present_search_results_matcher: All conditions met.")
-        return True
 
     present_search_results_response = MockLLMOutput(
         content=f"Found these events: {event1_summary} at 9 AM and {event2_summary} at 1 PM.",
@@ -1421,9 +1411,9 @@ async def test_similarity_based_search_finds_similar_events(
     def final_response_matcher_event1(kwargs: MatcherArgs) -> bool:
         last_msg = kwargs.get("messages", [])[-1]
         return (
-            last_msg.get("role") == "tool"
-            and last_msg.get("tool_call_id") == tool_call_id_add_event1
-            and "OK. Event '" in last_msg.get("content", "")
+            last_msg.role == "tool"
+            and last_msg.tool_call_id == tool_call_id_add_event1
+            and "OK. Event '" in (last_msg.content or "")
         )
 
     final_response_event1 = MockLLMOutput(
@@ -1482,9 +1472,9 @@ async def test_similarity_based_search_finds_similar_events(
     def final_response_matcher_event2(kwargs: MatcherArgs) -> bool:
         last_msg = kwargs.get("messages", [])[-1]
         return (
-            last_msg.get("role") == "tool"
-            and last_msg.get("tool_call_id") == tool_call_id_add_event2
-            and "OK. Event '" in last_msg.get("content", "")
+            last_msg.role == "tool"
+            and last_msg.tool_call_id == tool_call_id_add_event2
+            and "OK. Event '" in (last_msg.content or "")
         )
 
     final_response_event2 = MockLLMOutput(
@@ -1543,9 +1533,9 @@ async def test_similarity_based_search_finds_similar_events(
     def final_response_matcher_event3(kwargs: MatcherArgs) -> bool:
         last_msg = kwargs.get("messages", [])[-1]
         return (
-            last_msg.get("role") == "tool"
-            and last_msg.get("tool_call_id") == tool_call_id_add_event3
-            and "OK. Event '" in last_msg.get("content", "")
+            last_msg.role == "tool"
+            and last_msg.tool_call_id == tool_call_id_add_event3
+            and "OK. Event '" in (last_msg.content or "")
         )
 
     final_response_event3 = MockLLMOutput(

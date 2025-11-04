@@ -27,6 +27,11 @@ import pytest_asyncio
 
 from family_assistant.llm import LLMInterface, LLMStreamEvent
 from family_assistant.llm.factory import LLMClientFactory
+from tests.factories.messages import (
+    create_assistant_message,
+    create_system_message,
+    create_user_message,
+)
 
 from .vcr_helpers import sanitize_response
 
@@ -136,10 +141,7 @@ async def test_basic_streaming(
 
     # Simple streaming request
     messages = [
-        {
-            "role": "user",
-            "content": "Count from 1 to 5, with each number on a new line.",
-        }
+        create_user_message("Count from 1 to 5, with each number on a new line.")
     ]
 
     # Collect all stream events
@@ -189,14 +191,12 @@ async def test_streaming_with_system_message(
     client = await llm_client_factory(provider, model, None)
 
     messages = [
-        {
-            "role": "system",
-            "content": "You are a helpful assistant that responds in a very concise manner.",
-        },
-        {
-            "role": "user",
-            "content": "What is the capital of France? Reply in exactly one word.",
-        },
+        create_system_message(
+            "You are a helpful assistant that responds in a very concise manner."
+        ),
+        create_user_message(
+            "What is the capital of France? Reply in exactly one word."
+        ),
     ]
 
     # Collect all content from stream
@@ -246,10 +246,9 @@ async def test_streaming_with_tool_calls(
     client = await llm_client_factory(provider, model, None)
 
     messages = [
-        {
-            "role": "user",
-            "content": "What's the weather in Paris, France? Also calculate 42 * 17.",
-        }
+        create_user_message(
+            "What's the weather in Paris, France? Also calculate 42 * 17."
+        )
     ]
 
     # Track events
@@ -313,7 +312,7 @@ async def test_streaming_error_handling(
     error_message = None
 
     try:
-        async for event in client.generate_response_stream(messages):
+        async for event in client.generate_response_stream(messages):  # type: ignore[reportArgumentType]
             if event.type == "error":
                 error_event_received = True
                 error_message = event.error
@@ -347,12 +346,9 @@ async def test_streaming_with_multi_turn_conversation(
     client = await llm_client_factory(provider, model, None)
 
     messages = [
-        {"role": "user", "content": "My favorite color is blue. Remember this."},
-        {
-            "role": "assistant",
-            "content": "I'll remember that your favorite color is blue.",
-        },
-        {"role": "user", "content": "What's my favorite color?"},
+        create_user_message("My favorite color is blue. Remember this."),
+        create_assistant_message("I'll remember that your favorite color is blue."),
+        create_user_message("What's my favorite color?"),
     ]
 
     # Collect complete output
@@ -393,7 +389,7 @@ async def test_streaming_reasoning_info(
 
     client = await llm_client_factory(provider, model, None)
 
-    messages = [{"role": "user", "content": "Say 'hello world'"}]
+    messages = [create_user_message("Say 'hello world'")]
 
     accumulated_content = ""
     reasoning_info = None
@@ -450,10 +446,9 @@ async def test_streaming_content_accumulation(
     client = await llm_client_factory(provider, model, None)
 
     messages = [
-        {
-            "role": "user",
-            "content": "Write exactly this text: 'The quick brown fox jumps over the lazy dog.'",
-        }
+        create_user_message(
+            "Write exactly this text: 'The quick brown fox jumps over the lazy dog.'"
+        )
     ]
 
     # Collect all content chunks
@@ -495,12 +490,7 @@ async def test_litellm_streaming_with_various_models(
     # Test with a LiteLLM-supported model
     client = await llm_client_factory("litellm", "gpt-4.1-nano", None)
 
-    messages = [
-        {
-            "role": "user",
-            "content": "Reply with exactly: 'LiteLLM streaming works!'",
-        }
-    ]
+    messages = [create_user_message("Reply with exactly: 'LiteLLM streaming works!'")]
 
     # Collect events
     events = []
@@ -557,10 +547,7 @@ async def test_basic_streaming_gemini(
 
     # Simple streaming request
     messages = [
-        {
-            "role": "user",
-            "content": "Count from 1 to 5, with each number on a new line.",
-        }
+        create_user_message("Count from 1 to 5, with each number on a new line.")
     ]
 
     # Collect all stream events
@@ -611,14 +598,12 @@ async def test_streaming_with_system_message_gemini(
     client = await llm_client_factory(provider, model, None)
 
     messages = [
-        {
-            "role": "system",
-            "content": "You are a helpful assistant that responds in a very concise manner.",
-        },
-        {
-            "role": "user",
-            "content": "What is the capital of France? Reply in exactly one word.",
-        },
+        create_system_message(
+            "You are a helpful assistant that responds in a very concise manner."
+        ),
+        create_user_message(
+            "What is the capital of France? Reply in exactly one word."
+        ),
     ]
 
     # Collect all content from stream
@@ -669,10 +654,9 @@ async def test_streaming_with_tool_calls_gemini(
     client = await llm_client_factory(provider, model, None)
 
     messages = [
-        {
-            "role": "user",
-            "content": "What's the weather in Paris, France? Also calculate 42 * 17.",
-        }
+        create_user_message(
+            "What's the weather in Paris, France? Also calculate 42 * 17."
+        )
     ]
 
     # Track events
@@ -738,7 +722,7 @@ async def test_streaming_error_handling_gemini(
     error_message = None
 
     try:
-        async for event in client.generate_response_stream(messages):
+        async for event in client.generate_response_stream(messages):  # type: ignore[reportArgumentType]
             if event.type == "error":
                 error_event_received = True
                 error_message = event.error
@@ -773,12 +757,9 @@ async def test_streaming_with_multi_turn_conversation_gemini(
     client = await llm_client_factory(provider, model, None)
 
     messages = [
-        {"role": "user", "content": "My favorite color is blue. Remember this."},
-        {
-            "role": "assistant",
-            "content": "I'll remember that your favorite color is blue.",
-        },
-        {"role": "user", "content": "What's my favorite color?"},
+        create_user_message("My favorite color is blue. Remember this."),
+        create_assistant_message("I'll remember that your favorite color is blue."),
+        create_user_message("What's my favorite color?"),
     ]
 
     # Collect complete output
@@ -820,7 +801,7 @@ async def test_streaming_reasoning_info_gemini(
 
     client = await llm_client_factory(provider, model, None)
 
-    messages = [{"role": "user", "content": "Say 'hello world'"}]
+    messages = [create_user_message("Say 'hello world'")]
 
     accumulated_content = ""
     reasoning_info = None

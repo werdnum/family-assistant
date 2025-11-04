@@ -21,7 +21,7 @@ async def test_basic_chat_conversation(
         messages = args.get("messages", [])
         # Look for "Hello" in any message content
         for msg in messages:
-            content = msg.get("content", "")
+            content = msg.content or ""
             if isinstance(content, str) and "Hello" in content:
                 return True
         return False
@@ -182,7 +182,7 @@ async def test_multiple_messages_in_conversation(
     # Configure different responses based on message count
     def response_based_on_history(args: dict) -> LLMOutput:
         messages = args.get("messages", [])
-        user_messages = [m for m in messages if m.get("role") == "user"]
+        user_messages = [m for m in messages if m.role == "user"]
 
         if len(user_messages) == 1:
             return LLMOutput(content="This is my first response.")

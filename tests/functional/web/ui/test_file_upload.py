@@ -33,7 +33,7 @@ async def test_image_upload_basic_functionality(
     def image_matcher(args: dict) -> bool:
         messages = args.get("messages", [])
         for msg in messages:
-            content = msg.get("content", [])
+            content = msg.content or []
             if isinstance(content, list):
                 for part in content:
                     if isinstance(part, dict) and part.get("type") == "image_url":
@@ -160,7 +160,7 @@ async def test_multiple_image_formats_support(
     def image_matcher(args: dict) -> bool:
         messages = args.get("messages", [])
         for msg in messages:
-            content = msg.get("content", [])
+            content = msg.content or []
             if isinstance(content, list):
                 for part in content:
                     if isinstance(part, dict) and part.get("type") == "image_url":

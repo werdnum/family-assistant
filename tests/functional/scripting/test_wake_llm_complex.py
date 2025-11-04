@@ -113,7 +113,7 @@ if motion_detected:
             messages = args.get("messages", [])
             if messages:
                 last_msg = messages[-1]
-                content = str(last_msg.get("content", ""))
+                content = str(last_msg.content or "")
                 # Check if it's a wake_llm call with our attachment ID
                 return (
                     "Script wake_llm call" in content
@@ -338,7 +338,7 @@ wake_llm({
             messages = args.get("messages", [])
             if messages:
                 last_msg = messages[-1]
-                content = str(last_msg.get("content", ""))
+                content = str(last_msg.content or "")
                 # Check if wake_llm was called with our content
                 if (
                     "Motion detected!" in content

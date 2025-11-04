@@ -1,0 +1,308 @@
+"""
+Pydantic models for LLM messages.
+
+This module defines typed message classes that replace the previous dict[str, Any] approach.
+Each message type has a specific structure enforced by Pydantic validation.
+
+The message types mirror the common structure used by LLM providers (OpenAI, Google, Anthropic)
+while adding type safety and runtime validation.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# These imports must be at runtime (not TYPE_CHECKING) because Pydantic needs them
+# for field validation in ToolMessage. The linter suggests TYPE_CHECKING, but that
+# would cause "model not fully defined" errors at runtime.
+from family_assistant.tools.types import (  # noqa: TCH001
+    ToolAttachment,
+    ToolResult,
+)
+
+from .tool_call import ToolCallItem  # noqa: TCH001
+
+# ===== Content Parts =====
+
+
+class TextContentPart(BaseModel):
+    """Text content in a multimodal message."""
+
+    type: Literal["text"]
+    text: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ImageUrlContentPart(BaseModel):
+    """Image URL content in a multimodal message."""
+
+    type: Literal["image_url"]
+    # ast-grep-ignore: no-dict-any - OpenAI API compatibility
+    image_url: dict[str, str]  # {"url": str}
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AttachmentContentPart(BaseModel):
+    """
+    Attachment reference in a message (internal only, converted before LLM).
+
+    This is used for messages with file attachments that need to be processed
+    before being sent to the LLM (e.g., converted to inline data or text).
+    """
+
+    type: Literal["attachment"]
+    attachment_id: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class FileContentPart(BaseModel):
+    """
+    File placeholder in a message (mock/testing only).
+
+    This is used by mock LLM implementations to represent file references
+    that would normally be handled by real LLM clients.
+    """
+
+    type: Literal["file_placeholder"]
+    # ast-grep-ignore: no-dict-any - Dynamic file reference structure
+    file_reference: dict[str, Any]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+ContentPart = (
+    TextContentPart | ImageUrlContentPart | AttachmentContentPart | FileContentPart
+)
+
+
+# ===== Message Types =====
+
+
+class UserMessage(BaseModel):
+    """Message from the user to the LLM."""
+
+    role: Literal["user"] = "user"
+    content: str | list[ContentPart]
+
+    # Optional: For provider-specific pre-converted format (e.g., Google GenAI)
+    # Excluded from serialization as it's only used during provider conversion
+    parts: list[Any] | None = Field(default=None, exclude=True)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AssistantMessage(BaseModel):
+    """Message from the LLM assistant."""
+
+    role: Literal["assistant"] = "assistant"
+    content: str | None = None
+    tool_calls: list[ToolCallItem] | None = None
+    # ast-grep-ignore: no-dict-any - Provider-specific metadata structure is dynamic
+    provider_metadata: dict[str, Any] | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("tool_calls", mode="after")
+    @classmethod
+    def check_has_content_or_tool_calls(
+        cls,
+        tool_calls: list[ToolCallItem] | None,
+        info: Any,  # noqa: ANN401
+    ) -> list[ToolCallItem] | None:
+        """Ensure assistant message has either content or tool_calls."""
+        content = info.data.get("content")
+        if content is None and tool_calls is None:
+            raise ValueError("Assistant message must have content or tool_calls")
+        return tool_calls
+
+
+class ToolMessage(BaseModel):
+    """
+    Message representing a tool execution result.
+
+    This is sent back to the LLM after a tool is executed.
+    """
+
+    role: Literal["tool"] = "tool"
+    tool_call_id: str
+    content: str
+    name: str  # Function name
+    error_traceback: str | None = None
+
+    # IMPORTANT: Preserve the original ToolResult for better tracking and debugging
+    # This field is excluded from serialization and used internally
+    tool_result: ToolResult | None = Field(default=None, exclude=True)
+
+    # Transient field for provider processing (e.g., attachment injection)
+    # Excluded from serialization as it's only used during provider conversion
+    transient_attachments: list[ToolAttachment] | None = Field(
+        default=None, exclude=True, alias="_attachments"
+    )
+
+    # Attachment metadata for database storage (serialized)
+    # ast-grep-ignore: no-dict-any - Database serialization format
+    attachments: list[dict[str, Any]] | None = None
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+class SystemMessage(BaseModel):
+    """System prompt message."""
+
+    role: Literal["system"] = "system"
+    content: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ErrorMessage(BaseModel):
+    """
+    Error message (database-only).
+
+    Used to record errors in conversation history.
+    """
+
+    role: Literal["error"] = "error"
+    content: str
+    error_traceback: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+# ===== Union Type =====
+
+LLMMessage = UserMessage | AssistantMessage | ToolMessage | SystemMessage | ErrorMessage
+
+
+# ===== Utility Functions =====
+
+
+# ast-grep-ignore: no-dict-any - Generic serialization function
+def message_to_dict(msg: LLMMessage | dict[str, Any]) -> dict[str, Any]:
+    """
+    Convert a message to a dictionary.
+
+    This uses Pydantic's model_dump() which automatically excludes
+    fields marked with exclude=True (_attachments, tool_result, parts).
+    If the message is already a dict, it's returned as-is.
+
+    Args:
+        msg: The message to convert (can be a Pydantic message or dict)
+
+    Returns:
+        Dictionary representation suitable for serialization
+    """
+    if isinstance(msg, dict):
+        return msg
+    return msg.model_dump(mode="json", exclude_none=True)
+
+
+# ast-grep-ignore: no-dict-any - Generic deserialization function
+def dict_to_message(data: dict[str, Any]) -> LLMMessage:
+    """
+    Convert a dictionary to a typed message.
+
+    This function examines the 'role' field and constructs the appropriate
+    message type. It validates the structure and raises ValidationError if invalid.
+
+    Args:
+        data: Dictionary with message data (must have 'role' field)
+
+    Returns:
+        Appropriate LLMMessage subclass
+
+    Raises:
+        KeyError: If 'role' field is missing
+        ValidationError: If message structure is invalid
+    """
+    role = data["role"]
+
+    if role == "user":
+        return UserMessage(**data)
+    elif role == "assistant":
+        return AssistantMessage(**data)
+    elif role == "tool":
+        return ToolMessage(**data)
+    elif role == "system":
+        return SystemMessage(**data)
+    elif role == "error":
+        return ErrorMessage(**data)
+    else:
+        raise ValueError(f"Unknown message role: {role}")
+
+
+# ast-grep-ignore: no-dict-any - Conversion function for ToolResult
+def tool_result_to_llm_message(
+    result: ToolResult,
+    tool_call_id: str,
+    function_name: str,
+) -> ToolMessage:
+    """
+    Convert a ToolResult to a ToolMessage for LLM consumption.
+
+    This includes the _attachments field for provider handling.
+
+    Args:
+        result: The ToolResult to convert
+        tool_call_id: The tool call ID
+        function_name: The function name
+
+    Returns:
+        ToolMessage with attachments for provider processing
+    """
+    # Prepare attachment metadata for database storage
+    attachments_metadata = None
+    if result.attachments:
+        attachments_metadata = [
+            {
+                "type": "tool_result",
+                "mime_type": att.mime_type,
+                "description": att.description,
+                "attachment_id": att.attachment_id,  # Include ID for references
+            }
+            for att in result.attachments
+        ]
+
+    return ToolMessage(
+        tool_call_id=tool_call_id,
+        content=result.get_text(),  # Use fallback mechanism
+        name=function_name,
+        tool_result=result,  # Preserve original ToolResult for debugging
+        _attachments=result.attachments,  # Pass attachments to provider (using alias)
+        attachments=attachments_metadata,  # Store metadata in database
+    )
+
+
+def tool_result_to_history_message(
+    result: ToolResult,
+    tool_call_id: str,
+    function_name: str,
+    # ast-grep-ignore: no-dict-any - Database serialization format
+) -> dict[str, Any]:
+    """
+    Convert a ToolResult to a history message dict for database storage.
+
+    This creates a ToolMessage and then converts it to a dict.
+    Raw attachment data is excluded (only metadata is stored).
+
+    Args:
+        result: The ToolResult to convert
+        tool_call_id: The tool call ID
+        function_name: The function name
+
+    Returns:
+        Dictionary suitable for database storage
+    """
+    llm_message = tool_result_to_llm_message(result, tool_call_id, function_name)
+
+    # Convert to dict for database storage
+    # model_dump automatically excludes fields marked with exclude=True
+    history_message = message_to_dict(llm_message)
+    history_message["tool_name"] = function_name  # Store tool name for database
+
+    return history_message

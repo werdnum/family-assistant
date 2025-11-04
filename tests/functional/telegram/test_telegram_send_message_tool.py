@@ -162,8 +162,7 @@ async def test_send_message_to_user_tool(
     def tool_result_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         return any(
-            msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id
-            for msg in messages
+            msg.role == "tool" and msg.tool_call_id == tool_call_id for msg in messages
         )
 
     final_confirmation_output = LLMOutput(
@@ -343,11 +342,11 @@ async def test_send_message_to_self_rejected(
         messages = kwargs.get("messages", [])
         # Look for the tool response with error message
         return any(
-            msg.get("role") == "tool"
-            and msg.get("tool_call_id") == tool_call_id
+            msg.role == "tool"
+            and msg.tool_call_id == tool_call_id
             and (
                 "Cannot use send_message_to_user tool"
-                in (content := str(msg.get("content", "")))
+                in (content := str(msg.content or ""))
                 and "already replying to" in content
             )
             for msg in messages
@@ -453,11 +452,11 @@ async def test_callback_send_message_to_self_rejected(
     def callback_error_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         return any(
-            msg.get("role") == "tool"
-            and msg.get("tool_call_id") == tool_call_id
+            msg.role == "tool"
+            and msg.tool_call_id == tool_call_id
             and (
                 "Cannot use send_message_to_user tool"
-                in (content := str(msg.get("content", "")))
+                in (content := str(msg.content or ""))
                 and "already replying to" in content
             )
             for msg in messages

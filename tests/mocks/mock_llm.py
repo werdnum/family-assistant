@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment
 
-from family_assistant.llm import LLMInterface, LLMOutput, LLMStreamEvent
+from family_assistant.llm import LLMInterface, LLMMessage, LLMOutput, LLMStreamEvent
+from family_assistant.llm.messages import message_to_dict
 
 logger = logging.getLogger(__name__)
 
@@ -92,8 +93,7 @@ class RuleBasedMockLLMClient(LLMInterface):
 
     async def generate_response(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: list[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
@@ -101,6 +101,8 @@ class RuleBasedMockLLMClient(LLMInterface):
         """
         Evaluates rules against the input for 'generate_response' and returns the corresponding output.
         """
+        # Pass typed messages directly to matchers
+        # Matchers can access fields via .attribute or dict-style .get()
         actual_kwargs: MatcherArgs = {
             "messages": messages,
             "tools": tools,
@@ -164,17 +166,16 @@ class RuleBasedMockLLMClient(LLMInterface):
                 continue
 
         # Enhanced logging for debugging test failures
-        messages = actual_kwargs.get("messages", [])
         logger.warning(
             f"No mock LLM rule matched for 'generate_response' with {len(messages)} messages. "
             f"Returning default response."
         )
-        # Sanitize messages for JSON serialization (remove _attachments objects)
+        # Convert messages to dicts and sanitize for JSON logging
         sanitized_messages = []
         for msg in messages:
-            sanitized = msg.copy()
-            sanitized.pop("_attachments", None)
-            sanitized_messages.append(sanitized)
+            msg_dict = message_to_dict(msg)
+            msg_dict.pop("_attachments", None)
+            sanitized_messages.append(msg_dict)
         logger.warning(
             f"Messages received:\n{json.dumps(sanitized_messages, indent=2)}"
         )
@@ -182,8 +183,7 @@ class RuleBasedMockLLMClient(LLMInterface):
 
     def generate_response_stream(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: list[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
@@ -305,35 +305,67 @@ class RuleBasedMockLLMClient(LLMInterface):
         return {"role": "user", "content": user_message_content}
 
 
-# --- Helper function to extract text from messages ---
-# (Useful for writing matchers)
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-def get_last_message_text(messages: list[dict[str, Any]]) -> str:
-    """Extracts and concatenates text from the last message in a list."""
-    if not messages:
+# --- Helper functions for working with typed messages in matchers ---
+
+
+def get_message_role(msg: LLMMessage) -> str:
+    """Get the role from a typed message or dict."""
+    if isinstance(msg, dict):
+        return msg.get("role", "")
+    return msg.role
+
+
+def get_message_content(msg: LLMMessage) -> str | list | None:
+    """Get the content from a typed message or dict."""
+    if isinstance(msg, dict):
+        return msg.get("content")
+    return msg.content
+
+
+def extract_text_from_content(content: str | list | None) -> str:
+    """Extract text string from message content (handles both string and multi-part)."""
+    if content is None:
         return ""
-    last_message_content = messages[-1].get("content", "")
-    if isinstance(last_message_content, list):  # Handle multi-part
-        # Ensure part is a dict and has 'type' and 'text' keys before accessing
-        text_parts = [
-            part.get("text", "")
-            for part in last_message_content
-            if isinstance(part, dict) and part.get("type") == "text"
-        ]
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        # Extract text from multi-part content (ContentPart objects or dicts)
+        text_parts = []
+        for part in content:
+            # Handle both Pydantic ContentPart objects and dict representations
+            if isinstance(part, dict):
+                # Dict representation: {"type": "text", "text": "..."}
+                if part.get("type") == "text":
+                    text_parts.append(part.get("text", ""))
+            elif hasattr(part, "type") and part.type == "text":
+                # Pydantic ContentPart object
+                text_parts.append(part.text)
         return " ".join(text_parts).strip()
-    elif isinstance(last_message_content, str):
-        return last_message_content.strip()
-    # Handle other potential content types gracefully (e.g., None)
     return ""
 
 
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-def get_system_prompt(messages: list[dict[str, Any]]) -> str | None:
+# --- Helper function to extract text from messages ---
+# (Useful for writing matchers)
+def get_last_message_text(messages: list[LLMMessage]) -> str:
+    """Extracts and concatenates text from the last message in a list."""
+    if not messages:
+        return ""
+
+    last_message = messages[-1]
+    last_message_content = get_message_content(last_message)
+
+    return extract_text_from_content(last_message_content)
+
+
+def get_system_prompt(messages: list[LLMMessage]) -> str | None:
     """Extracts the system prompt content from a list of messages."""
     if not messages:
         return None
-    if messages[0].get("role") == "system":
-        content = messages[0].get("content")
+
+    first_msg = messages[0]
+
+    if get_message_role(first_msg) == "system":
+        content = get_message_content(first_msg)
         if isinstance(content, str):
             return content
     return None
@@ -345,4 +377,7 @@ __all__ = [
     "MatcherFunction",
     "get_last_message_text",
     "get_system_prompt",
+    "get_message_role",
+    "get_message_content",
+    "extract_text_from_content",
 ]

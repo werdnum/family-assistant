@@ -41,4 +41,46 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": "What is 25 times 4?"}], "role": "user"}], "tools": [{"functionDeclarations": [{"description": "Get the current weather in a given location", "name": "get_weather", "parameters": {"properties": {"location": {"description": "The city and state, e.g. San Francisco, CA", "type": "STRING"}, "unit": {"description": "The temperature unit", "type": "STRING"}}, "required": ["location"], "type": "OBJECT"}}, {"description": "Perform basic mathematical calculations", "name": "calculate", "parameters": {"properties": {"expression": {"description": "The mathematical expression to evaluate", "type": "STRING"}}, "required": ["expression"], "type": "OBJECT"}}]}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"calculate\",\n              \"args\": {\n                \"expression\": \"25 * 4\"\n              }\n            }\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 117,\n    \"candidatesTokenCount\": 17,\n    \"totalTokenCount\": 134,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 117\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite-preview-06-17\",\n  \"responseId\": \"PM8JadDIBabVvdIPs9SjgQY\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Tue, 04 Nov 2025 10:02:36 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=558
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
 version: 1
