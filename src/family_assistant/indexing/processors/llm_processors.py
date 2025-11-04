@@ -131,7 +131,7 @@ class LLMIntelligenceProcessor(ContentProcessor):
                 # from format_user_message_with_file (e.g., file_placeholder)
                 messages = [
                     SystemMessage(content=system_prompt),
-                    UserMessage.model_validate(user_message_dict),  # type: ignore
+                    UserMessage.model_validate(user_message_dict),
                 ]
 
                 logger.debug(
@@ -446,10 +446,7 @@ class LLMPrimaryLinkExtractorProcessor(LLMIntelligenceProcessor):
                 )
                 messages = [
                     SystemMessage(content=system_prompt),
-                    UserMessage(
-                        role="user",
-                        content=user_message_dict.get("content", ""),  # type: ignore
-                    ),
+                    UserMessage.model_validate(user_message_dict),
                 ]
 
                 llm_response = await self.llm_client.generate_response(
