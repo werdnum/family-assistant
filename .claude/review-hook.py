@@ -234,21 +234,32 @@ class ReviewHook:
                 env=env,
             )
 
+            # Check if hooks made any changes to files
+            changes_made = (
+                subprocess.run(["git", "diff", "--quiet"], check=False).returncode != 0
+            )
+
             if result.returncode == 0:
-                # Check if any changes were made
-                if (
-                    subprocess.run(["git", "diff", "--quiet"], check=False).returncode
-                    == 0
-                ):
-                    print("✅ Pre-commit hooks completed", file=sys.stderr)
-                    break
-                else:
+                # Hooks passed
+                if changes_made:
                     print(
                         f"Pre-commit hooks made changes (iteration {iteration + 1})...",
                         file=sys.stderr,
                     )
                     subprocess.run(["git", "add", "-u"], check=False)
+                else:
+                    print("✅ Pre-commit hooks completed", file=sys.stderr)
+                    break
+            # Hooks failed - check if they made changes (e.g., auto-formatting)
+            elif changes_made:
+                print(
+                    f"Pre-commit hooks made changes (iteration {iteration + 1}), staging and retrying...",
+                    file=sys.stderr,
+                )
+                # Stage the changes and continue looping
+                subprocess.run(["git", "add", "-u"], check=False)
             else:
+                # Hooks failed without making changes - this is a real error
                 print("❌ Pre-commit hooks failed", file=sys.stderr)
                 error_msg = ""
                 if result.stdout:
