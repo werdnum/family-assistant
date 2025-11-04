@@ -35,7 +35,6 @@ from .messages import (
     ToolMessage,
     UserMessage,
     message_to_dict,
-    tool_result_to_history_message,
     tool_result_to_llm_message,
 )
 from .tool_call import ToolCallFunction, ToolCallItem
@@ -1720,7 +1719,6 @@ __all__ = [
     "LLMClientFactory",
     "message_to_dict",
     "tool_result_to_llm_message",
-    "tool_result_to_history_message",
     "AssistantMessage",
     "ErrorMessage",
     "SystemMessage",

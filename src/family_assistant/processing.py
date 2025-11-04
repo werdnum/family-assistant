@@ -40,7 +40,6 @@ from .llm.messages import (
     ToolMessage,
     UserMessage,
     message_to_dict,
-    tool_result_to_history_message,
     tool_result_to_llm_message,
 )
 
@@ -1041,9 +1040,10 @@ class ProcessingService:
                         update={"content": modified_content}
                     )
 
-                # Create history_message from llm_message using to_history_message
-                history_message = tool_result_to_history_message(
-                    result, call_id, function_name
+                # Create history_message from the modified llm_message to preserve attachment IDs
+                history_message = message_to_dict(llm_message)
+                history_message["tool_name"] = (
+                    function_name  # Store tool name for database
                 )
                 if attachments_data:
                     history_message["attachments"] = attachments_data
