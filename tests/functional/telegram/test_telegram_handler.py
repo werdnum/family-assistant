@@ -297,7 +297,7 @@ async def test_add_note_tool_usage(
             return False
         # Check previous messages too, as history might be added before tool result
         for msg in reversed(messages):
-            if msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id:
+            if msg.role == "tool" and msg.tool_call_id == tool_call_id:
                 logger.debug(f"Tool result matcher found tool message: {msg}")
                 return True
         logger.debug(
@@ -431,7 +431,7 @@ async def test_tool_result_in_subsequent_history(
     def tool_result_matcher_t1(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         return any(
-            msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id_1
+            msg.role == "tool" and msg.tool_call_id == tool_call_id_1
             for msg in messages
         )
 
@@ -450,7 +450,7 @@ async def test_tool_result_in_subsequent_history(
         last_user_msg_correct = get_last_message_text(messages) == user_text_2
         # Check 2: Does the history *before* the last user message contain the tool result from Turn 1?
         history_includes_tool_result = any(
-            msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id_1
+            msg.role == "tool" and msg.tool_call_id == tool_call_id_1
             for msg in messages[
                 :-1
             ]  # Look in history *before* the current user message
@@ -563,7 +563,7 @@ async def test_telegram_photo_persistence_and_llm_context(
         """Check if LLM call includes image_url content parts."""
         messages = args.get("messages", [])
         for msg in messages:
-            content = msg.get("content", [])
+            content = msg.content or []
             if isinstance(content, list):
                 for part in content:
                     if isinstance(part, dict) and part.get("type") == "image_url":

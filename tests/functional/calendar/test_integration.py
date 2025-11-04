@@ -215,10 +215,10 @@ async def test_add_event_and_verify_in_system_prompt(
             return False
         last_message = messages[-1]
         return (
-            last_message.get("role") == "tool"
-            and last_message.get("tool_call_id") == tool_call_id
-            and "OK. Event '" in last_message.get("content", "")
-            and f"'{event_summary}' added" in last_message.get("content", "")
+            last_message.role == "tool"
+            and last_message.tool_call_id == tool_call_id
+            and "OK. Event '" in (last_message.content or "")
+            and f"'{event_summary}' added" in (last_message.content or "")
         )
 
     final_llm_response_content = (

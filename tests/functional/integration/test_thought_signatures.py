@@ -1,7 +1,7 @@
 """Functional tests for thought signature round-trip through ProcessingService."""
 
 import base64
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment
 
 from family_assistant.llm import (
+    LLMMessage,
     LLMOutput,
     LLMStreamEvent,
     ToolCallFunction,
@@ -59,20 +60,19 @@ class MockLLMWithThoughtSignatures:
 
     def __init__(self) -> None:
         self.call_count = 0
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        self.last_messages: list[dict[str, Any]] = []
+        self.last_messages: list[LLMMessage] = []
 
     async def generate_response(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: Sequence[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Generate mock response with thought signatures."""
         self.call_count += 1
-        self.last_messages = messages
+        # Store messages as list for introspection
+        self.last_messages = list(messages) if messages else []
 
         # First call: Return response with tool call and thought signature
         if self.call_count == 1:
@@ -102,8 +102,7 @@ class MockLLMWithThoughtSignatures:
 
     def generate_response_stream(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: Sequence[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
@@ -113,8 +112,7 @@ class MockLLMWithThoughtSignatures:
 
     async def _generate_response_stream(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: Sequence[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
@@ -164,8 +162,7 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
 
     async def generate_response(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: Sequence[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
@@ -182,8 +179,7 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
 
     def generate_response_stream(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: Sequence[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
@@ -193,8 +189,7 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
 
     async def _generate_response_stream(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: Sequence[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",

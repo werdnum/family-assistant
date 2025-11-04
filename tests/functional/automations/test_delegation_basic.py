@@ -119,14 +119,14 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
                 )
                 return False
             last_message = messages[-1]
-            is_tool_role = last_message.get("role") == "tool"
-            content = last_message.get("content", "")
+            is_tool_role = last_message.role == "tool"
+            content = last_message.content or ""
             expected_prefix = f"Response from {SPECIALIZED_PROFILE_ID}"
             starts_with_prefix = content.startswith(expected_prefix)
 
             match_result = is_tool_role and starts_with_prefix
             logger.debug(
-                f"delegate_tool_response_matcher: last_message_role='{last_message.get('role')}', is_tool_role={is_tool_role}"
+                f"delegate_tool_response_matcher: last_message_role='{last_message.role}', is_tool_role={is_tool_role}"
             )
             logger.debug(
                 f"delegate_tool_response_matcher: content='{content[:100]}...', expected_prefix='{expected_prefix}', starts_with_prefix={starts_with_prefix}"
@@ -136,8 +136,8 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
 
         def delegate_tool_final_response_callable(kwargs: MatcherArgs) -> MockLLMOutput:
             messages = kwargs.get("messages", [])
-            tool_response_content = messages[-1].get(
-                "content", "Error: Could not extract tool response."
+            tool_response_content = (
+                messages[-1].content or "Error: Could not extract tool response."
             )
             logger.info(
                 f"delegate_tool_final_response_callable: Matched! Returning content: {tool_response_content[:100]}..."
@@ -157,19 +157,17 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
                 logger.debug("cancelled_matcher: no messages, returning False")
                 return False
             last_message = messages[-1]
-            match = last_message.get(
-                "role"
-            ) == "tool" and "cancelled by user" in last_message.get("content", "")
+            match = last_message.role == "tool" and "cancelled by user" in (
+                last_message.content or ""
+            )
             logger.debug(
-                f"cancelled_matcher: returning {match} for content: '{last_message.get('content', '')[:100]}...'"
+                f"cancelled_matcher: returning {match} for content: '{(last_message.content or '')[:100]}...'"
             )
             return match
 
         def cancelled_response_callable(kwargs: MatcherArgs) -> MockLLMOutput:
             messages = kwargs.get("messages", [])
-            content = messages[-1].get(
-                "content", "Error: Could not get cancelled content."
-            )
+            content = messages[-1].content or "Error: Could not get cancelled content."
             logger.info(
                 f"cancelled_response_callable: Matched! Returning content: {content[:100]}..."
             )
@@ -185,12 +183,11 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
                 logger.debug("blocked_matcher: no messages, returning False")
                 return False
             last_message = messages[-1]
-            content_str = last_message.get("content", "")
+            content_str = last_message.content or ""
             # Make the match more specific to the exact error message
             expected_error_message = f"Error: Delegation to service profile '{SPECIALIZED_PROFILE_ID}' is not allowed."
             match = (
-                last_message.get("role") == "tool"
-                and content_str == expected_error_message
+                last_message.role == "tool" and content_str == expected_error_message
             )
             logger.debug(
                 f"blocked_matcher: checking content='{content_str[:100]}...' against expected='{expected_error_message}'. Match: {match}"
@@ -200,11 +197,9 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
         def blocked_response_callable(kwargs: MatcherArgs) -> MockLLMOutput:
             messages = kwargs.get("messages", [])
             # Ensure we return the exact content that was matched
-            content = messages[
-                -1
-            ].get(
-                "content",
-                f"Error: Delegation to service profile '{SPECIALIZED_PROFILE_ID}' is not allowed.",  # Default to expected if somehow missing
+            content = (
+                messages[-1].content
+                or f"Error: Delegation to service profile '{SPECIALIZED_PROFILE_ID}' is not allowed."
             )
             logger.info(
                 f"blocked_response_callable: Matched! Returning content: {content[:100]}..."
@@ -221,7 +216,7 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
                 logger.debug("delegate_request_matcher: no messages, returning False")
                 return False
 
-            last_message_role = messages[-1].get("role")
+            last_message_role = messages[-1].role
             if last_message_role != "user":
                 logger.debug(
                     f"delegate_request_matcher: last message role is '{last_message_role}', not 'user'. Returning False."

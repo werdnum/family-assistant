@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from family_assistant.llm.messages import tool_result_to_llm_message
 from family_assistant.tools.types import ToolResult
 
 
@@ -98,17 +99,19 @@ def test_toolresult_complex_data_serialization() -> None:
 
 
 def test_toolresult_to_llm_message_uses_fallback() -> None:
-    """to_llm_message uses get_text() fallback."""
+    """tool_result_to_llm_message uses get_text() fallback."""
     result = ToolResult(data={"result": "success"})
 
-    message = result.to_llm_message(tool_call_id="test_123", function_name="test_tool")
+    message = tool_result_to_llm_message(
+        result, tool_call_id="test_123", function_name="test_tool"
+    )
 
-    assert message["role"] == "tool"
-    assert message["tool_call_id"] == "test_123"
-    assert message["name"] == "test_tool"
+    assert message.role == "tool"
+    assert message.tool_call_id == "test_123"
+    assert message.name == "test_tool"
     # Content should use get_text() which serializes data
-    assert "result" in message["content"]
-    assert "success" in message["content"]
+    assert "result" in message.content
+    assert "success" in message.content
 
 
 def test_toolresult_text_with_invalid_json() -> None:

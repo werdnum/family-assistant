@@ -380,7 +380,7 @@ async def test_api_chat_add_note_tool(
     # Rule 1: User prompt -> LLM requests add_or_update_note tool
     def rule1_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
-        last_msg_content = messages[-1].get("content") if messages else ""
+        last_msg_content = messages[-1].content if messages else ""
         return (
             isinstance(last_msg_content, str)
             and "Please add a note" in last_msg_content
@@ -407,8 +407,7 @@ async def test_api_chat_add_note_tool(
     def rule2_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         return any(
-            msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id
-            for msg in messages
+            msg.role == "tool" and msg.tool_call_id == tool_call_id for msg in messages
         )
 
     rule2_output = LLMOutput(content=llm_final_reply)

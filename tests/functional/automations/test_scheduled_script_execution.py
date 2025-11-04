@@ -99,7 +99,7 @@ print("Script executed - note created: " + str(result))
         messages = kwargs.get("messages", [])
         if messages and len(messages) >= 2:
             last_msg = messages[-1]
-            if last_msg.get("role") == "tool":
+            if last_msg.role == "tool":
                 return True
         return False
 
@@ -266,7 +266,7 @@ print("Recurring script executed - note created")
         messages = kwargs.get("messages", [])
         if messages and len(messages) >= 2:
             last_msg = messages[-1]
-            if last_msg.get("role") == "tool":
+            if last_msg.role == "tool":
                 return True
         return False
 
@@ -434,7 +434,7 @@ if True  # Missing colon
         messages = kwargs.get("messages", [])
         if messages and len(messages) >= 2:
             last_msg = messages[-1]
-            if last_msg.get("role") == "tool":
+            if last_msg.role == "tool":
                 return True
         return False
 

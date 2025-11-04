@@ -183,19 +183,18 @@ async def test_get_camera_snapshot_success(
 
         # Check basic tool message structure
         if not (
-            last_message.get("role") == "tool"
-            and last_message.get("tool_call_id") == tool_call_id
+            last_message.role == "tool" and last_message.tool_call_id == tool_call_id
         ):
             return False
 
         # Check that the content contains the expected text
-        content = last_message.get("content", "")
+        content = last_message.content or ""
         if f"Retrieved snapshot from camera '{camera_entity_id}'" not in content:
             return False
 
         # CRITICAL: Check that the LLM receives the actual image attachment data
         # The tool message should have _attachments with the image content
-        attachments = last_message.get("_attachments")
+        attachments = last_message.transient_attachments
         if not attachments or len(attachments) == 0:
             return False
 
@@ -309,10 +308,10 @@ async def test_get_camera_snapshot_list_cameras(
         if len(messages) < 2:
             return False
         last_message = messages[-1]
-        content = last_message.get("content", "")
+        content = last_message.content or ""
         return (
-            last_message.get("role") == "tool"
-            and last_message.get("tool_call_id") == tool_call_id
+            last_message.role == "tool"
+            and last_message.tool_call_id == tool_call_id
             and "Available cameras" in content
             and "camera.front_door" in content
             and "Front Door Camera" in content
@@ -404,10 +403,10 @@ async def test_get_camera_snapshot_no_client(
             return False
         last_message = messages[-1]
         return (
-            last_message.get("role") == "tool"
-            and last_message.get("tool_call_id") == tool_call_id
-            and "Error:" in last_message.get("content", "")
-            and "not configured" in last_message.get("content", "")
+            last_message.role == "tool"
+            and last_message.tool_call_id == tool_call_id
+            and "Error:" in (last_message.content or "")
+            and "not configured" in (last_message.content or "")
         )
 
     error_llm_response = MockLLMOutput(
@@ -489,10 +488,10 @@ async def test_get_camera_snapshot_api_error(
         if len(messages) < 2:
             return False
         last_message = messages[-1]
-        content = last_message.get("content", "")
+        content = last_message.content or ""
         return (
-            last_message.get("role") == "tool"
-            and last_message.get("tool_call_id") == tool_call_id
+            last_message.role == "tool"
+            and last_message.tool_call_id == tool_call_id
             and "Error:" in content
             and "Failed to retrieve camera snapshot" in content
             and "Camera not found" in content

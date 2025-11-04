@@ -8,13 +8,13 @@ This implementation mimics LiteLLM's simple retry strategy:
 """
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment
 
-from . import LLMInterface, LLMOutput, LLMStreamEvent
+from . import LLMInterface, LLMMessage, LLMOutput, LLMStreamEvent
 from .base import (
     LLMProviderError,
     ProviderConnectionError,
@@ -63,8 +63,7 @@ class RetryingLLMClient:
 
     async def generate_response(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: Sequence[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
@@ -186,8 +185,7 @@ class RetryingLLMClient:
 
     async def generate_response_stream(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: Sequence[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",

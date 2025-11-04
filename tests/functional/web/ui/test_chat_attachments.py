@@ -29,8 +29,7 @@ def should_handle_attach_tool_follow_up(args: dict) -> bool:
     messages = args.get("messages", [])
     # Check if there's an attach_to_response tool result in the messages
     has_attach_tool_result = any(
-        msg.get("role") == "tool" and msg.get("name") == "attach_to_response"
-        for msg in messages
+        msg.role == "tool" and msg.name == "attach_to_response" for msg in messages
     )
     return has_attach_tool_result
 
@@ -136,12 +135,12 @@ async def test_attachment_response_flow(
         messages = args.get("messages", [])
         # Check if user message contains the trigger phrase
         has_trigger = any(
-            "send this image back" in msg.get("content", "").lower()
+            "send this image back" in (msg.content or "").lower()
             for msg in messages
-            if msg.get("role") == "user"
+            if msg.role == "user"
         )
         # Check if there are already tool results (indicating this is a follow-up call)
-        has_tool_results = any(msg.get("role") == "tool" for msg in messages)
+        has_tool_results = any(msg.role == "tool" for msg in messages)
         # Only trigger if we have the phrase but no tool results yet
         return has_trigger and not has_tool_results
 
@@ -165,7 +164,7 @@ async def test_attachment_response_flow(
         (
             should_handle_attach_tool_follow_up,
             LLMOutput(
-                content=""  # Empty content to avoid appending additional text
+                content="✓"  # Minimal acknowledgment that satisfies Pydantic validation
             ),
         ),
     ]
@@ -310,12 +309,12 @@ async def test_attachment_response_with_multiple_attachments(
         messages = args.get("messages", [])
         # Check if user message contains the trigger phrase
         has_trigger = any(
-            "send me both images" in msg.get("content", "").lower()
+            "send me both images" in (msg.content or "").lower()
             for msg in messages
-            if msg.get("role") == "user"
+            if msg.role == "user"
         )
         # Check if there are already tool results (indicating this is a follow-up call)
-        has_tool_results = any(msg.get("role") == "tool" for msg in messages)
+        has_tool_results = any(msg.role == "tool" for msg in messages)
         # Only trigger if we have the phrase but no tool results yet
         return has_trigger and not has_tool_results
 
@@ -339,7 +338,7 @@ async def test_attachment_response_with_multiple_attachments(
         (
             should_handle_attach_tool_follow_up,
             LLMOutput(
-                content=""  # Empty content to avoid appending additional text
+                content="✓"  # Minimal acknowledgment that satisfies Pydantic validation
             ),
         ),
     ]
@@ -468,12 +467,12 @@ async def test_attachment_response_error_handling(
         messages = args.get("messages", [])
         # Check if user message contains the trigger phrase
         has_trigger = any(
-            "send invalid image" in msg.get("content", "").lower()
+            "send invalid image" in (msg.content or "").lower()
             for msg in messages
-            if msg.get("role") == "user"
+            if msg.role == "user"
         )
         # Check if there are already tool results (indicating this is a follow-up call)
-        has_tool_results = any(msg.get("role") == "tool" for msg in messages)
+        has_tool_results = any(msg.role == "tool" for msg in messages)
         # Only trigger if we have the phrase but no tool results yet
         return has_trigger and not has_tool_results
 
@@ -499,7 +498,7 @@ async def test_attachment_response_error_handling(
         (
             should_handle_attach_tool_follow_up,
             LLMOutput(
-                content=""  # Empty content to avoid appending additional text
+                content="✓"  # Minimal acknowledgment that satisfies Pydantic validation
             ),
         ),
     ]
@@ -595,16 +594,16 @@ async def test_tool_attachment_persistence_after_page_reload(
     attachment_id = str(uuid.uuid4())
 
     # Mock the LLM to respond with attach_to_response tool call
-    def should_trigger_attach_tool(args: dict[str, list[dict[str, str]]]) -> bool:
+    def should_trigger_attach_tool(args: dict) -> bool:
         messages = args.get("messages", [])
         # Check if user message contains the trigger phrase
         has_trigger = any(
-            "show attachment" in msg.get("content", "").lower()
+            "show attachment" in (msg.content or "").lower()
             for msg in messages
-            if msg.get("role") == "user"
+            if msg.role == "user"
         )
         # Check if there are already tool results (indicating this is a follow-up call)
-        has_tool_results = any(msg.get("role") == "tool" for msg in messages)
+        has_tool_results = any(msg.role == "tool" for msg in messages)
         # Only trigger if we have the phrase but no tool results yet
         return has_trigger and not has_tool_results
 
@@ -631,7 +630,7 @@ async def test_tool_attachment_persistence_after_page_reload(
         (
             should_handle_attach_tool_follow_up,
             LLMOutput(
-                content=""  # Empty content to avoid appending additional text
+                content="✓"  # Minimal acknowledgment that satisfies Pydantic validation
             ),
         ),
     ]

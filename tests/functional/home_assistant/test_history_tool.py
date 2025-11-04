@@ -238,13 +238,12 @@ async def test_download_state_history_success(
 
         # Check basic tool message structure
         if not (
-            last_message.get("role") == "tool"
-            and last_message.get("tool_call_id") == tool_call_id
+            last_message.role == "tool" and last_message.tool_call_id == tool_call_id
         ):
             return False
 
         # Check that the LLM receives the JSON attachment
-        attachments = last_message.get("_attachments")
+        attachments = last_message.transient_attachments
         if not attachments or len(attachments) == 0:
             return False
 

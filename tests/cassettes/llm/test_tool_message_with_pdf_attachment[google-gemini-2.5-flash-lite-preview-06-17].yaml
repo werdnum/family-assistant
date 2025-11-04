@@ -41,4 +41,46 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": "Find me a document about software management"}], "role": "user"}, {"parts": [{"text": "I''ll search for a document about software management."}, {"functionCall": {"args": {"query": "software management"}, "name": "search_documents"}}], "role": "model"}, {"parts": [{"functionResponse": {"name": "test_tool", "response": {"result": "Found a PDF document about software management practices"}}}], "role": "function"}, {"parts": [{"text": "What is this document about? What are the main topics it covers?"}], "role": "user"}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"This document is about **software management practices**.\\n\\nThe main topics it covers include:\\n\\n*   **Software Project Management:** This is likely a core focus, encompassing planning, organizing, staffing, directing, and controlling software projects.\\n*   **Software Development Lifecycle (SDLC) Models:** It probably discusses different models used to structure and manage the software development process (e.g., Waterfall, Agile, Spiral).\\n*   **Software Quality Assurance (SQA):** This would involve processes and activities to ensure the quality of the software being developed.\\n*   **Risk Management:** Identifying, assessing, and mitigating potential risks that could impact a software project.\\n*   **Configuration Management:** Managing changes to software products and their associated documentation throughout the development lifecycle.\\n*   **Process Improvement:** Strategies and methodologies for enhancing the efficiency and effectiveness of software development processes.\\n*   **Tools and Techniques:** Mention of specific software tools and techniques used in software management.\\n\\nEssentially, it's a comprehensive overview of how to effectively manage the creation and maintenance of software.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 72,\n    \"candidatesTokenCount\": 217,\n    \"totalTokenCount\": 289,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 72\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite-preview-06-17\",\n  \"responseId\": \"NM8JadDbLsTfnsEP1JH96A0\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Tue, 04 Nov 2025 10:02:28 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=1419
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
 version: 1

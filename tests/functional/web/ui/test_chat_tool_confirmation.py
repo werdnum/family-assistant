@@ -29,9 +29,7 @@ async def test_tool_confirmation_timeout_flow(
             # Only respond with tool call on the FIRST user message, not on subsequent messages
             lambda args: (
                 "add a note" in str(args.get("messages", []))
-                and not any(
-                    msg.get("role") == "tool" for msg in args.get("messages", [])
-                )
+                and not any(msg.role == "tool" for msg in args.get("messages", []))
             ),
             LLMOutput(
                 content=llm_initial_response,
@@ -52,10 +50,10 @@ async def test_tool_confirmation_timeout_flow(
         ),
         (
             lambda args: any(
-                msg.get("role") == "tool"
+                msg.role == "tool"
                 and (
-                    "timed out" in str(msg.get("content", "")).lower()
-                    or "cancelled" in str(msg.get("content", "")).lower()
+                    "timed out" in str(msg.content or "").lower()
+                    or "cancelled" in str(msg.content or "").lower()
                 )
                 for msg in args.get("messages", [])
             ),
@@ -106,9 +104,7 @@ async def test_tool_confirmation_approval_flow(
             # Only respond with tool call on the FIRST user message
             lambda args: (
                 "add a note" in str(args.get("messages", []))
-                and not any(
-                    msg.get("role") == "tool" for msg in args.get("messages", [])
-                )
+                and not any(msg.role == "tool" for msg in args.get("messages", []))
             ),
             LLMOutput(
                 content=llm_initial_response,
@@ -129,7 +125,7 @@ async def test_tool_confirmation_approval_flow(
         ),
         (
             lambda args: any(
-                msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id
+                msg.role == "tool" and msg.tool_call_id == tool_call_id
                 for msg in args.get("messages", [])
             ),
             LLMOutput(content=llm_final_response),
@@ -180,9 +176,7 @@ async def test_tool_confirmation_rejection_flow(
             # Only respond with tool call on the FIRST user message
             lambda args: (
                 "add a note" in str(args.get("messages", []))
-                and not any(
-                    msg.get("role") == "tool" for msg in args.get("messages", [])
-                )
+                and not any(msg.role == "tool" for msg in args.get("messages", []))
             ),
             LLMOutput(
                 content=llm_initial_response,
@@ -203,10 +197,10 @@ async def test_tool_confirmation_rejection_flow(
         ),
         (
             lambda args: any(
-                msg.get("role") == "tool"
+                msg.role == "tool"
                 and (
-                    "rejected" in str(msg.get("content", "")).lower()
-                    or "cancelled" in str(msg.get("content", "")).lower()
+                    "rejected" in str(msg.content or "").lower()
+                    or "cancelled" in str(msg.content or "").lower()
                 )
                 for msg in args.get("messages", [])
             ),
@@ -259,9 +253,7 @@ async def test_multiple_tool_confirmations(
             # Only respond with tool calls on the FIRST user message
             lambda args: (
                 "add two notes" in str(args.get("messages", []))
-                and not any(
-                    msg.get("role") == "tool" for msg in args.get("messages", [])
-                )
+                and not any(msg.role == "tool" for msg in args.get("messages", []))
             ),
             LLMOutput(
                 content=llm_initial_response,
@@ -293,9 +285,7 @@ async def test_multiple_tool_confirmations(
         ),
         (
             # After receiving tool results, generate final response
-            lambda args: any(
-                msg.get("role") == "tool" for msg in args.get("messages", [])
-            ),
+            lambda args: any(msg.role == "tool" for msg in args.get("messages", [])),
             LLMOutput(content=llm_final_response),
         ),
     ]

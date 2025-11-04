@@ -32,7 +32,17 @@ from .context_providers import ContextProvider
 from .interfaces import ChatInterface  # Import ChatInterface
 
 # Import the LLM interface and output structure
-from .llm import LLMInterface, LLMStreamEvent, ToolCallItem
+from .llm import LLMInterface, LLMStreamEvent, ToolCallFunction, ToolCallItem
+from .llm.messages import (
+    AssistantMessage,
+    LLMMessage,
+    SystemMessage,
+    ToolMessage,
+    UserMessage,
+    message_to_dict,
+    tool_result_to_history_message,
+    tool_result_to_llm_message,
+)
 
 # Import DatabaseContext for type hinting
 from .storage.context import DatabaseContext, get_db_context
@@ -67,8 +77,7 @@ class ToolExecutionResult:
     """Result of executing a single tool call."""
 
     stream_event: "LLMStreamEvent"
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    llm_message: dict[str, Any]
+    llm_message: "ToolMessage"
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     history_message: dict[str, Any]
     auto_attachment_ids: list[str] | None = None  # list of attachment IDs
@@ -267,11 +276,65 @@ class ProcessingService:
 
     # Removed _execute_function_call method (if it was previously here)
 
+    def _convert_dict_messages_to_typed(
+        self,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        messages: list[dict[str, Any]],
+    ) -> list[LLMMessage]:
+        """
+        Convert dict messages to typed LLMMessage objects.
+
+        This is a compatibility helper for converting messages from the database
+        or _format_history_for_llm into properly typed message objects.
+        """
+        typed_messages: list[LLMMessage] = []
+        for msg in messages:
+            role = msg.get("role")
+            if role == "system":
+                typed_messages.append(SystemMessage(content=msg.get("content", "")))
+            elif role == "user":
+                typed_messages.append(UserMessage(content=msg.get("content", "")))
+            elif role == "assistant":
+                tool_calls_data = msg.get("tool_calls")
+                tool_calls_items = None
+                if tool_calls_data:
+                    tool_calls_items = []
+                    for tc in tool_calls_data:
+                        tool_calls_items.append(
+                            ToolCallItem(
+                                id=tc["id"],
+                                type=tc.get("type", "function"),
+                                function=ToolCallFunction(
+                                    name=tc["function"]["name"],
+                                    arguments=tc["function"]["arguments"],
+                                ),
+                            )
+                        )
+                typed_messages.append(
+                    AssistantMessage(
+                        content=msg.get("content"),
+                        tool_calls=tool_calls_items,
+                    )
+                )
+            elif role == "tool":
+                typed_messages.append(
+                    ToolMessage(
+                        tool_call_id=msg.get("tool_call_id", ""),
+                        content=msg.get("content", ""),
+                        name=msg.get("name", ""),
+                        error_traceback=msg.get("error_traceback"),
+                    )
+                )
+            else:
+                # Unknown role, skip or log warning
+                logger.warning(f"Unknown message role: {role}, skipping conversion")
+
+        return typed_messages
+
     async def process_message(
         self,
         db_context: DatabaseContext,  # Added db_context
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: list[LLMMessage],
         # --- Updated Signature ---
         interface_type: str,
         conversation_id: str,
@@ -363,8 +426,7 @@ class ProcessingService:
     async def process_message_stream(
         self,
         db_context: DatabaseContext,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: list[LLMMessage],
         interface_type: str,
         conversation_id: str,
         user_name: str,
@@ -448,10 +510,10 @@ class ProcessingService:
             )
 
             # Add iteration context to system prompt
-            if messages and messages[0].get("role") == "system":
+            if messages and messages[0].role == "system":
                 # Store original system content on first iteration
                 if original_system_content is None:
-                    original_system_content = str(messages[0].get("content", ""))
+                    original_system_content = str(messages[0].content)
 
                 # Add iteration status to system prompt
                 iteration_suffix = (
@@ -460,7 +522,10 @@ class ProcessingService:
                 if is_final_iteration:
                     iteration_suffix += "\nIMPORTANT: This is the final iteration. You MUST provide your final response now without requesting additional tools."
 
-                messages[0]["content"] = original_system_content + iteration_suffix
+                # Create new message with modified content (Pydantic models are immutable)
+                messages[0] = SystemMessage(
+                    content=original_system_content + iteration_suffix
+                )
 
             # Stream from LLM
             accumulated_content = []
@@ -587,11 +652,26 @@ class ProcessingService:
             )
 
             # Add to context for next iteration
-            llm_context_assistant_message = {
-                "role": "assistant",
-                "content": final_content,
-                "tool_calls": serialized_tool_calls,
-            }
+            # Convert serialized tool calls to ToolCallItem objects for AssistantMessage
+            tool_call_items = []
+            if serialized_tool_calls:
+                for tc in serialized_tool_calls:
+                    tool_call_items.append(
+                        ToolCallItem(
+                            id=tc["id"],
+                            type=tc["type"],
+                            function=ToolCallFunction(
+                                name=tc["function"]["name"],
+                                arguments=tc["function"]["arguments"],
+                            ),
+                        )
+                    )
+
+            llm_context_assistant_message = AssistantMessage(
+                role="assistant",
+                content=final_content,
+                tool_calls=tool_call_items if tool_call_items else None,
+            )
             messages.append(llm_context_assistant_message)
 
             # Break if no tool calls
@@ -766,18 +846,19 @@ class ProcessingService:
             logger.error(f"Invalid tool call: id='{call_id}', name='{function_name}'")
             error_content = "Error: Invalid tool call structure."
             error_traceback = "Invalid tool call structure received from LLM."
+            func_name = function_name or "unknown_function"
 
-            llm_message = {
-                "role": "tool",
-                "tool_call_id": call_id or f"missing_id_{uuid.uuid4()}",
-                "content": error_content,
-                "error_traceback": error_traceback,
-                "name": function_name or "unknown_function",
-            }
+            llm_message = ToolMessage(
+                role="tool",
+                tool_call_id=call_id or f"missing_id_{uuid.uuid4()}",
+                content=error_content,
+                error_traceback=error_traceback,
+                name=func_name,
+            )
 
-            # Create history message (same as LLM message for errors)
-            history_message = llm_message.copy()
-            history_message["tool_name"] = function_name or "unknown_function"
+            # Create history message from ToolMessage
+            history_message = message_to_dict(llm_message)
+            history_message["tool_name"] = func_name
 
             return ToolExecutionResult(
                 stream_event=LLMStreamEvent(
@@ -801,16 +882,16 @@ class ProcessingService:
             error_content = f"Error: Invalid arguments format for {function_name}."
             error_traceback = f"JSONDecodeError: {function_args_str}"
 
-            llm_message = {
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": error_content,
-                "error_traceback": error_traceback,
-                "name": function_name,
-            }
+            llm_message = ToolMessage(
+                role="tool",
+                tool_call_id=call_id,
+                content=error_content,
+                error_traceback=error_traceback,
+                name=function_name,
+            )
 
-            # Create history message (same as LLM message for errors)
-            history_message = llm_message.copy()
+            # Create history message from ToolMessage
+            history_message = message_to_dict(llm_message)
             history_message["tool_name"] = function_name
 
             return ToolExecutionResult(
@@ -946,34 +1027,38 @@ class ProcessingService:
                     stream_metadata = {"attachments": attachments_data}
 
                 # Create LLM message AFTER storing attachments (if any) so attachment_ids are populated
-                llm_message = result.to_llm_message(call_id, function_name)
+                llm_message = tool_result_to_llm_message(result, call_id, function_name)
 
                 # Inject attachment IDs into LLM message content so LLM can reference them in subsequent calls
                 if auto_attachment_ids:
                     attachment_id_list = ", ".join(auto_attachment_ids)
-                    llm_message["content"] += (
-                        f"\n[Attachment ID(s): {attachment_id_list}]"
+                    modified_content = (
+                        llm_message.content
+                        + f"\n[Attachment ID(s): {attachment_id_list}]"
+                    )
+                    # Create new ToolMessage with modified content using model_copy
+                    llm_message = llm_message.model_copy(
+                        update={"content": modified_content}
                     )
 
-                # Create history_message from llm_message
-                history_message = llm_message.copy()
-                history_message.pop("_attachments", None)
-                history_message["tool_name"] = function_name
+                # Create history_message from llm_message using to_history_message
+                history_message = tool_result_to_history_message(
+                    result, call_id, function_name
+                )
                 if attachments_data:
                     history_message["attachments"] = attachments_data
             else:
                 # Backward compatible string handling
                 content_for_stream = str(result)
                 auto_attachment_ids = []  # String results don't generate attachments
-                llm_message = {
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "content": content_for_stream,
-                    "error_traceback": None,
-                    "name": function_name,  # OpenAI API compatibility
-                }
+                llm_message = ToolMessage(
+                    role="tool",
+                    tool_call_id=call_id,
+                    content=content_for_stream,
+                    name=function_name,
+                )
                 # Create history message for string results
-                history_message = llm_message.copy()
+                history_message = message_to_dict(llm_message)
                 history_message["tool_name"] = function_name
                 stream_metadata = None
 
@@ -1049,12 +1134,17 @@ class ProcessingService:
             error_content = f"Error: Tool '{function_name}' not found."
             error_traceback = traceback.format_exc()
 
-            tool_response_message = {
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": error_content,
-                "error_traceback": error_traceback,
-            }
+            llm_message = ToolMessage(
+                role="tool",
+                tool_call_id=call_id,
+                content=error_content,
+                error_traceback=error_traceback,
+                name=function_name,
+            )
+
+            # Create history message from ToolMessage
+            history_message = message_to_dict(llm_message)
+            history_message["tool_name"] = function_name
 
             return ToolExecutionResult(
                 stream_event=LLMStreamEvent(
@@ -1063,13 +1153,8 @@ class ProcessingService:
                     tool_result=error_content,
                     error=error_traceback,
                 ),
-                llm_message=tool_response_message,
-                history_message={
-                    "tool_call_id": call_id,
-                    "role": "tool",
-                    "name": function_name,
-                    "content": error_content,
-                },
+                llm_message=llm_message,
+                history_message=history_message,
                 auto_attachment_ids=None,  # No attachments for error cases
             )
 
@@ -1078,12 +1163,17 @@ class ProcessingService:
             error_content = f"Error executing {function_name}: {str(e)}"
             error_traceback = traceback.format_exc()
 
-            tool_response_message = {
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": error_content,
-                "error_traceback": error_traceback,
-            }
+            llm_message = ToolMessage(
+                role="tool",
+                tool_call_id=call_id,
+                content=error_content,
+                error_traceback=error_traceback,
+                name=function_name,
+            )
+
+            # Create history message from ToolMessage
+            history_message = message_to_dict(llm_message)
+            history_message["tool_name"] = function_name
 
             return ToolExecutionResult(
                 stream_event=LLMStreamEvent(
@@ -1092,13 +1182,8 @@ class ProcessingService:
                     tool_result=error_content,
                     error=error_traceback,
                 ),
-                llm_message=tool_response_message,
-                history_message={
-                    "tool_call_id": call_id,
-                    "role": "tool",
-                    "name": function_name,
-                    "content": error_content,
-                },
+                llm_message=llm_message,
+                history_message=history_message,
                 auto_attachment_ids=None,  # No attachments for error cases
             )
 
@@ -1913,6 +1998,11 @@ class ProcessingService:
 
             messages_for_llm.append({"role": "user", "content": llm_user_content})
 
+            # Convert dict messages to typed messages
+            typed_messages_for_llm = self._convert_dict_messages_to_typed(
+                messages_for_llm
+            )
+
             # --- 3. Call Core LLM Processing (self.process_message) ---
             (
                 generated_turn_messages,
@@ -1920,7 +2010,7 @@ class ProcessingService:
                 response_attachment_ids,
             ) = await self.process_message(
                 db_context=db_context,
-                messages=messages_for_llm,
+                messages=typed_messages_for_llm,
                 interface_type=interface_type,
                 conversation_id=conversation_id,
                 user_name=user_name,  # Pass user_name
@@ -2321,10 +2411,15 @@ class ProcessingService:
 
             messages_for_llm.append({"role": "user", "content": llm_user_content})
 
+            # Convert dict messages to typed messages
+            typed_messages_for_llm = self._convert_dict_messages_to_typed(
+                messages_for_llm
+            )
+
             # --- 3. Stream LLM Processing ---
             async for event, message_dict in self.process_message_stream(
                 db_context=db_context,
-                messages=messages_for_llm,
+                messages=typed_messages_for_llm,
                 interface_type=interface_type,
                 conversation_id=conversation_id,
                 user_name=user_name,

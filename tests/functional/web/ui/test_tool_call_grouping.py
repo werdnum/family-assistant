@@ -55,24 +55,21 @@ async def test_multiple_tool_calls_are_grouped(
         # Mock tool responses
         (
             lambda args: any(
-                msg.get("role") == "tool"
-                and "call_1" in str(msg.get("tool_call_id", ""))
+                msg.role == "tool" and "call_1" in str(msg.tool_call_id or "")
                 for msg in args.get("messages", [])
             ),
             LLMOutput(content="Successfully added all three notes."),
         ),
         (
             lambda args: any(
-                msg.get("role") == "tool"
-                and "call_2" in str(msg.get("tool_call_id", ""))
+                msg.role == "tool" and "call_2" in str(msg.tool_call_id or "")
                 for msg in args.get("messages", [])
             ),
             LLMOutput(content="Successfully added all three notes."),
         ),
         (
             lambda args: any(
-                msg.get("role") == "tool"
-                and "call_3" in str(msg.get("tool_call_id", ""))
+                msg.role == "tool" and "call_3" in str(msg.tool_call_id or "")
                 for msg in args.get("messages", [])
             ),
             LLMOutput(content="Successfully added all three notes."),
@@ -187,16 +184,14 @@ async def test_tool_group_expand_collapse_interaction(
         # Mock tool responses
         (
             lambda args: any(
-                msg.get("role") == "tool"
-                and "call_search" in str(msg.get("tool_call_id", ""))
+                msg.role == "tool" and "call_search" in str(msg.tool_call_id or "")
                 for msg in args.get("messages", [])
             ),
             LLMOutput(content="Search completed and note added."),
         ),
         (
             lambda args: any(
-                msg.get("role") == "tool"
-                and "call_note" in str(msg.get("tool_call_id", ""))
+                msg.role == "tool" and "call_note" in str(msg.tool_call_id or "")
                 for msg in args.get("messages", [])
             ),
             LLMOutput(content="Search completed and note added."),
@@ -304,8 +299,7 @@ async def test_single_tool_call_uses_toolgroup(
         ),
         (
             lambda args: any(
-                msg.get("role") == "tool"
-                and "call_single" in str(msg.get("tool_call_id", ""))
+                msg.role == "tool" and "call_single" in str(msg.tool_call_id or "")
                 for msg in args.get("messages", [])
             ),
             LLMOutput(content="Single note added successfully."),

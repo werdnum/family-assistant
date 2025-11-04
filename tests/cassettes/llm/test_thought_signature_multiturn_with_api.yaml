@@ -83,4 +83,130 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": "What''s the weather in Paris?"}], "role": "user"}], "tools": [{"functionDeclarations": [{"description": "Get the current weather", "name": "get_weather", "parameters": {"properties": {"location": {"description": "City name", "type": "STRING"}}, "required": ["location"], "type": "OBJECT"}}]}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"Paris\"\n              }\n            },\n            \"thoughtSignature\": \"CpQCAdHtim99jz7vUd201jdtyRqOXlZANcYT13L4jenKHIsKELxLYtxhoKr/sEOd/ZdefdIlItVmVvxOHFhVCP+Pn0Oug7m8mMZJSqHFfrooEMkr/bDNVFyoMqEFHjtsxaP3zhr9i3JraRYMLNz47BQSsq9S/wddfXosKSIAWACOlGeexcGtgVV6ZEeR3QhZtvZEgxgJW0B0KFJOW615mFRKMR5ykWIVG84q39oZE0aaQuaXRI/nl1NjXs2ej87MidiRTzacVqHQ8KTNK5cQBbUXDuhJL2XP8eWJNUAGTOPV+fYXGbsGWvKLzQ7drAm4YNHGIrCpD3vbXJS0eKlf53FeP9v+GqQO6I5hyt2y9vytFV/kmIQQ\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 46,\n    \"candidatesTokenCount\": 15,\n    \"totalTokenCount\": 121,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 46\n      }\n    ],\n    \"thoughtsTokenCount\": 60\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"Pc8JacSmG5brkdUP8qPBgQw\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Tue, 04 Nov 2025 10:02:37 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=704
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": "What''s the weather in Paris?"}], "role": "user"}, {"parts": [{"thoughtSignature": "Q3BRQ0FkSHRpbTk5ano3dlVkMjAxamR0eVJxT1hsWkFOY1lUMTNMNGplbktISXNLRUx4TFl0eGhvS3Ivc0VPZC9aZGVmZElsSXRWbVZ2eE9IRmhWQ1ArUG4wT3VnN204bU1aSlNxSEZmcm9vRU1rci9iRE5WRnlvTXFFRkhqdHN4YVAzemhyOWkzSnJhUllNTE56NDdCUVNzcTlTL3dkZGZYb3NLU0lBV0FDT2xHZWV4Y0d0Z1ZWNlpFZVIzUWhadHZaRWd4Z0pXMEIwS0ZKT1c2MTVtRlJLTVI1eWtXSVZHODRxMzlvWkUwYWFRdWFYUkkvbmwxTmpYczJlajg3TWlkaVJUemFjVnFIUThLVE5LNWNRQmJVWER1aEpMMlhQOGVXSk5VQUdUT1BWK2ZZWEdic0dXdktMelE3ZHJBbTRZTkhHSXJDcEQzdmJYSlMwZUtsZjUzRmVQOXYrR3FRTzZJNWh5dDJ5OXZ5dEZWL2ttSVFR", "functionCall": {"args": {"location": "Paris"}, "name": "get_weather"}}], "role": "model"}, {"parts": [{"functionResponse": {"name": "test_tool", "response": {"result": "15\u00b0C, sunny"}}}], "role": "function"}, {"parts": [{"text": "Thanks! What about London?"}], "role": "user"}], "tools": [{"functionDeclarations": [{"description": "Get the current weather", "name": "get_weather", "parameters": {"properties": {"location": {"description": "City name", "type": "STRING"}}, "required": ["location"], "type": "OBJECT"}}]}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"London\"\n              }\n            }\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 88,\n    \"candidatesTokenCount\": 15,\n    \"totalTokenCount\": 103,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 88\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"Pc8JaYmWL8_j7M8P-4iUwQw\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Tue, 04 Nov 2025 10:02:37 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=315
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": "What''s the weather in Paris?"}], "role": "user"}, {"parts": [{"thoughtSignature": "Q3ZJQkFkSHRpbTliYnYwdnpxYTNsQkpqTWpKenN5WUo3SVFGQUJ3VC9zZHYwUXZwRDdvSU8zSm05Rys4QkFBYSszTXZwRXR2TENIUFFVZnB0b2prTHRiZm1kaWhaNTA4RzFKRERVS0EvMXpxb3BCVGQ1QUY1RENlbE5vTFBpWEMzb1hRUXBXbFZYaksrWGg2SXl4Q2pNd212Ti9kaDkyNHpsYmZUdm54RS9JdHk4MUl0SjI0U3FYSXVEcHZMWTFkd2hRcHdTUTRCdjlMUmpnZFNOSnBqZjZzM1ozeFlVY0dnejFxbTNmdnI3RUMwdFFDVUxKNllQRFViOFdVWGRFMG80TVRveHpSajVuYmtaYUptWUF5dktaWHZoaGp6YmM5UVIraklkaXBPNCtLVEFoY3BYWFlFNE9LRG9tZnd0b2tWK1hSOWlRPQ==", "functionCall": {"args": {"location": "Paris"}, "name": "get_weather"}}], "role": "model"}, {"parts": [{"functionResponse": {"name": "test_tool", "response": {"result": "15\u00b0C, sunny"}}}], "role": "function"}, {"parts": [{"text": "Thanks! What about London?"}], "role": "user"}], "tools": [{"functionDeclarations": [{"description": "Get the current weather", "name": "get_weather", "parameters": {"properties": {"location": {"description": "City name", "type": "STRING"}}, "required": ["location"], "type": "OBJECT"}}]}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"London\"\n              }\n            },\n            \"thoughtSignature\": \"Co0CAdHtim+JHnhvg3c4/MPMTM+ryNx6hndVaIDfjmhg/9u8/zApye8W8WstAZf810EIDVnSVIPJUPjxwHH+y3DFseYhbTGJssDgRPG1r9KQG5c+Bui3yy9UPOBK7Hjo/ksezmd/AhXwhsqBYMZvV2iY9t4dbW0KXeEx6GzwboUjWJpqGFAPoVs6V/lrUky0g1jLsFPCpBm9dPGkz5dVWpWK0iaEarcWkAGZkdjP1H3D6/yZ8JP/Kt9nU0OJwy8KTDqqiTrDmCYcm1NlzM+/ExyuqmA877uGI0SLEtniu1/SFLJGGV5NgonKrTb9zzFQ6ui2d9vPxzycHKVCmDaRRp8tai8nNOqE+xlikwCEMZg=\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 88,\n    \"candidatesTokenCount\": 15,\n    \"totalTokenCount\": 161,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 88\n      }\n    ],\n    \"thoughtsTokenCount\": 58\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"uM8JacvgBeuFvdIPsYCwkAQ\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Tue, 04 Nov 2025 10:04:40 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=1418
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
 version: 1

@@ -493,7 +493,7 @@ else:
             messages = args.get("messages", [])
             if messages:
                 last_msg = messages[-1]
-                content = str(last_msg.get("content", ""))
+                content = str(last_msg.content or "")
                 return (
                     "Script wake_llm call" in content
                     and "motion_detection" in content

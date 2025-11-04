@@ -175,17 +175,17 @@ async def test_reply_with_different_profile_includes_history(
     # Assert that the history from Profile A is present
     # Should include: system prompt, root user message, Profile A's assistant response, current user message
     assert len(messages_for_llm) >= 4
-    assert messages_for_llm[0]["role"] == "system"
-    assert "You are Profile B" in messages_for_llm[0]["content"]
+    assert messages_for_llm[0].role == "system"
+    assert "You are Profile B" in messages_for_llm[0].content
 
     # Check that the root user message is included (for attachment context)
-    assert messages_for_llm[1]["role"] == "user"
-    assert "Hello" in messages_for_llm[1]["content"]
+    assert messages_for_llm[1].role == "user"
+    assert "Hello" in messages_for_llm[1].content
 
     # Check for Profile A's assistant message
-    assert messages_for_llm[2]["role"] == "assistant"
-    assert "Hello from Profile A" in messages_for_llm[2]["content"]
+    assert messages_for_llm[2].role == "assistant"
+    assert "Hello from Profile A" in messages_for_llm[2].content
 
     # Check for the current user's reply
-    assert messages_for_llm[3]["role"] == "user"
-    assert "Good job" in messages_for_llm[3]["content"]
+    assert messages_for_llm[3].role == "user"
+    assert "Good job" in messages_for_llm[3].content
