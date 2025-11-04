@@ -8,7 +8,7 @@ import logging
 import mimetypes
 import os
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -27,6 +27,7 @@ from family_assistant.llm import (
     ToolCallItem,
     _format_messages_for_debug,
 )
+from family_assistant.llm.messages import LLMMessage, message_to_dict
 
 from ..base import (
     AuthenticationError,
@@ -474,27 +475,29 @@ class GoogleGenAIClient(BaseLLMClient):
 
     async def generate_response(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: Sequence[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Generate response using Google GenAI."""
         try:
+            # Convert typed messages to dicts for internal processing
+            message_dicts = [message_to_dict(msg) for msg in messages]
+
             # Debug logging if enabled
             if self.should_debug_messages:
                 logger.info(
                     f"=== LLM Request to {self.model_name} ===\n"
-                    f"{_format_messages_for_debug(messages, tools, tool_choice)}"
+                    f"{_format_messages_for_debug(message_dicts, tools, tool_choice)}"
                 )
 
             # Convert messages to format expected by new API
-            contents = self._convert_messages_to_genai_format(messages)
+            contents = self._convert_messages_to_genai_format(message_dicts)
 
             # Debug: Log post-processed messages if enabled
             if self.should_debug_messages:
-                processed_msgs = self._process_tool_messages(messages.copy())
+                processed_msgs = self._process_tool_messages(message_dicts.copy())
                 logger.info(
                     f"=== After _process_tool_messages ({len(processed_msgs)} messages) ===\n"
                     f"{_format_messages_for_debug(processed_msgs, None, None)}"
@@ -739,8 +742,7 @@ class GoogleGenAIClient(BaseLLMClient):
 
     def generate_response_stream(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: Sequence[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
@@ -750,27 +752,29 @@ class GoogleGenAIClient(BaseLLMClient):
 
     async def _generate_response_stream(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: Sequence[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses using Google GenAI."""
         try:
+            # Convert typed messages to dicts for internal processing
+            message_dicts = [message_to_dict(msg) for msg in messages]
+
             # Debug logging if enabled
             if self.should_debug_messages:
                 logger.info(
                     f"=== LLM Streaming Request to {self.model_name} ===\n"
-                    f"{_format_messages_for_debug(messages, tools, tool_choice)}"
+                    f"{_format_messages_for_debug(message_dicts, tools, tool_choice)}"
                 )
 
             # Convert messages to format expected by API
-            contents = self._convert_messages_to_genai_format(messages)
+            contents = self._convert_messages_to_genai_format(message_dicts)
 
             # Debug: Log post-processed messages if enabled
             if self.should_debug_messages:
-                processed_msgs = self._process_tool_messages(messages.copy())
+                processed_msgs = self._process_tool_messages(message_dicts.copy())
                 logger.info(
                     f"=== After _process_tool_messages ({len(processed_msgs)} messages) ===\n"
                     f"{_format_messages_for_debug(processed_msgs, None, None)}"

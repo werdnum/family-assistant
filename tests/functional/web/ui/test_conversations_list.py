@@ -41,7 +41,7 @@ async def test_get_conversations_with_data(
         def matcher(kwargs: dict) -> bool:
             messages = kwargs.get("messages", [])
             if messages:
-                last_message = messages[-1].get("content", "")
+                last_message = messages[-1].content or ""
                 return f"conversation {i}" in last_message
             return False
 

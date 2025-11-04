@@ -10,6 +10,11 @@ import pytest_asyncio
 
 from family_assistant.llm import LLMInterface, LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.llm.factory import LLMClientFactory
+from tests.factories.messages import (
+    create_assistant_message,
+    create_tool_message,
+    create_user_message,
+)
 
 from .vcr_helpers import sanitize_response
 
@@ -142,9 +147,7 @@ async def test_single_tool_call(
     client = await llm_client_with_tools(provider, model)
 
     tools = [get_weather_tool()]
-    messages = [
-        {"role": "user", "content": "What's the weather like in San Francisco?"}
-    ]
+    messages = [create_user_message("What's the weather like in San Francisco?")]
 
     response = await client.generate_response(
         messages=messages, tools=tools, tool_choice="auto"
@@ -188,7 +191,7 @@ async def test_multiple_tool_options(
     client = await llm_client_with_tools(provider, model)
 
     tools = [get_weather_tool(), calculate_tool()]
-    messages = [{"role": "user", "content": "What is 25 times 4?"}]
+    messages = [create_user_message("What is 25 times 4?")]
 
     response = await client.generate_response(
         messages=messages, tools=tools, tool_choice="auto"
@@ -229,7 +232,7 @@ async def test_no_tool_needed(
     client = await llm_client_with_tools(provider, model)
 
     tools = [get_weather_tool(), calculate_tool()]
-    messages = [{"role": "user", "content": "Tell me a joke about programming"}]
+    messages = [create_user_message("Tell me a joke about programming")]
 
     response = await client.generate_response(
         messages=messages, tools=tools, tool_choice="auto"
@@ -267,10 +270,7 @@ async def test_parallel_tool_calls(
 
     tools = [get_weather_tool(), calculate_tool()]
     messages = [
-        {
-            "role": "user",
-            "content": "What's the weather in New York and what is 15 plus 27?",
-        }
+        create_user_message("What's the weather in New York and what is 15 plus 27?")
     ]
 
     response = await client.generate_response(
@@ -314,12 +314,11 @@ async def test_tool_call_with_conversation_history(
 
     # Simulate a conversation with tool usage
     messages = [
-        {"role": "user", "content": "I'm planning a trip to Paris, France"},
-        {
-            "role": "assistant",
-            "content": "Paris is a wonderful destination! Would you like to know about the weather there?",
-        },
-        {"role": "user", "content": "Yes, what's the weather like in Paris, France?"},
+        create_user_message("I'm planning a trip to Paris, France"),
+        create_assistant_message(
+            "Paris is a wonderful destination! Would you like to know about the weather there?"
+        ),
+        create_user_message("Yes, what's the weather like in Paris, France?"),
     ]
 
     response = await client.generate_response(
@@ -366,7 +365,7 @@ async def test_tool_response_handling(
     tools = [get_weather_tool()]
 
     # First, get a tool call
-    messages = [{"role": "user", "content": "What's the weather in London, UK?"}]
+    messages = [create_user_message("What's the weather in London, UK?")]
 
     response1 = await client.generate_response(
         messages=messages, tools=tools, tool_choice="auto"
@@ -376,16 +375,15 @@ async def test_tool_response_handling(
     tool_call = response1.tool_calls[0]
 
     # Simulate tool execution and response
-    tool_response = {
-        "role": "tool",
-        "tool_call_id": tool_call.id,
-        "content": json.dumps({
+    tool_response = create_tool_message(
+        tool_call_id=tool_call.id,
+        content=json.dumps({
             "location": "London, UK",
             "temperature": 15,
             "unit": "celsius",
             "condition": "Partly cloudy",
         }),
-    }
+    )
 
     # Continue conversation with tool response
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
@@ -403,8 +401,8 @@ async def test_tool_response_handling(
             }
         ],
     }
-    messages.append(assistant_msg)
-    messages.append(tool_response)
+    messages.append(assistant_msg)  # type: ignore[reportArgumentType]
+    messages.append(tool_response)  # type: ignore[reportArgumentType]
 
     # Get final response
     response2 = await client.generate_response(messages=messages, tools=tools)
@@ -442,7 +440,7 @@ async def test_tool_call_id_format(
     client = await llm_client_with_tools(provider, model)
 
     tools = [calculate_tool()]
-    messages = [{"role": "user", "content": "Calculate 42 divided by 7"}]
+    messages = [create_user_message("Calculate 42 divided by 7")]
 
     response = await client.generate_response(
         messages=messages, tools=tools, tool_choice="auto"

@@ -117,8 +117,8 @@ async def test_recurring_task_respects_user_timezone(
         if not messages:
             return False
         last_message = messages[-1]
-        if last_message.get("role") == "user":
-            content = last_message.get("content")
+        if last_message.role == "user":
+            content = last_message.content
             if isinstance(content, str):
                 return (
                     "System Callback Trigger:" in content
@@ -137,7 +137,7 @@ async def test_recurring_task_respects_user_timezone(
         if len(messages) >= 2:
             # Check if previous message has tool calls and current has tool results
             for msg in messages[-2:]:
-                if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                if msg.role == "assistant" and msg.tool_calls:
                     return True
         return False
 

@@ -4,7 +4,7 @@ Direct OpenAI API implementation for LLM interactions.
 
 import base64
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -20,6 +20,7 @@ from family_assistant.llm import (
     ToolCallFunction,
     ToolCallItem,
 )
+from family_assistant.llm.messages import LLMMessage, message_to_dict
 
 from ..base import (
     AuthenticationError,
@@ -148,21 +149,23 @@ class OpenAIClient(BaseLLMClient):
 
     async def generate_response(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: Sequence[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Generate response using OpenAI API."""
         try:
+            # Convert typed messages to dicts for internal processing
+            message_dicts = [message_to_dict(msg) for msg in messages]
+
             # Process tool attachments before sending
-            messages = self._process_tool_messages(messages)
+            message_dicts = self._process_tool_messages(message_dicts)
 
             # Build parameters with defaults, then model-specific overrides
             params = {
                 "model": self.model,
-                "messages": messages,
+                "messages": message_dicts,
                 **self.default_kwargs,
                 **self._get_model_specific_params(self.model),
             }
@@ -317,8 +320,7 @@ class OpenAIClient(BaseLLMClient):
 
     def generate_response_stream(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: Sequence[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
@@ -328,21 +330,23 @@ class OpenAIClient(BaseLLMClient):
 
     async def _generate_response_stream(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: Sequence[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses."""
         try:
+            # Convert typed messages to dicts for internal processing
+            message_dicts = [message_to_dict(msg) for msg in messages]
+
             # Process tool attachments before sending
-            messages = self._process_tool_messages(messages)
+            message_dicts = self._process_tool_messages(message_dicts)
 
             # Build parameters with defaults, then model-specific overrides
             params = {
                 "model": self.model,
-                "messages": messages,
+                "messages": message_dicts,
                 "stream": True,  # Enable streaming
                 **self.default_kwargs,
                 **self._get_model_specific_params(self.model),

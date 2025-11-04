@@ -164,10 +164,7 @@ async def test_attachment_id_injected_and_referenceable(
         # Find the tool response message
         tool_message = None
         for msg in reversed(messages):
-            if (
-                msg.get("role") == "tool"
-                and msg.get("tool_call_id") == tool_call_id_snapshot
-            ):
+            if msg.role == "tool" and msg.tool_call_id == tool_call_id_snapshot:
                 tool_message = msg
                 break
 
@@ -175,7 +172,7 @@ async def test_attachment_id_injected_and_referenceable(
             return False
 
         # Check that the content contains the attachment ID marker (plural form)
-        content = tool_message.get("content", "")
+        content = tool_message.content or ""
         if "[Attachment ID(s):" not in content:
             return False
 
@@ -220,11 +217,8 @@ async def test_attachment_id_injected_and_referenceable(
         messages = kwargs.get("messages", [])
         # Look for the highlight tool result
         for msg in reversed(messages):
-            if (
-                msg.get("role") == "tool"
-                and msg.get("tool_call_id") == tool_call_id_highlight
-            ):
-                content = msg.get("content", "")
+            if msg.role == "tool" and msg.tool_call_id == tool_call_id_highlight:
+                content = msg.content or ""
                 # Check for success message (not error)
                 return (
                     "Successfully highlighted" in content

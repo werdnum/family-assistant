@@ -157,7 +157,7 @@ async def test_tool_call_display(
         ),
         (
             lambda args: any(
-                msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id
+                msg.role == "tool" and msg.tool_call_id == tool_call_id
                 for msg in args.get("messages", [])
             ),
             LLMOutput(
@@ -251,7 +251,7 @@ async def test_tool_call_status_progression(
         ),
         (
             lambda args: any(
-                msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id
+                msg.role == "tool" and msg.tool_call_id == tool_call_id
                 for msg in args.get("messages", [])
             ),
             LLMOutput(
@@ -345,10 +345,9 @@ async def test_conversation_loading_with_tool_calls(
         """Match the initial user request for creating a note."""
         messages = args.get("messages", [])
         # Check if this is the initial request (no tool messages yet)
-        has_tool_messages = any(msg.get("role") == "tool" for msg in messages)
+        has_tool_messages = any(msg.role == "tool" for msg in messages)
         has_user_request = any(
-            msg.get("role") == "user"
-            and "create a note for testing" in str(msg.get("content", ""))
+            msg.role == "user" and "create a note for testing" in str(msg.content or "")
             for msg in messages
         )
         return has_user_request and not has_tool_messages
@@ -357,8 +356,7 @@ async def test_conversation_loading_with_tool_calls(
         """Match when we have a tool result and should provide final response."""
         messages = args.get("messages", [])
         return any(
-            msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id
-            for msg in messages
+            msg.role == "tool" and msg.tool_call_id == tool_call_id for msg in messages
         )
 
     mock_llm_client.rules = [

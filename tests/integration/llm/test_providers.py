@@ -12,7 +12,14 @@ from PIL import Image
 
 from family_assistant.llm import LLMInterface, LLMOutput
 from family_assistant.llm.factory import LLMClientFactory
+from family_assistant.llm.messages import ImageUrlContentPart, TextContentPart
 from family_assistant.tools.types import ToolAttachment
+from tests.factories.messages import (
+    create_assistant_message,
+    create_system_message,
+    create_tool_message,
+    create_user_message,
+)
 
 from .vcr_helpers import sanitize_response
 
@@ -77,10 +84,9 @@ async def test_basic_completion(
 
     # Simple completion request
     messages = [
-        {
-            "role": "user",
-            "content": "Reply with exactly this text: 'Hello from the test suite!'",
-        }
+        create_user_message(
+            "Reply with exactly this text: 'Hello from the test suite!'"
+        )
     ]
 
     response = await client.generate_response(messages)
@@ -118,14 +124,12 @@ async def test_system_message_handling(
     client = await llm_client_factory(provider, model, None)
 
     messages = [
-        {
-            "role": "system",
-            "content": "You are a helpful assistant that always responds in JSON format.",
-        },
-        {
-            "role": "user",
-            "content": "What is 2+2? Reply with a JSON object with a key 'answer'.",
-        },
+        create_system_message(
+            "You are a helpful assistant that always responds in JSON format."
+        ),
+        create_user_message(
+            "What is 2+2? Reply with a JSON object with a key 'answer'."
+        ),
     ]
 
     response = await client.generate_response(messages)
@@ -161,9 +165,9 @@ async def test_multi_turn_conversation(
     client = await llm_client_factory(provider, model, None)
 
     messages = [
-        {"role": "user", "content": "My name is TestBot. What's my name?"},
-        {"role": "assistant", "content": "Your name is TestBot."},
-        {"role": "user", "content": "What did I just tell you my name was?"},
+        create_user_message("My name is TestBot. What's my name?"),
+        create_assistant_message("Your name is TestBot."),
+        create_user_message("What did I just tell you my name was?"),
     ]
 
     response = await client.generate_response(messages)
@@ -196,7 +200,7 @@ async def test_model_parameters(
     client = await llm_client_factory(provider, model, None)
 
     # Test with low temperature for more deterministic output
-    messages = [{"role": "user", "content": "Complete this sequence: 1, 2, 3, 4,"}]
+    messages = [create_user_message("Complete this sequence: 1, 2, 3, 4,")]
 
     # Most models should complete this with "5"
     response = await client.generate_response(messages)
@@ -222,7 +226,7 @@ async def test_provider_specific_google_features(
 
     # Test basic functionality specific to Google
     # For now, just ensure the client works with Google-specific config
-    messages = [{"role": "user", "content": "Say 'Google Gemini test passed'"}]
+    messages = [create_user_message("Say 'Google Gemini test passed'")]
 
     response = await client.generate_response(messages)
 
@@ -245,8 +249,8 @@ async def test_provider_specific_openai_features(
 
     # Test with a more complex prompt that showcases OpenAI capabilities
     messages = [
-        {"role": "system", "content": "You are a code reviewer."},
-        {"role": "user", "content": "Review this Python code: print('hello')"},
+        create_system_message("You are a code reviewer."),
+        create_user_message("Review this Python code: print('hello')"),
     ]
 
     response = await client.generate_response(messages)
@@ -279,7 +283,7 @@ async def test_empty_conversation(
     client = await llm_client_factory(provider, model, None)
 
     # Some providers might handle empty messages differently
-    messages = [{"role": "user", "content": ""}]
+    messages = [create_user_message("")]
 
     try:
         response = await client.generate_response(messages)
@@ -312,7 +316,7 @@ async def test_reasoning_info_included(
 
     client = await llm_client_factory(provider, model, None)
 
-    messages = [{"role": "user", "content": "Count to 5"}]
+    messages = [create_user_message("Count to 5")]
 
     response = await client.generate_response(messages)
 
@@ -363,19 +367,18 @@ async def test_gemini_multipart_content_with_images(
 
     # Test multi-part content with text and image
     messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": "What do you see in this image? Describe the color.",
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{test_image_base64}"},
-                },
-            ],
-        }
+        create_user_message(
+            content=[
+                TextContentPart(
+                    type="text",
+                    text="What do you see in this image? Describe the color.",
+                ),
+                ImageUrlContentPart(
+                    type="image_url",
+                    image_url={"url": f"data:image/png;base64,{test_image_base64}"},
+                ),
+            ]
+        )
     ]
 
     response = await client.generate_response(messages)
@@ -416,20 +419,18 @@ async def test_gemini_system_message_with_multipart_content(
     test_image_base64 = base64.b64encode(img_bytes).decode("utf-8")
 
     messages = [
-        {
-            "role": "system",
-            "content": "You are a color identification assistant. Always respond with just the color name.",
-        },
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "What color is this square?"},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{test_image_base64}"},
-                },
-            ],
-        },
+        create_system_message(
+            "You are a color identification assistant. Always respond with just the color name."
+        ),
+        create_user_message(
+            content=[
+                TextContentPart(type="text", text="What color is this square?"),
+                ImageUrlContentPart(
+                    type="image_url",
+                    image_url={"url": f"data:image/png;base64,{test_image_base64}"},
+                ),
+            ]
+        ),
     ]
 
     response = await client.generate_response(messages)
@@ -477,7 +478,7 @@ async def test_tool_message_with_image_attachment(
 
     # Simulate a conversation where a tool has returned an image
     messages = [
-        {"role": "user", "content": "Generate a simple image for me"},
+        create_user_message("Generate a simple image for me"),
         {
             "role": "assistant",
             "content": "I'll generate a simple image for you.",
@@ -492,13 +493,12 @@ async def test_tool_message_with_image_attachment(
                 }
             ],
         },
-        {
-            "role": "tool",
-            "tool_call_id": "call_123",
-            "content": "Generated a simple red pixel image",
-            "_attachments": [attachment],
-        },
-        {"role": "user", "content": "What do you see in the image?"},
+        create_tool_message(
+            tool_call_id="call_123",
+            content="Generated a simple red pixel image",
+            attachments_list=[attachment],
+        ),
+        create_user_message("What do you see in the image?"),
     ]
 
     # This should work without errors - the provider should handle the attachment
@@ -549,7 +549,7 @@ async def test_tool_message_with_pdf_attachment(
 
     # Simulate a conversation where a tool has returned a PDF about software updates
     messages = [
-        {"role": "user", "content": "Find me a document about software management"},
+        create_user_message("Find me a document about software management"),
         {
             "role": "assistant",
             "content": "I'll search for a document about software management.",
@@ -564,16 +564,14 @@ async def test_tool_message_with_pdf_attachment(
                 }
             ],
         },
-        {
-            "role": "tool",
-            "tool_call_id": "call_456",
-            "content": "Found a PDF document about software management practices",
-            "_attachments": [attachment],
-        },
-        {
-            "role": "user",
-            "content": "What is this document about? What are the main topics it covers?",
-        },
+        create_tool_message(
+            tool_call_id="call_456",
+            content="Found a PDF document about software management practices",
+            attachments_list=[attachment],
+        ),
+        create_user_message(
+            "What is this document about? What are the main topics it covers?"
+        ),
     ]
 
     # This should work without errors - the provider should handle the attachment
@@ -623,10 +621,9 @@ async def test_gemini_url_grounding() -> None:
 
     # Test with the GitHub release page for llm-openrouter
     messages = [
-        {
-            "role": "user",
-            "content": "Look at this URL https://github.com/simonw/llm-openrouter/releases/tag/0.5 and tell me what example prompt is mentioned for testing reasoning options support.",
-        }
+        create_user_message(
+            "Look at this URL https://github.com/simonw/llm-openrouter/releases/tag/0.5 and tell me what example prompt is mentioned for testing reasoning options support."
+        )
     ]
 
     response = await client.generate_response(messages)
@@ -669,10 +666,9 @@ async def test_gemini_google_search_grounding(
 
     # Test with a query that requires current information
     messages = [
-        {
-            "role": "user",
-            "content": "What is the current version of Python available for download?",
-        }
+        create_user_message(
+            "What is the current version of Python available for download?"
+        )
     ]
 
     response = await client.generate_response(messages)

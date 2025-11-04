@@ -100,16 +100,16 @@ class TestProcessingServiceMultimodal:
         assert event.tool_result == "Simple string result"
 
         # Check tool message
-        assert tool_message["role"] == "tool"
-        assert tool_message["tool_call_id"] == "test_call_123"
-        assert tool_message["content"] == "Simple string result"
-        assert tool_message["error_traceback"] is None
-        assert "_attachments" not in tool_message
+        assert tool_message.role == "tool"
+        assert tool_message.tool_call_id == "test_call_123"
+        assert tool_message.content == "Simple string result"
+        assert tool_message.error_traceback is None
+        assert tool_message.transient_attachments is None
 
         # Check history message
-        assert history_message["role"] == "tool"
-        assert history_message["tool_call_id"] == "test_call_123"
-        assert history_message["content"] == "Simple string result"
+        assert history_message["role"] == "tool"  # type: ignore[reportIndexIssue]
+        assert history_message["tool_call_id"] == "test_call_123"  # type: ignore[reportIndexIssue]
+        assert history_message["content"] == "Simple string result"  # type: ignore[reportIndexIssue]
 
     @pytest.mark.asyncio
     async def test_execute_single_tool_result_with_attachment(
@@ -160,27 +160,28 @@ class TestProcessingServiceMultimodal:
         assert event.tool_result == "Successfully generated sunset image"
 
         # Check tool message (should have _attachments for provider processing)
-        assert tool_message["role"] == "tool"
-        assert tool_message["tool_call_id"] == "test_call_456"
-        assert tool_message["content"] == "Successfully generated sunset image"
-        assert tool_message["error_traceback"] is None
-        assert "_attachments" in tool_message
-        assert tool_message["_attachments"] == [attachment]
+        assert tool_message.role == "tool"
+        assert tool_message.tool_call_id == "test_call_456"
+        assert tool_message.content == "Successfully generated sunset image"
+        assert tool_message.error_traceback is None
+        assert tool_message.transient_attachments is not None
+        assert tool_message.transient_attachments == [attachment]
 
         # Should also have attachments metadata for history
-        assert "attachments" in tool_message
-        assert len(tool_message["attachments"]) == 1
-        attachment_meta = tool_message["attachments"][0]
+        assert tool_message.attachments is not None
+        assert len(tool_message.attachments) == 1
+        attachment_meta = tool_message.attachments[0]
         assert attachment_meta["type"] == "tool_result"
         assert attachment_meta["mime_type"] == "image/png"
         assert attachment_meta["description"] == "Generated sunset image"
 
-        # Check history message (should NOT have _attachments but should have metadata)
-        assert history_message["role"] == "tool"
-        assert history_message["tool_call_id"] == "test_call_456"
-        assert history_message["content"] == "Successfully generated sunset image"
-        assert "_attachments" not in history_message  # Raw data removed
-        assert "attachments" in history_message  # Metadata preserved
+        # Check history message (should NOT have transient_attachments but should have metadata)
+        assert history_message["role"] == "tool"  # type: ignore[reportIndexIssue]
+        assert history_message["tool_call_id"] == "test_call_456"  # type: ignore[reportIndexIssue]
+        assert history_message["content"] == "Successfully generated sunset image"  # type: ignore[reportIndexIssue]
+        # transient_attachments is excluded from serialization, so it shouldn't be in the dict
+        assert "transient_attachments" not in history_message
+        assert history_message["attachments"] is not None  # type: ignore[reportIndexIssue]
 
     @pytest.mark.asyncio
     async def test_execute_single_tool_result_without_attachment(
@@ -217,10 +218,10 @@ class TestProcessingServiceMultimodal:
 
         # Should behave similar to string result when no attachment
         assert event.tool_result == "Text processed successfully"
-        assert tool_message["content"] == "Text processed successfully"
-        assert "_attachments" not in tool_message
-        assert "attachments" not in tool_message
-        assert history_message["content"] == "Text processed successfully"
+        assert tool_message.content == "Text processed successfully"
+        assert tool_message.transient_attachments is None
+        assert tool_message.attachments is None
+        assert history_message["content"] == "Text processed successfully"  # type: ignore[reportIndexIssue]
 
     @pytest.mark.asyncio
     async def test_execute_single_tool_invalid_json_args(
@@ -253,8 +254,8 @@ class TestProcessingServiceMultimodal:
         assert event.type == "tool_result"
         assert event.tool_result is not None
         assert "error" in event.tool_result.lower()
-        assert "invalid arguments" in tool_message["content"].lower()
-        assert tool_message["error_traceback"] is not None
+        assert "invalid arguments" in tool_message.content.lower()
+        assert tool_message.error_traceback is not None
 
     @pytest.mark.asyncio
     async def test_execute_single_tool_execution_error(
@@ -292,8 +293,8 @@ class TestProcessingServiceMultimodal:
         assert event.type == "tool_result"
         assert event.tool_result is not None
         assert "error" in event.tool_result.lower()
-        assert "tool execution failed" in tool_message["content"].lower()
-        assert tool_message["error_traceback"] is not None
+        assert "tool execution failed" in tool_message.content.lower()
+        assert tool_message.error_traceback is not None
 
     def test_tool_result_type_alias(self) -> None:
         """Test ToolReturnType alias works correctly"""
@@ -383,10 +384,14 @@ class TestProcessingServiceMultimodal:
 
         # Verify that the attachment ID is injected into the LLM message content
         llm_message = result.llm_message
-        assert "[Attachment ID(s): auto_attachment_123]" in llm_message["content"]
+        assert "[Attachment ID(s): auto_attachment_123]" in llm_message.content
 
         # Verify that the ToolAttachment object has the attachment_id populated
-        assert llm_message["_attachments"][0].attachment_id == "auto_attachment_123"
+        assert (
+            llm_message.transient_attachments is not None
+            and llm_message.transient_attachments[0].attachment_id
+            == "auto_attachment_123"
+        )
 
     async def test_no_auto_attachment_for_string_results(
         self, processing_service: ProcessingService, mock_db_context: Mock

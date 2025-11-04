@@ -77,14 +77,13 @@ async def test_message_history_includes_most_recent_when_limited(
 
     # Set up LLM responses for the conversation
     # We'll use a single rule that responds differently based on the conversation state
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def dynamic_response(messages: list[dict[str, Any]]) -> LLMOutput | bool:
+    def dynamic_response(messages: Any) -> LLMOutput | bool:  # noqa: ANN401
         # Get the last user message
-        user_messages = [msg for msg in messages if msg.get("role") == "user"]
+        user_messages = [msg for msg in messages if msg.role == "user"]
         if not user_messages:
             return False
 
-        last_user_msg = user_messages[-1].get("content", "")
+        last_user_msg = user_messages[-1].content or ""
 
         # Determine response based on conversation flow
         if "First message" in last_user_msg:
@@ -116,18 +115,19 @@ async def test_message_history_includes_most_recent_when_limited(
 
     # Create matcher function that always returns True
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def always_match(messages: list[dict[str, Any]], **kwargs: Any) -> bool:  # noqa: ANN401  # Mock kwargs
+    def always_match(kwargs: dict[str, Any]) -> bool:  # noqa: ANN401
         return True
 
     # Create rule function that returns the dynamic response
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def get_response(messages: list[dict[str, Any]], **kwargs: Any) -> LLMOutput | bool:  # noqa: ANN401  # Mock kwargs
+    def get_response(kwargs: dict[str, Any]) -> LLMOutput | bool:  # noqa: ANN401
+        messages = kwargs.get("messages", [])
         return dynamic_response(messages)
 
     # Set up the mock LLM with a custom generate_response method
     async def mock_generate_response(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: Any,  # noqa: ANN401
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
@@ -207,13 +207,12 @@ async def test_reminder_after_completed_conversation(
     fixture.mock_bot.send_message.side_effect = mock_send_message
 
     # Set up dynamic LLM response
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def dynamic_response(messages: list[dict[str, Any]]) -> LLMOutput | bool:
-        user_messages = [msg for msg in messages if msg.get("role") == "user"]
+    def dynamic_response(messages: Any) -> LLMOutput | bool:  # noqa: ANN401
+        user_messages = [msg for msg in messages if msg.role == "user"]
         if not user_messages:
             return False
 
-        last_user_msg = user_messages[-1].get("content", "")
+        last_user_msg = user_messages[-1].content or ""
 
         if "clobbered" in last_user_msg:
             return LLMOutput(
@@ -239,7 +238,7 @@ async def test_reminder_after_completed_conversation(
     # Set up the mock LLM with a custom generate_response method
     async def mock_generate_response(
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: Any,  # noqa: ANN401
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",

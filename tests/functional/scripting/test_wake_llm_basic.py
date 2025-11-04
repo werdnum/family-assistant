@@ -101,7 +101,7 @@ if temp > 25.0:
         messages = args.get("messages", [])
         if messages:
             last_msg = messages[-1]
-            content = str(last_msg.get("content", ""))
+            content = str(last_msg.content or "")
             return (
                 "Script wake_llm call" in content
                 and "High temperature detected" in content
@@ -286,7 +286,7 @@ if air_quality < 50:
         messages = args.get("messages", [])
         if messages:
             last_msg = messages[-1]
-            content = str(last_msg.get("content", ""))
+            content = str(last_msg.content or "")
             return (
                 "Script wake_llm call" in content
                 and "Multiple wake requests" in content

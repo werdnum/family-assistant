@@ -258,10 +258,10 @@ async def test_document_indexing_with_llm_summary_e2e(
             return False
 
         last_message = messages[-1]
-        if last_message.get("role") != "user":
+        if last_message.role != "user":
             return False
 
-        content = last_message.get("content")
+        content = last_message.content
         if not isinstance(content, list):  # Expecting multipart content for files
             # If it's simple text content, check if TEST_DOC_FOR_SUMMARY_CONTENT is in it
             # This path might not be hit if format_user_message_with_file always makes a list
@@ -273,20 +273,43 @@ async def test_document_indexing_with_llm_summary_e2e(
         has_text_plain_file_placeholder = False
 
         for part in content:
+            # Handle both dict and Pydantic model objects
+            # Check for text content
+            part_type = None
             if isinstance(part, dict):
-                if (
-                    part.get("type") == "text"
-                    and part.get("text") == "Process the provided file."
-                ):
+                part_type = part.get("type")
+            elif hasattr(part, "type"):
+                part_type = part.type
+
+            if part_type == "text":
+                # Check if it's a dict or a Pydantic model object
+                part_text = None
+                if isinstance(part, dict):
+                    part_text = part.get("text")
+                elif hasattr(part, "text"):
+                    part_text = part.text
+                if part_text == "Process the provided file.":
                     has_process_file_text = True
-                # Check for the file placeholder that format_user_message_with_file creates
-                elif part.get("type") == "file_placeholder":
+            # Check for the file placeholder that format_user_message_with_file creates
+            elif part_type == "file_placeholder":
+                # Extract file_reference from dict or Pydantic model
+                file_ref = None
+                if isinstance(part, dict):
                     file_ref = part.get("file_reference", {})
-                    # In this test, the uploaded file is text/plain.
-                    # We can't check the content of file_ref.get("file_path") here easily,
-                    # but if we see this structure, we assume it's our test file.
-                    if file_ref.get("mime_type") == "text/plain":
-                        has_text_plain_file_placeholder = True
+                elif hasattr(part, "file_reference"):
+                    file_ref = part.file_reference
+                else:
+                    file_ref = {}
+
+                # In this test, the uploaded file is text/plain.
+                # We can't check the content of file_ref.get("file_path") here easily,
+                # but if we see this structure, we assume it's our test file.
+                if isinstance(file_ref, dict):
+                    mime_type = file_ref.get("mime_type")
+                else:
+                    mime_type = getattr(file_ref, "mime_type", None)
+                if mime_type == "text/plain":
+                    has_text_plain_file_placeholder = True
 
         # The matcher should return true if it's a text prompt containing the summary content OR
         # if it's a file processing prompt for a text file.

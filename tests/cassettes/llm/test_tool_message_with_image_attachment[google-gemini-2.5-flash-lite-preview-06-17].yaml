@@ -41,4 +41,46 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": "Generate a simple image for me"}], "role": "user"}, {"parts": [{"text": "I''ll generate a simple image for you."}, {"functionCall": {"args": {"prompt": "simple"}, "name": "generate_image"}}], "role": "model"}, {"parts": [{"functionResponse": {"name": "test_tool", "response": {"result": "Generated a simple red pixel image"}}}], "role": "function"}, {"parts": [{"text": "What do you see in the image?"}], "role": "user"}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"I see a single, solid red pixel.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 61,\n    \"candidatesTokenCount\": 9,\n    \"totalTokenCount\": 70,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 61\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite-preview-06-17\",\n  \"responseId\": \"Nc8JaZWHBdXj7M8Pgd-2iAw\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Tue, 04 Nov 2025 10:02:29 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=241
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
 version: 1

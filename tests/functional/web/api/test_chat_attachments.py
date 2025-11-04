@@ -22,7 +22,7 @@ async def test_chat_api_with_image_attachment(
     def image_matcher(args: dict) -> bool:
         messages = args.get("messages", [])
         for msg in messages:
-            content = msg.get("content", [])
+            content = msg.content or []
             if isinstance(content, list):
                 for part in content:
                     if isinstance(part, dict) and part.get("type") == "image_url":
@@ -128,13 +128,18 @@ async def test_chat_api_multiple_attachments(
     def multi_image_matcher(args: dict) -> bool:
         messages = args.get("messages", [])
         for msg in messages:
-            content = msg.get("content", [])
+            content = msg.content or []
             if isinstance(content, list):
-                image_count = sum(
-                    1
-                    for part in content
-                    if isinstance(part, dict) and part.get("type") == "image_url"
-                )
+                image_count = 0
+                for part in content:
+                    # Handle both dict-style and Pydantic model-style parts
+                    part_type = None
+                    if isinstance(part, dict):
+                        part_type = part.get("type")
+                    elif hasattr(part, "type"):
+                        part_type = part.type
+                    if part_type == "image_url":
+                        image_count += 1
                 return image_count >= 2
         return False
 
@@ -324,12 +329,9 @@ async def test_tool_result_attachments_include_complete_metadata(
         has_tool_result = False
 
         for msg in messages:
-            if (
-                msg.get("role") == "user"
-                and "image" in str(msg.get("content", "")).lower()
-            ):
+            if msg.role == "user" and "image" in str(msg.content or "").lower():
                 has_user_request = True
-            if msg.get("role") == "tool":
+            if msg.role == "tool":
                 has_tool_result = True
 
         return has_user_request and not has_tool_result

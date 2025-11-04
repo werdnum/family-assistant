@@ -142,8 +142,8 @@ async def test_schedule_and_execute_callback(
         # The "System Callback Trigger" is added as the last user message by handle_chat_interaction
         # when invoked by handle_llm_callback.
         last_message = messages[-1]
-        if last_message.get("role") == "user":
-            content = last_message.get("content")
+        if last_message.role == "user":
+            content = last_message.content
             if isinstance(content, str):
                 is_trigger = "System Callback Trigger:" in content
                 has_context = CALLBACK_CONTEXT in content
@@ -431,8 +431,8 @@ async def test_modify_pending_callback(
         if not messages:
             return False
         last_message = messages[-1]
-        if last_message.get("role") == "user":
-            content = last_message.get("content")
+        if last_message.role == "user":
+            content = last_message.content
             if isinstance(content, str):
                 return (
                     "System Callback Trigger:" in content
@@ -754,8 +754,8 @@ async def test_cancel_pending_callback(
         if not messages:
             return False
         last_message = messages[-1]
-        if last_message.get("role") == "user":
-            content = last_message.get("content")
+        if last_message.role == "user":
+            content = last_message.content
             if isinstance(content, str):
                 # This matcher should ideally NOT be hit if cancellation is successful
                 is_trigger = "System Callback Trigger:" in content
@@ -1040,8 +1040,8 @@ async def test_schedule_reminder_with_follow_up(
         if not messages:
             return False
         last_message = messages[-1]
-        if last_message.get("role") == "user":
-            content = last_message.get("content")
+        if last_message.role == "user":
+            content = last_message.content
             if isinstance(content, str):
                 return (
                     "System: Reminder triggered" in content
@@ -1061,8 +1061,8 @@ async def test_schedule_reminder_with_follow_up(
         if not messages:
             return False
         last_message = messages[-1]
-        if last_message.get("role") == "user":
-            content = last_message.get("content")
+        if last_message.role == "user":
+            content = last_message.content
             if isinstance(content, str):
                 return (
                     "System: Follow-up reminder triggered" in content
@@ -1384,8 +1384,8 @@ async def test_schedule_recurring_callback(
         if not messages:
             return False
         last_message = messages[-1]
-        if last_message.get("role") == "user":
-            content = last_message.get("content")
+        if last_message.role == "user":
+            content = last_message.content
             if isinstance(content, str):
                 return (
                     "System Callback Trigger:" in content
@@ -1405,8 +1405,8 @@ async def test_schedule_recurring_callback(
         if not messages:
             return False
         last_message = messages[-1]
-        if last_message.get("role") == "user":
-            content = last_message.get("content")
+        if last_message.role == "user":
+            content = last_message.content
             if isinstance(content, str):
                 # Check if this is a callback trigger AND we've already done one
                 is_trigger = (
@@ -1646,9 +1646,9 @@ async def test_list_pending_callbacks(db_engine: AsyncEngine) -> None:
         # Check if the last message is a tool response
         if messages and len(messages) >= 2:
             last_msg = messages[-1]
-            if last_msg.get("role") == "tool":
+            if last_msg.role == "tool":
                 # Check if it contains our callback information
-                content = last_msg.get("content", "")
+                content = last_msg.content or ""
                 return (
                     "First test callback" in content
                     or "Second test callback" in content
