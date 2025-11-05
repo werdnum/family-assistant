@@ -41,6 +41,7 @@ jobs:
       ci_workflow: ${{ steps.filter.outputs.ci_workflow }}
       web_api: ${{ steps.filter.outputs.web_api }}
       dockerfile_changes: ${{ steps.filter.outputs.dockerfile_changes }}
+      gemini_client: ${{ steps.filter.outputs.gemini_client }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -101,6 +102,8 @@ jobs:
               - 'pyproject.toml'
               - 'uv.lock'
               - 'requirements*.txt'
+            gemini_client:
+              - 'src/family_assistant/llm/providers/google_genai_client.py'
   build-ci-container:
     needs: [prepare, detect-changes]
     if: needs.detect-changes.outputs.has_code_changes == 'true'
@@ -507,9 +510,53 @@ jobs:
           echo ""
           echo "💡 Download with: gh run download ${{ github.run_id }} --name playwright-artifacts-postgres-${{ github.run_id }}"
 
+  test-gemini-live:
+    needs: [prepare, build-ci-container, detect-changes]
+    if: |
+      needs.detect-changes.outputs.has_code_changes == 'true' &&
+      needs.detect-changes.outputs.gemini_client == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run Gemini live tests in devcontainer
+        run: |
+          docker run \
+            --rm \
+            -v ${{ github.workspace }}:/workspace/main \
+            -e GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+            -e CLAUDE_PROJECT_REPO="" \
+            -e UV_CACHE_DIR=/opt/uv-cache \
+            -e CI=true \
+            -u claude \
+            ${{ needs.prepare.outputs.image-name }} \
+            bash -c 'cd /workspace/main && \
+              echo "Setting up Python environment..." && \
+              uv venv .venv && \
+              . .venv/bin/activate && \
+              uv sync --extra dev && \
+              mkdir -p test-results && \
+              .venv/bin/pytest -q --timeout=300 -m "gemini_live" \
+                --json-report --json-report-file=test-results/gemini-live-report.json'
+      - name: Upload Gemini live test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gemini-live-test-results-${{ github.run_id }}
+          path: test-results/gemini-live-report.json
+          retention-days: 7
+          if-no-files-found: ignore
+
   # Require all test jobs to pass
   all-tests:
-    needs: [lint, test-frontend-unit, test-backend-sqlite, test-backend-postgres, test-playwright-sqlite, test-playwright-postgres]
+    needs: [lint, test-frontend-unit, test-backend-sqlite, test-backend-postgres, test-playwright-sqlite, test-playwright-postgres, test-gemini-live]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -547,6 +594,7 @@ jobs:
           check_job "test-backend-postgres" "${{ needs.test-backend-postgres.result }}" || FAILED=1
           check_job "test-playwright-sqlite" "${{ needs.test-playwright-sqlite.result }}" || FAILED=1
           check_job "test-playwright-postgres" "${{ needs.test-playwright-postgres.result }}" || FAILED=1
+          check_job "test-gemini-live" "${{ needs.test-gemini-live.result }}" || FAILED=1
 
           if [[ $FAILED -eq 1 ]]; then
             echo ""
