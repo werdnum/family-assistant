@@ -57,7 +57,8 @@ poe test
 The setup script will:
 
 - Create a virtual environment (`.venv`)
-- Install all Python dependencies using `uv sync --extra dev` (includes all dev tools)
+- Install all Python dependencies using `uv sync --extra dev --extra pgserver` (includes all dev
+  tools and PostgreSQL test server)
 - Install pre-commit hooks
 - Install frontend dependencies (`npm ci --prefix frontend`)
 - Install Playwright browsers
@@ -71,8 +72,8 @@ If you prefer to set up manually:
 uv venv .venv
 source .venv/bin/activate
 
-# Install Python dependencies (includes dev dependencies)
-uv sync --extra dev
+# Install Python dependencies (includes dev dependencies and pgserver)
+uv sync --extra dev --extra pgserver
 
 # Install pre-commit hooks
 .venv/bin/pre-commit install
@@ -86,11 +87,6 @@ npm ci --prefix frontend
 # Optional: Install local embedding model support (adds ~450MB of dependencies)
 # Only needed if you want to use local sentence transformer models instead of cloud APIs
 uv sync --extra dev --extra local-embeddings
-
-# Optional: Install pgserver for PostgreSQL testing
-# Only needed if TEST_DATABASE_URL is unset (e.g., cloud coding environments)
-# Not needed if you have access to an external PostgreSQL database
-uv sync --extra dev --extra pgserver
 ```
 
 ## Dependency Management
@@ -402,12 +398,13 @@ When evaluating input trust levels:
   - Any content from unauthenticated sources
 
 - This approach requires enforcing strong authentication and authorization at the interface
-  boundaries
-The current architecture primarily operates in **[BC]** mode:
+  boundaries The current architecture primarily operates in **[BC]** mode:
 
 - Input filtering and authentication ensure only authorized users can interact with the system
+
 - The agent can access sensitive data (notes, calendar, contacts) and take actions (creating tasks,
   sending notifications)
+
 - This approach requires maintaining strong authentication and authorization at the interface
   boundaries
 
