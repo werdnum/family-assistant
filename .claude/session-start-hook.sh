@@ -18,13 +18,10 @@ if [ -f "scripts/setup-workspace.sh" ]; then
     bash scripts/setup-workspace.sh
 fi
 
-# Ensure pgserver extra is installed on amd64 architectures
-ARCH=$(uname -m)
-if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "amd64" ]; then
-    echo "🔍 Ensuring pgserver extra is installed..." >&2
-    source .venv/bin/activate
-    uv sync --extra dev --extra pgserver
-fi
+# Ensure pgserver extra is installed
+echo "🔍 Ensuring pgserver extra is installed..." >&2
+source .venv/bin/activate
+uv sync --extra dev --extra pgserver
 
 # Set environment variables for the activated virtual environment
 VENV_PATH="$(pwd)/.venv"
