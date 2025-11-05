@@ -585,3 +585,103 @@ March,200"""
         assert content is not None
         img = Image.open(io.BytesIO(content))
         assert img.format == "PNG"
+
+    @pytest.mark.asyncio
+    async def test_debug_mode_simple_spec(
+        self, mock_exec_context: Mock, simple_vega_lite_spec: str
+    ) -> None:
+        """Test debug mode returns spec as JSON instead of rendering."""
+        result = await create_vega_chart_tool(
+            mock_exec_context,
+            spec=simple_vega_lite_spec,
+            title="Debug Test",
+            debug=True,
+        )
+
+        assert isinstance(result, ToolResult)
+        assert "Generated spec for Debug Test:" in result.get_text()
+        assert "```json" in result.get_text()
+        # Should not have PNG attachments in debug mode
+        assert not result.attachments or len(result.attachments) == 0
+
+        # Verify the returned spec is valid JSON
+        text = result.get_text()
+        json_start = text.find("```json\n") + 8
+        json_end = text.find("\n```", json_start)
+        returned_spec = json.loads(text[json_start:json_end])
+        assert "$schema" in returned_spec
+        assert "data" in returned_spec
+
+    @pytest.mark.asyncio
+    async def test_debug_mode_with_data_attachments(
+        self,
+        mock_exec_context: Mock,
+        vega_lite_spec_with_named_data: str,
+        mock_csv_attachment: Mock,
+    ) -> None:
+        """Test debug mode includes merged data from attachments."""
+        result = await create_vega_chart_tool(
+            mock_exec_context,
+            spec=vega_lite_spec_with_named_data,
+            data_attachments=[mock_csv_attachment],
+            title="Debug with CSV",
+            debug=True,
+        )
+
+        assert isinstance(result, ToolResult)
+        assert "Generated spec for Debug with CSV:" in result.get_text()
+        assert not result.attachments or len(result.attachments) == 0
+
+        # Extract and parse the returned spec
+        text = result.get_text()
+        json_start = text.find("```json\n") + 8
+        json_end = text.find("\n```", json_start)
+        returned_spec = json.loads(text[json_start:json_end])
+
+        # Verify data was merged into the spec
+        assert "data" in returned_spec
+        assert "values" in returned_spec["data"]
+        # Should have the CSV data merged in
+        values = returned_spec["data"]["values"]
+        assert len(values) == 3
+        assert values[0]["month"] == "January"
+        assert values[0]["sales"] == "100"
+
+    @pytest.mark.asyncio
+    async def test_debug_mode_with_direct_data(self, mock_exec_context: Mock) -> None:
+        """Test debug mode includes merged data from direct data parameter."""
+        spec = {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "description": "Test chart",
+            "data": {"name": "mydata"},
+            "mark": "bar",
+            "encoding": {
+                "x": {"field": "x", "type": "nominal"},
+                "y": {"field": "y", "type": "quantitative"},
+            },
+        }
+
+        data = {"mydata": [{"x": "A", "y": 10}, {"x": "B", "y": 20}]}
+
+        result = await create_vega_chart_tool(
+            mock_exec_context,
+            spec=json.dumps(spec),
+            data=data,
+            title="Debug with Data",
+            debug=True,
+        )
+
+        assert isinstance(result, ToolResult)
+        assert "Generated spec for Debug with Data:" in result.get_text()
+        assert not result.attachments or len(result.attachments) == 0
+
+        # Extract and parse the returned spec
+        text = result.get_text()
+        json_start = text.find("```json\n") + 8
+        json_end = text.find("\n```", json_start)
+        returned_spec = json.loads(text[json_start:json_end])
+
+        # Verify data was merged into the spec
+        assert "data" in returned_spec
+        assert "values" in returned_spec["data"]
+        assert returned_spec["data"]["values"] == data["mydata"]
