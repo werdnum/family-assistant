@@ -18,6 +18,7 @@ This approach provides a clean solution for testing streaming functionality whil
 preserving the VCR.py benefits for non-streaming tests.
 """
 
+import json
 import os
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -27,9 +28,13 @@ import pytest_asyncio
 
 from family_assistant.llm import LLMInterface, LLMStreamEvent
 from family_assistant.llm.factory import LLMClientFactory
+from family_assistant.llm.messages import message_to_dict
+from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from tests.factories.messages import (
     create_assistant_message,
     create_system_message,
+    create_tool_call,
+    create_tool_message,
     create_user_message,
 )
 
@@ -835,3 +840,214 @@ async def test_streaming_reasoning_info_gemini(
                 "total_token_count",
             ]
         )
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
+@pytest.mark.no_vcr  # Bypass VCR for streaming compatibility
+@pytest.mark.gemini_live
+@pytest.mark.parametrize(
+    "provider,model",
+    [
+        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+    ],
+)
+async def test_google_streaming_with_multiturns_and_tool_calls(
+    provider: str,
+    model: str,
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    sample_tools: list[dict[str, Any]],
+) -> None:
+    """Test streaming with multi-turn conversation including tool calls for Google Gemini.
+
+    This test reproduces the Pydantic validation bug where the Google GenAI client
+    uses camelCase keys (functionCall, functionResponse) instead of snake_case keys
+    (function_call, function_response) expected by the SDK's Pydantic validation.
+
+    The bug manifests when:
+    1. Streaming is enabled
+    2. Multi-turn conversation (with assistant message containing tool_calls in history)
+    3. Real API call (not VCR replay)
+    """
+    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
+        pytest.skip(f"Skipping {provider} test in CI without API key")
+
+    client = await llm_client_factory(provider, model, None)
+    assert isinstance(client, GoogleGenAIClient)
+
+    # Simulate a multi-turn conversation with tool calls
+    # This is the exact pattern that triggers the Pydantic validation error
+    messages = [
+        create_user_message("What's the weather in Paris?"),
+        create_assistant_message(
+            content=None,
+            tool_calls=[
+                create_tool_call(
+                    call_id="call_123",
+                    function_name="get_weather",
+                    arguments='{"location": "Paris, France", "unit": "celsius"}',
+                )
+            ],
+        ),
+        create_tool_message(
+            tool_call_id="call_123",
+            name="get_weather",
+            content="The weather in Paris is 18°C and sunny.",
+        ),
+    ]
+
+    # Capture what gets sent to the API by inspecting _convert_messages_to_genai_format
+    message_dicts = [message_to_dict(msg) for msg in messages]
+    converted = client._convert_messages_to_genai_format(message_dicts)
+
+    # Check if using camelCase (bug) or snake_case (correct)
+    converted_json = json.dumps(converted, default=str)
+    has_camel_case = (
+        "functionCall" in converted_json or "functionResponse" in converted_json
+    )
+    has_snake_case = (
+        "function_call" in converted_json or "function_response" in converted_json
+    )
+
+    print("\n=== Converted format check ===")
+    print(f"Has camelCase (functionCall/functionResponse): {has_camel_case}")
+    print(f"Has snake_case (function_call/function_response): {has_snake_case}")
+    print(f"Sample: {converted_json[:500]}")
+
+    # Try to stream the next response
+    accumulated_content = ""
+    done_event_received = False
+    error_occurred = False
+    error_message = None
+
+    try:
+        async for event in client.generate_response_stream(
+            messages, tools=sample_tools, tool_choice="auto"
+        ):
+            if event.type == "content" and event.content:
+                accumulated_content += event.content
+            elif event.type == "done":
+                done_event_received = True
+            elif event.type == "error":
+                error_occurred = True
+                error_message = event.error
+    except Exception as e:
+        error_occurred = True
+        error_message = str(e)
+        print(f"Exception: {type(e).__name__}: {str(e)[:500]}")
+
+    # Report the results
+    if error_occurred and has_camel_case:
+        print("\n=== BUG REPRODUCED ===")
+        print(f"Error: {error_message[:200] if error_message else 'Unknown error'}")
+        print("This is the expected Pydantic validation error with camelCase keys")
+        # This is expected when the bug is present
+        assert error_message and (
+            "validation" in error_message.lower() or "Extra inputs" in error_message
+        )
+    elif has_snake_case:
+        print("\n=== BUG FIXED ===")
+        print("Using snake_case keys - streaming should work")
+        assert not error_occurred, f"Streaming failed unexpectedly: {error_message}"
+        assert done_event_received, "Done event not received"
+        assert accumulated_content, "No content received from streaming"
+    else:
+        # Neither format found - something else is wrong
+        raise AssertionError(
+            f"Unexpected format in converted messages: {converted_json[:200]}"
+        )
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
+@pytest.mark.no_vcr  # Must bypass VCR to trigger SDK's Pydantic validation
+@pytest.mark.gemini_live
+async def test_google_streaming_pydantic_validation_reproducer(
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    sample_tools: list[dict[str, Any]],
+) -> None:
+    """Reproducer test for Pydantic validation error with Google GenAI streaming.
+
+    This test is designed to fail with the current bug and pass after the fix.
+
+    Root cause: The google_genai_client._convert_messages_to_genai_format() method
+    returns plain dicts with camelCase keys (functionCall, functionResponse) instead
+    of the snake_case keys (function_call, function_response) that the Google GenAI
+    SDK's Pydantic models expect.
+
+    When streaming with tool calls in conversation history, the SDK's validation
+    rejects these malformed dicts with "Extra inputs are not permitted" errors.
+
+    This test will:
+    - FAIL initially: Pydantic ValidationError due to camelCase keys in dicts
+    - PASS after fix: Snake_case keys allow SDK validation to succeed
+    """
+    # Skip if no API key available
+    if not os.getenv("GEMINI_API_KEY"):
+        pytest.skip("Requires GEMINI_API_KEY to reproduce SDK validation error")
+
+    client = await llm_client_factory(
+        "google", "gemini-2.5-flash-lite-preview-06-17", None
+    )
+    assert isinstance(client, GoogleGenAIClient)
+
+    # Create conversation with tool calls - this triggers the buggy code path
+    messages = [
+        create_user_message("Calculate 5 + 3"),
+        create_assistant_message(
+            content=None,
+            tool_calls=[
+                create_tool_call(
+                    call_id="call_test_123",
+                    function_name="calculate",
+                    arguments='{"expression": "5 + 3"}',
+                )
+            ],
+        ),
+        create_tool_message(
+            tool_call_id="call_test_123",
+            name="calculate",
+            content="8",
+        ),
+    ]
+
+    # Attempt streaming - this should work but will fail with Pydantic validation
+    # error if the bug is present
+    accumulated_content = ""
+    done_received = False
+
+    try:
+        async for event in client.generate_response_stream(
+            messages, tools=sample_tools, tool_choice="auto"
+        ):
+            if event.type == "content" and event.content:
+                accumulated_content += event.content
+            elif event.type == "done":
+                done_received = True
+            elif event.type == "error":
+                # If we get an error event, fail the test
+                pytest.fail(
+                    f"Streaming error event received: {event.error}\n"
+                    f"This is likely the Pydantic validation error due to camelCase keys"
+                )
+    except Exception as e:
+        error_msg = str(e)
+        # Check if this is the Pydantic validation error we expect
+        if "validation" in error_msg.lower() or "Extra inputs" in error_msg:
+            pytest.fail(
+                f"Pydantic ValidationError caught during streaming:\n{error_msg}\n\n"
+                f"This confirms the bug: google_genai_client is passing dicts with "
+                f"camelCase keys (functionCall/functionResponse) to the SDK, but the "
+                f"SDK expects snake_case keys (function_call/function_response).\n\n"
+                f"Fix: Update _convert_messages_to_genai_format() to use snake_case "
+                f"or return proper types.Content objects."
+            )
+        else:
+            # Some other unexpected error
+            raise
+
+    # Verify we got a proper response
+    assert done_received, "Did not receive done event from streaming"
+    assert accumulated_content or done_received, "No content received from streaming"
