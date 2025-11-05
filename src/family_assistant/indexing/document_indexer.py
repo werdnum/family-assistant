@@ -2,6 +2,7 @@
 Handles the indexing process for documents uploaded via the API.
 """
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
@@ -45,6 +46,10 @@ if TYPE_CHECKING:
 from family_assistant.utils.scraping import Scraper  # Added
 
 logger = logging.getLogger(__name__)
+
+# Constants for document fetch retry logic (handles SQLite WAL visibility delays)
+DOCUMENT_FETCH_MAX_ATTEMPTS = 3
+DOCUMENT_FETCH_RETRY_DELAY_SECONDS = 0.5
 
 
 # --- Document Indexer Class ---
@@ -194,22 +199,35 @@ class DocumentIndexer:
             raise ValueError("Missing 'document_id' in task payload.")
 
         # Fetch the original DocumentRecord
-        try:
-            # Assuming a function like get_document_by_id exists.
-            original_document_record = await get_document_by_id(  # Changed from storage.get_document_by_id
-                db_context,
-                document_id,  # The returned object should conform to the Document protocol.
-            )
-            if not original_document_record:
-                raise ValueError(f"Document with ID {document_id} not found.")
-        except SQLAlchemyError as e:
-            logger.error(
-                f"Database error fetching document {document_id}: {e}", exc_info=True
-            )
-            raise RuntimeError(f"Failed to fetch document {document_id}") from e
-        except ValueError as e:
-            logger.error(str(e))
-            raise  # Re-raise to mark task as failed if document not found
+        # Retry a few times to handle SQLite WAL visibility delays
+        original_document_record = None
+        for attempt in range(DOCUMENT_FETCH_MAX_ATTEMPTS):
+            try:
+                original_document_record = await get_document_by_id(
+                    db_context,
+                    document_id,
+                )
+                if original_document_record:
+                    break  # Success!
+
+                # Document not found - retry with delay if not last attempt
+                if attempt < DOCUMENT_FETCH_MAX_ATTEMPTS - 1:
+                    logger.warning(
+                        f"Document {document_id} not found on attempt {attempt + 1}/{DOCUMENT_FETCH_MAX_ATTEMPTS}. "
+                        "Retrying after delay (may be SQLite WAL visibility delay)..."
+                    )
+                    await asyncio.sleep(DOCUMENT_FETCH_RETRY_DELAY_SECONDS)
+                else:
+                    # Last attempt failed
+                    raise ValueError(
+                        f"Document with ID {document_id} not found after {DOCUMENT_FETCH_MAX_ATTEMPTS} attempts."
+                    )
+            except SQLAlchemyError as e:
+                logger.error(
+                    f"Database error fetching document {document_id}: {e}",
+                    exc_info=True,
+                )
+                raise RuntimeError(f"Failed to fetch document {document_id}") from e
 
         initial_items: list[IndexableContent] = []
 
