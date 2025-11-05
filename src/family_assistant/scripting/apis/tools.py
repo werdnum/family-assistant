@@ -252,7 +252,7 @@ class ToolsAPI:
         return await fetch_attachment_object(attachment_id, self.execution_context)
 
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def _get_raw_tool_definitions(self) -> list[dict[str, Any]]:
+    async def _get_raw_tool_definitions(self) -> list[dict[str, Any]]:
         """Get raw tool definitions for internal schema analysis.
 
         Uses the raw definitions (without LLM translation) to detect attachment types.
@@ -289,8 +289,9 @@ class ToolsAPI:
                     f"Cannot get raw tool definitions from {type(self.tools_provider).__name__}, "
                     "using translated definitions - attachment detection may not work properly"
                 )
-                self._raw_tool_definitions = self._run_async(
-                    self.tools_provider.get_tool_definitions()
+                # Use await instead of _run_async since we're already in async context
+                self._raw_tool_definitions = (
+                    await self.tools_provider.get_tool_definitions()
                 )
 
         return self._raw_tool_definitions or []
@@ -315,7 +316,7 @@ class ToolsAPI:
         """
         # Get tool definition to properly detect attachment parameters
         tool_definition = None
-        raw_definitions = self._get_raw_tool_definitions()
+        raw_definitions = await self._get_raw_tool_definitions()
         for definition in raw_definitions:
             # Tool definitions have a 'function' key with the function name
             func_def = definition.get("function", {})
