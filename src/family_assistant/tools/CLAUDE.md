@@ -379,6 +379,165 @@ See `src/family_assistant/tools/automations.py` for comprehensive examples:
 5. **Docstrings**: Document all functions with clear descriptions
 6. **Async**: All tool implementations should be async functions
 
+## Async/Await and Blocking Operations
+
+### The Golden Rule: Never Block the Event Loop
+
+**ALL tool functions MUST be async**, but declaring a function `async` is not enough. You must
+ensure blocking operations don't run directly on the event loop.
+
+**Why this matters:** When a tool blocks the event loop:
+
+- All other operations freeze (database, HTTP, WebSockets)
+- Telegram messages queue up
+- Web UI becomes unresponsive
+- In Starlark scripts: Creates deadlock when tool tries to use main loop → 30s timeout
+
+**Real example:** The jq_query tool was timing out in Starlark scripts because `jq.compile()`
+blocked the event loop, creating a deadlock with the async/sync bridge.
+
+### What Operations Are Blocking?
+
+**File I/O (always blocking unless using aiofiles):**
+
+- `Path.read_bytes()`, `Path.write_bytes()`
+- `Path.exists()`, `Path.stat()`, `Path.is_file()`
+- `os.listdir()`, `os.path.exists()`
+- Regular `open()` / `read()` / `write()`
+
+**CPU-Intensive Operations:**
+
+- `json.loads()` / `json.dumps()` on large data (>1MB)
+- `jq.compile()` and `.input().all()` (jq query execution)
+- PIL/Pillow: `Image.open()`, `.convert()`, `.resize()`, `.save()`
+- Chart rendering: `vlc.vegalite_to_png()`, matplotlib operations
+- CSV parsing: `csv.DictReader()` on large files
+- `filetype.guess()` (reads file header)
+- Font loading: `ImageFont.truetype()`
+- Regular expressions on large text
+- Any third-party library that doesn't explicitly support async
+
+**DON'T do this (blocks event loop):**
+
+```python
+async def my_tool(...):
+    content = file_path.read_bytes()  # BLOCKS!
+    data = json.loads(content)         # BLOCKS on large JSON!
+    img = Image.open(data)             # BLOCKS!
+    result = expensive_computation()   # BLOCKS!
+```
+
+**DO this (offloads to thread pool):**
+
+```python
+async def my_tool(...):
+    # Wrap blocking operations in asyncio.to_thread()
+    def _blocking_work():
+        content = file_path.read_bytes()
+        data = json.loads(content)
+        img = Image.open(io.BytesIO(data))
+        return process_image(img)
+
+    result = await asyncio.to_thread(_blocking_work)
+```
+
+### When to Use asyncio.to_thread()
+
+**Always use it for:**
+
+- Any file system operation (unless using `aiofiles`)
+- CPU-intensive parsing/processing (JSON, CSV, XML on large data)
+- Image processing (PIL, OpenCV)
+- Chart/graph rendering
+- Third-party libraries that don't support async (jq, filetype, etc.)
+- Any operation that takes >10ms to complete
+
+**Don't need it for:**
+
+- Database operations (SQLAlchemy async sessions)
+- HTTP requests (aiohttp, httpx async clients)
+- Operations already in `aiofiles.open()` context
+- Async library calls (anything you `await`)
+- In-memory operations on small data (\<1KB)
+
+### Pattern: Wrap Multiple Blocking Operations
+
+```python
+async def my_tool(exec_context, file_path: str):
+    # Group related blocking operations into a helper
+    def _process_file():
+        # Read file
+        content = Path(file_path).read_bytes()
+
+        # Parse (potentially large)
+        data = json.loads(content)
+
+        # Process (CPU-intensive)
+        result = expensive_computation(data)
+
+        return result
+
+    # Execute all blocking work in thread pool
+    return await asyncio.to_thread(_process_file)
+```
+
+### Examples from Codebase
+
+**Good: documents.py uses asyncio.to_thread()**
+
+```python
+# Line 298-300
+has_file = file_path and await asyncio.to_thread(pathlib.Path(file_path).exists)
+
+# Line 320
+file_size = (await asyncio.to_thread(file_path_obj.stat)).st_size
+```
+
+**Good: documents.py uses aiofiles**
+
+```python
+# Lines 397-398
+async with aiofiles.open(file_path, "rb") as f:
+    file_content = await f.read()
+```
+
+**Good: data_manipulation.py (after fix)**
+
+```python
+def _load_and_parse_json() -> Any:  # noqa: ANN401
+    content = file_path.read_bytes()
+    return json.loads(content.decode("utf-8"))
+
+json_data = await asyncio.to_thread(_load_and_parse_json)
+```
+
+**Good: data_visualization.py (after fix)**
+
+```python
+def _render_chart() -> bytes:
+    if is_vega_lite:
+        return vlc.vegalite_to_png(vl_spec=spec_dict, scale=scale)
+    else:
+        return vlc.vega_to_png(vg_spec=spec_dict, scale=scale)
+
+png_data = await asyncio.to_thread(_render_chart)
+```
+
+### Testing Async Correctness
+
+Your tests won't catch blocking operations because:
+
+- Tests use small data (blocking is fast)
+- Tests don't measure event loop responsiveness
+- asyncio allows mixing sync/async code
+
+**Manual verification needed:**
+
+1. Search for file I/O operations not wrapped in `asyncio.to_thread()` or `aiofiles`
+2. Search for CPU-intensive library calls (PIL, jq, csv, json.loads on paths)
+3. Review PR changes for new blocking operations
+4. Use `python -m pytest --durations=10` to find slow tests that might have blocking operations
+
 ## Testing Tools
 
 Tools can be tested through the web UI at `/tools` or programmatically in tests. See the functional

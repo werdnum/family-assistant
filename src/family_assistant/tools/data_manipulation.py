@@ -6,6 +6,7 @@ particularly JSON data using jq queries.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -112,10 +113,15 @@ async def jq_query_tool(
                 text=f"Error: Attachment file not found for {attachment_id}."
             )
 
-        # Read and parse JSON
+        # Read and parse JSON - use asyncio.to_thread to avoid blocking event loop
+        # File I/O and JSON parsing can be blocking on large files
         try:
-            content = file_path.read_bytes()
-            json_data = json.loads(content.decode("utf-8"))
+
+            def _load_and_parse_json() -> Any:  # noqa: ANN401
+                content = file_path.read_bytes()
+                return json.loads(content.decode("utf-8"))
+
+            json_data = await asyncio.to_thread(_load_and_parse_json)
         except UnicodeDecodeError:
             return ToolResult(
                 text="Error: Attachment is not valid UTF-8 text. Cannot process as JSON."
@@ -125,10 +131,15 @@ async def jq_query_tool(
                 text=f"Error: Attachment is not valid JSON. Parse error: {str(e)}"
             )
 
-        # Compile and execute jq query
+        # Compile and execute jq query - use asyncio.to_thread to avoid blocking event loop
+        # jq.compile() and .input().all() are CPU-intensive synchronous operations
         try:
-            jq_compiled = jq.compile(jq_program)
-            result = jq_compiled.input(json_data).all()
+
+            def _execute_jq_query() -> list[Any]:
+                jq_compiled = jq.compile(jq_program)
+                return jq_compiled.input(json_data).all()
+
+            result = await asyncio.to_thread(_execute_jq_query)
 
             # Return structured data - ToolResult handles conversion to text for LLM
             # If single result, unwrap from list

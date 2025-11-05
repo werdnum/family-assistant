@@ -6,6 +6,7 @@ for testing and demonstrating attachment manipulation capabilities.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 from typing import TYPE_CHECKING, Any
@@ -163,123 +164,146 @@ async def highlight_image_tool(
                 text="Error: Could not retrieve image content", attachments=None
             )
 
-        # Load image with PIL
+        # Load and process image with PIL
+        # Use asyncio.to_thread to avoid blocking event loop with CPU-intensive PIL operations
         try:
-            with Image.open(io.BytesIO(original_content)) as original_img:
-                # Save format before any conversion (e.g., "JPEG", "PNG")
-                original_format = original_img.format or "PNG"
 
-                # Convert to RGB if necessary for drawing
-                if original_img.mode != "RGB":
-                    img = original_img.convert("RGB")
-                else:
-                    img = original_img
+            def _process_image_with_pil(
+                img_content: bytes,
+                region_list: list[dict[str, Any]],  # ast-grep-ignore: no-dict-any
+            ) -> tuple[bytes, list[str]] | tuple[None, str]:
+                """Process image with PIL - runs in thread pool to avoid blocking."""
+                try:
+                    with Image.open(io.BytesIO(img_content)) as original_img:
+                        # Save format before any conversion (e.g., "JPEG", "PNG")
+                        original_format = original_img.format or "PNG"
 
-                # Create a copy for modification
-                highlighted_img = img.copy()
-                draw = ImageDraw.Draw(highlighted_img)
+                        # Convert to RGB if necessary for drawing
+                        if original_img.mode != "RGB":
+                            img = original_img.convert("RGB")
+                        else:
+                            img = original_img
 
-                # Get image dimensions for coordinate scaling
-                img_width, img_height = highlighted_img.size
+                        # Create a copy for modification
+                        highlighted_img = img.copy()
+                        draw = ImageDraw.Draw(highlighted_img)
 
-                # Calculate default thickness as ~1% of smaller dimension, minimum 2px
-                default_thickness = max(2, int(min(img_width, img_height) * 0.01))
+                        # Get image dimensions for coordinate scaling
+                        img_width, img_height = highlighted_img.size
 
-                # Validate all regions first - fail fast if any are invalid
-                for i, region in enumerate(regions):
-                    try:
-                        # Validate required fields
-                        box = region["box"]
-                        if not isinstance(box, list) or len(box) != 4:
-                            return ToolResult(
-                                text=f"Error: Invalid region {i}: box must be a list of 4 numbers [y_min, x_min, y_max, x_max]",
-                                attachments=None,
+                        # Calculate default thickness as ~1% of smaller dimension, minimum 2px
+                        default_thickness = max(
+                            2, int(min(img_width, img_height) * 0.01)
+                        )
+
+                        # Validate all regions first - fail fast if any are invalid
+                        for i, region in enumerate(region_list):
+                            try:
+                                # Validate required fields
+                                box = region["box"]
+                                if not isinstance(box, list) or len(box) != 4:
+                                    return (
+                                        None,
+                                        f"Error: Invalid region {i}: box must be a list of 4 numbers [y_min, x_min, y_max, x_max]",
+                                    )
+
+                                # Validate shape if specified
+                                shape = region.get("shape", "rectangle")
+                                if shape not in {"rectangle", "circle"}:
+                                    return (
+                                        None,
+                                        f"Error: Invalid shape '{shape}' in region {i}. Must be 'rectangle' or 'circle'.",
+                                    )
+                            except KeyError as e:
+                                return (
+                                    None,
+                                    f"Error: Invalid region {i}: missing required field {e}",
+                                )
+                            except (ValueError, TypeError) as e:
+                                return (None, f"Error: Invalid region {i}: {e}")
+
+                        # All regions validated - proceed with drawing
+                        regions_drawn = []
+                        for region in region_list:
+                            # Extract bounding box (Gemini format: [y_min, x_min, y_max, x_max] normalized to [0, 1000])
+                            box = region["box"]
+                            y_min_norm, x_min_norm, y_max_norm, x_max_norm = box
+
+                            # Scale normalized [0, 1000] coordinates to actual pixel coordinates
+                            x_min = (x_min_norm / 1000.0) * img_width
+                            y_min = (y_min_norm / 1000.0) * img_height
+                            x_max = (x_max_norm / 1000.0) * img_width
+                            y_max = (y_max_norm / 1000.0) * img_height
+
+                            # Convert to x, y, width, height for logging
+                            x = x_min
+                            y = y_min
+                            width = x_max - x_min
+                            height = y_max - y_min
+
+                            # Get optional attributes
+                            label = region.get("label", "")
+                            color = COLOR_MAP.get(region.get("color", "red"), "#FF0000")
+                            shape = region.get("shape", "rectangle")
+                            thickness = region.get("thickness", default_thickness)
+
+                            if shape == "rectangle":
+                                # Draw rectangle outline using bounding box coordinates
+                                draw.rectangle(
+                                    [x_min, y_min, x_max, y_max],
+                                    outline=color,
+                                    width=thickness,
+                                )
+                                label_str = f" ({label})" if label else ""
+                                regions_drawn.append(
+                                    f"rectangle at ({x},{y}) {width}x{height}{label_str} in {region.get('color', 'red')}"
+                                )
+                            elif shape == "circle":
+                                # Draw circle outline using bounding box center
+                                center_x = (x_min + x_max) / 2
+                                center_y = (y_min + y_max) / 2
+                                radius = width / 2  # Use width as diameter
+                                draw.ellipse(
+                                    [
+                                        center_x - radius,
+                                        center_y - radius,
+                                        center_x + radius,
+                                        center_y + radius,
+                                    ],
+                                    outline=color,
+                                    width=thickness,
+                                )
+                                label_str = f" ({label})" if label else ""
+                                regions_drawn.append(
+                                    f"circle at ({center_x},{center_y}) radius {radius}{label_str} in {region.get('color', 'red')}"
+                                )
+
+                        # Save highlighted image to bytes preserving original format
+                        output_buffer = io.BytesIO()
+                        if original_format == "JPEG":
+                            # Use JPEG with good quality and optimization for photos
+                            highlighted_img.save(
+                                output_buffer, format="JPEG", quality=85, optimize=True
                             )
+                        else:
+                            # Preserve other formats (PNG, etc.)
+                            highlighted_img.save(output_buffer, format=original_format)
 
-                        # Validate shape if specified
-                        shape = region.get("shape", "rectangle")
-                        if shape not in {"rectangle", "circle"}:
-                            return ToolResult(
-                                text=f"Error: Invalid shape '{shape}' in region {i}. Must be 'rectangle' or 'circle'.",
-                                attachments=None,
-                            )
-                    except KeyError as e:
-                        return ToolResult(
-                            text=f"Error: Invalid region {i}: missing required field {e}",
-                            attachments=None,
-                        )
-                    except (ValueError, TypeError) as e:
-                        return ToolResult(
-                            text=f"Error: Invalid region {i}: {e}", attachments=None
-                        )
+                        return (output_buffer.getvalue(), regions_drawn)
 
-                # All regions validated - proceed with drawing
-                regions_drawn = []
-                for region in regions:
-                    # Extract bounding box (Gemini format: [y_min, x_min, y_max, x_max] normalized to [0, 1000])
-                    box = region["box"]
-                    y_min_norm, x_min_norm, y_max_norm, x_max_norm = box
+                except Exception as e:
+                    return (None, f"Failed to process image: {str(e)}")
 
-                    # Scale normalized [0, 1000] coordinates to actual pixel coordinates
-                    x_min = (x_min_norm / 1000.0) * img_width
-                    y_min = (y_min_norm / 1000.0) * img_height
-                    x_max = (x_max_norm / 1000.0) * img_width
-                    y_max = (y_max_norm / 1000.0) * img_height
+            result = await asyncio.to_thread(
+                _process_image_with_pil, original_content, regions
+            )
 
-                    # Convert to x, y, width, height for logging
-                    x = x_min
-                    y = y_min
-                    width = x_max - x_min
-                    height = y_max - y_min
+            if result[0] is None:
+                # Error occurred
+                logger.error(f"Error processing image with PIL: {result[1]}")
+                return ToolResult(text=f"Error: {result[1]}", attachments=None)
 
-                    # Get optional attributes
-                    label = region.get("label", "")
-                    color = COLOR_MAP.get(region.get("color", "red"), "#FF0000")
-                    shape = region.get("shape", "rectangle")
-                    thickness = region.get("thickness", default_thickness)
-
-                    if shape == "rectangle":
-                        # Draw rectangle outline using bounding box coordinates
-                        draw.rectangle(
-                            [x_min, y_min, x_max, y_max],
-                            outline=color,
-                            width=thickness,
-                        )
-                        label_str = f" ({label})" if label else ""
-                        regions_drawn.append(
-                            f"rectangle at ({x},{y}) {width}x{height}{label_str} in {region.get('color', 'red')}"
-                        )
-                    elif shape == "circle":
-                        # Draw circle outline using bounding box center
-                        center_x = (x_min + x_max) / 2
-                        center_y = (y_min + y_max) / 2
-                        radius = width / 2  # Use width as diameter
-                        draw.ellipse(
-                            [
-                                center_x - radius,
-                                center_y - radius,
-                                center_x + radius,
-                                center_y + radius,
-                            ],
-                            outline=color,
-                            width=thickness,
-                        )
-                        label_str = f" ({label})" if label else ""
-                        regions_drawn.append(
-                            f"circle at ({center_x},{center_y}) radius {radius}{label_str} in {region.get('color', 'red')}"
-                        )
-
-                # Save highlighted image to bytes preserving original format
-                output_buffer = io.BytesIO()
-                if original_format == "JPEG":
-                    # Use JPEG with good quality and optimization for photos
-                    highlighted_img.save(
-                        output_buffer, format="JPEG", quality=85, optimize=True
-                    )
-                else:
-                    # Preserve other formats (PNG, etc.)
-                    highlighted_img.save(output_buffer, format=original_format)
-                highlighted_content = output_buffer.getvalue()
+            highlighted_content, regions_drawn = result
 
         except Exception as e:
             logger.error(f"Error processing image with PIL: {e}")
