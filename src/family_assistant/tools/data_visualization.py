@@ -57,6 +57,11 @@ DATA_VISUALIZATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
                         "description": "Scale factor for the output PNG (default 2 for high DPI displays)",
                         "default": 2,
                     },
+                    "debug": {
+                        "type": "boolean",
+                        "description": "If true, return the generated spec as JSON instead of rendering to PNG. Useful for debugging and inspecting the spec with data merged in.",
+                        "default": False,
+                    },
                 },
                 "required": ["spec"],
             },
@@ -73,6 +78,7 @@ async def create_vega_chart_tool(
     data: dict[str, Any] | list[Any] | None = None,
     title: str = "Data Visualization",
     scale: float = 2,
+    debug: bool = False,
 ) -> ToolResult:
     """
     Create a data visualization from a Vega or Vega-Lite specification.
@@ -85,9 +91,10 @@ async def create_vega_chart_tool(
               list or other = default dataset named "data"
         title: Title for the chart
         scale: Scale factor for PNG output (default 2 for high DPI)
+        debug: If True, return the generated spec as JSON instead of rendering to PNG
 
     Returns:
-        ToolResult with PNG attachment of the rendered chart
+        ToolResult with PNG attachment of the rendered chart, or JSON text if debug=True
     """
     logger.info(f"Creating Vega chart: {title}")
 
@@ -162,27 +169,31 @@ async def create_vega_chart_tool(
                     )
                     continue
 
-            # Merge data into spec if we have any
-            if data_dict:
-                # Handle both Vega and Vega-Lite formats
-                if "data" in spec_dict:
-                    # If data is a dict with a "name" field, replace values
-                    if (
-                        isinstance(spec_dict["data"], dict)
-                        and "name" in spec_dict["data"]
-                    ):
-                        data_name = spec_dict["data"]["name"]
-                        if data_name in data_dict:
-                            spec_dict["data"]["values"] = data_dict[data_name]
-                    # If data is a list (Vega format), look for named datasets
-                    elif isinstance(spec_dict["data"], list):
-                        for data_item in spec_dict["data"]:
-                            if "name" in data_item and data_item["name"] in data_dict:
-                                data_item["values"] = data_dict[data_item["name"]]
+        # Merge data into spec if we have any
+        if data_dict:
+            # Handle both Vega and Vega-Lite formats
+            if "data" in spec_dict:
+                # If data is a dict with a "name" field, replace values
+                if isinstance(spec_dict["data"], dict) and "name" in spec_dict["data"]:
+                    data_name = spec_dict["data"]["name"]
+                    if data_name in data_dict:
+                        spec_dict["data"]["values"] = data_dict[data_name]
+                # If data is a list (Vega format), look for named datasets
+                elif isinstance(spec_dict["data"], list):
+                    for data_item in spec_dict["data"]:
+                        if "name" in data_item and data_item["name"] in data_dict:
+                            data_item["values"] = data_dict[data_item["name"]]
 
-                # Also check for datasets (Vega-Lite format)
-                if "datasets" in spec_dict:
-                    spec_dict["datasets"].update(data_dict)
+            # Also check for datasets (Vega-Lite format)
+            if "datasets" in spec_dict:
+                spec_dict["datasets"].update(data_dict)
+
+        # If debug mode, return the spec as JSON instead of rendering
+        if debug:
+            formatted_spec = json.dumps(spec_dict, indent=2)
+            return ToolResult(
+                text=f"Generated spec for {title}:\n\n```json\n{formatted_spec}\n```"
+            )
 
         # Determine if this is Vega or Vega-Lite based on schema
         is_vega_lite = False
