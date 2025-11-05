@@ -43,15 +43,13 @@ def check_command_rules(
         explanation = rule.get("explanation", "This command is not allowed.")
 
         try:
-            match = re.search(pattern, command)
-            if match:
-                replacement = None
+            if re.search(pattern, command):
                 if action == "replace":
                     replacement_template = rule.get("replacement", "")
                     # Perform regex substitution with capture groups
                     replacement = re.sub(pattern, replacement_template, command)
-
-                return action, replacement, explanation
+                    return action, replacement, explanation
+                return action, None, explanation
         except re.error:
             # If the regex is invalid, skip it
             continue
