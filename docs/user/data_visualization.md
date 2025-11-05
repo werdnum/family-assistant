@@ -49,10 +49,12 @@ chart
 **Example: Transform and visualize with functional composition**
 
 ```starlark
-# Process data with jq, create chart, and return result
+# Process data with jq_query, pass result directly to create_vega_chart
+# No intermediate attachment needed - jq result flows directly as data
+filtered_data = jq_query(source_attachment, ".[] | select(.value > 10)")
 create_vega_chart(
     spec=spec_json,
-    data_attachments=[jq_query(source_attachment, ".[] | select(.value > 10)")]
+    data=filtered_data  # Direct data parameter - no attachment overhead
 )
 ```
 
@@ -79,6 +81,49 @@ create_vega_chart(
 
 The attachment is auto-displayed. No need for `attach_to_response` unless you want to control which
 specific attachments are shown.
+
+## Choosing Between `data` and `data_attachments` Parameters
+
+The `create_vega_chart` tool accepts data in two ways:
+
+### Use `data` parameter for:
+
+- **Computed results** from `jq_query()` or other data transformations
+- **Inline data** from calculations or API responses
+- **Direct composition** where data flows through tool calls
+- **Ephemeral data** that doesn't need persistent storage
+
+```starlark
+# Example: Direct composition with jq_query
+result = jq_query(attachment_id, ".[] | select(.temp > 20)")
+create_vega_chart(spec=spec_json, data=result)
+```
+
+### Use `data_attachments` parameter for:
+
+- **File-based data** (CSV, JSON files uploaded by users)
+- **Large datasets** already stored as attachments
+- **Persistent data** that needs to be referenceable later
+- **Data from tools** that return attachment IDs
+
+```starlark
+# Example: CSV file from user upload
+create_vega_chart(spec=spec_json, data_attachments=[csv_attachment_id])
+```
+
+### Mixing both (when needed):
+
+You can combine both parameters for complex visualizations using multiple data sources:
+
+```starlark
+# Computed data + file data
+computed = jq_query(attachment, ".summary")
+create_vega_chart(
+    spec=multi_layer_spec,
+    data={"summary": computed},  # Named dataset from computation
+    data_attachments=[raw_data_file]  # File-based dataset
+)
+```
 
 ## Workflow for Large Data Attachments
 
@@ -160,15 +205,16 @@ create_vega_chart(
 )
 ```
 
-**Advanced: Filter data with jq and create chart in one expression**
+**Advanced: Filter data with jq and create chart**
 
 ```starlark
 # Functional composition - filter and visualize
+# jq_query returns data directly (not an attachment), pass via data parameter
 filtered_data = jq_query("636058f3-...", "[.[] | select(.state != null)]")
 
 spec = {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "data": {"name": "filtered_data"},
+  "data": {"name": "data"},  # Use "data" as default name for direct data
   "mark": {"type": "line", "point": true},
   "encoding": {
     "x": {"field": "last_changed", "type": "temporal"},
@@ -178,7 +224,7 @@ spec = {
 
 create_vega_chart(
   spec=json_encode(spec),
-  data_attachments=[filtered_data],
+  data=filtered_data,  # Direct data from jq_query result
   title="Pool Temperature (Cleaned)"
 )
 ```
