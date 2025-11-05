@@ -1,107 +1,167 @@
-[
-  {
-    "regexp": "\\bgit\\s+commit\\b.*--no-verify",
-    "explanation": "Using --no-verify is not permitted in this project. If you need to bypass pre-commit hooks, ask the user for help."
-  },
-  {
-    "regexp": "^\\s*rm\\s+-rf\\s+/\\s*$",
-    "explanation": "This command would delete the entire filesystem. Please use a more specific path."
-  },
-  {
-    "regexp": "^\\s*rm\\s+-rf\\s+~/?\\s*$",
-    "explanation": "This command would delete your entire home directory. Please use a more specific path."
-  },
-  {
-    "regexp": "^\\s*:(){ :|:& };:\\s*$",
-    "explanation": "This is a fork bomb that would crash the system. This command is not allowed."
-  },
-  {
-    "regexp": "^\\s*dd\\s+.*of=/dev/[sh]da\\s*$",
-    "explanation": "Direct disk writes can corrupt the system. Please use safer file operations."
-  },
-  {
-    "regexp": "^\\s*mkfs\\..*\\s+/dev/",
-    "explanation": "Formatting system devices can destroy data. This operation is not allowed."
-  },
-  {
-    "regexp": "^\\s*chmod\\s+-R\\s+777\\s+/",
-    "explanation": "Making system directories world-writable is a security risk. Please use more restrictive permissions."
-  },
-  {
-    "regexp": "^\\s*>\\s*/dev/sda",
-    "explanation": "Writing directly to disk devices can corrupt the system. This operation is not allowed."
-  },
-  {
-    "regexp": "timeout\\s+\\d+\\s+.*",
-    "explanation": "Use the Bash tool's timeout parameter instead of the timeout command for better control and consistency."
-  },
-  {
-    "regexp": "^\\s*cd\\s+",
-    "explanation": "Using cd changes the working directory for all subsequent commands. If you need to run commands in a different directory, use a subshell like: (cd /path && command) or use absolute paths."
-  },
-  {
-    "regexp": "\\bpython\\s+-m\\s+pytest\\b",
-    "explanation": "Use 'pytest' directly instead of 'python -m pytest' - it's already properly configured in the virtual environment."
-  },
-  {
-    "regexp": "\\bpytest\\b.*\\s+-[a-zA-Z]*v[a-zA-Z]*s[a-zA-Z]*\\s",
-    "explanation": "pytest with -v and -s flags together creates excessive verbose output. Run pytest without these flags first. If you truly need verbose output after seeing the results, use separate flags like '-x -v -s' to bypass this check."
-  },
-  {
-    "regexp": "\\b(cd|pushd)\\s+frontend\\b.*(&&|;)\\s*npm",
-    "explanation": "Use 'npm ... --prefix frontend' instead of '(cd frontend && npm ...)' to avoid directory changes and follow project conventions."
-  },
-  {
-    "regexp": "\\bpoe\\s+(dev|serve)\\b",
-    "explanation": "The dev server is already running and auto-reloading. No need to start/restart it. Check logs at /var/log/family-assistant/dev-server.log if needed."
-  },
-  {
-    "regexp": "\\bpkill\\b.*\\bpoe\\b",
-    "explanation": "Don't kill the poe dev server - it's already running and auto-reloading. Check logs at /var/log/family-assistant/dev-server.log if needed."
-  },
-  {
-    "regexp": "\\bnpm\\s+run\\s+dev\\b",
-    "explanation": "The dev server is already running on devcontainer-backend-1:5173 with hot reloading. Do not start another instance."
-  },
-  {
-    "regexp": "localhost:5173",
-    "explanation": "Use devcontainer-backend-1:5173 instead of localhost:5173. The app is running in a container."
-  },
-  {
-    "regexp": "\\bss\\s+-[tlnp]+",
-    "explanation": "Port checking is unnecessary. Frontend runs on devcontainer-backend-1:5173 and backend on devcontainer-backend-1:8000. Use these addresses directly."
-  },
-  {
-    "regexp": "localhost:(8000|5173)",
-    "explanation": "Use devcontainer-backend-1:8000 for backend API and devcontainer-backend-1:5173 for frontend instead of localhost. The services run in containers."
-  },
-  {
-    "regexp": "127\\.0\\.0\\.1:(8000|5173)",
-    "explanation": "Use devcontainer-backend-1:8000 for backend API and devcontainer-backend-1:5173 for frontend instead of 127.0.0.1. The services run in containers."
-  },
-  {
-    "regexp": "2>&1",
-    "explanation": "Redirecting stderr to stdout with 2>&1 can cause issues with the Bash tool. Please capture stderr and stdout separately if needed."
-  },
-  {
-    "regexp": "\\bcat\\s+.*\\|\\s*llm\\b",
-    "explanation": "Use 'llm -f filename' instead of 'cat file | llm' for better file handling and context preservation."
-  },
-  {
-    "regexp": "\\bllm\\s+.*-m\\s+gemini-2\\.0",
-    "explanation": "gemini-2.0 models are outdated. Use gemini-2.5-pro or gemini-2.5-flash instead for better performance."
-  },
-  {
-    "regexp": "\\brm\\b.*\\.poe-test\\.lock",
-    "explanation": "Do not remove the test lock file. It protects against concurrent test runs and will be released automatically when tests complete. If tests appear stuck, investigate the running process instead."
-  },
-  {
-    "regexp": "\\bcat\\s+>.*<<",
-    "explanation": "Use the Write tool to create files instead of cat with heredocs. The Write tool is more reliable and doesn't require approval for each attempt."
-  },
-  {
-    "regexp": "DATABASE_URL=.*alembic",
-    "explanation": "DATABASE_URL is already correctly set in the environment. Do not override it when running alembic commands. Simply run 'alembic revision --autogenerate -m \"Description\"' without DATABASE_URL prefix."
-  }
-]
+{
+  "default_timeout_ms": 120000,
+  "comment": "Configuration for Bash command validation and auto-fixing",
+  "command_rules": [
+    {
+      "regexp": "\\bgit\\s+commit\\b.*--no-verify",
+      "action": "block",
+      "explanation": "Using --no-verify is not permitted in this project. If you need to bypass pre-commit hooks, ask the user for help."
+    },
+    {
+      "regexp": "^\\s*rm\\s+-rf\\s+/\\s*$",
+      "action": "block",
+      "explanation": "This command would delete the entire filesystem. Please use a more specific path."
+    },
+    {
+      "regexp": "^\\s*rm\\s+-rf\\s+~/?\\s*$",
+      "action": "block",
+      "explanation": "This command would delete your entire home directory. Please use a more specific path."
+    },
+    {
+      "regexp": "^\\s*:(){ :|:& };:\\s*$",
+      "action": "block",
+      "explanation": "This is a fork bomb that would crash the system. This command is not allowed."
+    },
+    {
+      "regexp": "^\\s*dd\\s+.*of=/dev/[sh]da\\s*$",
+      "action": "block",
+      "explanation": "Direct disk writes can corrupt the system. Please use safer file operations."
+    },
+    {
+      "regexp": "^\\s*mkfs\\..*\\s+/dev/",
+      "action": "block",
+      "explanation": "Formatting system devices can destroy data. This operation is not allowed."
+    },
+    {
+      "regexp": "^\\s*chmod\\s+-R\\s+777\\s+/",
+      "action": "block",
+      "explanation": "Making system directories world-writable is a security risk. Please use more restrictive permissions."
+    },
+    {
+      "regexp": "^\\s*>\\s*/dev/sda",
+      "action": "block",
+      "explanation": "Writing directly to disk devices can corrupt the system. This operation is not allowed."
+    },
+    {
+      "regexp": "timeout\\s+\\d+\\s+.*",
+      "action": "block",
+      "explanation": "Use the Bash tool's timeout parameter instead of the timeout command for better control and consistency."
+    },
+    {
+      "regexp": "^\\s*cd\\s+",
+      "action": "block",
+      "explanation": "Using cd changes the working directory for all subsequent commands. If you need to run commands in a different directory, use a subshell like: (cd /path && command) or use absolute paths."
+    },
+    {
+      "regexp": "\\bpython\\s+-m\\s+pytest\\b",
+      "action": "replace",
+      "replacement": "pytest",
+      "explanation": "Automatically rewriting to use 'pytest' directly - it's already properly configured in the virtual environment."
+    },
+    {
+      "regexp": "\\bpytest\\b.*\\s+-[a-zA-Z]*v[a-zA-Z]*s[a-zA-Z]*\\s",
+      "action": "block",
+      "explanation": "pytest with -v and -s flags together creates excessive verbose output. Run pytest without these flags first. If you truly need verbose output after seeing the results, use separate flags like '-x -v -s' to bypass this check."
+    },
+    {
+      "regexp": "\\b(cd|pushd)\\s+frontend\\b.*(&&|;)\\s*npm\\s+(\\S+)(?:\\s+(.*))?",
+      "action": "replace",
+      "replacement": "npm \\3 --prefix frontend\\4",
+      "explanation": "Automatically rewriting to use 'npm --prefix frontend' instead of changing directories."
+    },
+    {
+      "regexp": "\\bpoe\\s+(dev|serve)\\b",
+      "action": "block",
+      "explanation": "The dev server is already running and auto-reloading. No need to start/restart it. Check logs at /var/log/family-assistant/dev-server.log if needed."
+    },
+    {
+      "regexp": "\\bpkill\\b.*\\bpoe\\b",
+      "action": "block",
+      "explanation": "Don't kill the poe dev server - it's already running and auto-reloading. Check logs at /var/log/family-assistant/dev-server.log if needed."
+    },
+    {
+      "regexp": "\\bnpm\\s+run\\s+dev\\b",
+      "action": "block",
+      "explanation": "The dev server is already running on devcontainer-backend-1:5173 with hot reloading. Do not start another instance."
+    },
+    {
+      "regexp": "\\blocalhost:5173\\b",
+      "action": "replace",
+      "replacement": "devcontainer-backend-1:5173",
+      "explanation": "Automatically rewriting to use devcontainer-backend-1:5173 (the app runs in a container)."
+    },
+    {
+      "regexp": "\\blocalhost:8000\\b",
+      "action": "replace",
+      "replacement": "devcontainer-backend-1:8000",
+      "explanation": "Automatically rewriting to use devcontainer-backend-1:8000 (the backend API runs in a container)."
+    },
+    {
+      "regexp": "\\b127\\.0\\.0\\.1:5173\\b",
+      "action": "replace",
+      "replacement": "devcontainer-backend-1:5173",
+      "explanation": "Automatically rewriting to use devcontainer-backend-1:5173 (the app runs in a container)."
+    },
+    {
+      "regexp": "\\b127\\.0\\.0\\.1:8000\\b",
+      "action": "replace",
+      "replacement": "devcontainer-backend-1:8000",
+      "explanation": "Automatically rewriting to use devcontainer-backend-1:8000 (the backend API runs in a container)."
+    },
+    {
+      "regexp": "\\bss\\s+-[tlnp]+",
+      "action": "block",
+      "explanation": "Port checking is unnecessary. Frontend runs on devcontainer-backend-1:5173 and backend on devcontainer-backend-1:8000. Use these addresses directly."
+    },
+    {
+      "regexp": "2>&1",
+      "action": "block",
+      "explanation": "Redirecting stderr to stdout with 2>&1 can cause issues with the Bash tool. Please capture stderr and stdout separately if needed."
+    },
+    {
+      "regexp": "\\bcat\\s+([^|\\s]+)\\s*\\|\\s*llm\\b",
+      "action": "replace",
+      "replacement": "llm -f \\1",
+      "explanation": "Automatically rewriting to use 'llm -f' for better file handling and context preservation."
+    },
+    {
+      "regexp": "\\bllm\\s+.*-m\\s+gemini-2\\.0",
+      "action": "block",
+      "explanation": "gemini-2.0 models are outdated. Use gemini-2.5-pro or gemini-2.5-flash instead for better performance."
+    },
+    {
+      "regexp": "\\brm\\b.*\\.poe-test\\.lock",
+      "action": "block",
+      "explanation": "Do not remove the test lock file. It protects against concurrent test runs and will be released automatically when tests complete. If tests appear stuck, investigate the running process instead."
+    },
+    {
+      "regexp": "\\bcat\\s+>.*<<",
+      "action": "block",
+      "explanation": "Use the Write tool to create files instead of cat with heredocs. The Write tool is more reliable and doesn't require approval for each attempt."
+    },
+    {
+      "regexp": "DATABASE_URL=.*alembic",
+      "action": "block",
+      "explanation": "DATABASE_URL is already correctly set in the environment. Do not override it when running alembic commands. Simply run 'alembic revision --autogenerate -m \"Description\"' without DATABASE_URL prefix."
+    }
+  ],
+  "timeout_requirements": [
+    {
+      "regexp": "^pytest\\b",
+      "minimum_timeout_ms": 300000,
+      "explanation": "pytest requires at least 5 minutes for comprehensive test execution"
+    },
+    {
+      "regexp": "^poe\\s+test\\b",
+      "minimum_timeout_ms": 900000,
+      "explanation": "poe test requires at least 15 minutes for full test suite including integration tests"
+    }
+  ],
+  "background_restrictions": [
+    {
+      "regexp": "^poe\\s+test\\b",
+      "explanation": "poe test must run in foreground to ensure proper output capture and test result visibility"
+    }
+  ]
+}
 
