@@ -5,6 +5,7 @@ This module provides tools for creating data visualizations from Vega and Vega-L
 specifications and returning them as PNG attachments.
 """
 
+import asyncio
 import csv
 import io
 import json
@@ -126,9 +127,15 @@ async def create_vega_chart_tool(
                         continue
                 elif mime_type == "text/csv" or attachment_filename.endswith(".csv"):
                     # For CSV, we'll parse it into a list of dicts
-                    # Use StringIO to handle CSVs with newlines in quoted fields
-                    reader = csv.DictReader(io.StringIO(content_str))
-                    data_dict[attachment_filename] = list(reader)
+                    # Use asyncio.to_thread to avoid blocking on large CSV files
+                    # ast-grep-ignore: no-dict-any - CSV parsing returns dynamic row types
+                    def _parse_csv(csv_content: str) -> list[dict[str, Any]]:
+                        reader = csv.DictReader(io.StringIO(csv_content))
+                        return list(reader)
+
+                    data_dict[attachment_filename] = await asyncio.to_thread(
+                        _parse_csv, content_str
+                    )
                 else:
                     logger.warning(
                         f"Unsupported attachment type: {mime_type} for {attachment.get_id()}"
@@ -163,17 +170,22 @@ async def create_vega_chart_tool(
             is_vega_lite = "vega-lite" in spec_dict["$schema"].lower()
 
         # Convert to PNG using vl-convert
+        # Use asyncio.to_thread as vl-convert rendering is CPU-intensive and can block for seconds
         try:
-            if is_vega_lite:
-                png_data = vlc.vegalite_to_png(
-                    vl_spec=spec_dict,
-                    scale=scale,
-                )
-            else:
-                png_data = vlc.vega_to_png(
-                    vg_spec=spec_dict,
-                    scale=scale,
-                )
+
+            def _render_chart() -> bytes:
+                if is_vega_lite:
+                    return vlc.vegalite_to_png(
+                        vl_spec=spec_dict,
+                        scale=scale,
+                    )
+                else:
+                    return vlc.vega_to_png(
+                        vg_spec=spec_dict,
+                        scale=scale,
+                    )
+
+            png_data = await asyncio.to_thread(_render_chart)
         except Exception as e:
             logger.error(f"Error rendering Vega spec: {e}", exc_info=True)
             return ToolResult(text=f"Error rendering chart: {str(e)}")
