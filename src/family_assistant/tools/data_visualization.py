@@ -29,19 +29,23 @@ DATA_VISUALIZATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "create_vega_chart",
-            "description": "Create a data visualization from a Vega or Vega-Lite specification and return it as a PNG image. The LLM provides the spec and optional data attachments.",
+            "description": "Create a data visualization from a Vega or Vega-Lite specification and return it as a PNG image. The LLM provides the spec and optional data (either as direct data structures or attachments).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "spec": {
                         "type": "string",
-                        "description": "Vega or Vega-Lite specification as a JSON string. Use Vega-Lite for simpler charts (recommended). The spec should include the data inline or use named datasets that will be populated from data_attachments.",
+                        "description": "Vega or Vega-Lite specification as a JSON string. Use Vega-Lite for simpler charts (recommended). The spec should include the data inline or use named datasets that will be populated from data or data_attachments.",
                     },
                     "data_attachments": {
                         "type": "array",
                         "items": {"type": "attachment"},
-                        "description": "Optional list of attachment IDs containing CSV or JSON data files to use in the visualization. Each attachment should be referenced by name in the spec's data field.",
+                        "description": "Optional list of attachment IDs containing CSV or JSON data files to use in the visualization. Each attachment should be referenced by name in the spec's data field. Use this for file-based data.",
                         "default": [],
+                    },
+                    "data": {
+                        "type": "object",
+                        "description": "Optional data as a direct object. If a dict with string keys, treated as named datasets (e.g., {'temps': [...], 'humidity': [...]}). If a list or other structure, used as default dataset with name 'data'. Use this for computed data from other tools like jq_query.",
                     },
                     "title": {
                         "type": "string",
@@ -65,6 +69,8 @@ async def create_vega_chart_tool(
     exec_context: "ToolExecutionContext",
     spec: str,
     data_attachments: list["ScriptAttachment"] | None = None,
+    # ast-grep-ignore: no-dict-any - Data can be any valid JSON structure
+    data: dict[str, Any] | list[Any] | None = None,
     title: str = "Data Visualization",
     scale: float = 2,
 ) -> ToolResult:
@@ -75,6 +81,8 @@ async def create_vega_chart_tool(
         exec_context: The execution context
         spec: Vega or Vega-Lite specification as a JSON string
         data_attachments: Optional list of attachments containing data files (CSV/JSON)
+        data: Optional data as direct structure. Dict with string keys = named datasets,
+              list or other = default dataset named "data"
         title: Title for the chart
         scale: Scale factor for PNG output (default 2 for high DPI)
 
@@ -90,9 +98,21 @@ async def create_vega_chart_tool(
         except json.JSONDecodeError as e:
             return ToolResult(text=f"Invalid JSON in spec: {str(e)}")
 
-        # Process data attachments if provided
+        # Build data_dict from both sources
+        # ast-grep-ignore: no-dict-any - Data can be any valid JSON structure
+        data_dict: dict[str, Any] = {}
+
+        # First, process direct data parameter if provided
+        if data is not None:
+            if isinstance(data, dict) and all(isinstance(k, str) for k in data):
+                # Dict with string keys: treat as named datasets
+                data_dict.update(data)
+            else:
+                # List or other structure: use as default dataset named "data"
+                data_dict["data"] = data
+
+        # Then process data attachments if provided (merges with data parameter)
         if data_attachments:
-            data_dict = {}
             for attachment in data_attachments:
                 # Get attachment content
                 content_bytes = await attachment.get_content_async()

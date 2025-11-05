@@ -337,3 +337,251 @@ March,200"""
 
         # Should handle gracefully by skipping the invalid attachment
         assert isinstance(result, ToolResult)
+
+    @pytest.mark.asyncio
+    async def test_create_chart_with_data_dict(self, mock_exec_context: Mock) -> None:
+        """Test creating a chart with direct data as named datasets (dict)."""
+        # Create spec that references a named dataset
+        spec = {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "description": "Temperature chart",
+            "data": {"name": "temperatures"},
+            "mark": "line",
+            "encoding": {
+                "x": {"field": "date", "type": "temporal"},
+                "y": {"field": "temp", "type": "quantitative"},
+            },
+        }
+
+        # Provide data as named datasets
+        data = {
+            "temperatures": [
+                {"date": "2024-01-01", "temp": 20},
+                {"date": "2024-01-02", "temp": 22},
+                {"date": "2024-01-03", "temp": 19},
+            ]
+        }
+
+        result = await create_vega_chart_tool(
+            mock_exec_context,
+            spec=json.dumps(spec),
+            data=data,
+            title="Temperature Chart",
+        )
+
+        assert isinstance(result, ToolResult)
+        assert "Created visualization: Temperature Chart" in result.get_text()
+        assert result.attachments and len(result.attachments) > 0
+        assert result.attachments[0].mime_type == "image/png"
+
+        # Verify it's a valid PNG
+        content = result.attachments[0].content
+        assert content is not None
+        img = Image.open(io.BytesIO(content))
+        assert img.format == "PNG"
+
+    @pytest.mark.asyncio
+    async def test_create_chart_with_data_list(self, mock_exec_context: Mock) -> None:
+        """Test creating a chart with direct data as a list (default 'data' name)."""
+        # Create spec that uses default "data" name
+        spec = {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "description": "Sales bar chart",
+            "data": {"name": "data"},
+            "mark": "bar",
+            "encoding": {
+                "x": {"field": "product", "type": "nominal"},
+                "y": {"field": "sales", "type": "quantitative"},
+            },
+        }
+
+        # Provide data as a list (will be assigned to "data" key)
+        data = [
+            {"product": "A", "sales": 100},
+            {"product": "B", "sales": 150},
+            {"product": "C", "sales": 120},
+        ]
+
+        result = await create_vega_chart_tool(
+            mock_exec_context,
+            spec=json.dumps(spec),
+            data=data,
+            title="Sales Chart",
+        )
+
+        assert isinstance(result, ToolResult)
+        assert "Created visualization: Sales Chart" in result.get_text()
+        assert result.attachments and len(result.attachments) > 0
+
+        # Verify it's a valid PNG
+        content = result.attachments[0].content
+        assert content is not None
+        img = Image.open(io.BytesIO(content))
+        assert img.format == "PNG"
+
+    @pytest.mark.asyncio
+    async def test_create_chart_with_data_and_attachments(
+        self, mock_exec_context: Mock, mock_json_attachment: Mock
+    ) -> None:
+        """Test creating a chart with both data parameter and attachments."""
+        spec = {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "description": "Multi-dataset chart",
+            "layer": [
+                {
+                    "data": {"name": "computed"},
+                    "mark": "line",
+                    "encoding": {
+                        "x": {"field": "x", "type": "quantitative"},
+                        "y": {"field": "y", "type": "quantitative"},
+                    },
+                },
+                {
+                    "data": {"name": "data.json"},
+                    "mark": "point",
+                    "encoding": {
+                        "x": {"field": "month", "type": "nominal"},
+                        "y": {"field": "sales", "type": "quantitative"},
+                    },
+                },
+            ],
+        }
+
+        # Provide both computed data and attachment
+        computed_data = {"computed": [{"x": 1, "y": 2}, {"x": 2, "y": 4}]}
+
+        result = await create_vega_chart_tool(
+            mock_exec_context,
+            spec=json.dumps(spec),
+            data=computed_data,
+            data_attachments=[mock_json_attachment],
+            title="Mixed Data Chart",
+        )
+
+        assert isinstance(result, ToolResult)
+        assert "Created visualization: Mixed Data Chart" in result.get_text()
+        assert result.attachments and len(result.attachments) > 0
+
+        # Verify attachment was accessed
+        mock_json_attachment.get_content_async.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_chart_simulating_jq_query_composition(
+        self, mock_exec_context: Mock
+    ) -> None:
+        """Test composition pattern: jq_query result -> create_vega_chart."""
+        # Simulate what jq_query would return (list of data points)
+        jq_result = [
+            {"timestamp": "2024-01-01T10:00:00", "temperature": 20.5},
+            {"timestamp": "2024-01-01T11:00:00", "temperature": 21.2},
+            {"timestamp": "2024-01-01T12:00:00", "temperature": 22.0},
+            {"timestamp": "2024-01-01T13:00:00", "temperature": 21.8},
+        ]
+
+        # Create chart spec that uses this data
+        spec = {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "description": "Temperature over time",
+            "data": {"name": "data"},
+            "mark": {"type": "line", "point": True},
+            "encoding": {
+                "x": {
+                    "field": "timestamp",
+                    "type": "temporal",
+                    "title": "Time",
+                },
+                "y": {
+                    "field": "temperature",
+                    "type": "quantitative",
+                    "title": "Temperature (°C)",
+                },
+            },
+        }
+
+        # Pass jq_query result directly to create_vega_chart
+        result = await create_vega_chart_tool(
+            mock_exec_context,
+            spec=json.dumps(spec),
+            data=jq_result,  # Direct composition - no attachment needed
+            title="Pool Temperature",
+        )
+
+        assert isinstance(result, ToolResult)
+        assert "Created visualization: Pool Temperature" in result.get_text()
+        assert result.attachments and len(result.attachments) > 0
+        assert result.attachments[0].mime_type == "image/png"
+
+        # Verify it's a valid PNG with reasonable dimensions
+        content = result.attachments[0].content
+        assert content is not None
+        img = Image.open(io.BytesIO(content))
+        assert img.format == "PNG"
+        assert img.width > 100  # Sanity check
+        assert img.height > 100
+
+    @pytest.mark.asyncio
+    async def test_create_chart_with_multiple_named_datasets(
+        self, mock_exec_context: Mock
+    ) -> None:
+        """Test creating a chart with multiple named datasets from data parameter."""
+        spec = {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "description": "Dual axis chart",
+            "layer": [
+                {
+                    "data": {"name": "temperature"},
+                    "mark": "line",
+                    "encoding": {
+                        "x": {"field": "time", "type": "temporal"},
+                        "y": {
+                            "field": "value",
+                            "type": "quantitative",
+                            "title": "Temperature",
+                        },
+                        "color": {"value": "red"},
+                    },
+                },
+                {
+                    "data": {"name": "humidity"},
+                    "mark": "line",
+                    "encoding": {
+                        "x": {"field": "time", "type": "temporal"},
+                        "y": {
+                            "field": "value",
+                            "type": "quantitative",
+                            "title": "Humidity",
+                        },
+                        "color": {"value": "blue"},
+                    },
+                },
+            ],
+        }
+
+        # Multiple named datasets
+        data = {
+            "temperature": [
+                {"time": "2024-01-01T10:00", "value": 20},
+                {"time": "2024-01-01T11:00", "value": 21},
+            ],
+            "humidity": [
+                {"time": "2024-01-01T10:00", "value": 65},
+                {"time": "2024-01-01T11:00", "value": 68},
+            ],
+        }
+
+        result = await create_vega_chart_tool(
+            mock_exec_context,
+            spec=json.dumps(spec),
+            data=data,
+            title="Climate Data",
+        )
+
+        assert isinstance(result, ToolResult)
+        assert "Created visualization: Climate Data" in result.get_text()
+        assert result.attachments and len(result.attachments) > 0
+
+        # Verify it's a valid PNG
+        content = result.attachments[0].content
+        assert content is not None
+        img = Image.open(io.BytesIO(content))
+        assert img.format == "PNG"
