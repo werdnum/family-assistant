@@ -200,15 +200,14 @@ report = generate_report(title="Analysis Report")
 
 #### Functional Composition with Attachments
 
-One of the most powerful patterns is passing attachments from one tool to another:
+One of the most powerful patterns is passing data from one tool to another:
 
 ```starlark
 # Process data, then visualize - all in one expression
+# jq_query returns data directly, pass via data parameter
 chart = create_vega_chart(
     spec='{"mark": "bar", "encoding": {...}}',
-    data_attachments=[
-        jq_query(raw_data_attachment, '.[] | select(.value > 10)')
-    ]
+    data=jq_query(raw_data_attachment, '.[] | select(.value > 10)')
 )
 chart
 ```
@@ -227,10 +226,10 @@ transformed = jq_query(
     'map({date: .timestamp, value: .reading})'
 )
 
-# 3. Create visualization
+# 3. Create visualization - pass data directly
 chart = create_vega_chart(
     spec='{"mark": "line", ...}',
-    data_attachments=[transformed]
+    data=transformed  # Use data parameter for computed results
 )
 
 chart  # Final chart is sent to assistant
@@ -342,27 +341,33 @@ def generate_weekly_reports():
 generate_weekly_reports()
 ```
 
-##### Example 4: Tool Attachment Passthrough
+##### Example 4: Data Processing and Visualization
 
 ```starlark
-# Use attachment IDs to pass between tools
-def analyze_and_chart(query):
-    # Get data from one tool
-    data_result = jq_query(source_data, query)
+# Process data and create visualization using direct data flow
+def analyze_and_chart(source_attachment, query):
+    # Get data from jq_query - returns raw data, not an attachment
+    filtered_data = jq_query(source_attachment, query)
 
-    # data_result is a dict with attachment info
-    print("Filtered data: " + data_result["filename"])
+    # Create chart spec
+    chart_spec = json_encode({
+        "mark": "bar",
+        "data": {"name": "data"},  # Use "data" for direct data parameter
+        "encoding": {
+            "x": {"field": "category", "type": "nominal"},
+            "y": {"field": "value", "type": "quantitative"}
+        }
+    })
 
-    # Pass the attachment to chart tool using the data dict directly
-    # The tool will extract the ID automatically
+    # Pass filtered data directly - no intermediate attachment needed
     chart = create_vega_chart(
         spec=chart_spec,
-        data_attachments=[data_result]  # Pass the whole dict
+        data=filtered_data  # Use data parameter for computed results
     )
 
     return chart
 
-analyze_and_chart('.[] | select(.value > 100)')
+analyze_and_chart(source_data, '.[] | select(.value > 100)')
 ```
 
 #### Best Practices

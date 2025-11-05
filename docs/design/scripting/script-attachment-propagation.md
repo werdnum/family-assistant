@@ -709,10 +709,10 @@ chart
 ### Example 3: Functional Composition (Target Use Case)
 
 ```starlark
-# Compose tools naturally - dicts pass through seamlessly
+# Compose tools naturally - data flows directly from jq_query to create_vega_chart
 chart = create_vega_chart(
     spec=vega_spec,
-    data_attachments=[jq_query(input_attachment, ".[].revenue")]
+    data=jq_query(input_attachment, ".[].revenue")  # Direct data flow
 )
 
 # Highlight the chart (accepts dict, extracts ID automatically)
@@ -726,8 +726,8 @@ highlighted  # Return final result
 
 **This works because**:
 
-- `jq_query()` processes input attachment and returns dict
-- `create_vega_chart()` accepts dict in `data_attachments`, extracts ID
+- `jq_query()` processes input attachment and returns raw data
+- `create_vega_chart()` accepts data via `data` parameter (no intermediate attachment)
 - `create_vega_chart()` returns dict with new attachment
 - `highlight_image()` accepts dict as `image` parameter, extracts ID
 - Final result is dict that gets propagated with correct metadata
