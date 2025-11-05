@@ -161,6 +161,32 @@ async def process_attachment_arguments(
                         raise ValueError(
                             f"Attachment '{item}' not found or access denied in array parameter '{key}'"
                         )
+                elif isinstance(item, dict) and "attachments" in item:
+                    # ScriptToolResult dict format: {"text": "...", "attachments": [{"id": "...", ...}, ...]}
+                    # Extract attachment IDs from the nested attachments list
+                    logger.debug(
+                        f"Processing ScriptToolResult dict in array parameter {key}"
+                    )
+                    nested_attachments = item.get("attachments", [])
+                    for nested_att in nested_attachments:
+                        if isinstance(nested_att, dict) and "id" in nested_att:
+                            attachment_id = nested_att["id"]
+                            if is_attachment_id(attachment_id):
+                                logger.debug(
+                                    f"Processing nested attachment ID {attachment_id} from ScriptToolResult"
+                                )
+                                attachment = await fetch_attachment_object(
+                                    attachment_id, context
+                                )
+                                if attachment is not None:
+                                    processed_values.append(attachment)
+                                    logger.debug(
+                                        f"Replaced nested attachment ID {attachment_id} with attachment object"
+                                    )
+                                else:
+                                    raise ValueError(
+                                        f"Nested attachment '{attachment_id}' not found or access denied"
+                                    )
                 else:
                     processed_values.append(item)
             processed_args[key] = processed_values
