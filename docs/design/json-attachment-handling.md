@@ -65,16 +65,24 @@ This allows the model to "explore" large datasets without loading them entirely 
    - Generates schema showing: array of `{entity_id, state, last_changed, attributes}` objects
    - Injects: "Large data attachment (199KB) - use jq tool to query symbolically"
 
-4. **data_visualization service**:
+4. **data_visualization service** (two approaches):
+
+   **Approach A: Direct attachment reference (for file-based data)**:
 
    - Sees schema, understands data structure
-   - Optionally queries: `jq(id, '.[0]')` to see example record
-   - Optionally queries: `jq(id, '[.[0].last_changed, .[-1].last_changed]')` for date range
+   - Optionally queries with `jq` for exploration (count, date range, etc.)
    - Creates Vega-Lite spec referencing data by structure
    - Calls `create_vega_chart(spec, data_attachments=[attachment_id])`
    - Tool internally fetches full content and injects into Vega spec
 
-5. **Result**: Chart generated without ever loading 199KB into LLM context
+   **Approach B: Data transformation with jq_query (for computed data)**:
+
+   - Uses `jq_query(id, '.[] | select(.state != null)')` to filter/transform data
+   - Creates Vega-Lite spec for the transformed data
+   - Calls `create_vega_chart(spec, data=filtered_data)`
+   - Passes computed data directly without intermediate attachment
+
+5. **Result**: Chart generated without ever loading full 199KB into LLM context
 
 ## Implementation Details
 
