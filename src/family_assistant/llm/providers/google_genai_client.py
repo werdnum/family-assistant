@@ -231,12 +231,20 @@ class GoogleGenAIClient(BaseLLMClient):
         self,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         messages: list[dict[str, Any]],
-    ) -> list[Any]:
-        """Convert OpenAI-style messages to Gemini format."""
+    ) -> list[types.ContentUnionDict]:
+        """Convert OpenAI-style messages to Gemini format using SDK types.
+
+        Returns a list compatible with the SDK's ContentListUnionDict type. In practice,
+        we return types.Content objects, but ContentUnionDict allows for the full
+        flexibility the SDK supports (Content, ContentDict, str, images, files, parts).
+
+        All parts use types.Part with proper snake_case field names (function_call,
+        function_response, thought_signature) to ensure proper SDK validation.
+        """
         # First process any tool attachments
         messages = self._process_tool_messages(messages)
         # Build proper Content objects for the new API
-        contents = []
+        contents: list[types.ContentUnionDict] = []
 
         for msg in messages:
             role = msg["role"]
@@ -244,27 +252,32 @@ class GoogleGenAIClient(BaseLLMClient):
 
             if role == "system":
                 # System messages can be included as user messages with a prefix
-                contents.append({
-                    "role": "user",
-                    "parts": [{"text": f"System: {content}"}],
-                })
+                contents.append(
+                    types.Content(
+                        role="user",
+                        parts=[types.Part(text=f"System: {content}")],
+                    )
+                )
             elif role == "user":
                 # Check if message already has parts (e.g., from attachment injection)
                 if "parts" in msg:
-                    # Parts can be a mix of dicts and types.Part objects
-                    # The API will handle both, so pass them as-is
-                    contents.append({"role": "user", "parts": msg["parts"]})
+                    # Parts from _inject_tool_attachments can be mix of Part objects and dicts
+                    # The SDK will accept both, but we document this flexibility here
+                    # This is safe because _inject_tool_attachments uses types.Part.from_bytes()
+                    contents.append(types.Content(role="user", parts=msg["parts"]))
                 # Handle both simple string content and multi-part content (text + images)
                 elif isinstance(content, str):
                     # Simple text content
-                    contents.append({"role": "user", "parts": [{"text": content}]})
+                    contents.append(
+                        types.Content(role="user", parts=[types.Part(text=content)])
+                    )
                 elif isinstance(content, list):
                     # Multi-part content (e.g., text + images)
-                    parts = []
+                    user_parts: list[types.Part] = []
                     for part in content:
                         if isinstance(part, dict):
                             if part.get("type") == "text":
-                                parts.append({"text": part.get("text", "")})
+                                user_parts.append(types.Part(text=part.get("text", "")))
                             elif part.get("type") == "image_url":
                                 # Extract base64 image data
                                 image_url = part.get("image_url", {}).get("url", "")
@@ -276,16 +289,16 @@ class GoogleGenAIClient(BaseLLMClient):
                                         # Extract MIME type
                                         mime_type = header.split(";")[0].split(":")[1]
 
-                                        # Decode base64 to bytes - the SDK will re-encode it
+                                        # Decode base64 to bytes
                                         image_bytes = base64.b64decode(base64_data)
 
-                                        # Add as inline data part with raw bytes
-                                        parts.append({
-                                            "inline_data": {
-                                                "mime_type": mime_type,
-                                                "data": image_bytes,  # SDK expects bytes, not base64 string
-                                            }
-                                        })
+                                        # Create inline data part using SDK types
+                                        user_parts.append(
+                                            types.Part.from_bytes(
+                                                data=image_bytes,
+                                                mime_type=mime_type,
+                                            )
+                                        )
                                     except Exception as e:
                                         logger.error(
                                             f"Failed to parse image data URL: {e}"
@@ -299,19 +312,23 @@ class GoogleGenAIClient(BaseLLMClient):
                                     )
                         elif isinstance(part, str):
                             # Fallback for string parts
-                            parts.append({"text": part})
+                            user_parts.append(types.Part(text=part))
 
-                    if parts:
-                        contents.append({"role": "user", "parts": parts})
+                    if user_parts:
+                        contents.append(types.Content(role="user", parts=user_parts))
                 else:
                     # Fallback for other content types - try to convert to string
-                    contents.append({"role": "user", "parts": [{"text": str(content)}]})
+                    contents.append(
+                        types.Content(
+                            role="user", parts=[types.Part(text=str(content))]
+                        )
+                    )
             elif role == "assistant":
-                parts = []
+                assistant_parts: list[types.Part] = []
 
                 # Add text content if present
                 if content:
-                    parts.append({"text": content})
+                    assistant_parts.append(types.Part(text=content))
 
                 # Add tool calls if present
                 if "tool_calls" in msg and msg["tool_calls"]:
@@ -323,14 +340,18 @@ class GoogleGenAIClient(BaseLLMClient):
                             if isinstance(args, str):
                                 args = json.loads(args)
 
-                            parts.append({
-                                "functionCall": {
-                                    "name": func.get("name"),
-                                    "args": args,
-                                }
-                            })
+                            # Create FunctionCall using SDK types with snake_case
+                            assistant_parts.append(
+                                types.Part(
+                                    function_call=types.FunctionCall(
+                                        name=func.get("name"),
+                                        args=args,
+                                    )
+                                )
+                            )
 
                 # Reconstruct thought signatures if present in provider_metadata
+                # The SDK's Part type supports thought_signature parameter directly
                 provider_metadata = msg.get("provider_metadata")
                 if provider_metadata and provider_metadata.get("provider") == "google":
                     thought_signatures = provider_metadata.get("thought_signatures", [])
@@ -340,14 +361,33 @@ class GoogleGenAIClient(BaseLLMClient):
                         if (
                             part_index is not None
                             and signature_b64
-                            and part_index < len(parts)
+                            and part_index < len(assistant_parts)
                         ):
-                            # Decode base64 signature and attach to part
+                            # Decode base64 signature
                             signature_bytes = base64.b64decode(signature_b64)
-                            parts[part_index]["thought_signature"] = signature_bytes
 
-                if parts:
-                    contents.append({"role": "model", "parts": parts})
+                            # Get the existing part and create a new one with thought_signature
+                            # Note: We need to recreate the Part because it's immutable
+                            existing_part = assistant_parts[part_index]
+                            if hasattr(existing_part, "text") and existing_part.text:
+                                # Text part with thought signature
+                                assistant_parts[part_index] = types.Part(
+                                    text=existing_part.text,
+                                    thought_signature=signature_bytes,
+                                )
+                            elif (
+                                hasattr(existing_part, "function_call")
+                                and existing_part.function_call
+                            ):
+                                # Function call with thought signature (unusual but handle it)
+                                assistant_parts[part_index] = types.Part(
+                                    function_call=existing_part.function_call,
+                                    thought_signature=signature_bytes,
+                                )
+                            # Add more cases if needed for other part types
+
+                if assistant_parts:
+                    contents.append(types.Content(role="model", parts=assistant_parts))
             elif role == "tool":
                 # Handle tool responses
                 tool_content = msg.get("content", "")
@@ -362,17 +402,24 @@ class GoogleGenAIClient(BaseLLMClient):
                 except json.JSONDecodeError:
                     response_data = {"result": tool_content}
 
-                contents.append({
-                    "role": "function",
-                    "parts": [
-                        {
-                            "functionResponse": {
-                                "name": msg.get("name", "unknown"),
-                                "response": response_data,
-                            }
-                        }
-                    ],
-                })
+                # SDK requires response to be a dict, not a primitive value
+                if not isinstance(response_data, dict):
+                    response_data = {"result": response_data}
+
+                # Create FunctionResponse using SDK types with snake_case
+                contents.append(
+                    types.Content(
+                        role="function",
+                        parts=[
+                            types.Part(
+                                function_response=types.FunctionResponse(
+                                    name=msg.get("name", "unknown"),
+                                    response=response_data,
+                                )
+                            )
+                        ],
+                    )
+                )
 
         return contents
 

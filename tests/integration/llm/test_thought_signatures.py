@@ -176,25 +176,63 @@ async def test_thought_signature_reconstruction(
     )
 
     # Assert: Verify signature was reconstructed in the assistant message
-    model_messages = [msg for msg in genai_contents if msg.get("role") == "model"]
-    assert len(model_messages) > 0
+    # genai_contents now contains types.Content objects (Pydantic models)
+    # Filter for Content objects with role="model"
+    model_messages = []
+    for msg in genai_contents:
+        # Check if it's a dict with role="model"
+        if (
+            isinstance(msg, dict)
+            and msg.get("role") == "model"
+            or hasattr(msg, "role")
+            and getattr(msg, "role", None) == "model"
+        ):
+            model_messages.append(msg)
 
-    # Find the message with tool calls (should be the assistant message)
-    model_msg_with_tool = next((msg for msg in model_messages if "parts" in msg), None)
-    assert model_msg_with_tool is not None
+    assert len(model_messages) > 0, "No model messages found in genai_contents"
+
+    # Find the message with parts (should be the assistant message with tool calls)
+    model_msg_with_tool = None
+    for msg in model_messages:
+        if isinstance(msg, dict):
+            if "parts" in msg and msg["parts"]:
+                model_msg_with_tool = msg
+                break
+        elif hasattr(msg, "parts"):
+            parts = getattr(msg, "parts", None)
+            if parts:
+                model_msg_with_tool = msg
+                break
+
+    assert model_msg_with_tool is not None, "No message with parts found"
 
     # Check that at least one part has the reconstructed thought signature
-    parts = model_msg_with_tool["parts"]
-    parts_with_thought_signature = [
-        part for part in parts if "thought_signature" in part
-    ]
+    if isinstance(model_msg_with_tool, dict):
+        parts = model_msg_with_tool["parts"]
+        parts_with_thought_signature = [
+            part
+            for part in parts
+            if isinstance(part, dict) and "thought_signature" in part
+        ]
+        if parts_with_thought_signature:
+            assert (
+                parts_with_thought_signature[0]["thought_signature"]
+                == b"test_signature_data"
+            )
+    else:
+        # Working with types.Content object
+        parts = getattr(model_msg_with_tool, "parts", [])
+        parts_with_thought_signature = []
+        for part in parts:
+            if hasattr(part, "thought_signature"):
+                sig = getattr(part, "thought_signature", None)
+                if sig:
+                    parts_with_thought_signature.append(part)
 
-    if parts_with_thought_signature:
-        # Verify the thought_signature was reconstructed as bytes
-        assert (
-            parts_with_thought_signature[0]["thought_signature"]
-            == b"test_signature_data"
-        )
+        if parts_with_thought_signature:
+            # Verify the thought_signature was reconstructed as bytes
+            sig = parts_with_thought_signature[0].thought_signature
+            assert sig == b"test_signature_data"
 
 
 @pytest.mark.no_db
