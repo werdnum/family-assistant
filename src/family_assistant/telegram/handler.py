@@ -23,7 +23,7 @@ from telegram import (
     Update,
 )
 from telegram.constants import ChatAction, ParseMode
-from telegram.error import Conflict
+from telegram.error import BadRequest, Conflict
 from telegram.ext import (
     CallbackContext,
     CommandHandler,
@@ -569,6 +569,23 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             reply_to_message_id=reply_target_message_id,
                             reply_markup=force_reply_markup,
                         )
+                    except BadRequest as parse_err:
+                        # If Telegram rejects the message due to parse errors, fall back to plain text
+                        if "Can't parse entities" in str(parse_err):
+                            logger.warning(
+                                f"Telegram rejected MarkdownV2 message (parse error): {parse_err}. Falling back to plain text.",
+                                exc_info=False,
+                            )
+                            sent_assistant_message = await self._send_message_chunks(
+                                context=context,
+                                chat_id=chat_id,
+                                text=final_llm_content_to_send,
+                                parse_mode=None,
+                                reply_to_message_id=reply_target_message_id,
+                                reply_markup=force_reply_markup,
+                            )
+                        else:
+                            raise
                     except Exception as md_err:
                         logger.error(
                             f"Failed to convert markdown: {md_err}. Sending plain text.",
@@ -996,6 +1013,23 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             reply_to_message_id=reply_target_message_id_for_bot,
                             reply_markup=force_reply_markup,
                         )
+                    except BadRequest as parse_err:
+                        # If Telegram rejects the message due to parse errors, fall back to plain text
+                        if "Can't parse entities" in str(parse_err):
+                            logger.warning(
+                                f"Telegram rejected MarkdownV2 message (parse error): {parse_err}. Falling back to plain text.",
+                                exc_info=False,
+                            )
+                            sent_assistant_message = await self._send_message_chunks(
+                                context=context,
+                                chat_id=chat_id,
+                                text=final_llm_content_to_send,
+                                parse_mode=None,
+                                reply_to_message_id=reply_target_message_id_for_bot,
+                                reply_markup=force_reply_markup,
+                            )
+                        else:
+                            raise
                     except Exception as md_err:
                         logger.error(
                             f"Failed to convert markdown for slash command response: {md_err}. Sending plain text.",

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 import telegramify_markdown
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 
 from family_assistant.telegram.markdown_utils import fix_telegramify_markdown_escaping
 from family_assistant.telegram.protocols import ConfirmationUIManager
@@ -82,6 +83,36 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
             logger.debug(
                 f"Confirmation message sent (Message ID: {sent_message.message_id})"
             )
+        except BadRequest as parse_err:
+            # If Telegram rejects the message due to parse errors, fall back to plain text
+            if "Can't parse entities" in str(parse_err):
+                logger.warning(
+                    f"Telegram rejected MarkdownV2 confirmation message (parse error): {parse_err}. Falling back to plain text.",
+                    exc_info=False,
+                )
+                try:
+                    sent_message = await self.application.bot.send_message(
+                        chat_id=chat_id_int,
+                        text=prompt_text,
+                        parse_mode=None,
+                        reply_markup=keyboard,
+                    )
+                    escaped_prompt_text = prompt_text  # Update for later use
+                    logger.debug(
+                        f"Confirmation message sent in plain text (Message ID: {sent_message.message_id})"
+                    )
+                except Exception as fallback_err:
+                    logger.error(
+                        f"Failed to send plain text confirmation message: {fallback_err}",
+                        exc_info=True,
+                    )
+                    return False
+            else:
+                logger.error(
+                    f"Failed to send confirmation message to chat {chat_id_int}: {parse_err}",
+                    exc_info=True,
+                )
+                return False
         except Exception as send_err:
             logger.error(
                 f"Failed to send confirmation message to chat {chat_id_int}: {send_err}",

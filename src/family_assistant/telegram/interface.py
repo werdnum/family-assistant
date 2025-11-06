@@ -8,6 +8,7 @@ import telegramify_markdown
 from PIL import Image
 from telegram import ForceReply, InputMediaPhoto
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 
 from family_assistant.interfaces import ChatInterface
 from family_assistant.storage.context import DatabaseContext
@@ -119,6 +120,34 @@ class TelegramChatInterface(ChatInterface):
                 f"Invalid conversation_id '{conversation_id}' or reply_to_interface_id '{reply_to_interface_id}' for Telegram. Must be integer convertible."
             )
             return None
+        except BadRequest as parse_err:
+            # If Telegram rejects the message due to parse errors, fall back to plain text
+            if "Can't parse entities" in str(parse_err) and final_parse_mode:
+                logger.warning(
+                    f"Telegram rejected MarkdownV2 message (parse error): {parse_err}. Retrying with plain text.",
+                    exc_info=False,
+                )
+                try:
+                    sent_msg = await self.application.bot.send_message(
+                        chat_id=chat_id_int,
+                        text=text,
+                        parse_mode=None,
+                        reply_to_message_id=reply_to_msg_id_int,
+                        reply_markup=force_reply_markup,
+                    )
+                    return str(sent_msg.message_id)
+                except Exception as fallback_err:
+                    logger.error(
+                        f"TelegramChatInterface failed to send plain text message to {conversation_id}: {fallback_err}",
+                        exc_info=True,
+                    )
+                    return None
+            else:
+                logger.error(
+                    f"TelegramChatInterface failed to send message to {conversation_id}: {parse_err}",
+                    exc_info=True,
+                )
+                return None
         except Exception as e:
             logger.error(
                 f"TelegramChatInterface failed to send message to {conversation_id}: {e}",
