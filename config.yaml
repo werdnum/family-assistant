@@ -171,14 +171,9 @@ default_profile_settings:
       - "render_home_assistant_template" # Home Assistant template rendering
       - "get_camera_snapshot" # Get camera snapshots from Home Assistant
       - "download_state_history" # Download Home Assistant state history as JSON
-      # Unified automation tools (event and schedule-based)
-      - "create_automation" # Create event or schedule-based automations
+      # Read-only automation tools (creation/editing requires automation_creation profile)
       - "list_automations" # List all automations
       - "get_automation" # Get automation details
-      - "update_automation" # Update automation configuration
-      - "enable_automation" # Enable a disabled automation
-      - "disable_automation" # Disable an automation
-      - "delete_automation" # Delete an automation
       - "get_automation_stats" # Get automation execution statistics
       # Image generation tools
       - "generate_image" # Generate images from text using AI
