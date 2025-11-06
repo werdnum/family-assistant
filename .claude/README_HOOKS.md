@@ -4,13 +4,25 @@ This directory contains hook scripts and configuration files for Claude Code.
 
 ## Bash Command Validation Hook
 
-The `check_banned_commands.py` hook validates and auto-fixes Bash commands before execution.
+The `check_banned_commands.py` hook validates Bash commands before execution and suggests fixes.
+
+**Note**: The `updatedInput` feature for automatic command rewriting is currently broken in Claude
+Code v2.0.34. The hook defaults to blocking with suggestions instead. Set `use_updated_input: true`
+in the config if you want to test the updatedInput behavior (though it won't actually work until the
+bug is fixed).
 
 ### Configuration File: `banned_commands.json`
 
 The hook uses a JSON configuration file with the following sections:
 
-#### 1. `default_timeout_ms`
+#### 1. `use_updated_input`
+
+Boolean flag controlling whether to use the `updatedInput` feature (default: `false`).
+
+- `false`: Block commands with suggestions (recommended - current behavior)
+- `true`: Attempt to use `updatedInput` feature (currently broken in Claude Code v2.0.34)
+
+#### 2. `default_timeout_ms`
 
 Default timeout in milliseconds when no timeout is specified (default: 120000 = 2 minutes).
 
@@ -84,34 +96,36 @@ Commands that must run in foreground (automatically fixes `run_in_background: tr
 
 ### Hook Behavior
 
-The hook uses Claude Code's `updatedInput` feature to automatically fix command issues:
+**Current Behavior** (with `use_updated_input: false`, the default):
 
-**Auto-Fix Examples:**
+The hook blocks commands that need modifications and suggests the corrected version:
+
+**Suggestion Examples:**
 
 1. **Command Replacement:**
 
    - Input: `python -m pytest tests/`
-   - Output: `pytest tests/` (auto-rewritten)
+   - Output: Hook blocks and suggests: `pytest tests/` with `timeout: 300000`
 
-2. **Timeout Auto-Set:**
+2. **Timeout Requirement:**
 
    - Input: `pytest tests/` (no timeout)
-   - Output: `pytest tests/` with `timeout: 300000` (auto-added)
+   - Output: Hook blocks and suggests adding `timeout: 300000`
 
-3. **Timeout Auto-Increase:**
+3. **Timeout Increase:**
 
    - Input: `poe test` with `timeout: 120000`
-   - Output: `poe test` with `timeout: 900000` (auto-increased)
+   - Output: Hook blocks and suggests increasing to `timeout: 900000`
 
-4. **Background Auto-Fix:**
+4. **Background Restriction:**
 
    - Input: `poe test` with `run_in_background: true`
-   - Output: `poe test` with `run_in_background: false` (auto-fixed)
+   - Output: Hook blocks and suggests `run_in_background: false`
 
 5. **Multiple Fixes:**
 
-   - Input: `python -m pytest` with `run_in_background: true`
-   - Output: `pytest` with `timeout: 300000` and `run_in_background: false`
+   - Input: `python -m pytest` with no timeout
+   - Output: Hook blocks and suggests `pytest` with `timeout: 300000`
 
 **Block Examples:**
 
