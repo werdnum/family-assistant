@@ -590,7 +590,7 @@ March,200"""
     async def test_debug_mode_simple_spec(
         self, mock_exec_context: Mock, simple_vega_lite_spec: str
     ) -> None:
-        """Test debug mode returns spec as JSON instead of rendering."""
+        """Test debug mode returns spec as structured data instead of rendering."""
         result = await create_vega_chart_tool(
             mock_exec_context,
             spec=simple_vega_lite_spec,
@@ -599,16 +599,14 @@ March,200"""
         )
 
         assert isinstance(result, ToolResult)
-        assert "Generated spec for Debug Test:" in result.get_text()
-        assert "```json" in result.get_text()
+        assert "Debug: Generated spec for Debug Test" in result.get_text()
         # Should not have PNG attachments in debug mode
         assert not result.attachments or len(result.attachments) == 0
 
-        # Verify the returned spec is valid JSON
-        text = result.get_text()
-        json_start = text.find("```json\n") + 8
-        json_end = text.find("\n```", json_start)
-        returned_spec = json.loads(text[json_start:json_end])
+        # Verify the returned spec is structured data
+        returned_spec = result.get_data()
+        assert returned_spec is not None
+        assert isinstance(returned_spec, dict)
         assert "$schema" in returned_spec
         assert "data" in returned_spec
 
@@ -629,14 +627,13 @@ March,200"""
         )
 
         assert isinstance(result, ToolResult)
-        assert "Generated spec for Debug with CSV:" in result.get_text()
+        assert "Debug: Generated spec for Debug with CSV" in result.get_text()
         assert not result.attachments or len(result.attachments) == 0
 
-        # Extract and parse the returned spec
-        text = result.get_text()
-        json_start = text.find("```json\n") + 8
-        json_end = text.find("\n```", json_start)
-        returned_spec = json.loads(text[json_start:json_end])
+        # Get the returned spec as structured data
+        returned_spec = result.get_data()
+        assert returned_spec is not None
+        assert isinstance(returned_spec, dict)
 
         # Verify data was merged into the spec
         assert "data" in returned_spec
@@ -672,14 +669,13 @@ March,200"""
         )
 
         assert isinstance(result, ToolResult)
-        assert "Generated spec for Debug with Data:" in result.get_text()
+        assert "Debug: Generated spec for Debug with Data" in result.get_text()
         assert not result.attachments or len(result.attachments) == 0
 
-        # Extract and parse the returned spec
-        text = result.get_text()
-        json_start = text.find("```json\n") + 8
-        json_end = text.find("\n```", json_start)
-        returned_spec = json.loads(text[json_start:json_end])
+        # Get the returned spec as structured data
+        returned_spec = result.get_data()
+        assert returned_spec is not None
+        assert isinstance(returned_spec, dict)
 
         # Verify data was merged into the spec
         assert "data" in returned_spec
