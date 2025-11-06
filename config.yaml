@@ -616,7 +616,6 @@ service_profiles:
       confirm_tools: [] # No confirmation needed for automation creation workflows
     slash_commands:
       - "/automate"
-      - "/create-automation"
 # Other global settings like llm_parameters, indexing_pipeline_config remain at top level.
 # Attachment handling configuration
 attachment_config:
