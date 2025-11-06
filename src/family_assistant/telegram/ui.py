@@ -5,12 +5,11 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
-import telegramify_markdown
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 
-from family_assistant.telegram.markdown_utils import fix_telegramify_markdown_escaping
+from family_assistant.telegram.markdown_utils import convert_to_telegram_markdown
 from family_assistant.telegram.protocols import ConfirmationUIManager
 
 if TYPE_CHECKING:
@@ -70,22 +69,22 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
             ]
         ])
 
+        # Convert to Telegram MarkdownV2 with bug fixes
+        text_to_send, parse_mode_str = convert_to_telegram_markdown(prompt_text)
+
         try:
-            escaped_prompt_text = telegramify_markdown.markdownify(prompt_text)
-            # Fix escaping bugs in telegramify_markdown (doesn't escape '<' and '>' properly)
-            escaped_prompt_text = fix_telegramify_markdown_escaping(escaped_prompt_text)
             sent_message = await self.application.bot.send_message(
                 chat_id=chat_id_int,
-                text=escaped_prompt_text,
-                parse_mode=ParseMode.MARKDOWN_V2,
+                text=text_to_send,
+                parse_mode=ParseMode.MARKDOWN_V2 if parse_mode_str else None,
                 reply_markup=keyboard,
             )
             logger.debug(
                 f"Confirmation message sent (Message ID: {sent_message.message_id})"
             )
         except BadRequest as parse_err:
-            # If Telegram rejects the message due to parse errors, fall back to plain text
-            if "Can't parse entities" in str(parse_err):
+            # Defense-in-depth: If Telegram still rejects due to parse errors, fall back to plain text
+            if "Can't parse entities" in str(parse_err) and parse_mode_str:
                 logger.warning(
                     f"Telegram rejected MarkdownV2 confirmation message (parse error): {parse_err}. Falling back to plain text.",
                     exc_info=False,
@@ -97,7 +96,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                         parse_mode=None,
                         reply_markup=keyboard,
                     )
-                    escaped_prompt_text = prompt_text  # Update for later use
+                    text_to_send = prompt_text  # Update for later use
                     logger.debug(
                         f"Confirmation message sent in plain text (Message ID: {sent_message.message_id})"
                     )
@@ -147,7 +146,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                 await self.application.bot.edit_message_text(
                     chat_id=chat_id_int,
                     message_id=sent_message.message_id,
-                    text=escaped_prompt_text + "\n\n\\(Confirmation timed out\\)",
+                    text=text_to_send + "\n\n\\(Confirmation timed out\\)",
                     parse_mode=ParseMode.MARKDOWN_V2,
                 )
             except Exception as edit_err:

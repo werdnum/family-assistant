@@ -11,7 +11,6 @@ import traceback
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-import telegramify_markdown
 from sqlalchemy import update as sqlalchemy_update
 from telegram import (
     ForceReply,
@@ -36,7 +35,7 @@ from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.storage.message_history import (
     message_history_table,  # For error handling db update
 )
-from family_assistant.telegram.markdown_utils import fix_telegramify_markdown_escaping
+from family_assistant.telegram.markdown_utils import convert_to_telegram_markdown
 from family_assistant.tools.confirmation import TOOL_CONFIRMATION_RENDERERS
 
 if TYPE_CHECKING:
@@ -553,25 +552,23 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 force_reply_markup = ForceReply(selective=False)
 
                 if final_llm_content_to_send:
+                    # Convert to Telegram MarkdownV2 with bug fixes
+                    text_to_send, parse_mode = convert_to_telegram_markdown(
+                        final_llm_content_to_send
+                    )
+
                     try:
-                        converted_markdown = telegramify_markdown.markdownify(
-                            final_llm_content_to_send
-                        )
-                        # Fix escaping bugs in telegramify_markdown (doesn't escape '<' and '>' properly)
-                        converted_markdown = fix_telegramify_markdown_escaping(
-                            converted_markdown
-                        )
                         sent_assistant_message = await self._send_message_chunks(
                             context=context,
                             chat_id=chat_id,
-                            text=converted_markdown,
-                            parse_mode=ParseMode.MARKDOWN_V2,
+                            text=text_to_send,
+                            parse_mode=ParseMode.MARKDOWN_V2 if parse_mode else None,
                             reply_to_message_id=reply_target_message_id,
                             reply_markup=force_reply_markup,
                         )
                     except BadRequest as parse_err:
-                        # If Telegram rejects the message due to parse errors, fall back to plain text
-                        if "Can't parse entities" in str(parse_err):
+                        # Defense-in-depth: If Telegram still rejects due to parse errors, fall back to plain text
+                        if "Can't parse entities" in str(parse_err) and parse_mode:
                             logger.warning(
                                 f"Telegram rejected MarkdownV2 message (parse error): {parse_err}. Falling back to plain text.",
                                 exc_info=False,
@@ -586,19 +583,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             )
                         else:
                             raise
-                    except Exception as md_err:
-                        logger.error(
-                            f"Failed to convert markdown: {md_err}. Sending plain text.",
-                            exc_info=True,
-                        )
-                        sent_assistant_message = await self._send_message_chunks(
-                            context=context,
-                            chat_id=chat_id,
-                            text=final_llm_content_to_send,
-                            parse_mode=None,
-                            reply_to_message_id=reply_target_message_id,
-                            reply_markup=force_reply_markup,
-                        )
 
                     if (
                         sent_assistant_message
@@ -997,25 +981,23 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
                 if final_llm_content_to_send:
                     sent_assistant_message = None
+                    # Convert to Telegram MarkdownV2 with bug fixes
+                    text_to_send, parse_mode = convert_to_telegram_markdown(
+                        final_llm_content_to_send
+                    )
+
                     try:
-                        converted_markdown = telegramify_markdown.markdownify(
-                            final_llm_content_to_send
-                        )
-                        # Fix escaping bugs in telegramify_markdown (doesn't escape '<' and '>' properly)
-                        converted_markdown = fix_telegramify_markdown_escaping(
-                            converted_markdown
-                        )
                         sent_assistant_message = await self._send_message_chunks(
                             context=context,
                             chat_id=chat_id,
-                            text=converted_markdown,
-                            parse_mode=ParseMode.MARKDOWN_V2,
+                            text=text_to_send,
+                            parse_mode=ParseMode.MARKDOWN_V2 if parse_mode else None,
                             reply_to_message_id=reply_target_message_id_for_bot,
                             reply_markup=force_reply_markup,
                         )
                     except BadRequest as parse_err:
-                        # If Telegram rejects the message due to parse errors, fall back to plain text
-                        if "Can't parse entities" in str(parse_err):
+                        # Defense-in-depth: If Telegram still rejects due to parse errors, fall back to plain text
+                        if "Can't parse entities" in str(parse_err) and parse_mode:
                             logger.warning(
                                 f"Telegram rejected MarkdownV2 message (parse error): {parse_err}. Falling back to plain text.",
                                 exc_info=False,
@@ -1030,19 +1012,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             )
                         else:
                             raise
-                    except Exception as md_err:
-                        logger.error(
-                            f"Failed to convert markdown for slash command response: {md_err}. Sending plain text.",
-                            exc_info=True,
-                        )
-                        sent_assistant_message = await self._send_message_chunks(
-                            context=context,
-                            chat_id=chat_id,
-                            text=final_llm_content_to_send,
-                            parse_mode=None,
-                            reply_to_message_id=reply_target_message_id_for_bot,
-                            reply_markup=force_reply_markup,
-                        )
 
                     if (
                         sent_assistant_message
