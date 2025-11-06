@@ -190,7 +190,7 @@ async def create_vega_chart_tool(
 
         # If debug mode, return the spec as structured data instead of rendering
         if debug:
-            return ToolResult(text=f"Debug: Generated spec for {title}", data=spec_dict)
+            return ToolResult(data=spec_dict)
 
         # Determine if this is Vega or Vega-Lite based on schema
         is_vega_lite = False
