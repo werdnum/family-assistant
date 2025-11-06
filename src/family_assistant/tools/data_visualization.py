@@ -45,7 +45,7 @@ DATA_VISUALIZATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
                     },
                     "data": {
                         "type": "object",
-                        "description": "Optional data as a direct object. If a dict with string keys, treated as named datasets (e.g., {'temps': [...], 'humidity': [...]}). If a list or other structure, used as default dataset with name 'data'. Use this for computed data from other tools like jq_query.",
+                        "description": "Optional data as a direct object. If a dict with string keys, treated as named datasets (e.g., {'temps': [...], 'humidity': [...]}). If a list or other structure, automatically assigned to a default dataset named 'data' - your Vega spec MUST reference it using {\"name\": \"data\"}. Use this for computed data from other tools like jq_query.",
                     },
                     "title": {
                         "type": "string",
