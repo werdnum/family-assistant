@@ -11,6 +11,7 @@ from telegram.constants import ParseMode
 
 from family_assistant.interfaces import ChatInterface
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.telegram.markdown_utils import fix_telegramify_markdown_escaping
 
 if TYPE_CHECKING:
     from telegram.ext import Application
@@ -81,6 +82,8 @@ class TelegramChatInterface(ChatInterface):
         if final_parse_mode == ParseMode.MARKDOWN_V2:
             try:
                 text_to_send = telegramify_markdown.markdownify(text)
+                # Fix escaping bugs in telegramify_markdown (doesn't escape '<' and '>' properly)
+                text_to_send = fix_telegramify_markdown_escaping(text_to_send)
             except Exception as md_err:
                 logger.error(
                     f"Failed to convert text to MarkdownV2 for chat {conversation_id}: {md_err}. Sending as plain text.",

@@ -9,6 +9,7 @@ import telegramify_markdown
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.constants import ParseMode
 
+from family_assistant.telegram.markdown_utils import fix_telegramify_markdown_escaping
 from family_assistant.telegram.protocols import ConfirmationUIManager
 
 if TYPE_CHECKING:
@@ -70,6 +71,8 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
 
         try:
             escaped_prompt_text = telegramify_markdown.markdownify(prompt_text)
+            # Fix escaping bugs in telegramify_markdown (doesn't escape '<' and '>' properly)
+            escaped_prompt_text = fix_telegramify_markdown_escaping(escaped_prompt_text)
             sent_message = await self.application.bot.send_message(
                 chat_id=chat_id_int,
                 text=escaped_prompt_text,
