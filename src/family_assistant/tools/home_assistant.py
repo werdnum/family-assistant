@@ -59,7 +59,31 @@ HOME_ASSISTANT_TOOLS_DEFINITION: list[dict[str, Any]] = [
                 "Returns: A JSON attachment containing the state history data with entity states, attributes, "
                 "and timestamps. The data can be loaded and analyzed programmatically. "
                 "If no entities are specified, retrieves history for all entities (may be large). "
-                "On errors, returns descriptive error messages."
+                "On errors, returns descriptive error messages.\n\n"
+                "Response Schema:\n"
+                "{\n"
+                '  "start_time": "ISO 8601 timestamp",\n'
+                '  "end_time": "ISO 8601 timestamp",\n'
+                '  "significant_changes_only": boolean,\n'
+                '  "entities": [\n'
+                "    {\n"
+                '      "entity_id": "sensor.example",\n'
+                '      "states": [\n'
+                "        {\n"
+                '          "state": "value or unavailable/unknown/null",\n'
+                '          "attributes": {...},\n'
+                '          "last_changed": "ISO 8601 timestamp",\n'
+                '          "last_updated": "ISO 8601 timestamp"\n'
+                "        }\n"
+                "      ]\n"
+                "    }\n"
+                "  ]\n"
+                "}\n\n"
+                "IMPORTANT: For data visualization, it's recommended to retrieve history as an attachment first "
+                "(using this tool), then pass the attachment to visualization tools. This allows the LLM to see "
+                "the inferred JSON schema, making it much easier to understand the data structure and create "
+                "correct visualizations. Sensor states may contain non-numeric values like 'unavailable' or 'unknown' "
+                "that should be filtered before visualization."
             ),
             "parameters": {
                 "type": "object",
