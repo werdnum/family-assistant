@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
-from family_assistant.telegram.markdown_utils import fix_telegramify_markdown_escaping
+from family_assistant.telegram.markdown_utils import (
+    convert_to_telegram_markdown,
+    fix_telegramify_markdown_escaping,
+)
 
 
 class TestFixTelegramifyMarkdownEscaping:
@@ -80,6 +85,38 @@ class TestFixTelegramifyMarkdownEscaping:
             == "Task Status Report\nCompleted: 5 \\> 3\nPending: 2 \\< 4\n\\<important\\> note"
         )
 
+    def test_backslash_not_consumed(self) -> None:
+        """Test that backslashes not before special chars are preserved."""
+        text = r"Path: C:\Users\file.txt with > and <"
+        result = fix_telegramify_markdown_escaping(text)
+        assert result == r"Path: C:\Users\file.txt with \> and \<"
+
+    def test_multiple_backslashes(self) -> None:
+        r"""Test handling of multiple backslashes.
+
+        Note: The regex uses negative lookbehind (?<!\\) which cannot detect
+        escaped backslashes. In \\>, the > appears to be escaped (preceded by \),
+        so it won't be escaped again. This is an acceptable limitation for our
+        use case of post-processing telegramify_markdown output.
+        """
+        text = r"Test \\> and \\< with double backslashes"
+        result = fix_telegramify_markdown_escaping(text)
+        # The regex sees \ before > and <, so they don't get escaped
+        assert result == r"Test \\> and \\< with double backslashes"
+
+    def test_escaped_backslash_before_special_char(self) -> None:
+        r"""Test handling of escaped backslash before special char.
+
+        Note: The regex cannot distinguish between \> (escaped >) and \\>
+        (escaped backslash followed by >). This is an acceptable trade-off
+        for the simplicity and performance of the regex approach.
+        """
+        # If we have \\> (escaped backslash followed by >), the regex sees \ before >
+        text = r"\\>"
+        result = fix_telegramify_markdown_escaping(text)
+        # Result is unchanged - regex sees backslash before >
+        assert result == r"\\>"
+
 
 @pytest.mark.parametrize(
     "input_text,expected",
@@ -99,3 +136,50 @@ def test_fix_telegramify_markdown_escaping_parametrized(
     """Parametrized test for various input scenarios."""
     result = fix_telegramify_markdown_escaping(input_text)
     assert result == expected
+
+
+class TestConvertToTelegramMarkdown:
+    """Tests for convert_to_telegram_markdown shim function."""
+
+    def test_successful_conversion(self) -> None:
+        """Test successful markdown conversion."""
+        text = "Hello *world*"
+        result, parse_mode = convert_to_telegram_markdown(text)
+        assert parse_mode == "MarkdownV2"
+        assert result  # Should have some converted content
+
+    def test_escaping_applied(self) -> None:
+        """Test that escaping bug fixes are applied."""
+        text = "Text with < and >"
+        result, parse_mode = convert_to_telegram_markdown(text)
+        assert parse_mode == "MarkdownV2"
+        # The result should have escaped < and >
+        assert r"\<" in result
+        assert r"\>" in result
+
+    def test_conversion_error_fallback(self) -> None:
+        """Test fallback to plain text on conversion error."""
+        with patch(
+            "family_assistant.telegram.markdown_utils.telegramify_markdown.markdownify",
+            side_effect=Exception("Test error"),
+        ):
+            text = "Test text"
+            result, parse_mode = convert_to_telegram_markdown(text)
+            assert parse_mode is None  # Should fall back to plain text
+            assert result == text  # Should return original text
+
+    def test_empty_string(self) -> None:
+        """Test conversion of empty string."""
+        text = ""
+        result, parse_mode = convert_to_telegram_markdown(text)
+        # Should succeed but return empty (with newline from markdownify)
+        assert parse_mode == "MarkdownV2"
+
+    def test_complex_markdown(self) -> None:
+        """Test conversion of complex markdown with multiple elements."""
+        text = "# Header\n\n**Bold** and *italic* with > and < symbols"
+        result, parse_mode = convert_to_telegram_markdown(text)
+        assert parse_mode == "MarkdownV2"
+        # Should have escaped the angle brackets
+        assert r"\>" in result
+        assert r"\<" in result
