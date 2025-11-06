@@ -4,7 +4,6 @@ import io
 import logging
 from typing import TYPE_CHECKING
 
-import telegramify_markdown
 from PIL import Image
 from telegram import ForceReply, InputMediaPhoto
 from telegram.constants import ParseMode
@@ -12,7 +11,7 @@ from telegram.error import BadRequest
 
 from family_assistant.interfaces import ChatInterface
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.telegram.markdown_utils import fix_telegramify_markdown_escaping
+from family_assistant.telegram.markdown_utils import convert_to_telegram_markdown
 
 if TYPE_CHECKING:
     from telegram.ext import Application
@@ -77,21 +76,13 @@ class TelegramChatInterface(ChatInterface):
                 f"Unsupported parse_mode '{parse_mode}' for Telegram. Sending as plain text."
             )
 
-        text_to_send = text
-        final_parse_mode = tg_parse_mode
-
-        if final_parse_mode == ParseMode.MARKDOWN_V2:
-            try:
-                text_to_send = telegramify_markdown.markdownify(text)
-                # Fix escaping bugs in telegramify_markdown (doesn't escape '<' and '>' properly)
-                text_to_send = fix_telegramify_markdown_escaping(text_to_send)
-            except Exception as md_err:
-                logger.error(
-                    f"Failed to convert text to MarkdownV2 for chat {conversation_id}: {md_err}. Sending as plain text.",
-                    exc_info=True,
-                )
-                text_to_send = text
-                final_parse_mode = None
+        # Convert to Telegram MarkdownV2 with bug fixes if requested
+        if tg_parse_mode == ParseMode.MARKDOWN_V2:
+            text_to_send, parse_mode_str = convert_to_telegram_markdown(text)
+            final_parse_mode = ParseMode.MARKDOWN_V2 if parse_mode_str else None
+        else:
+            text_to_send = text
+            final_parse_mode = tg_parse_mode
 
         try:
             chat_id_int = int(conversation_id)
