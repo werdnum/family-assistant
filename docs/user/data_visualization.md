@@ -125,6 +125,152 @@ create_vega_chart(
 )
 ```
 
+### Important: Default Dataset Naming
+
+**CRITICAL**: When you pass raw data directly to the `data` parameter (as a list or non-dict
+structure), it is automatically assigned to a default dataset named **`"data"`**. Your Vega-Lite
+specification **must** reference it by that exact name.
+
+```starlark
+# Example: Direct data from jq_query
+filtered_data = jq_query(attachment_id, ".[] | select(.value > 10)")
+
+# Your spec MUST use {"name": "data"} to reference this data
+spec = {
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "data": {"name": "data"},  # MUST be "data" - this is the default name!
+  "mark": "line",
+  "encoding": {
+    "x": {"field": "timestamp", "type": "temporal"},
+    "y": {"field": "value", "type": "quantitative"}
+  }
+}
+
+create_vega_chart(spec=json_encode(spec), data=filtered_data)
+```
+
+**Common mistake**: Using a different name like `{"name": "filtered_data"}` will result in a blank
+chart because the tool cannot find the dataset you're referencing.
+
+## Recommended Pattern: Retrieve Data as Attachments
+
+**BEST PRACTICE**: When working with data from tools like `download_state_history`, retrieve the
+data as a separate step and pass the attachment to your visualization script. This provides several
+benefits:
+
+1. **Schema Inference**: JSON attachments are rendered to the LLM with an inferred JSON schema,
+   making it much easier to understand the data structure
+2. **Cleaner Code**: Separates data retrieval from visualization logic
+3. **Reusability**: The same data attachment can be used for multiple charts or analyses
+
+### Example: Two-Step Pattern
+
+```starlark
+# Step 1: Retrieve data as attachment (outside the script)
+# User or assistant calls: download_state_history(entity_ids=["sensor.pool_temp"], ...)
+# Result: Attachment with ID "abc123" containing state history JSON
+
+# Step 2: Your script receives the attachment with inferred schema
+# You can now easily understand the structure and create visualizations
+
+# Option A: Use attachment directly with data_attachments
+create_vega_chart(
+  spec=spec_json,
+  data_attachments=["abc123"]  # Reference by attachment ID
+)
+
+# Option B: Transform with jq_query first, then visualize
+cleaned_data = jq_query("abc123", ".entities[0].states | map({time: .last_changed, value: (.state | tonumber?)}) | map(select(.value != null))")
+create_vega_chart(
+  spec=spec_json,
+  data=cleaned_data  # Use transformed data
+)
+```
+
+This pattern is especially helpful when delegating from the main assistant to the data visualization
+profile - the data structure is clear from the inferred schema rather than buried in raw JSON.
+
+## Best Practices for Data Cleaning
+
+### Home Assistant State History Data
+
+When visualizing Home Assistant sensor data, **always clean non-numeric values**. Sensors can return
+states like `"unavailable"`, `"unknown"`, or `null` that will cause chart rendering errors.
+
+#### Recommended jq Pattern for Sensor Data
+
+```starlark
+# Robust cleaning pattern using tonumber? filter
+cleaned = jq_query(
+  attachment_id,
+  '.entities[0].states | map({last_changed: .last_changed, state: (.state | tonumber?)}) | map(select(.state != null))'
+)
+
+# Explanation:
+# 1. .entities[0].states - Extract states array from first entity
+# 2. tonumber? - Safely attempt conversion, returns null on failure
+# 3. select(.state != null) - Filter out null values
+```
+
+#### Common Data Issues to Handle
+
+- **Non-numeric states**: `"unavailable"`, `"unknown"`, `"None"`, `""` (empty string)
+- **Null values**: Missing data points
+- **Invalid timestamps**: Malformed date strings
+- **Mixed types**: Some sensors switch between numeric and string states
+
+#### Example: Complete Cleaning Workflow
+
+```starlark
+# Get sensor history (already retrieved as attachment "history_id")
+# Clean the data thoroughly
+cleaned_data = jq_query(
+  "history_id",
+  '''
+  .entities[0].states
+  | map({
+      time: .last_changed,
+      value: (.state | tonumber?)
+    })
+  | map(select(.value != null))
+  | sort_by(.time)
+  '''
+)
+
+# Create visualization with cleaned data
+spec = {
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "data": {"name": "data"},
+  "mark": {"type": "line", "point": true, "tooltip": true},
+  "encoding": {
+    "x": {
+      "field": "time",
+      "type": "temporal",
+      "title": "Time"
+    },
+    "y": {
+      "field": "value",
+      "type": "quantitative",
+      "title": "Temperature (°F)"
+    }
+  }
+}
+
+create_vega_chart(
+  spec=json_encode(spec),
+  data=cleaned_data,
+  title="Pool Temperature (Last 5 Days)"
+)
+```
+
+### General Data Cleaning Tips
+
+1. **Always validate data types**: Use type conversion filters like `tonumber?`, `tostring`, etc.
+2. **Filter invalid values**: Use `select()` to remove nulls, empty strings, or out-of-range values
+3. **Sort when needed**: Use `sort_by()` for time-series data to ensure correct ordering
+4. **Preview first**: Use `jq_query` to examine data structure before creating complex specs
+5. **Handle edge cases**: Check for empty datasets, single data points, or extreme values
+
 ## Workflow for Large Data Attachments
 
 When you receive a large JSON dataset (>10KB), it will appear as:
