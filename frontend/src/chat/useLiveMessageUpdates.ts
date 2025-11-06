@@ -88,7 +88,9 @@ export function useLiveMessageUpdates({
       });
 
       eventSource.onerror = (error) => {
-        console.error('[SSE] Connection error:', error);
+        // Log as warning since SSE disconnections are expected during normal operation
+        // (server restarts, network issues, etc.) and we handle reconnection automatically
+        console.warn('[SSE] Connection error, will attempt to reconnect:', error);
         eventSource.close();
 
         // Attempt reconnection after 5 seconds by triggering useEffect
