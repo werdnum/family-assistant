@@ -145,6 +145,7 @@ def main() -> None:
 
     # Load configuration
     config = load_config()
+    use_updated_input = config.get("use_updated_input", False)
 
     # Track modifications to apply
     updated_input = {}
@@ -204,16 +205,40 @@ def main() -> None:
 
     # If we have modifications, output them
     if updated_input:
-        output = {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "allow",
-                "permissionDecisionReason": "\n".join(modifications),
-                "updatedInput": updated_input,
+        if use_updated_input:
+            # Use updatedInput feature (currently broken in Claude Code v2.0.34)
+            output = {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "allow",
+                    "permissionDecisionReason": "\n".join(modifications),
+                    "updatedInput": updated_input,
+                }
             }
-        }
-        print(json.dumps(output, indent=2))
-        sys.exit(0)
+            print(json.dumps(output, indent=2))
+            sys.exit(0)
+        else:
+            # Fallback: Block with suggestions since updatedInput doesn't work
+            suggestion_lines = ["Command needs modifications:"]
+            suggestion_lines.extend(modifications)
+            suggestion_lines.append("\nSuggested command:")
+
+            # Build the suggested command
+            suggested_cmd = updated_input.get("command", command)
+            suggestion_lines.append(f"  {suggested_cmd}")
+
+            # Add timeout suggestion if present
+            if "timeout" in updated_input:
+                timeout_val = updated_input["timeout"]
+                suggestion_lines.append(f"  timeout: {timeout_val}")
+
+            # Add background suggestion if present
+            if "run_in_background" in updated_input:
+                bg_val = updated_input["run_in_background"]
+                suggestion_lines.append(f"  run_in_background: {bg_val}")
+
+            print("• " + "\n• ".join(suggestion_lines), file=sys.stderr)
+            sys.exit(2)
 
     # No changes needed, allow as-is
     sys.exit(0)
