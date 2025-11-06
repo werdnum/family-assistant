@@ -599,7 +599,6 @@ March,200"""
         )
 
         assert isinstance(result, ToolResult)
-        assert "Debug: Generated spec for Debug Test" in result.get_text()
         # Should not have PNG attachments in debug mode
         assert not result.attachments or len(result.attachments) == 0
 
@@ -609,6 +608,12 @@ March,200"""
         assert isinstance(returned_spec, dict)
         assert "$schema" in returned_spec
         assert "data" in returned_spec
+
+        # Verify get_text() auto-generates JSON from data
+        text = result.get_text()
+        assert text  # Should not be empty
+        parsed = json.loads(text)  # Should be valid JSON
+        assert parsed == returned_spec  # Should match the data
 
     @pytest.mark.asyncio
     async def test_debug_mode_with_data_attachments(
@@ -627,7 +632,6 @@ March,200"""
         )
 
         assert isinstance(result, ToolResult)
-        assert "Debug: Generated spec for Debug with CSV" in result.get_text()
         assert not result.attachments or len(result.attachments) == 0
 
         # Get the returned spec as structured data
@@ -643,6 +647,12 @@ March,200"""
         assert len(values) == 3
         assert values[0]["month"] == "January"
         assert values[0]["sales"] == "100"
+
+        # Verify get_text() auto-generates JSON from data
+        text = result.get_text()
+        assert text  # Should not be empty
+        parsed = json.loads(text)  # Should be valid JSON
+        assert parsed == returned_spec  # Should match the data
 
     @pytest.mark.asyncio
     async def test_debug_mode_with_direct_data(self, mock_exec_context: Mock) -> None:
@@ -669,7 +679,6 @@ March,200"""
         )
 
         assert isinstance(result, ToolResult)
-        assert "Debug: Generated spec for Debug with Data" in result.get_text()
         assert not result.attachments or len(result.attachments) == 0
 
         # Get the returned spec as structured data
@@ -681,3 +690,9 @@ March,200"""
         assert "data" in returned_spec
         assert "values" in returned_spec["data"]
         assert returned_spec["data"]["values"] == data["mydata"]
+
+        # Verify get_text() auto-generates JSON from data
+        text = result.get_text()
+        assert text  # Should not be empty
+        parsed = json.loads(text)  # Should be valid JSON
+        assert parsed == returned_spec  # Should match the data
