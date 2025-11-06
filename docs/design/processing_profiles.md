@@ -284,7 +284,97 @@ The main application startup logic (`src/family_assistant/__main__.py`) will be 
 
 - **Error Handling**: Errors in specialized services need to be gracefully handled and reported.
 
-## 8. Future Considerations
+## 8. Implemented Profiles
+
+### 8.1. `automation_creation`
+
+**Purpose**: Specialized profile for creating and validating event-based and schedule-based
+automations with thorough testing and validation.
+
+**Configuration**:
+
+- **Model**: `gemini-2.5-pro` (Google provider)
+- **Max Iterations**: 25 (to support complex validation workflows)
+- **Delegation**: `unrestricted` (can delegate to other profiles if needed)
+- **Documentation**: Automatically loads `scripting.md` for comprehensive Starlark reference
+
+**Available Tools**:
+
+- **Automation Management**: `create_automation`, `list_automations`, `get_automation`,
+  `update_automation`, `enable_automation`, `disable_automation`, `delete_automation`,
+  `get_automation_stats`
+- **Event Testing & Validation**: `query_recent_events`, `test_event_listener`
+- **Script Execution**: `execute_script` (for testing candidate scripts)
+- **Context & Validation**: Calendar, notes, documents, Home Assistant state history
+- **Communication**: `send_message_to_user`
+- **Home Assistant**: Full MCP access for entity validation
+
+**Slash Commands**: `/automate`, `/create-automation`
+
+**System Prompt Features**:
+
+The profile uses a prescriptive system prompt that guides through a systematic automation creation
+procedure:
+
+1. **Understand Request & Examine Patterns**: Search existing automations for successful patterns
+2. **Identify Trigger Conditions**: Determine event sources, filters, and whether simple
+   match_conditions or complex condition_script is needed
+3. **Determine Action Type**: Choose between deterministic scripts (faster, cheaper) and wake_llm
+   (for judgment-based decisions)
+4. **Validate Assumptions**: Use tools to verify entity IDs, event structures, states before
+   creating
+5. **Test Candidate Scripts**: Execute scripts in isolation with test data before embedding
+6. **Test Actions Safely**: Dry-run strategies and validation
+7. **Validate wake_llm Context**: Ensure LLM will have sufficient context when awakened
+8. **Create Automation**: Use validated parameters
+9. **Provide Results**: Show automation ID, UI link, explain triggers and actions
+
+**Best Practices Enforced**:
+
+- Always validate entity IDs and event structures using tools (never guess)
+- Test scripts with `execute_script` before creating automations
+- Use `test_event_listener` to verify conditions would match real events
+- Check historical state data with `download_state_history`
+- Prefer scripts over wake_llm for deterministic tasks (faster, cheaper)
+- Write defensive scripts with `.get()` and null checks
+- Handle Starlark limitations (no float(), no try/except, etc.)
+
+**Common Patterns Provided**:
+
+- Zone entry detection (state transitions)
+- Threshold crossing (with proper int() truncation for decimals)
+- Pattern matching (entity ID prefixes)
+
+**Example Usage**:
+
+```
+User: Create an automation that alerts me when the garage door opens at night
+Profile: automation_creation
+
+The profile will:
+1. List existing automations to check for similar patterns
+2. Query recent events to understand garage door event structure
+3. Validate garage door entity ID exists in Home Assistant
+4. Test a condition script: time_hour(time_now()) >= 21 or time_hour(time_now()) < 6
+5. Create either a script-based automation (for simple notification) or wake_llm (if context-aware decision needed)
+6. Provide UI link: http://localhost:8000/automations/event/{id}
+```
+
+**Security Considerations**:
+
+This profile operates in **trusted [BC] mode** per the Rule of Two framework:
+
+- Processes trusted user input (authenticated users creating automations)
+- Has access to sensitive data and can change state
+- Relies on strong authentication at interface boundaries
+
+**Design Notes**:
+
+This profile demonstrates the power of specialized processing profiles for complex workflows. By
+loading scripting documentation by default and using a systematic, validation-heavy approach, it
+helps users create reliable automations that work correctly on first try.
+
+## 9. Future Considerations
 
 - **Dynamic Profile Loading/Reloading**: For more advanced scenarios.
 
