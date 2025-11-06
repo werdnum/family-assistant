@@ -188,12 +188,9 @@ async def create_vega_chart_tool(
             if "datasets" in spec_dict:
                 spec_dict["datasets"].update(data_dict)
 
-        # If debug mode, return the spec as JSON instead of rendering
+        # If debug mode, return the spec as structured data instead of rendering
         if debug:
-            formatted_spec = json.dumps(spec_dict, indent=2)
-            return ToolResult(
-                text=f"Generated spec for {title}:\n\n```json\n{formatted_spec}\n```"
-            )
+            return ToolResult(text=f"Debug: Generated spec for {title}", data=spec_dict)
 
         # Determine if this is Vega or Vega-Lite based on schema
         is_vega_lite = False
