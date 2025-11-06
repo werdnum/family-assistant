@@ -36,6 +36,7 @@ from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.storage.message_history import (
     message_history_table,  # For error handling db update
 )
+from family_assistant.telegram.markdown_utils import fix_telegramify_markdown_escaping
 from family_assistant.tools.confirmation import TOOL_CONFIRMATION_RENDERERS
 
 if TYPE_CHECKING:
@@ -556,6 +557,10 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         converted_markdown = telegramify_markdown.markdownify(
                             final_llm_content_to_send
                         )
+                        # Fix escaping bugs in telegramify_markdown (doesn't escape '<' and '>' properly)
+                        converted_markdown = fix_telegramify_markdown_escaping(
+                            converted_markdown
+                        )
                         sent_assistant_message = await self._send_message_chunks(
                             context=context,
                             chat_id=chat_id,
@@ -978,6 +983,10 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     try:
                         converted_markdown = telegramify_markdown.markdownify(
                             final_llm_content_to_send
+                        )
+                        # Fix escaping bugs in telegramify_markdown (doesn't escape '<' and '>' properly)
+                        converted_markdown = fix_telegramify_markdown_escaping(
+                            converted_markdown
                         )
                         sent_assistant_message = await self._send_message_chunks(
                             context=context,
