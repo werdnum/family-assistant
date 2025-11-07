@@ -84,6 +84,8 @@ class ToolExecutionContext:
         tools_provider: Optional tools provider for direct access (used by execute_script from API).
         home_assistant_client: Home Assistant client wrapper (REQUIRED - no default).
         attachment_registry: Attachment registry for file operations (REQUIRED - no default).
+        subconversation_id: Optional ID for delegated subconversations. None indicates main conversation.
+            When set, history retrieval is isolated to only messages with this subconversation_id.
     """
 
     # Core required fields (no defaults)
@@ -115,6 +117,9 @@ class ToolExecutionContext:
     timezone_str: str = "UTC"  # Timezone string for localization
     processing_profile_id: str | None = (
         None  # Processing profile associated with the request
+    )
+    subconversation_id: str | None = (
+        None  # Subconversation ID for delegated conversations, None for main conversation
     )
     request_confirmation_callback: (
         Callable[
