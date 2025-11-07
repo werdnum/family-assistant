@@ -361,6 +361,7 @@ class ProcessingService:
             ]
             | None
         ) = None,
+        subconversation_id: str | None = None,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, list[str] | None]:
@@ -405,6 +406,7 @@ class ProcessingService:
             chat_interface=chat_interface,
             chat_interfaces=chat_interfaces,
             request_confirmation_callback=request_confirmation_callback,
+            subconversation_id=subconversation_id,
         ):
             # Collect messages that should be saved
             if message_dict and message_dict.get("role"):
@@ -451,6 +453,7 @@ class ProcessingService:
             ]
             | None
         ) = None,
+        subconversation_id: str | None = None,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> AsyncIterator[tuple[LLMStreamEvent, dict[str, Any]]]:
         """
@@ -706,6 +709,7 @@ class ProcessingService:
                         chat_interface=chat_interface,
                         chat_interfaces=chat_interfaces,
                         request_confirmation_callback=request_confirmation_callback,
+                        subconversation_id=subconversation_id,
                     )
                 )
                 for tool_call in tool_calls_from_stream
@@ -820,6 +824,7 @@ class ProcessingService:
             Awaitable[bool],
         ]
         | None = None,
+        subconversation_id: str | None = None,
     ) -> ToolExecutionResult:
         """Execute a single tool call and return the result.
 
@@ -927,6 +932,7 @@ class ProcessingService:
             chat_interfaces=chat_interfaces_dict,
             timezone_str=self.timezone_str,
             processing_profile_id=self.service_config.id,
+            subconversation_id=subconversation_id,
             request_confirmation_callback=request_confirmation_callback,
             processing_service=self,
             clock=self.clock,
@@ -1656,6 +1662,7 @@ class ProcessingService:
         ) = None,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         trigger_attachments: list[dict[str, Any]] | None = None,
+        subconversation_id: str | None = None,
     ) -> ChatInteractionResult:
         """
         Handles a complete chat interaction from user input to final response.
@@ -1754,6 +1761,7 @@ class ProcessingService:
                 attachments=trigger_attachments,
                 tool_call_id=None,
                 processing_profile_id=self.service_config.id,  # Record profile ID
+                subconversation_id=subconversation_id,  # Pass subconversation ID
                 user_id=user_id,  # Pass user_id
             )
 
@@ -1778,6 +1786,7 @@ class ProcessingService:
                     limit=history_limit,
                     max_age=history_max_age,
                     processing_profile_id=self.service_config.id,  # Filter by profile
+                    subconversation_id=subconversation_id,  # Filter by subconversation
                 )
             except Exception as hist_err:
                 logger.error(
@@ -2018,6 +2027,7 @@ class ProcessingService:
                 turn_id=turn_id,
                 chat_interface=chat_interface,
                 request_confirmation_callback=request_confirmation_callback,
+                subconversation_id=subconversation_id,  # Pass subconversation ID
             )
             final_reasoning_info = final_reasoning_info_from_process_msg
 
@@ -2039,6 +2049,7 @@ class ProcessingService:
                     msg_to_save.setdefault("interface_message_id", None)
                     # Add processing_profile_id for turn messages
                     msg_to_save["processing_profile_id"] = self.service_config.id
+                    msg_to_save["subconversation_id"] = subconversation_id
                     msg_to_save["user_id"] = user_id
 
                     # Remove fields that shouldn't be saved to database
@@ -2092,6 +2103,7 @@ class ProcessingService:
                     timestamp=datetime.now(UTC),
                     role="assistant",
                     content=error_message,
+                    subconversation_id=subconversation_id,
                 )
                 error_message_internal_id = (
                     error_message_record.get("internal_id")

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
@@ -277,8 +278,12 @@ async def delegate_to_service_tool(
                     logger.error(f"Error validating attachment {attachment_id}: {e}")
                     continue
 
+    # Generate a unique subconversation ID for this delegation
+    # This isolates the delegated conversation's history from the main conversation
+    subconversation_id = str(uuid.uuid4())
+
     logger.info(
-        f"Delegating request to service profile: '{target_service_id}' with {len(content_parts)} content parts"
+        f"Delegating request to service profile: '{target_service_id}' with {len(content_parts)} content parts (subconversation_id={subconversation_id})"
     )
     try:
         result = await target_service.handle_chat_interaction(
@@ -291,6 +296,7 @@ async def delegate_to_service_tool(
             replied_to_interface_id=None,
             chat_interface=exec_context.chat_interface,  # Pass through for nested actions
             request_confirmation_callback=exec_context.request_confirmation_callback,  # Pass through
+            subconversation_id=subconversation_id,  # Pass subconversation ID for isolation
         )
 
         final_text_reply = result.text_reply
