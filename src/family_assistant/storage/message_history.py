@@ -74,6 +74,9 @@ message_history_table = Table(
     Column(
         "processing_profile_id", String(255), nullable=True, index=True
     ),  # ID of the processing profile used
+    Column(
+        "subconversation_id", String(36), nullable=True, index=True
+    ),  # UUID for delegated subconversations, NULL for main conversation
     Column("user_id", String(255), nullable=True, index=True),
     Column(
         "attachments", JSON().with_variant(JSONB, "postgresql"), nullable=True
@@ -109,6 +112,7 @@ async def add_message_to_history(
         str | None
     ) = None,  # Added: ID linking tool response to assistant request
     processing_profile_id: str | None = None,  # Added: Profile ID
+    subconversation_id: str | None = None,  # Added: Subconversation ID for delegation
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     attachments: list[dict[str, Any]] | None = None,  # Attachment metadata
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
@@ -155,6 +159,7 @@ async def add_message_to_history(
                 error_traceback=error_traceback,
                 tool_call_id=tool_call_id,
                 processing_profile_id=processing_profile_id,  # Store profile ID
+                subconversation_id=subconversation_id,  # Store subconversation ID
                 attachments=attachments,  # Store attachment metadata
             )  # Close .values()
             .returning(message_history_table.c.internal_id)  # Specify returning clause
@@ -224,6 +229,7 @@ async def get_recent_history(
     limit: int,
     max_age: timedelta,
     processing_profile_id: str | None = None,  # Added for filtering
+    subconversation_id: str | None = None,  # Added for filtering subconversations
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> list[dict[str, Any]]:
     """Retrieves recent messages for a conversation, including tool call info.
@@ -262,6 +268,15 @@ async def get_recent_history(
             stmt_candidates = stmt_candidates.where(
                 message_history_table.c.processing_profile_id == processing_profile_id
             )
+        # Filter by subconversation_id: None means main conversation only (IS NULL)
+        if subconversation_id is None:
+            stmt_candidates = stmt_candidates.where(
+                message_history_table.c.subconversation_id.is_(None)
+            )
+        else:
+            stmt_candidates = stmt_candidates.where(
+                message_history_table.c.subconversation_id == subconversation_id
+            )
         stmt_candidates = stmt_candidates.order_by(
             message_history_table.c.timestamp.desc(),
             message_history_table.c.internal_id.desc(),  # Add this secondary sort
@@ -297,6 +312,15 @@ async def get_recent_history(
                 stmt_expand_turns = stmt_expand_turns.where(
                     message_history_table.c.processing_profile_id
                     == processing_profile_id
+                )
+            # Also filter by subconversation_id to maintain isolation
+            if subconversation_id is None:
+                stmt_expand_turns = stmt_expand_turns.where(
+                    message_history_table.c.subconversation_id.is_(None)
+                )
+            else:
+                stmt_expand_turns = stmt_expand_turns.where(
+                    message_history_table.c.subconversation_id == subconversation_id
                 )
             # We fetch all messages for these turns, even if some parts of the turn
             # are older than cutoff_time, as one part of the turn met the criteria.
@@ -392,6 +416,7 @@ async def get_messages_by_thread_id(
     db_context: DatabaseContext,
     thread_root_id: int,
     processing_profile_id: str | None = None,  # Added for filtering
+    subconversation_id: str | None = None,  # Added for filtering subconversations
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 ) -> list[dict[str, Any]]:
     """Retrieves all messages belonging to a specific conversation thread."""
@@ -411,6 +436,13 @@ async def get_messages_by_thread_id(
         if processing_profile_id:
             stmt = stmt.where(
                 message_history_table.c.processing_profile_id == processing_profile_id
+            )
+        # Filter by subconversation_id to maintain isolation
+        if subconversation_id is None:
+            stmt = stmt.where(message_history_table.c.subconversation_id.is_(None))
+        else:
+            stmt = stmt.where(
+                message_history_table.c.subconversation_id == subconversation_id
             )
         stmt = stmt.order_by(
             message_history_table.c.internal_id

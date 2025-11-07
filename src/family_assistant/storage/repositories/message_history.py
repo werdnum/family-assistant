@@ -45,6 +45,8 @@ class MessageHistoryRepository(BaseRepository):
             str | None
         ) = None,  # Added: ID linking tool response to assistant request
         processing_profile_id: str | None = None,  # Added: Profile ID
+        subconversation_id: str
+        | None = None,  # Added: Subconversation ID for delegation
         user_id: str | None = None,  # Added: User identifier
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         attachments: list[dict[str, Any]] | None = None,  # Attachment metadata
@@ -109,6 +111,7 @@ class MessageHistoryRepository(BaseRepository):
             "tool_call_id": tool_call_id,
             "error_traceback": error_traceback,
             "processing_profile_id": processing_profile_id,
+            "subconversation_id": subconversation_id,
             "attachments": attachments,
             "tool_name": tool_name,
             "provider_metadata": provider_metadata,
@@ -131,6 +134,7 @@ class MessageHistoryRepository(BaseRepository):
                 "tool_call_id",
                 "error_traceback",
                 "processing_profile_id",
+                "subconversation_id",
                 "attachments",
                 "tool_name",
                 "provider_metadata",
@@ -186,6 +190,7 @@ class MessageHistoryRepository(BaseRepository):
         limit: int | None = None,
         max_age: timedelta | None = None,
         processing_profile_id: str | None = None,
+        subconversation_id: str | None = None,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """
@@ -215,6 +220,14 @@ class MessageHistoryRepository(BaseRepository):
         if processing_profile_id:
             conditions.append(
                 message_history_table.c.processing_profile_id == processing_profile_id
+            )
+
+        # Filter by subconversation_id: None means main conversation only (IS NULL)
+        if subconversation_id is None:
+            conditions.append(message_history_table.c.subconversation_id.is_(None))
+        else:
+            conditions.append(
+                message_history_table.c.subconversation_id == subconversation_id
             )
 
         # First, order by timestamp descending to get the most recent messages
@@ -365,6 +378,7 @@ class MessageHistoryRepository(BaseRepository):
         self,
         thread_root_id: int,
         processing_profile_id: str | None = None,
+        subconversation_id: str | None = None,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     ) -> list[dict[str, Any]]:
         """
@@ -389,6 +403,14 @@ class MessageHistoryRepository(BaseRepository):
         if processing_profile_id:
             conditions.append(
                 message_history_table.c.processing_profile_id == processing_profile_id
+            )
+
+        # Filter by subconversation_id to maintain isolation
+        if subconversation_id is None:
+            conditions.append(message_history_table.c.subconversation_id.is_(None))
+        else:
+            conditions.append(
+                message_history_table.c.subconversation_id == subconversation_id
             )
 
         stmt = (
