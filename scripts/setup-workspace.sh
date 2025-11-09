@@ -75,7 +75,18 @@ if grep -q "playwright" pyproject.toml 2>/dev/null; then
     }
 fi
 
-# Step 8: Verify setup
+# Step 8: Update Claude plugin marketplaces
+if command -v claude >/dev/null 2>&1; then
+    echo "🔄 Updating Claude plugin marketplaces..."
+    claude plugin marketplace update || {
+        echo "⚠️  Warning: Failed to update Claude plugin marketplaces"
+        echo "   You may need to run: claude plugin marketplace update manually"
+    }
+else
+    echo "⚠️  Claude CLI not found, skipping plugin marketplace update"
+fi
+
+# Step 9: Verify setup
 echo ""
 echo "✅ Workspace setup complete!"
 echo ""
