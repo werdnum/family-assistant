@@ -1,0 +1,38 @@
+{
+  "comment": "Project-specific format-and-lint configuration for family-assistant. Extends default rules with additional file patterns.",
+  "formatting": {
+    "formatters": {
+      "ensure_newline": {
+        "patterns": [
+          "*.py", "*.js", "*.jsx", "*.ts", "*.tsx",
+          "*.yaml", "*.yml", "*.toml", "*.md", "*.json", "*.txt",
+          "*.sh", "*.bash", "*.css", "*.scss", "*.html", "*.xml",
+          "*.cfg", "*.ini", "*.conf"
+        ]
+      }
+    },
+    "exclude": [
+      "*.min.js",
+      "*.min.css",
+      "build/*",
+      "dist/*",
+      "node_modules/*",
+      ".venv/*",
+      "__pycache__/*",
+      "*.pyc",
+      "*.pyo",
+      "*.egg-info/*"
+    ]
+  },
+  "linting": {
+    "python": {
+      "enabled": true,
+      "venvPath": ".venv"
+    },
+    "typescript": {
+      "enabled": true,
+      "projectDir": "frontend"
+    }
+  }
+}
+
