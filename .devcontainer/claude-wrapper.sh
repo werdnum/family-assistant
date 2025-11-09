@@ -95,6 +95,12 @@ if [ -f "frontend/package.json" ] && [ ! -d "frontend/node_modules" ]; then
     npm install --prefix frontend
 fi
 
+# Update Claude plugin marketplaces
+echo "🔄 Updating Claude plugin marketplaces..."
+/home/claude/.npm-global/bin/claude plugin marketplace update >/dev/null 2>&1 || {
+    echo "⚠️  Warning: Failed to update plugin marketplaces"
+}
+
 export BASH_DEFAULT_TIMEOUT_MS=300000
 export BASH_MAX_TIMEOUT_MS=3600000
 export CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1
