@@ -1,58 +1,6 @@
 {
-  "default_timeout_ms": 120000,
-  "use_updated_input": false,
-  "comment": "Configuration for Bash command validation and auto-fixing. Set use_updated_input to true to use updatedInput feature (currently broken in Claude Code v2.0.34), or false to suggest fixes via deny messages.",
+  "comment": "Project-specific bash-guard configuration for family-assistant. Extends default rules with containerized development environment patterns.",
   "command_rules": [
-    {
-      "regexp": "\\bgit\\s+commit\\b.*--no-verify",
-      "action": "block",
-      "explanation": "Using --no-verify is not permitted in this project. If you need to bypass pre-commit hooks, ask the user for help."
-    },
-    {
-      "regexp": "^\\s*rm\\s+-rf\\s+/\\s*$",
-      "action": "block",
-      "explanation": "This command would delete the entire filesystem. Please use a more specific path."
-    },
-    {
-      "regexp": "^\\s*rm\\s+-rf\\s+~/?\\s*$",
-      "action": "block",
-      "explanation": "This command would delete your entire home directory. Please use a more specific path."
-    },
-    {
-      "regexp": "^\\s*:(){ :|:& };:\\s*$",
-      "action": "block",
-      "explanation": "This is a fork bomb that would crash the system. This command is not allowed."
-    },
-    {
-      "regexp": "^\\s*dd\\s+.*of=/dev/[sh]da\\s*$",
-      "action": "block",
-      "explanation": "Direct disk writes can corrupt the system. Please use safer file operations."
-    },
-    {
-      "regexp": "^\\s*mkfs\\..*\\s+/dev/",
-      "action": "block",
-      "explanation": "Formatting system devices can destroy data. This operation is not allowed."
-    },
-    {
-      "regexp": "^\\s*chmod\\s+-R\\s+777\\s+/",
-      "action": "block",
-      "explanation": "Making system directories world-writable is a security risk. Please use more restrictive permissions."
-    },
-    {
-      "regexp": "^\\s*>\\s*/dev/sda",
-      "action": "block",
-      "explanation": "Writing directly to disk devices can corrupt the system. This operation is not allowed."
-    },
-    {
-      "regexp": "timeout\\s+\\d+\\s+.*",
-      "action": "block",
-      "explanation": "Use the Bash tool's timeout parameter instead of the timeout command for better control and consistency."
-    },
-    {
-      "regexp": "^\\s*cd\\s+",
-      "action": "block",
-      "explanation": "Using cd changes the working directory for all subsequent commands. If you need to run commands in a different directory, use a subshell like: (cd /path && command) or use absolute paths."
-    },
     {
       "regexp": "\\bpython\\s+-m\\s+pytest\\b",
       "action": "replace",
@@ -115,11 +63,6 @@
       "explanation": "Port checking is unnecessary. Frontend runs on devcontainer-backend-1:5173 and backend on devcontainer-backend-1:8000. Use these addresses directly."
     },
     {
-      "regexp": "2>&1",
-      "action": "block",
-      "explanation": "Redirecting stderr to stdout with 2>&1 can cause issues with the Bash tool. Please capture stderr and stdout separately if needed."
-    },
-    {
       "regexp": "\\bcat\\s+([^|\\s]+)\\s*\\|\\s*llm\\b",
       "action": "replace",
       "replacement": "llm -f \\1",
@@ -144,24 +87,6 @@
       "regexp": "DATABASE_URL=.*alembic",
       "action": "block",
       "explanation": "DATABASE_URL is already correctly set in the environment. Do not override it when running alembic commands. Simply run 'alembic revision --autogenerate -m \"Description\"' without DATABASE_URL prefix."
-    }
-  ],
-  "timeout_requirements": [
-    {
-      "regexp": "^pytest\\b",
-      "minimum_timeout_ms": 300000,
-      "explanation": "pytest requires at least 5 minutes for comprehensive test execution"
-    },
-    {
-      "regexp": "^poe\\s+test\\b",
-      "minimum_timeout_ms": 900000,
-      "explanation": "poe test requires at least 15 minutes for full test suite including integration tests"
-    }
-  ],
-  "background_restrictions": [
-    {
-      "regexp": "^poe\\s+test\\b",
-      "explanation": "poe test must run in foreground to ensure proper output capture and test result visibility"
     }
   ]
 }

@@ -1,0 +1,12 @@
+{
+  "comment": "Project-specific guardian configuration for family-assistant. Enables code review workflow.",
+  "preCommitReview": {
+    "workflow": {
+      "runCodeReview": {
+        "enabled": true,
+        "scriptPath": "scripts/review-changes.py"
+      }
+    }
+  }
+}
+

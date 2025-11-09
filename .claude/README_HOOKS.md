@@ -1,224 +1,217 @@
-# Claude Code Hooks Configuration
+# Claude Code Plugins Configuration
 
-This directory contains hook scripts and configuration files for Claude Code.
+This directory contains plugin configuration files for Claude Code. The project uses plugins from
+the [claude-code-plugins](https://github.com/werdnum/claude-code-plugins) marketplace.
 
-## Bash Command Validation Hook
+## Installed Plugins
 
-The `check_banned_commands.py` hook validates Bash commands before execution and suggests fixes.
+### 1. **bash-guard** - Command Safety
 
-**Note**: The `updatedInput` feature for automatic command rewriting is currently broken in Claude
-Code v2.0.34. The hook defaults to blocking with suggestions instead. Set `use_updated_input: true`
-in the config if you want to test the updatedInput behavior (though it won't actually work until the
-bug is fixed).
+Prevents dangerous shell commands and enforces best practices through PreToolUse hooks.
 
-### Configuration File: `banned_commands.json`
+**Configuration**: `bash-guard.json`
 
-The hook uses a JSON configuration file with the following sections:
+**Features**:
 
-#### 1. `use_updated_input`
+- Block dangerous commands (rm -rf /, fork bombs, etc.)
+- Enforce minimum timeouts for long-running commands
+- Block commits to protected branches (main/master)
+- Prevent commands from running in background when required
+- Auto-rewrite commands to safer alternatives
 
-Boolean flag controlling whether to use the `updatedInput` feature (default: `false`).
+**Project-Specific Rules** (see `bash-guard.json`):
 
-- `false`: Block commands with suggestions (recommended - current behavior)
-- `true`: Attempt to use `updatedInput` feature (currently broken in Claude Code v2.0.34)
+- Container URL rewrites (localhost → devcontainer-backend-1)
+- Dev server blocking (prevents duplicate instances)
+- Test timeout requirements (pytest: 5min, poe test: 15min)
+- Command optimizations (npm --prefix, llm -f)
 
-#### 2. `default_timeout_ms`
+### 2. **format-and-lint** - Code Quality
 
-Default timeout in milliseconds when no timeout is specified (default: 120000 = 2 minutes).
+Automatically formats and lints files after edits through PostToolUse hooks.
+
+**Configuration**: `format-lint.json`
+
+**Features**:
+
+- **File Formatting**: Ensure newline at EOF, trim trailing whitespace
+- **Python**: ruff format, ruff check, basedpyright, ast-grep
+- **TypeScript**: prettier, eslint (for frontend/ directory)
+- Informational only (doesn't block execution)
+
+**Project Configuration**:
+
+- Python linting enabled with venv at `.venv`
+- TypeScript linting enabled for `frontend/` directory
+- Extended file patterns for formatters
+
+### 3. **guardian** - Quality Gates
+
+Ensures code quality through test verification, pre-commit workflows, and stop validation.
+
+**Configuration**: `guardian.json`
+
+**Features**:
+
+- **Test Verification**: Ensures tests run before commits
+- **Pre-Commit Review**: Executes git adds, runs pre-commit hooks, optional code review
+- **Stop Validation**: Validates work completeness before stopping session
+- **Oneshot Mode**: Strict requirements for CI/CD environments
+
+**Project Configuration**:
+
+- Code review enabled using `scripts/review-changes.py`
+- Test verification for pytest and poe test
+- Excludes documentation files from test requirements
+
+### 4. **development-agents** - Specialized Agents
+
+Collection of specialized AI agents for focused development tasks.
+
+**No Configuration Required**
+
+**Included Agents**:
+
+- **systematic-debugger**: Methodical bug investigation
+- **focused-coder**: Self-contained implementation tasks
+- **mechanical-coder**: Repetitive changes with ast-grep
+- **codebase-researcher**: Code exploration and understanding
+- **external-research-specialist**: Web research and documentation
+- **playwright-qa-tester**: UI testing with Playwright
+- **parallel-coder**: Coordinating parallel development
+
+**Included Commands**:
+
+- **/test**: Run tests and display output
+
+## Configuration Files
+
+Plugin configurations use a layered system:
+
+```
+Project Override (.claude/plugin-name.json)
+           ↓
+Global Override (~/.config/claude-code/plugin-name.json)
+           ↓
+Plugin Defaults (from plugin)
+```
+
+### bash-guard.json
+
+Project-specific command rules, timeout requirements, and background restrictions.
+
+Example:
 
 ```json
 {
-  "default_timeout_ms": 120000
+  "command_rules": [
+    {
+      "regexp": "\\blocalhost:5173\\b",
+      "action": "replace",
+      "replacement": "devcontainer-backend-1:5173",
+      "explanation": "App runs in container"
+    }
+  ]
 }
 ```
 
-#### 2. `command_rules`
+### format-lint.json
 
-Rules for blocking or automatically rewriting commands.
+Formatting and linting configuration for different languages.
 
-**Block Action**: Prevents dangerous or incorrect commands from running.
-
-```json
-{
-  "regexp": "\\bgit\\s+commit\\b.*--no-verify",
-  "action": "block",
-  "explanation": "Using --no-verify is not permitted in this project."
-}
-```
-
-**Replace Action**: Automatically rewrites commands to the correct form.
+Example:
 
 ```json
 {
-  "regexp": "\\bpython\\s+-m\\s+pytest\\b",
-  "action": "replace",
-  "replacement": "pytest",
-  "explanation": "Automatically rewriting to use 'pytest' directly."
-}
-```
-
-Replacements support regex capture groups using `\1`, `\2`, etc.:
-
-```json
-{
-  "regexp": "\\bcat\\s+([^|\\s]+)\\s*\\|\\s*llm\\b",
-  "action": "replace",
-  "replacement": "llm -f \\1",
-  "explanation": "Automatically rewriting to use 'llm -f' for better file handling."
-}
-```
-
-#### 3. `timeout_requirements`
-
-Automatically sets or increases timeout for commands that need longer execution time.
-
-```json
-{
-  "regexp": "^pytest\\b",
-  "minimum_timeout_ms": 300000,
-  "explanation": "pytest requires at least 5 minutes for comprehensive test execution"
-}
-```
-
-If a command matches and has no timeout or insufficient timeout, the hook will automatically set the
-proper timeout using the `updatedInput` feature.
-
-#### 4. `background_restrictions`
-
-Commands that must run in foreground (automatically fixes `run_in_background: true` → `false`).
-
-```json
-{
-  "regexp": "^poe\\s+test\\b",
-  "explanation": "poe test must run in foreground to ensure proper output capture"
-}
-```
-
-### Hook Behavior
-
-**Current Behavior** (with `use_updated_input: false`, the default):
-
-The hook blocks commands that need modifications and suggests the corrected version:
-
-**Suggestion Examples:**
-
-1. **Command Replacement:**
-
-   - Input: `python -m pytest tests/`
-   - Output: Hook blocks and suggests: `pytest tests/` with `timeout: 300000`
-
-2. **Timeout Requirement:**
-
-   - Input: `pytest tests/` (no timeout)
-   - Output: Hook blocks and suggests adding `timeout: 300000`
-
-3. **Timeout Increase:**
-
-   - Input: `poe test` with `timeout: 120000`
-   - Output: Hook blocks and suggests increasing to `timeout: 900000`
-
-4. **Background Restriction:**
-
-   - Input: `poe test` with `run_in_background: true`
-   - Output: Hook blocks and suggests `run_in_background: false`
-
-5. **Multiple Fixes:**
-
-   - Input: `python -m pytest` with no timeout
-   - Output: Hook blocks and suggests `pytest` with `timeout: 300000`
-
-**Block Examples:**
-
-1. **Dangerous Commands:**
-
-   - Input: `rm -rf /`
-   - Output: Blocked with error message
-
-2. **Policy Violations:**
-
-   - Input: `git commit --no-verify`
-   - Output: Blocked with explanation
-
-### Testing
-
-A test script is available at `scratch/test_hook.py`:
-
-```bash
-python scratch/test_hook.py
-```
-
-This runs comprehensive tests covering:
-
-- Command replacements
-- Timeout auto-fixing
-- Background restrictions
-- Blocking dangerous commands
-- Multiple simultaneous fixes
-
-### Adding New Rules
-
-To add new rules, edit `banned_commands.json`:
-
-1. **Block a dangerous pattern:**
-
-   ```json
-   {
-     "regexp": "pattern_to_block",
-     "action": "block",
-     "explanation": "Why this is blocked"
-   }
-   ```
-
-2. **Auto-fix a command:**
-
-   ```json
-   {
-     "regexp": "pattern_to_match",
-     "action": "replace",
-     "replacement": "corrected_command",
-     "explanation": "Why this is auto-fixed"
-   }
-   ```
-
-3. **Require a minimum timeout:**
-
-   ```json
-   {
-     "regexp": "^command_pattern\\b",
-     "minimum_timeout_ms": 300000,
-     "explanation": "Why this timeout is needed"
-   }
-   ```
-
-4. **Prevent background execution:**
-
-   ```json
-   {
-     "regexp": "^command_pattern\\b",
-     "explanation": "Why this must run in foreground"
-   }
-   ```
-
-### Exit Codes
-
-- **0**: Command allowed (possibly with modifications via `updatedInput`)
-- **2**: Command blocked (explanation sent to stderr)
-
-### JSON Output Format
-
-When modifications are applied, the hook outputs JSON to stdout:
-
-```json
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": "allow",
-    "permissionDecisionReason": "Auto-setting timeout to 5 minutes...",
-    "updatedInput": {
-      "timeout": 300000
+  "linting": {
+    "python": {
+      "enabled": true
+    },
+    "typescript": {
+      "enabled": true,
+      "projectDir": "frontend"
     }
   }
 }
 ```
 
-Claude Code will automatically apply the `updatedInput` changes before executing the tool.
+### guardian.json
+
+Quality gate configuration for testing and review workflows.
+
+Example:
+
+```json
+{
+  "preCommitReview": {
+    "workflow": {
+      "runCodeReview": {
+        "enabled": true,
+        "scriptPath": "scripts/review-changes.py"
+      }
+    }
+  }
+}
+```
+
+## Marketplace Configuration
+
+The plugins are automatically installed from the configured marketplace in `settings.json`:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "claude-code-plugins": {
+      "source": {
+        "source": "github",
+        "repo": "werdnum/claude-code-plugins"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "bash-guard@claude-code-plugins": true,
+    "format-and-lint@claude-code-plugins": true,
+    "guardian@claude-code-plugins": true,
+    "development-agents@claude-code-plugins": true
+  }
+}
+```
+
+## Updating Plugin Configurations
+
+To customize plugin behavior:
+
+1. **Edit project config**: Modify `.claude/bash-guard.json`, `.claude/format-lint.json`, or
+   `.claude/guardian.json`
+2. **Create global config**: Add `~/.config/claude-code/plugin-name.json` for user-wide settings
+3. **Restart session**: Changes take effect on next Claude Code session
+
+## Plugin Documentation
+
+For detailed documentation on each plugin:
+
+- [bash-guard README](https://github.com/werdnum/claude-code-plugins/blob/main/plugins/bash-guard/README.md)
+- [format-and-lint README](https://github.com/werdnum/claude-code-plugins/blob/main/plugins/format-and-lint/README.md)
+- [guardian README](https://github.com/werdnum/claude-code-plugins/blob/main/plugins/guardian/README.md)
+- [development-agents README](https://github.com/werdnum/claude-code-plugins/blob/main/plugins/development-agents/README.md)
+
+## Migration Notes
+
+This project was migrated from custom hook scripts to plugins:
+
+- ✅ `check_banned_commands.py` → **bash-guard** plugin
+- ✅ `check_main_branch_commit.py` → **bash-guard** plugin
+- ✅ `format-files.py` → **format-and-lint** plugin
+- ✅ `lint-hook.py` → **format-and-lint** plugin
+- ✅ `test-verification-hook.sh` → **guardian** plugin
+- ✅ `test-verification-core.sh` → **guardian** plugin
+- ✅ `review-hook.py` → **guardian** plugin
+- ✅ `stop-feedback-hook.sh` → **guardian** plugin
+- ✅ `.claude/agents/*` → **development-agents** plugin
+- ✅ `.claude/commands/test.md` → **development-agents** plugin
+
+**Kept Scripts**:
+
+- `session-start-hook.sh`: Project-specific workspace setup (not replaced by plugins)
+- `scripts/review-changes.py`: Integrated with guardian plugin's code review workflow
+- `scripts/format-and-lint.sh`: Standalone script for manual use and pre-commit hooks
