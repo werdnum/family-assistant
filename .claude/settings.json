@@ -11,7 +11,8 @@
     "bash-guard@claude-code-plugins": true,
     "format-and-lint@claude-code-plugins": true,
     "guardian@claude-code-plugins": true,
-    "development-agents@claude-code-plugins": true
+    "development-agents@claude-code-plugins": true,
+    "python-utils@claude-code-plugins": true
   },
   "hooks": {
     "SessionStart": [
