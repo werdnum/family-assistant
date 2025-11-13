@@ -171,6 +171,7 @@ default_profile_settings:
       - "render_home_assistant_template" # Home Assistant template rendering
       - "get_camera_snapshot" # Get camera snapshots from Home Assistant
       - "download_state_history" # Download Home Assistant state history as JSON
+      - "list_home_assistant_entities" # Search and list Home Assistant entities
       # Read-only automation tools (creation/editing requires automation_creation profile)
       - "list_automations" # List all automations
       - "get_automation" # Get automation details
@@ -260,6 +261,7 @@ service_profiles:
         - "search_documents"
         - "get_full_document_content"
         - "download_state_history"
+        - "list_home_assistant_entities"
         - "render_home_assistant_template"
         - "execute_script"
       enable_mcp_server_ids:

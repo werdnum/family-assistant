@@ -73,6 +73,7 @@ from family_assistant.tools.home_assistant import (
     HOME_ASSISTANT_TOOLS_DEFINITION,
     download_state_history_tool,
     get_camera_snapshot_tool,
+    list_home_assistant_entities_tool,
     render_home_assistant_template_tool,
 )
 from family_assistant.tools.image_generation import (
@@ -195,6 +196,7 @@ __all__ = [
     "generate_image_tool",
     "transform_image_tool",
     "download_state_history_tool",
+    "list_home_assistant_entities_tool",
     "DATA_VISUALIZATION_TOOLS_DEFINITION",
     "create_vega_chart_tool",
     "DATA_MANIPULATION_TOOLS_DEFINITION",
@@ -258,6 +260,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "render_home_assistant_template": render_home_assistant_template_tool,
     "get_camera_snapshot": get_camera_snapshot_tool,
     "download_state_history": download_state_history_tool,
+    "list_home_assistant_entities": list_home_assistant_entities_tool,
     "execute_script": execute_script_tool,
     "attach_to_response": attach_to_response_tool,
     # Mock image processing tools (for testing)
