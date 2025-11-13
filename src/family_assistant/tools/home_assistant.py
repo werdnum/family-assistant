@@ -6,6 +6,7 @@ rendering templates and retrieving camera snapshots.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime, timedelta
@@ -21,6 +22,13 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
+
+
+# Cache for entity list to avoid repeated template renders
+# ast-grep-ignore: no-dict-any - Cache structure with entities list and timestamp
+_entity_list_cache: dict[str, Any] = {}
+_entity_cache_lock = asyncio.Lock()
+_ENTITY_CACHE_TTL_SECONDS = 120  # 2 minutes
 
 
 def detect_image_mime_type(content: bytes) -> str:
@@ -178,6 +186,60 @@ HOME_ASSISTANT_TOOLS_DEFINITION: list[dict[str, Any]] = [
                             "The Home Assistant entity ID of the camera (e.g., 'camera.front_door'). "
                             "If not provided, returns a list of all available camera entities."
                         ),
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_home_assistant_entities",
+            "description": (
+                "List and search Home Assistant entities by ID, name, or area. "
+                "Returns entities with their IDs, friendly names, areas, and devices. "
+                "Useful for discovering what sensors, lights, switches, cameras, and other entities "
+                "are available in your Home Assistant setup.\n\n"
+                "The entity_id_filter parameter does substring matching, so you can search by:\n"
+                "- Entity type: 'sensor', 'light', 'switch', 'binary_sensor'\n"
+                "- Function: 'temperature', 'motion', 'energy', 'camera'\n"
+                "- Specific entity: 'pool', 'living_room', 'garage'\n"
+                "- Combined: 'sensor.pool' finds pool sensors, 'light.living' finds living room lights\n\n"
+                "Examples:\n"
+                "- list_home_assistant_entities(entity_id_filter='temperature') → all temperature sensors\n"
+                "- list_home_assistant_entities(entity_id_filter='light.living') → living room lights\n"
+                "- list_home_assistant_entities(area_filter='pool') → all pool equipment\n"
+                "- list_home_assistant_entities(entity_id_filter='motion') → motion sensors\n\n"
+                "Results are cached for 2 minutes to improve performance."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "entity_id_filter": {
+                        "type": "string",
+                        "description": (
+                            "Optional case-insensitive substring to filter entity IDs. "
+                            "Since entity IDs follow the pattern 'domain.name' (e.g., 'sensor.pool_temperature'), "
+                            "you can filter by domain ('sensor'), function ('temperature'), location ('pool'), "
+                            "or combinations ('sensor.pool'). Matches any part of the entity ID."
+                        ),
+                    },
+                    "area_filter": {
+                        "type": "string",
+                        "description": (
+                            "Optional case-insensitive substring to filter by area name "
+                            "(e.g., 'living room', 'pool', 'garage', 'bedroom'). "
+                            "Only returns entities assigned to areas matching this substring."
+                        ),
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": (
+                            "Maximum number of results to return. Defaults to 50. "
+                            "Maximum allowed is 200. Use filters to narrow results if needed."
+                        ),
+                        "default": 50,
                     },
                 },
                 "required": [],
@@ -512,3 +574,175 @@ async def download_state_history_tool(
     except Exception as e:
         logger.error(f"Error retrieving state history: {e}", exc_info=True)
         return ToolResult(text=f"Error: Failed to retrieve state history: {str(e)}")
+
+
+async def list_home_assistant_entities_tool(
+    exec_context: ToolExecutionContext,
+    entity_id_filter: str | None = None,
+    area_filter: str | None = None,
+    max_results: int = 50,
+) -> ToolResult:
+    """
+    List and search Home Assistant entities with filtering.
+
+    Args:
+        exec_context: The tool execution context containing HA client
+        entity_id_filter: Optional case-insensitive substring to filter entity IDs
+        area_filter: Optional case-insensitive substring to filter by area name
+        max_results: Maximum number of results to return (default: 50, max: 200)
+
+    Returns:
+        ToolResult with structured data containing matching entities
+    """
+    logger.info(
+        f"Listing HA entities: entity_filter={entity_id_filter}, "
+        f"area_filter={area_filter}, max={max_results}"
+    )
+
+    # Check if Home Assistant client is available
+    if (
+        not hasattr(exec_context, "home_assistant_client")
+        or not exec_context.home_assistant_client
+    ):
+        logger.error("Home Assistant client not available in execution context")
+        return ToolResult(
+            text="Error: Home Assistant integration is not configured or available."
+        )
+
+    ha_client = exec_context.home_assistant_client
+
+    # Limit max_results to 200
+    max_results = min(max_results, 200)
+
+    try:
+        # Use lock to prevent concurrent cache refreshes (race condition)
+        async with _entity_cache_lock:
+            # Check cache validity inside lock to prevent TOCTOU
+            now = datetime.now(UTC)
+            cache_valid = False
+            if _entity_list_cache:
+                cache_timestamp = _entity_list_cache.get("timestamp")
+                if (
+                    cache_timestamp
+                    and (now - cache_timestamp).total_seconds()
+                    < _ENTITY_CACHE_TTL_SECONDS
+                ):
+                    cache_valid = True
+                    logger.debug("Using cached entity list")
+
+            # Get entities from cache or fetch via template
+            if cache_valid:
+                entities = _entity_list_cache["entities"]
+                from_cache = True
+            else:
+                # Render template to get all entities with metadata
+                template = """[
+{% for state in states %}
+  {
+    "entity_id": "{{ state.entity_id }}",
+    "name": {{ state.name | tojson }},
+    "area_name": {{ area_name(state.entity_id) | default(none, true) | tojson }},
+    "device_id": {{ device_id(state.entity_id) | default(none, true) | tojson }},
+    "device_name": {{ device_name(state.entity_id) | default(none, true) | tojson }}
+  }{% if not loop.last %},{% endif %}
+{% endfor %}
+]"""
+
+                logger.debug(
+                    "Fetching entity list via template (cache miss or expired)"
+                )
+                rendered_json = await ha_client.async_get_rendered_template(
+                    template=template
+                )
+                entities = json.loads(rendered_json)
+
+                # Update cache
+                _entity_list_cache["entities"] = entities
+                _entity_list_cache["timestamp"] = now
+                from_cache = False
+                logger.info(f"Cached {len(entities)} entities")
+
+        # Apply filters
+        filtered = entities
+
+        if entity_id_filter:
+            filter_lower = entity_id_filter.lower()
+            filtered = [e for e in filtered if filter_lower in e["entity_id"].lower()]
+            logger.debug(f"After entity_id filter: {len(filtered)} entities")
+
+        if area_filter:
+            filter_lower = area_filter.lower()
+            filtered = [
+                e
+                for e in filtered
+                if e.get("area_name") and filter_lower in e["area_name"].lower()
+            ]
+            logger.debug(f"After area filter: {len(filtered)} entities")
+
+        # Limit results
+        total_matches = len(filtered)
+        result_entities = filtered[:max_results]
+
+        logger.info(
+            f"Returning {len(result_entities)} of {total_matches} matching entities"
+        )
+
+        # Build result data
+        # ast-grep-ignore: no-dict-any - Tool result data structure
+        result_data: dict[str, Any] = {
+            "entities": result_entities,
+            "total_matches": total_matches,
+            "from_cache": from_cache,
+        }
+
+        # Add filter info if filters were applied
+        if entity_id_filter or area_filter:
+            # ast-grep-ignore: no-dict-any - Filter info structure
+            filters_applied: dict[str, Any] = {}
+            if entity_id_filter:
+                filters_applied["entity_id_filter"] = entity_id_filter
+            if area_filter:
+                filters_applied["area_filter"] = area_filter
+            result_data["filters_applied"] = filters_applied
+
+        # Build text summary with actual entity details
+        if total_matches == 0:
+            text = "No matching entities found."
+        else:
+            # Build header
+            if total_matches <= max_results:
+                text = f"Found {total_matches} matching entities:\n\n"
+            else:
+                text = f"Found {total_matches} matching entities. Showing first {max_results}:\n\n"
+
+            # List each entity with details
+            for entity in result_entities:
+                entity_id = entity.get("entity_id", "unknown")
+                name = entity.get("name", entity_id)
+                area = entity.get("area_name")
+                device = entity.get("device_name")
+
+                # Build entity line with available metadata
+                text += f"- {entity_id}"
+                if name and name != entity_id:
+                    text += f" - {name}"
+                if area:
+                    text += f" (Area: {area})"
+                if device:
+                    text += f" [Device: {device}]"
+                text += "\n"
+
+            # Add filter info if filters were applied
+            if entity_id_filter or area_filter:
+                filter_desc = []
+                if entity_id_filter:
+                    filter_desc.append(f"entity_id contains '{entity_id_filter}'")
+                if area_filter:
+                    filter_desc.append(f"area contains '{area_filter}'")
+                text += f"\nFilters applied: {', '.join(filter_desc)}"
+
+        return ToolResult(text=text, data=result_data)
+
+    except Exception as e:
+        logger.error(f"Error listing entities: {e}", exc_info=True)
+        return ToolResult(text=f"Error: Failed to list entities: {str(e)}")
