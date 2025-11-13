@@ -51,8 +51,8 @@ async def test_list_home_assistant_entities_with_filter(
     """
     logger.info("\n--- Test: List Home Assistant Entities With Filter ---")
 
-    # Create mock entity list from template rendering
-    mock_entities_json = json.dumps([
+    # Create mock entity list
+    mock_entities = [
         {
             "entity_id": "sensor.living_room_temperature",
             "name": "Living Room Temperature",
@@ -74,12 +74,12 @@ async def test_list_home_assistant_entities_with_filter(
             "device_id": "ghi789",
             "device_name": "Smart Light",
         },
-    ])
+    ]
 
     # Create mock Home Assistant client
     mock_ha_client = MagicMock()
-    mock_ha_client.async_get_rendered_template = AsyncMock(
-        return_value=mock_entities_json
+    mock_ha_client.async_get_entity_list_with_metadata = AsyncMock(
+        return_value=mock_entities
     )
 
     tool_call_id = f"call_ha_list_{uuid.uuid4()}"
@@ -203,8 +203,8 @@ async def test_list_home_assistant_entities_with_filter(
     assert "Living Room Temperature" in final_reply, "Expected entity not in reply"
     assert "Bedroom Temperature" in final_reply, "Expected entity not in reply"
 
-    # Verify the mock was called correctly - template should be rendered
-    mock_ha_client.async_get_rendered_template.assert_awaited()
+    # Verify the mock was called correctly
+    mock_ha_client.async_get_entity_list_with_metadata.assert_awaited()
 
     logger.info("Test List Home Assistant Entities With Filter PASSED.")
 
@@ -219,7 +219,7 @@ async def test_list_home_assistant_entities_with_area_filter(
     logger.info("\n--- Test: List Home Assistant Entities With Area Filter ---")
 
     # Create mock entity list
-    mock_entities_json = json.dumps([
+    mock_entities = [
         {
             "entity_id": "sensor.pool_temperature",
             "name": "Pool Temperature",
@@ -241,11 +241,11 @@ async def test_list_home_assistant_entities_with_area_filter(
             "device_id": "light123",
             "device_name": "Smart Light",
         },
-    ])
+    ]
 
     mock_ha_client = MagicMock()
-    mock_ha_client.async_get_rendered_template = AsyncMock(
-        return_value=mock_entities_json
+    mock_ha_client.async_get_entity_list_with_metadata = AsyncMock(
+        return_value=mock_entities
     )
 
     tool_call_id = f"call_ha_area_{uuid.uuid4()}"

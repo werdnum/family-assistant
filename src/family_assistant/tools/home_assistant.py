@@ -6,7 +6,6 @@ rendering templates and retrieving camera snapshots.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from datetime import UTC, datetime, timedelta
@@ -22,13 +21,6 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
-
-
-# Cache for entity list to avoid repeated template renders
-# ast-grep-ignore: no-dict-any - Cache structure with entities list and timestamp
-_entity_list_cache: dict[str, Any] = {}
-_entity_cache_lock = asyncio.Lock()
-_ENTITY_CACHE_TTL_SECONDS = 120  # 2 minutes
 
 
 def detect_image_mime_type(content: bytes) -> str:
@@ -615,52 +607,8 @@ async def list_home_assistant_entities_tool(
     max_results = min(max_results, 200)
 
     try:
-        # Use lock to prevent concurrent cache refreshes (race condition)
-        async with _entity_cache_lock:
-            # Check cache validity inside lock to prevent TOCTOU
-            now = datetime.now(UTC)
-            cache_valid = False
-            if _entity_list_cache:
-                cache_timestamp = _entity_list_cache.get("timestamp")
-                if (
-                    cache_timestamp
-                    and (now - cache_timestamp).total_seconds()
-                    < _ENTITY_CACHE_TTL_SECONDS
-                ):
-                    cache_valid = True
-                    logger.debug("Using cached entity list")
-
-            # Get entities from cache or fetch via template
-            if cache_valid:
-                entities = _entity_list_cache["entities"]
-                from_cache = True
-            else:
-                # Render template to get all entities with metadata
-                template = """[
-{% for state in states %}
-  {
-    "entity_id": "{{ state.entity_id }}",
-    "name": {{ state.name | tojson }},
-    "area_name": {{ area_name(state.entity_id) | default(none, true) | tojson }},
-    "device_id": {{ device_id(state.entity_id) | default(none, true) | tojson }},
-    "device_name": {{ device_name(state.entity_id) | default(none, true) | tojson }}
-  }{% if not loop.last %},{% endif %}
-{% endfor %}
-]"""
-
-                logger.debug(
-                    "Fetching entity list via template (cache miss or expired)"
-                )
-                rendered_json = await ha_client.async_get_rendered_template(
-                    template=template
-                )
-                entities = json.loads(rendered_json)
-
-                # Update cache
-                _entity_list_cache["entities"] = entities
-                _entity_list_cache["timestamp"] = now
-                from_cache = False
-                logger.info(f"Cached {len(entities)} entities")
+        # Get entities from client (with built-in caching)
+        entities = await ha_client.async_get_entity_list_with_metadata()
 
         # Apply filters
         filtered = entities
@@ -675,7 +623,8 @@ async def list_home_assistant_entities_tool(
             filtered = [
                 e
                 for e in filtered
-                if e.get("area_name") and filter_lower in e["area_name"].lower()
+                if (area_name := e.get("area_name"))
+                and filter_lower in area_name.lower()
             ]
             logger.debug(f"After area filter: {len(filtered)} entities")
 
@@ -692,7 +641,6 @@ async def list_home_assistant_entities_tool(
         result_data: dict[str, Any] = {
             "entities": result_entities,
             "total_matches": total_matches,
-            "from_cache": from_cache,
         }
 
         # Add filter info if filters were applied
