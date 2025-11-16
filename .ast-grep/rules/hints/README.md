@@ -51,6 +51,29 @@ better test reliability.
 - Use fake implementations for external services
 - Reserve mocks for truly external dependencies (e.g., Telegram API, external HTTP services)
 
+### `toolresult-data-text-warning`
+
+**Pattern**: `ToolResult` with both `text` and `data` parameters
+
+**Why**: When both fields are provided, `text` is sent to LLMs while `data` is used by
+scripts/tests. Even with dynamic text (f-strings, expressions), the text might only convey metadata
+(e.g., "Found 5 items") rather than the actual data.
+
+**Example**:
+
+```python
+# ⚠️ Text has metadata but not actual data
+return ToolResult(text=f"Retrieved {len(results)} results", data=results)
+
+# ✅ Text includes actual data or is omitted
+return ToolResult(text=f"Results: {results}", data=results)
+return ToolResult(data=results)  # Auto-generates text from data
+```
+
+**Note**: String literals with data are blocked by the conformance rule
+`toolresult-text-literal-with-data`. This hint catches the subtler cases where text is dynamic but
+still doesn't convey the data content.
+
 ## Adding New Hints
 
 1. **Create hint rule file**: `.ast-grep/rules/hints/<hint-id>.yml`

@@ -1,0 +1,34 @@
+id: toolresult-data-text-warning
+language: python
+severity: hint
+message: "ToolResult with both text and data: ensure text contains actual data, not just metadata"
+note: |
+  When ToolResult has both 'text' and 'data' parameters, the text field is sent to LLMs
+  while the data field is used by scripts and tests. Ensure the text conveys the actual
+  data content, not just metadata about it.
+
+  ❌ PROBLEMATIC - Text describes data but doesn't include it:
+    ToolResult(text=f"Retrieved {len(results)} results", data=results)
+    ToolResult(text=f"Found {count} items", data=items)
+
+  ✅ GOOD - Text includes the actual data or is omitted:
+    ToolResult(text=json.dumps(results), data=results)
+    ToolResult(text=f"Results: {results}", data=results)
+    ToolResult(data=results)  # Text auto-generated from data
+
+  This hint appears when both text and data are provided. Consider:
+  1. Does the LLM need the actual data or just a summary?
+  2. If the LLM needs the data, does the text field include it?
+  3. If not, either add the data to text or omit text entirely
+
+  Note: String literals with data are caught by the conformance rule
+  'toolresult-text-literal-with-data' which blocks commits.
+
+rule:
+  any:
+    # Match with text and data (any order, with possible other args)
+    - pattern: ToolResult($$$A, text=$TEXT, $$$B, data=$DATA, $$$C)
+    - pattern: ToolResult($$$A, data=$DATA, $$$B, text=$TEXT, $$$C)
+    # Match with just text and data (no other args)
+    - pattern: ToolResult(text=$TEXT, data=$DATA)
+    - pattern: ToolResult(data=$DATA, text=$TEXT)
