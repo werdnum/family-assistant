@@ -76,15 +76,10 @@ if grep -q "playwright" pyproject.toml 2>/dev/null; then
 fi
 
 # Step 8: Update Claude plugin marketplaces
-if command -v claude >/dev/null 2>&1; then
-    echo "🔄 Updating Claude plugin marketplaces..."
-    claude plugin marketplace update || {
-        echo "⚠️  Warning: Failed to update Claude plugin marketplaces"
-        echo "   You may need to run: claude plugin marketplace update manually"
-    }
-else
-    echo "⚠️  Claude CLI not found, skipping plugin marketplace update"
-fi
+# The `claude plugin marketplace update` command is disabled here, as it can
+# cause a deadlock when run from the SessionStart hook in a remote session.
+# To update marketplaces, run the command manually:
+# claude plugin marketplace update
 
 # Step 9: Verify setup
 echo ""

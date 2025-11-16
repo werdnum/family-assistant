@@ -10,18 +10,35 @@ if [ "${CLAUDE_CODE_REMOTE:-false}" != "true" ]; then
     exit 0
 fi
 
-echo "🚀 Setting up workspace for remote Claude Code session..." >&2
-
-# Run the setup script from the project root
+# Go to project root
 cd "$(git rev-parse --show-toplevel)"
-if [ -f "scripts/setup-workspace.sh" ]; then
-    bash scripts/setup-workspace.sh
+
+# Success marker file
+SUCCESS_MARKER=".venv/.setup_complete"
+
+# If setup has already run successfully, just set env vars and exit
+if [ -f "$SUCCESS_MARKER" ]; then
+    VENV_PATH="$(pwd)/.venv"
+    PYTHON_BIN="${VENV_PATH}/bin"
+
+    if [ -n "$CLAUDE_ENV_FILE" ]; then
+        echo "export VIRTUAL_ENV='${VENV_PATH}'" >> "$CLAUDE_ENV_FILE"
+        echo "export PATH='${PYTHON_BIN}:${PATH}'" >> "$CLAUDE_ENV_FILE"
+    fi
+    echo "✓ Workspace setup previously completed, environment configured." >&2
+    exit 0
 fi
 
-# Ensure pgserver extra is installed
-echo "🔍 Ensuring pgserver extra is installed..." >&2
-source .venv/bin/activate
-uv sync --extra dev --extra pgserver
+# Run the setup script
+echo "🚀 Setting up workspace for remote Claude Code session..." >&2
+if [ -f "scripts/setup-workspace.sh" ]; then
+    # Capture output and display on error
+    if ! bash scripts/setup-workspace.sh > setup.log 2>&1; then
+        echo "❌ Workspace setup failed. See setup.log for details." >&2
+        cat setup.log >&2
+        exit 1
+    fi
+fi
 
 # Set environment variables for the activated virtual environment
 VENV_PATH="$(pwd)/.venv"
@@ -33,7 +50,9 @@ if [ -n "$CLAUDE_ENV_FILE" ]; then
     echo "export PATH='${PYTHON_BIN}:${PATH}'" >> "$CLAUDE_ENV_FILE"
 fi
 
+# Create success marker
+touch "$SUCCESS_MARKER"
+
 echo "✓ Workspace setup complete" >&2
 
 exit 0
-
