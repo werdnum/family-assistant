@@ -1,0 +1,32 @@
+id: toolresult-text-literal-with-data
+language: python
+severity: error
+message: "ToolResult with string literal for 'text' and 'data': LLM receives constant, not actual data"
+note: |
+  When ToolResult has both 'text' (as a string literal) and 'data', the LLM receives only
+  the constant string while the actual data is hidden in the 'data' field.
+
+  ❌ INCORRECT - LLM receives useless constant:
+    ToolResult(text="Here is the data", data=actual_data)
+    ToolResult(text="Operation completed", data=result)
+
+  ✅ CORRECT - Use f-string, expression, or omit text:
+    ToolResult(text=f"Found {len(items)} items", data=items)
+    ToolResult(text=json.dumps(result), data=result)
+    ToolResult(data=result)  # text auto-generated from data
+
+  If the literal string genuinely conveys equivalent information (e.g., simple error messages),
+  add an exemption:
+    # ast-grep-ignore: toolresult-text-literal-with-data - Error message is sufficient
+    return ToolResult(text="Error: Invalid input", data={"error": "Invalid input"})
+
+rule:
+  any:
+    # Match string literal for text with data (text before data, with other args)
+    - pattern: ToolResult($$$A, text="$$$TEXT", $$$B, data=$DATA, $$$C)
+    # Match string literal for text with data (data before text, with other args)
+    - pattern: ToolResult($$$A, data=$DATA, $$$B, text="$$$TEXT", $$$C)
+    # Match string literal for text with data (just these two args, text first)
+    - pattern: ToolResult(text="$$$TEXT", data=$DATA)
+    # Match string literal for text with data (just these two args, data first)
+    - pattern: ToolResult(data=$DATA, text="$$$TEXT")

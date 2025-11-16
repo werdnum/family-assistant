@@ -44,6 +44,7 @@ def test_toolresult_text_only_non_json() -> None:
 
 def test_toolresult_both_fields() -> None:
     """Both fields: each accessible independently."""
+    # ast-grep-ignore: toolresult-text-literal-with-data - Test verifies both fields work
     result = ToolResult(
         text="Created item with ID 789", data={"id": 789, "created": True}
     )

@@ -69,6 +69,38 @@ await expect(page.locator("#status")).to_have_text("Complete")
 await page.wait_for_load_state("networkidle")
 ```
 
+### Tool Development Anti-Patterns
+
+#### `toolresult-text-literal-with-data`
+
+**Pattern**: `ToolResult` with a string literal for `text` parameter and `data` parameter
+
+**Why it's banned**: When `ToolResult` has both `text` (as a string literal) and `data`, the `text`
+field is sent to LLMs while the `data` field is used by scripts and tests. Using a string literal
+for `text` means the LLM receives only a constant message and has no access to the actual data in
+the `data` field.
+
+**Replacement**:
+
+```python
+# ❌ INCORRECT - LLM receives useless constant
+return ToolResult(text="Here is the data", data=actual_data)
+return ToolResult(text="Operation completed", data=result)
+
+# ✅ CORRECT - Use f-string, expression, or omit text
+return ToolResult(text=f"Found {len(items)} items", data=items)
+return ToolResult(text=json.dumps(result), data=result)
+return ToolResult(data=result)  # text auto-generated from data
+```
+
+**Note**: If the string literal genuinely conveys equivalent information (rare), you can add an
+exemption:
+
+```python
+# ast-grep-ignore: toolresult-text-literal-with-data - Error message is sufficient
+return ToolResult(text="Error: Invalid input", data={"error": "Invalid input"})
+```
+
 ### Type Annotation Quality
 
 #### `no-dict-any`
