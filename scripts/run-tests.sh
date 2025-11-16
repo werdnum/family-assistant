@@ -100,6 +100,14 @@ if [ ${#PYTEST_ARGS[@]} -eq 0 ]; then
     PYTEST_ARGS=("tests" "--ignore=scratch")
 fi
 
+# Ensure dependencies are installed
+echo "${BLUE}Ensuring all dependencies are installed...${NC}"
+if ! uv sync --extra dev --extra pgserver; then
+    echo "${RED}❌ Dependency installation failed.${NC}" >&2
+    exit 1
+fi
+echo "${GREEN}✓ Dependencies are up to date${NC}"
+
 # Acquire exclusive lock to prevent concurrent test runs
 LOCK_FILE="$HOME/.poe-test.lock"
 exec 200>"$LOCK_FILE"
