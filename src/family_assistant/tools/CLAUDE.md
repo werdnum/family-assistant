@@ -335,6 +335,42 @@ elif isinstance(data, str):
 - Backward compatibility with existing tools
 - No structured output needed for programmatic access
 
+### ⚠️ Common Pitfall: String Literal for Text with Data
+
+**IMPORTANT**: When providing both `text` and `data`, the `text` field is sent to LLMs while `data`
+is used by scripts and tests. A common mistake is using a **string literal** for `text`:
+
+```python
+# ❌ INCORRECT - LLM receives useless constant string (will fail lint check)
+return ToolResult(text="Here is the data", data=actual_data)
+return ToolResult(text="Operation completed", data=result)
+return ToolResult(text="Success", data={"items": items})
+```
+
+In these cases, the LLM only sees a generic constant and has no access to the actual data!
+
+```python
+# ✅ CORRECT - Use f-string, expression, or omit text:
+return ToolResult(text=f"Found {len(items)} items", data=items)
+return ToolResult(text=json.dumps(result), data=result)
+return ToolResult(data=result)  # text auto-generated from data
+```
+
+**Enforcement**: The codebase has an ast-grep conformance rule (`toolresult-text-literal-with-data`)
+that **blocks commits** when `text` is a string literal and `data` is also provided. This prevents
+the footgun at development time.
+
+**Exemptions**: If a string literal genuinely conveys equivalent information (rare), add an
+exemption:
+
+```python
+# ast-grep-ignore: toolresult-text-literal-with-data - Error message is sufficient
+return ToolResult(text="Error: Invalid input", data={"error": "Invalid input"})
+```
+
+**Best Practice**: Prefer dynamic text (f-strings, expressions) or omit `text` entirely to let it
+auto-generate from `data`.
+
 ### Examples from the Codebase
 
 See `src/family_assistant/tools/automations.py` for comprehensive examples:
