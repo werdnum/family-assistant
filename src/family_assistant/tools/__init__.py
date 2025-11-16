@@ -77,6 +77,10 @@ from family_assistant.tools.data_visualization import (
     DATA_VISUALIZATION_TOOLS_DEFINITION,
     create_vega_chart_tool,
 )
+from family_assistant.tools.database import (
+    DATABASE_TOOLS_DEFINITION,
+    database_readonly_query,
+)
 from family_assistant.tools.documents import (
     DOCUMENT_TOOLS_DEFINITION,
     _scan_user_docs,
@@ -93,6 +97,10 @@ from family_assistant.tools.events import (
 from family_assistant.tools.execute_script import (
     SCRIPT_TOOLS_DEFINITION,
     execute_script_tool,
+)
+from family_assistant.tools.github import (
+    GITHUB_TOOLS_DEFINITION,
+    create_github_issue,
 )
 from family_assistant.tools.home_assistant import (
     HOME_ASSISTANT_TOOLS_DEFINITION,
@@ -140,6 +148,10 @@ from family_assistant.tools.notes import (
 from family_assistant.tools.services import (
     SERVICE_TOOLS_DEFINITION,
     delegate_to_service_tool,
+)
+from family_assistant.tools.source_code import (
+    SOURCE_CODE_TOOLS_DEFINITION,
+    read_source_code,
 )
 from family_assistant.tools.tasks import (
     TASK_TOOLS_DEFINITION,
@@ -410,6 +422,10 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "spawn_worker": spawn_worker_tool,
     "read_task_result": read_task_result_tool,
     "list_worker_tasks": list_worker_tasks_tool,
+    # Engineer profile tools
+    "read_source_code": read_source_code,
+    "create_github_issue": create_github_issue,
+    "database_readonly_query": database_readonly_query,
 }
 
 
@@ -437,4 +453,7 @@ TOOLS_DEFINITION: list[ToolDefinition] = (
     + COMPUTER_USE_TOOLS_DEFINITION
     + WORKSPACE_TOOLS_DEFINITION
     + WORKER_TOOLS_DEFINITION
+    + SOURCE_CODE_TOOLS_DEFINITION
+    + GITHUB_TOOLS_DEFINITION
+    + DATABASE_TOOLS_DEFINITION
 )
