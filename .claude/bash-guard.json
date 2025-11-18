@@ -71,7 +71,7 @@
     {
       "regexp": "\\bllm\\s+.*-m\\s+gemini-2\\.0",
       "action": "block",
-      "explanation": "gemini-2.0 models are outdated. Use gemini-2.5-pro or gemini-2.5-flash instead for better performance."
+      "explanation": "gemini-2.0 models are outdated. Use gemini-3-pro-preview or gemini-2.5-flash instead for better performance."
     },
     {
       "regexp": "\\brm\\b.*\\.poe-test\\.lock",

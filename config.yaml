@@ -118,7 +118,7 @@ default_profile_settings:
     retry_config:
       primary:
         provider: "google"
-        model: "gemini-2.5-pro"
+        model: "gemini-3-pro-preview"
       fallback:
         provider: "openai"
         model: "gpt-5"
@@ -215,7 +215,7 @@ service_profiles:
     processing_config:
       # Using simple format (no retry/fallback for browser tasks)
       provider: "google"
-      llm_model: "gemini-2.5-pro"
+      llm_model: "gemini-3-pro-preview"
       prompts: # MERGES with default_profile_settings.processing_config.prompts
         system_prompt: "You are an assistant with web browsing capabilities interacting with {user_name}. After any tool calls you make, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users. Current time is {current_time}."
       delegation_security_level: "unrestricted" # This profile can be delegated to without forced confirmation
@@ -272,11 +272,11 @@ service_profiles:
       - "/visualize"
       - "/chart"
   - id: "event_handler"
-    description: "Restricted assistant profile for automated script-event integration. Uses Gemini 2.5 Pro with read-only and non-destructive tools only."
+    description: "Restricted assistant profile for automated script-event integration. Uses Gemini 3 Pro Preview with read-only and non-destructive tools only."
     processing_config:
       # Using direct Google provider for consistency
       provider: "google"
-      llm_model: "gemini-2.5-pro"
+      llm_model: "gemini-3-pro-preview"
       # Auto-load system documentation into this profile's system prompt
       # include_system_docs:
       #   - "USER_GUIDE.md"
@@ -308,7 +308,7 @@ service_profiles:
     description: "Specialized profile for creating and validating event-based and schedule-based automations. Includes comprehensive scripting documentation and validation tools."
     processing_config:
       provider: "google"
-      llm_model: "gemini-2.5-pro"
+      llm_model: "gemini-3-pro-preview"
       max_iterations: 25 # Allow more iterations for complex validation workflows
       delegation_security_level: "unrestricted" # Can delegate to other profiles if needed
       include_system_docs:
