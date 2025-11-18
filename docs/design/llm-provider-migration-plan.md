@@ -826,7 +826,7 @@ processing_config:
   retry_config:
     primary:
       provider: "google"
-      model: "gemini-2.5-pro"
+      model: "gemini-3-pro-preview"
     fallback:
       provider: "openai"
       model: "o4-mini"
@@ -834,7 +834,7 @@ processing_config:
 
 This configuration provides:
 
-- Primary: Google Gemini 2.5 Pro (direct SDK)
+- Primary: Google Gemini 3 Pro Preview (direct SDK)
 - Fallback: OpenAI o4-mini (direct SDK, cost-effective)
 - Automatic retry on transient errors
 - Seamless fallback if primary provider fails
@@ -918,7 +918,7 @@ service_profiles:
       retry_config:
         primary:
           provider: "google"
-          model: "gemini-2.5-pro"
+          model: "gemini-3-pro-preview"
           api_base: "https://generativelanguage.googleapis.com/v1beta"
         fallback:
           provider: "openai"  # Using OpenRouter as OpenAI-compatible
