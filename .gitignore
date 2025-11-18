@@ -11,6 +11,7 @@ scratch
 .coverage
 coverage_annotated/
 logs.log
+setup.log
 .serena/cache/
 local-logs.txt
 
