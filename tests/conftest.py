@@ -954,13 +954,47 @@ async def radicale_server(
 # --- VCR.py Configuration for LLM Integration Tests ---
 
 
+# --- Unified LLM Record/Replay Configuration ---
+@pytest.fixture(scope="session")
+def llm_record_mode() -> str:
+    """
+    Unified record/replay mode for all LLM providers.
+
+    Controlled by LLM_RECORD_MODE environment variable.
+
+    Modes:
+        - replay (default): Only use existing recordings (safe for CI)
+        - auto: Record if missing, else replay (convenient for dev)
+        - record: Force re-record everything (requires API keys)
+
+    Returns:
+        One of: "replay", "auto", "record"
+
+    Raises:
+        ValueError: If LLM_RECORD_MODE is set to an invalid value
+    """
+    mode = os.getenv("LLM_RECORD_MODE", "replay")
+    if mode not in {"replay", "auto", "record"}:
+        raise ValueError(
+            f"Invalid LLM_RECORD_MODE: {mode}. Must be one of: replay, auto, record"
+        )
+    return mode
+
+
 @pytest.fixture(scope="module")
 # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-def vcr_config() -> dict[str, Any]:
-    """Configure VCR for recording and replaying HTTP interactions."""
-    # Only use "once" mode if explicitly requested via environment variable
-    # Default to "none" mode which will only use existing cassettes
-    record_mode = os.getenv("VCR_RECORD_MODE", "none")
+def vcr_config(llm_record_mode: str) -> dict[str, Any]:
+    """
+    Configure VCR for recording and replaying HTTP interactions.
+
+    Uses unified llm_record_mode to determine VCR's record_mode.
+    """
+    # Map unified mode to VCR's mode semantics
+    mode_mapping = {
+        "replay": "none",  # Only replay existing cassettes
+        "auto": "once",  # Record if cassette missing, else replay
+        "record": "all",  # Force re-record all cassettes
+    }
 
     return {
         # Filter sensitive headers
@@ -973,8 +1007,8 @@ def vcr_config() -> dict[str, Any]:
         ],
         # Filter sensitive query parameters
         "filter_query_parameters": ["api_key", "key"],
-        # Default to "none" mode - only replay existing cassettes, don't record
-        "record_mode": record_mode,
+        # Use unified mode mapped to VCR semantics
+        "record_mode": mode_mapping[llm_record_mode],
         # Match requests on these attributes
         "match_on": ["method", "scheme", "host", "port", "path", "query", "body"],
         # Store cassettes in organized directory structure
@@ -1043,48 +1077,63 @@ def vcr_bypass_for_streaming(request: pytest.FixtureRequest) -> None:
         request.addfinalizer(restore)
 
 
-# --- Google GenAI SDK Record/Replay ---
 @pytest.fixture
-def gemini_replay_config(request: pytest.FixtureRequest) -> dict[str, str]:
+def llm_replay_config(
+    request: pytest.FixtureRequest, llm_record_mode: str
+) -> dict[str, str]:
     """
-    Configure Gemini client for record/replay using SDK's DebugConfig.
+    Unified record/replay configuration for all LLM providers.
 
-    This fixture uses Google GenAI SDK's built-in replay functionality which
-    natively supports streaming, avoiding VCR.py compatibility issues.
+    Automatically configures the appropriate mechanism based on the provider
+    being tested. Providers are detected from test parametrization.
 
-    The replay mode is controlled by the GEMINI_RECORD_MODE environment variable:
-    - "auto" (default): Replay if cassette exists, otherwise record
-    - "record": Always call API and record responses
-    - "replay": Only replay from existing cassettes (fail if missing)
+    For Google Gemini:
+        Returns DebugConfig parameters for SDK's built-in replay (native streaming support)
 
-    Replay files are stored in tests/cassettes/gemini/ with hierarchical structure:
-    - {module}/{test_name}/mldev.json
+    For other providers (OpenAI, etc.):
+        Returns empty dict - VCR.py handles recording via @pytest.mark.vcr decorator
 
-    Usage:
-    ------
-    def test_gemini_streaming(gemini_replay_config):
-        client = GoogleGenAIClient(debug_config=gemini_replay_config)
-        # Test will automatically record on first run, replay on subsequent runs
+    Environment Variables:
+        LLM_RECORD_MODE: Control recording behavior (default: replay)
+            - replay: Only use existing recordings (safe for CI)
+            - auto: Record if missing, else replay (convenient for dev)
+            - record: Force re-record all interactions (requires API keys)
 
-    Recording cassettes:
+    Recording Examples:
     -------------------
-    GEMINI_RECORD_MODE=record pytest tests/integration/llm/test_streaming.py -k gemini
+    # Record all LLM tests
+    LLM_RECORD_MODE=record pytest tests/integration/llm/
+
+    # Record only Gemini tests
+    LLM_RECORD_MODE=record GEMINI_API_KEY=xxx pytest tests/integration/llm/ -k gemini
+
+    # Auto-record missing interactions during development
+    LLM_RECORD_MODE=auto pytest tests/integration/llm/
 
     Benefits:
     ---------
-    - Native streaming support (no VCR.py compatibility issues)
-    - Works in CI without API keys (uses replay mode)
-    - Automatic recording on first run with "auto" mode
-    - SDK-maintained recording infrastructure
+    - Single interface for all LLM providers
+    - Provider-agnostic test code
+    - Automatic provider detection via parametrization
+    - Consistent recording behavior across providers
     """
-    test_name = request.node.name
-    module_name = request.node.module.__name__.replace("tests.", "")
+    # Detect provider from test parametrization
+    provider = request.node.callspec.params.get("provider", "")
 
-    return {
-        "client_mode": os.getenv("GEMINI_RECORD_MODE", "auto"),
-        "replay_id": f"{module_name}/{test_name}/mldev",
-        "replays_directory": "tests/cassettes/gemini",
-    }
+    if provider == "google":
+        # Google uses SDK's DebugConfig for native streaming support
+        test_name = request.node.name
+        module_name = request.node.module.__name__.replace("tests.", "")
+
+        return {
+            "client_mode": llm_record_mode,  # Use unified mode
+            "replay_id": f"{module_name}/{test_name}/mldev",
+            "replays_directory": "tests/cassettes/gemini",
+        }
+    else:
+        # Other providers use VCR.py (configured via vcr_config fixture)
+        # Return empty dict - VCR.py intercepts HTTP automatically
+        return {}
 
 
 @pytest.fixture(scope="session")

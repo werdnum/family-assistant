@@ -2,15 +2,18 @@
 
 ## Overview
 
-We use [VCR.py](https://vcrpy.readthedocs.io/) via
-[pytest-recording](https://github.com/kiwicom/pytest-recording) to test LLM provider integrations.
-This approach records HTTP interactions during initial test runs and replays them in subsequent
-runs, allowing us to:
+We use a **unified record/replay system** for testing LLM provider integrations:
 
-- Test against real LLM APIs without incurring costs on every test run
-- Ensure tests are deterministic and reproducible
-- Run tests in CI/CD without requiring API keys
-- Verify provider-specific behavior
+- **OpenAI**: Uses [VCR.py](https://vcrpy.readthedocs.io/) for HTTP-level recording
+- **Google Gemini**: Uses SDK's built-in DebugConfig for native streaming support
+
+Both mechanisms are controlled via the `LLM_RECORD_MODE` environment variable, providing:
+
+- Testing against real LLM APIs without incurring costs on every test run
+- Deterministic and reproducible tests
+- CI/CD execution without requiring API keys
+- Verification of provider-specific behavior
+- Full streaming support for all providers
 
 ## Running Tests
 
@@ -30,35 +33,38 @@ pytest tests/integration/llm -k "google" -m llm_integration
 pytest tests/integration/llm -m llm_integration -v
 ```
 
-### Recording New Cassettes
+### Recording New Interactions
 
-To record new cassettes, you need:
+To record new interactions, you need:
 
 1. Valid API keys for the providers you want to test
-2. The `--record-mode` flag or `VCR_RECORD_MODE` environment variable
+2. The `LLM_RECORD_MODE` environment variable
 
 ```bash
 # Set API keys
 export OPENAI_API_KEY=your-openai-key
 export GEMINI_API_KEY=your-gemini-key
 
-# Record new cassettes (overwrites existing)
-pytest tests/integration/llm -m llm_integration --record-mode=rewrite
+# Record new interactions (force re-record everything)
+LLM_RECORD_MODE=record pytest tests/integration/llm -m llm_integration
 
-# Record only missing cassettes
-pytest tests/integration/llm -m llm_integration --record-mode=once
+# Auto-record missing interactions (recommended for development)
+LLM_RECORD_MODE=auto pytest tests/integration/llm -m llm_integration
 
-# Alternative: Use environment variable
-VCR_RECORD_MODE=rewrite pytest tests/integration/llm -m llm_integration
+# Replay only (default - safe for CI)
+LLM_RECORD_MODE=replay pytest tests/integration/llm -m llm_integration
 ```
 
-### Record Modes
+### LLM_RECORD_MODE Values
 
-- `once` (default): Record only if cassette doesn't exist
-- `new_episodes`: Append new interactions to existing cassettes
-- `none`: Never record, fail if cassette is missing
-- `rewrite`: Always record, overwrite existing cassettes
-- `all`: Record everything, even if cassette exists
+- `replay` (default): Only use existing recordings - no API calls, safe for CI
+- `auto`: Record if missing, else replay - convenient for development
+- `record`: Force re-record everything - requires API keys, overwrites existing
+
+**Implementation Details:**
+
+- OpenAI: Recordings stored as YAML in `tests/cassettes/llm/`
+- Gemini: Recordings stored as JSON in `tests/cassettes/gemini/`
 
 ## Test Structure
 
