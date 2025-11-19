@@ -1,24 +1,46 @@
-"""Integration tests for LLM streaming functionality with provider-specific record/replay.
+"""Integration tests for LLM streaming functionality with unified record/replay.
 
-This file contains streaming tests for multiple LLM providers:
-- OpenAI: Uses VCR.py for recording/replaying HTTP requests
-- Google Gemini: Uses Google GenAI SDK's built-in DebugConfig for record/replay
+This file contains streaming tests for multiple LLM providers with a unified
+record/replay interface:
 
-Google Gemini Record/Replay Approach:
-The Google GenAI SDK provides native record/replay functionality via DebugConfig that
-natively supports streaming, avoiding VCR.py compatibility issues (VCR.py issue #927 where
-MockStream doesn't implement the readany() method required by aiohttp 3.12+).
+- **OpenAI**: Uses VCR.py for HTTP-level recording
+- **Google Gemini**: Uses SDK's built-in DebugConfig (native streaming support)
 
-1. Tests use the gemini_replay_config fixture to configure record/replay mode
-2. Replay mode is controlled by GEMINI_RECORD_MODE environment variable:
-   - "auto" (default): Replay if cassette exists, otherwise record
-   - "record": Always call API and record responses
-   - "replay": Only replay from existing cassettes
-3. Cassettes are stored in tests/cassettes/gemini/ with hierarchical structure
-4. Tests work in CI without API keys using replay mode (default)
+## Unified Record/Replay Interface
 
-This approach provides deterministic testing with full streaming support while
-maintaining compatibility with VCR.py for other providers.
+All tests use the `llm_replay_config` fixture which automatically selects the
+appropriate mechanism based on the provider being tested.
+
+### Environment Variables
+
+**LLM_RECORD_MODE** - Controls recording behavior for all providers:
+  - `replay` (default): Only use existing recordings (safe for CI, no API calls)
+  - `auto`: Record if missing, else replay (convenient for development)
+  - `record`: Force re-record everything (requires API keys)
+
+### Usage Examples
+
+```bash
+# Run tests with existing recordings (default)
+pytest tests/integration/llm/test_streaming.py
+
+# Auto-record missing interactions
+LLM_RECORD_MODE=auto pytest tests/integration/llm/test_streaming.py
+
+# Force re-record all interactions
+LLM_RECORD_MODE=record pytest tests/integration/llm/test_streaming.py
+
+# Record only Gemini tests
+LLM_RECORD_MODE=record GEMINI_API_KEY=xxx pytest tests/integration/llm/ -k gemini
+```
+
+### Implementation Details
+
+- **VCR.py (OpenAI)**: YAML cassettes in `tests/cassettes/llm/`
+- **DebugConfig (Gemini)**: JSON replays in `tests/cassettes/gemini/`
+
+This provides deterministic testing with full streaming support while maintaining
+a single, consistent interface for all providers.
 """
 
 import json
@@ -556,10 +578,10 @@ async def test_basic_streaming_gemini(
         [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
     ],
     # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
-    gemini_replay_config: dict[str, Any],
+    llm_replay_config: dict[str, Any],
 ) -> None:
     """Test basic streaming functionality for Google Gemini using SDK record/replay."""
-    client = await llm_client_factory(provider, model, None, gemini_replay_config)
+    client = await llm_client_factory(provider, model, None, llm_replay_config)
 
     # Simple streaming request
     messages = [
@@ -608,10 +630,10 @@ async def test_streaming_with_system_message_gemini(
         [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
     ],
     # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
-    gemini_replay_config: dict[str, Any],
+    llm_replay_config: dict[str, Any],
 ) -> None:
     """Test streaming with system messages for Google Gemini using SDK record/replay."""
-    client = await llm_client_factory(provider, model, None, gemini_replay_config)
+    client = await llm_client_factory(provider, model, None, llm_replay_config)
 
     messages = [
         create_system_message(
@@ -664,10 +686,10 @@ async def test_streaming_with_tool_calls_gemini(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     sample_tools: list[dict[str, Any]],
     # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
-    gemini_replay_config: dict[str, Any],
+    llm_replay_config: dict[str, Any],
 ) -> None:
     """Test streaming with tool calls for Google Gemini using SDK record/replay."""
-    client = await llm_client_factory(provider, model, None, gemini_replay_config)
+    client = await llm_client_factory(provider, model, None, llm_replay_config)
 
     messages = [
         create_user_message(
@@ -722,10 +744,10 @@ async def test_streaming_error_handling_gemini(
         [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
     ],
     # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
-    gemini_replay_config: dict[str, Any],
+    llm_replay_config: dict[str, Any],
 ) -> None:
     """Test error handling during streaming for Google Gemini using SDK record/replay."""
-    client = await llm_client_factory(provider, model, None, gemini_replay_config)
+    client = await llm_client_factory(provider, model, None, llm_replay_config)
 
     # Test with invalid message format (missing role)
     messages = [
@@ -767,10 +789,10 @@ async def test_streaming_with_multi_turn_conversation_gemini(
         [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
     ],
     # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
-    gemini_replay_config: dict[str, Any],
+    llm_replay_config: dict[str, Any],
 ) -> None:
     """Test streaming with multi-turn conversation for Google Gemini using SDK record/replay."""
-    client = await llm_client_factory(provider, model, None, gemini_replay_config)
+    client = await llm_client_factory(provider, model, None, llm_replay_config)
 
     messages = [
         create_user_message("My favorite color is blue. Remember this."),
@@ -812,10 +834,10 @@ async def test_streaming_reasoning_info_gemini(
         [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
     ],
     # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
-    gemini_replay_config: dict[str, Any],
+    llm_replay_config: dict[str, Any],
 ) -> None:
     """Test that reasoning info (usage data) is included in streaming responses for Google Gemini using SDK record/replay."""
-    client = await llm_client_factory(provider, model, None, gemini_replay_config)
+    client = await llm_client_factory(provider, model, None, llm_replay_config)
 
     messages = [create_user_message("Say 'hello world'")]
 
@@ -871,7 +893,7 @@ async def test_google_streaming_with_multiturns_and_tool_calls(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     sample_tools: list[dict[str, Any]],
     # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
-    gemini_replay_config: dict[str, Any],
+    llm_replay_config: dict[str, Any],
 ) -> None:
     """Test streaming with multi-turn conversation including tool calls for Google Gemini.
 
@@ -885,7 +907,7 @@ async def test_google_streaming_with_multiturns_and_tool_calls(
     3. Real API call (not VCR replay)
     """
 
-    client = await llm_client_factory(provider, model, None, gemini_replay_config)
+    client = await llm_client_factory(provider, model, None, llm_replay_config)
     assert isinstance(client, GoogleGenAIClient)
 
     # Simulate a multi-turn conversation with tool calls
@@ -981,7 +1003,7 @@ async def test_google_streaming_pydantic_validation_reproducer(
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     sample_tools: list[dict[str, Any]],
     # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
-    gemini_replay_config: dict[str, Any],
+    llm_replay_config: dict[str, Any],
 ) -> None:
     """Reproducer test for Pydantic validation error with Google GenAI streaming.
 
@@ -1000,7 +1022,7 @@ async def test_google_streaming_pydantic_validation_reproducer(
     - PASS after fix: Snake_case keys allow SDK validation to succeed
     """
     client = await llm_client_factory(
-        "google", "gemini-2.5-flash-lite-preview-06-17", None, gemini_replay_config
+        "google", "gemini-2.5-flash-lite-preview-06-17", None, llm_replay_config
     )
     assert isinstance(client, GoogleGenAIClient)
 
