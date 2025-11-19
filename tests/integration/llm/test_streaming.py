@@ -1,21 +1,24 @@
-"""Integration tests for LLM streaming functionality using VCR.py for record/replay.
+"""Integration tests for LLM streaming functionality with provider-specific record/replay.
 
 This file contains streaming tests for multiple LLM providers:
 - OpenAI: Uses VCR.py for recording/replaying HTTP requests
-- Google Gemini: Uses @pytest.mark.no_vcr to bypass VCR.py due to streaming incompatibility
+- Google Gemini: Uses Google GenAI SDK's built-in DebugConfig for record/replay
 
-VCR.py Issue #927 and Solution:
-The MockStream object created by VCR.py doesn't implement the `readany()` method required
-by aiohttp 3.12+ for streaming responses. To address this, Google Gemini streaming tests
-use a custom VCR bypass mechanism:
+Google Gemini Record/Replay Approach:
+The Google GenAI SDK provides native record/replay functionality via DebugConfig that
+natively supports streaming, avoiding VCR.py compatibility issues (VCR.py issue #927 where
+MockStream doesn't implement the readany() method required by aiohttp 3.12+).
 
-1. Tests marked with @pytest.mark.no_vcr automatically disable VCR.py
-2. The vcr_bypass_for_streaming fixture in conftest.py handles this via monkey-patching
-3. This allows streaming tests to make real API calls while maintaining test isolation
-4. Tests are skipped in CI without API keys to prevent failures
+1. Tests use the gemini_replay_config fixture to configure record/replay mode
+2. Replay mode is controlled by GEMINI_RECORD_MODE environment variable:
+   - "auto" (default): Replay if cassette exists, otherwise record
+   - "record": Always call API and record responses
+   - "replay": Only replay from existing cassettes
+3. Cassettes are stored in tests/cassettes/gemini/ with hierarchical structure
+4. Tests work in CI without API keys using replay mode (default)
 
-This approach provides a clean solution for testing streaming functionality while
-preserving the VCR.py benefits for non-streaming tests.
+This approach provides deterministic testing with full streaming support while
+maintaining compatibility with VCR.py for other providers.
 """
 
 import json
@@ -43,12 +46,17 @@ from .vcr_helpers import sanitize_response
 
 @pytest_asyncio.fixture
 async def llm_client_factory() -> Callable[
-    [str, str, str | None], Awaitable[LLMInterface]
+    # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+    [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
 ]:
     """Factory fixture for creating LLM clients."""
 
     async def _create_client(
-        provider: str, model: str, api_key: str | None = None
+        provider: str,
+        model: str,
+        api_key: str | None = None,
+        # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+        debug_config: dict[str, Any] | None = None,
     ) -> LLMInterface:
         """Create an LLM client for testing."""
         # Use test API key or environment variable
@@ -60,7 +68,8 @@ async def llm_client_factory() -> Callable[
             else:
                 api_key = "test-api-key"
 
-        config = {
+        # ast-grep-ignore: no-dict-any - Config dict needs flexible types for factory
+        config: dict[str, Any] = {
             "provider": provider,
             "model": model,
             "api_key": api_key,
@@ -70,6 +79,9 @@ async def llm_client_factory() -> Callable[
         if provider == "google":
             # Use the v1beta endpoint for gemini
             config["api_base"] = "https://generativelanguage.googleapis.com/v1beta"
+            # Add debug_config if provided (for record/replay)
+            if debug_config:
+                config["debug_config"] = debug_config
 
         return LLMClientFactory.create_client(config)
 
@@ -523,15 +535,13 @@ async def test_litellm_streaming_with_various_models(
     )
 
 
-# --- Google Gemini Streaming Tests (VCR Bypass) ---
-# These tests bypass VCR.py due to issue #927 where MockStream doesn't implement
-# the readany() method required by aiohttp 3.12+ for streaming responses.
+# --- Google Gemini Streaming Tests (SDK Record/Replay) ---
+# These tests use Google GenAI SDK's built-in DebugConfig for record/replay,
+# which natively supports streaming without VCR.py compatibility issues.
 
 
 @pytest.mark.no_db
 @pytest.mark.llm_integration
-@pytest.mark.no_vcr  # Bypass VCR for streaming compatibility
-@pytest.mark.gemini_live
 @pytest.mark.parametrize(
     "provider,model",
     [
@@ -541,14 +551,15 @@ async def test_litellm_streaming_with_various_models(
 async def test_basic_streaming_gemini(
     provider: str,
     model: str,
-    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+    llm_client_factory: Callable[
+        # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+        [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
+    ],
+    # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+    gemini_replay_config: dict[str, Any],
 ) -> None:
-    """Test basic streaming functionality for Google Gemini (VCR bypass)."""
-    # Skip if running in CI without API keys
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
-    client = await llm_client_factory(provider, model, None)
+    """Test basic streaming functionality for Google Gemini using SDK record/replay."""
+    client = await llm_client_factory(provider, model, None, gemini_replay_config)
 
     # Simple streaming request
     messages = [
@@ -583,8 +594,6 @@ async def test_basic_streaming_gemini(
 
 @pytest.mark.no_db
 @pytest.mark.llm_integration
-@pytest.mark.no_vcr  # Bypass VCR for streaming compatibility
-@pytest.mark.gemini_live
 @pytest.mark.parametrize(
     "provider,model",
     [
@@ -594,13 +603,15 @@ async def test_basic_streaming_gemini(
 async def test_streaming_with_system_message_gemini(
     provider: str,
     model: str,
-    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+    llm_client_factory: Callable[
+        # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+        [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
+    ],
+    # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+    gemini_replay_config: dict[str, Any],
 ) -> None:
-    """Test streaming with system messages for Google Gemini (VCR bypass)."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
-    client = await llm_client_factory(provider, model, None)
+    """Test streaming with system messages for Google Gemini using SDK record/replay."""
+    client = await llm_client_factory(provider, model, None, gemini_replay_config)
 
     messages = [
         create_system_message(
@@ -637,8 +648,6 @@ async def test_streaming_with_system_message_gemini(
 
 @pytest.mark.no_db
 @pytest.mark.llm_integration
-@pytest.mark.no_vcr  # Bypass VCR for streaming compatibility
-@pytest.mark.gemini_live
 @pytest.mark.parametrize(
     "provider,model",
     [
@@ -648,15 +657,17 @@ async def test_streaming_with_system_message_gemini(
 async def test_streaming_with_tool_calls_gemini(
     provider: str,
     model: str,
-    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+    llm_client_factory: Callable[
+        # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+        [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
+    ],
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     sample_tools: list[dict[str, Any]],
+    # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+    gemini_replay_config: dict[str, Any],
 ) -> None:
-    """Test streaming with tool calls for Google Gemini (VCR bypass)."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
-    client = await llm_client_factory(provider, model, None)
+    """Test streaming with tool calls for Google Gemini using SDK record/replay."""
+    client = await llm_client_factory(provider, model, None, gemini_replay_config)
 
     messages = [
         create_user_message(
@@ -697,8 +708,6 @@ async def test_streaming_with_tool_calls_gemini(
 
 @pytest.mark.no_db
 @pytest.mark.llm_integration
-@pytest.mark.no_vcr  # Bypass VCR for streaming compatibility
-@pytest.mark.gemini_live
 @pytest.mark.parametrize(
     "provider,model",
     [
@@ -708,13 +717,15 @@ async def test_streaming_with_tool_calls_gemini(
 async def test_streaming_error_handling_gemini(
     provider: str,
     model: str,
-    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+    llm_client_factory: Callable[
+        # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+        [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
+    ],
+    # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+    gemini_replay_config: dict[str, Any],
 ) -> None:
-    """Test error handling during streaming for Google Gemini (VCR bypass)."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
-    client = await llm_client_factory(provider, model, None)
+    """Test error handling during streaming for Google Gemini using SDK record/replay."""
+    client = await llm_client_factory(provider, model, None, gemini_replay_config)
 
     # Test with invalid message format (missing role)
     messages = [
@@ -742,8 +753,6 @@ async def test_streaming_error_handling_gemini(
 
 @pytest.mark.no_db
 @pytest.mark.llm_integration
-@pytest.mark.no_vcr  # Bypass VCR for streaming compatibility
-@pytest.mark.gemini_live
 @pytest.mark.parametrize(
     "provider,model",
     [
@@ -753,13 +762,15 @@ async def test_streaming_error_handling_gemini(
 async def test_streaming_with_multi_turn_conversation_gemini(
     provider: str,
     model: str,
-    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+    llm_client_factory: Callable[
+        # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+        [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
+    ],
+    # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+    gemini_replay_config: dict[str, Any],
 ) -> None:
-    """Test streaming with multi-turn conversation for Google Gemini (VCR bypass)."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
-    client = await llm_client_factory(provider, model, None)
+    """Test streaming with multi-turn conversation for Google Gemini using SDK record/replay."""
+    client = await llm_client_factory(provider, model, None, gemini_replay_config)
 
     messages = [
         create_user_message("My favorite color is blue. Remember this."),
@@ -787,8 +798,6 @@ async def test_streaming_with_multi_turn_conversation_gemini(
 
 @pytest.mark.no_db
 @pytest.mark.llm_integration
-@pytest.mark.no_vcr  # Bypass VCR for streaming compatibility
-@pytest.mark.gemini_live
 @pytest.mark.parametrize(
     "provider,model",
     [
@@ -798,13 +807,15 @@ async def test_streaming_with_multi_turn_conversation_gemini(
 async def test_streaming_reasoning_info_gemini(
     provider: str,
     model: str,
-    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+    llm_client_factory: Callable[
+        # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+        [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
+    ],
+    # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+    gemini_replay_config: dict[str, Any],
 ) -> None:
-    """Test that reasoning info (usage data) is included in streaming responses for Google Gemini (VCR bypass)."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
-    client = await llm_client_factory(provider, model, None)
+    """Test that reasoning info (usage data) is included in streaming responses for Google Gemini using SDK record/replay."""
+    client = await llm_client_factory(provider, model, None, gemini_replay_config)
 
     messages = [create_user_message("Say 'hello world'")]
 
@@ -844,8 +855,6 @@ async def test_streaming_reasoning_info_gemini(
 
 @pytest.mark.no_db
 @pytest.mark.llm_integration
-@pytest.mark.no_vcr  # Bypass VCR for streaming compatibility
-@pytest.mark.gemini_live
 @pytest.mark.parametrize(
     "provider,model",
     [
@@ -855,9 +864,14 @@ async def test_streaming_reasoning_info_gemini(
 async def test_google_streaming_with_multiturns_and_tool_calls(
     provider: str,
     model: str,
-    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+    llm_client_factory: Callable[
+        # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+        [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
+    ],
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     sample_tools: list[dict[str, Any]],
+    # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+    gemini_replay_config: dict[str, Any],
 ) -> None:
     """Test streaming with multi-turn conversation including tool calls for Google Gemini.
 
@@ -870,10 +884,8 @@ async def test_google_streaming_with_multiturns_and_tool_calls(
     2. Multi-turn conversation (with assistant message containing tool_calls in history)
     3. Real API call (not VCR replay)
     """
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
 
-    client = await llm_client_factory(provider, model, None)
+    client = await llm_client_factory(provider, model, None, gemini_replay_config)
     assert isinstance(client, GoogleGenAIClient)
 
     # Simulate a multi-turn conversation with tool calls
@@ -961,12 +973,15 @@ async def test_google_streaming_with_multiturns_and_tool_calls(
 
 @pytest.mark.no_db
 @pytest.mark.llm_integration
-@pytest.mark.no_vcr  # Must bypass VCR to trigger SDK's Pydantic validation
-@pytest.mark.gemini_live
 async def test_google_streaming_pydantic_validation_reproducer(
-    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+    llm_client_factory: Callable[
+        # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+        [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
+    ],
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     sample_tools: list[dict[str, Any]],
+    # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+    gemini_replay_config: dict[str, Any],
 ) -> None:
     """Reproducer test for Pydantic validation error with Google GenAI streaming.
 
@@ -984,12 +999,8 @@ async def test_google_streaming_pydantic_validation_reproducer(
     - FAIL initially: Pydantic ValidationError due to camelCase keys in dicts
     - PASS after fix: Snake_case keys allow SDK validation to succeed
     """
-    # Skip if no API key available
-    if not os.getenv("GEMINI_API_KEY"):
-        pytest.skip("Requires GEMINI_API_KEY to reproduce SDK validation error")
-
     client = await llm_client_factory(
-        "google", "gemini-2.5-flash-lite-preview-06-17", None
+        "google", "gemini-2.5-flash-lite-preview-06-17", None, gemini_replay_config
     )
     assert isinstance(client, GoogleGenAIClient)
 
