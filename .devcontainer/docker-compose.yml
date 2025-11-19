@@ -20,6 +20,11 @@ services:
     networks:
       - devnet
     restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
   # Backend service container (runs both backend and frontend dev servers)
   backend:
     build:
@@ -59,6 +64,11 @@ services:
       - dev-logs:/var/log/family-assistant
     networks:
       - devnet
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
   # Claude Code container (runs claude-code-webui)
   claude:
     restart: always
@@ -103,6 +113,11 @@ services:
       - dev-logs:/var/log/family-assistant:ro
     networks:
       - devnet
+    deploy:
+      resources:
+        limits:
+          cpus: '6.0'
+          memory: 12G
   # Optional: Initialize workspace (run once to set up the repository)
   # Use: docker-compose run --rm init-workspace
   init-workspace:
