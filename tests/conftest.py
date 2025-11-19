@@ -1043,6 +1043,50 @@ def vcr_bypass_for_streaming(request: pytest.FixtureRequest) -> None:
         request.addfinalizer(restore)
 
 
+# --- Google GenAI SDK Record/Replay ---
+@pytest.fixture
+def gemini_replay_config(request: pytest.FixtureRequest) -> dict[str, str]:
+    """
+    Configure Gemini client for record/replay using SDK's DebugConfig.
+
+    This fixture uses Google GenAI SDK's built-in replay functionality which
+    natively supports streaming, avoiding VCR.py compatibility issues.
+
+    The replay mode is controlled by the GEMINI_RECORD_MODE environment variable:
+    - "auto" (default): Replay if cassette exists, otherwise record
+    - "record": Always call API and record responses
+    - "replay": Only replay from existing cassettes (fail if missing)
+
+    Replay files are stored in tests/cassettes/gemini/ with hierarchical structure:
+    - {module}/{test_name}/mldev.json
+
+    Usage:
+    ------
+    def test_gemini_streaming(gemini_replay_config):
+        client = GoogleGenAIClient(debug_config=gemini_replay_config)
+        # Test will automatically record on first run, replay on subsequent runs
+
+    Recording cassettes:
+    -------------------
+    GEMINI_RECORD_MODE=record pytest tests/integration/llm/test_streaming.py -k gemini
+
+    Benefits:
+    ---------
+    - Native streaming support (no VCR.py compatibility issues)
+    - Works in CI without API keys (uses replay mode)
+    - Automatic recording on first run with "auto" mode
+    - SDK-maintained recording infrastructure
+    """
+    test_name = request.node.name
+    module_name = request.node.module.__name__.replace("tests.", "")
+
+    return {
+        "client_mode": os.getenv("GEMINI_RECORD_MODE", "auto"),
+        "replay_id": f"{module_name}/{test_name}/mldev",
+        "replays_directory": "tests/cassettes/gemini",
+    }
+
+
 @pytest.fixture(scope="session")
 def built_frontend() -> Generator[None]:
     """
