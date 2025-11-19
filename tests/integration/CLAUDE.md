@@ -87,20 +87,36 @@ VCR_RECORD_MODE=new_episodes pytest tests/integration/
 
 #### For LLM Integration Tests
 
-LLM tests record API interactions with OpenAI, Google Gemini, and other LLM providers:
+LLM tests use a **unified record/replay system** that works across all providers (OpenAI, Google
+Gemini, etc.) via the `LLM_RECORD_MODE` environment variable:
 
 ```bash
-# Record missing LLM cassettes
+# Record missing LLM interactions (auto mode)
 export OPENAI_API_KEY="your-openai-key"
 export GEMINI_API_KEY="your-gemini-key"
-VCR_RECORD_MODE=once pytest tests/integration/llm/ -xvs
+LLM_RECORD_MODE=auto pytest tests/integration/llm/ -xvs
 
-# Re-record all LLM cassettes (when APIs change)
-VCR_RECORD_MODE=all pytest tests/integration/llm/ -xvs
+# Re-record all LLM interactions (when APIs change)
+LLM_RECORD_MODE=record pytest tests/integration/llm/ -xvs
 
-# Verify cassettes are recorded
-ls tests/cassettes/llm/
+# Run with existing recordings only (default - safe for CI)
+LLM_RECORD_MODE=replay pytest tests/integration/llm/ -xvs
+
+# Verify recordings are created
+ls tests/cassettes/llm/          # OpenAI (VCR.py cassettes)
+ls tests/cassettes/gemini/       # Gemini (SDK replay files)
 ```
+
+**LLM_RECORD_MODE values:**
+
+- `replay` (default): Only use existing recordings - no API calls
+- `auto`: Record if missing, else replay - convenient for development
+- `record`: Force re-record everything - requires API keys
+
+**Note**: Different providers use different mechanisms under the hood:
+
+- OpenAI uses VCR.py (HTTP-level YAML cassettes)
+- Google Gemini uses SDK's DebugConfig (JSON replay files with native streaming support)
 
 #### For Home Assistant Integration Tests
 
