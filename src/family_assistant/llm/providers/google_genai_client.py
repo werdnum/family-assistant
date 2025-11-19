@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 import aiofiles
 from google import genai
 from google.genai import types
+from google.genai.client import DebugConfig
 
 from family_assistant.llm import (
     BaseLLMClient,
@@ -56,6 +57,8 @@ class GoogleGenAIClient(BaseLLMClient):
         enable_url_context: bool = False,
         enable_google_search: bool = False,
         debug_messages: bool | None = None,
+        # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+        debug_config: dict[str, Any] | None = None,
         **kwargs: Any,  # noqa: ANN401 # Accepts arbitrary Google GenAI API parameters
     ) -> None:
         """
@@ -69,6 +72,7 @@ class GoogleGenAIClient(BaseLLMClient):
             enable_url_context: Enable URL understanding (supports up to 20 URLs per request)
             enable_google_search: Enable Google Search grounding for real-time information
             debug_messages: Enable detailed message logging. If None, reads from DEBUG_LLM_MESSAGES env var.
+            debug_config: SDK DebugConfig dict for record/replay in tests (client_mode, replay_id, replays_directory)
             **kwargs: Default parameters for generation
         """
         # Initialize the google-genai client
@@ -77,7 +81,13 @@ class GoogleGenAIClient(BaseLLMClient):
             logger.info(f"Using custom API base: {api_base}")
             # Note: The new API might handle this differently
 
-        self.client = genai.Client(api_key=api_key)
+        # Create client with optional debug_config for record/replay in tests
+        if debug_config:
+            self.client = genai.Client(
+                api_key=api_key, debug_config=DebugConfig(**debug_config)
+            )
+        else:
+            self.client = genai.Client(api_key=api_key)
         # Google API requires 'models/' prefix
         self.model_name = (
             f"models/{model}" if not model.startswith("models/") else model
