@@ -65,8 +65,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
 
 # User setup
 RUN useradd -m -s /bin/bash -u 1001 claude && \
-    mkdir -p /home/claude/.cache/uv \
-             /home/claude/.npm-global \
+    mkdir -p /home/claude/.npm-global \
              /home/claude/.cache/deno \
              /home/claude/.deno \
              /home/claude/.cache/playwright-browsers \

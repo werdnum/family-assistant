@@ -45,6 +45,7 @@ services:
       - TEST_DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
       - DEV_MODE=true
       - HOME=/home/claude
+      - UV_CACHE_DIR=/workspace/.cache/uv
       # Pass through any additional environment variables
       - CLAUDE_PROJECT_REPO=${CLAUDE_PROJECT_REPO:-https://github.com/werdnum/family-assistant.git}
       - CLAUDE_PROJECT_BRANCH=${CLAUDE_PROJECT_BRANCH:-}
@@ -90,6 +91,7 @@ services:
       - TEST_DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
       - DEV_MODE=true
       - HOME=/home/claude
+      - UV_CACHE_DIR=/workspace/.cache/uv
       - PYTEST_PARALLELISM=auto
       # Oneshot mode environment variables
       - ONESHOT_MODE=${ONESHOT_MODE:-}
@@ -127,6 +129,7 @@ services:
     environment:
       - CLAUDE_PROJECT_REPO=${CLAUDE_PROJECT_REPO:-https://github.com/werdnum/family-assistant.git}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - UV_CACHE_DIR=/workspace/.cache/uv
     volumes:
       - ${WORKSPACE_DIR:-./workspace}:/workspace
       - ${CLAUDE_HOME_DIR:-./claude-home}:/home/claude
