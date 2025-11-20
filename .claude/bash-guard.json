@@ -88,6 +88,24 @@
       "action": "block",
       "explanation": "DATABASE_URL is already correctly set in the environment. Do not override it when running alembic commands. Simply run 'alembic revision --autogenerate -m \"Description\"' without DATABASE_URL prefix."
     }
+  ],
+  "timeout_requirements": [
+    {
+      "regexp": "^pytest\\b",
+      "minimum_timeout_ms": 300000,
+      "explanation": "pytest requires at least 5 minutes for comprehensive test execution"
+    },
+    {
+      "regexp": "^poe\\s+test\\b",
+      "minimum_timeout_ms": 900000,
+      "explanation": "poe test requires at least 15 minutes for full test suite including integration tests"
+    }
+  ],
+  "background_restrictions": [
+    {
+      "regexp": "^poe\\s+test\\b",
+      "explanation": "poe test must run in foreground to ensure proper output capture and test result visibility"
+    }
   ]
 }
 

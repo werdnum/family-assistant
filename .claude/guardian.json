@@ -1,5 +1,5 @@
 {
-  "comment": "Project-specific guardian configuration for family-assistant. Enables code review workflow.",
+  "comment": "Project-specific guardian configuration for family-assistant. Enables code review, test verification, and completion validation.",
   "preCommitReview": {
     "workflow": {
       "runCodeReview": {
@@ -7,6 +7,46 @@
         "scriptPath": "scripts/review-changes.py"
       }
     }
+  },
+  "testVerification": {
+    "enabled": true,
+    "triggers": ["git commit"],
+    "excludePatterns": [
+      "^docs/",
+      "^\\.claude/",
+      "^\\.github/",
+      "^\\.devcontainer/",
+      "^deploy/",
+      "^contrib/",
+      "^scripts/review-changes\\.(py|sh)$",
+      "^scripts/format-and-lint\\.sh$",
+      "^\\.pre-commit-config\\.yaml$",
+      "^\\.gitignore$",
+      "^\\.dockerignore$",
+      "\\.(md|txt)$",
+      "^scratch/",
+      "^tmp/",
+      "^README",
+      "^LICENSE",
+      "^CHANGELOG",
+      "^Dockerfile$",
+      "^\\.devcontainer/Dockerfile",
+      "^\\.devcontainer/Dockerfile\\.ci$"
+    ],
+    "acceptableCommands": [
+      "poe test",
+      ".venv/bin/poe test",
+      "./\\.venv/bin/poe test"
+    ],
+    "reportFile": ".report.json",
+    "maxTestAge": 300
+  },
+  "stopValidation": {
+    "enabled": true,
+    "checkCleanWorkingDirectory": true,
+    "checkTestsRun": true,
+    "allowFailureAcknowledgment": true,
+    "failureReasonFile": ".claude/FAILURE_REASON"
   }
 }
 
