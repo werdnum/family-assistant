@@ -1,0 +1,195 @@
+{
+  "replay_id": "integration.llm.test_streaming/test_streaming_with_tool_calls_gemini[google-gemini-2.5-flash]/mldev",
+  "interactions": [
+    {
+      "request": {
+        "method": "post",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-goog-api-key": "{REDACTED}",
+          "user-agent": "google-genai-sdk/{VERSION_NUMBER} {LANGUAGE_LABEL}/{VERSION_NUMBER}",
+          "x-goog-api-client": "google-genai-sdk/{VERSION_NUMBER} {LANGUAGE_LABEL}/{VERSION_NUMBER}"
+        },
+        "body_segments": [
+          {
+            "contents": [
+              {
+                "parts": [
+                  {
+                    "text": "What's the weather in Paris, France? Also calculate 42 * 17."
+                  }
+                ],
+                "role": "user"
+              }
+            ],
+            "tools": [
+              {
+                "functionDeclarations": [
+                  {
+                    "description": "Get current weather for a location",
+                    "name": "get_weather",
+                    "parameters": {
+                      "properties": {
+                        "location": {
+                          "description": "The city and country",
+                          "type": "STRING"
+                        },
+                        "unit": {
+                          "description": "Temperature unit",
+                          "type": "STRING"
+                        }
+                      },
+                      "required": [
+                        "location"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  },
+                  {
+                    "description": "Perform mathematical calculations",
+                    "name": "calculate",
+                    "parameters": {
+                      "properties": {
+                        "expression": {
+                          "description": "Mathematical expression to evaluate",
+                          "type": "STRING"
+                        }
+                      },
+                      "required": [
+                        "expression"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              }
+            ],
+            "generationConfig": {}
+          }
+        ]
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "Content-Type": "text/event-stream",
+          "Content-Disposition": "attachment",
+          "Vary": "Origin, X-Origin, Referer",
+          "Transfer-Encoding": "chunked",
+          "Server": "scaffolding on HTTPServer2",
+          "X-XSS-Protection": "0",
+          "X-Frame-Options": "SAMEORIGIN",
+          "X-Content-Type-Options": "nosniff",
+          "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+        },
+        "body_segments": [
+          {
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "functionCall": {
+                        "name": "get_weather",
+                        "args": {
+                          "location": "Paris, France"
+                        }
+                      },
+                      "thoughtSignature": "CiQB0e2Kb8ziC6GUZecM+9rb7i9NZaDtXVnwDK+xVQk0OcCze7cKZgHR7Ypvnv/tsQshA55OmBaD5T6Gj+1Ul+hS9sBd/6TWKJL9IP+xH/+ZZ56XdMsWd44znfv02GE/ygLXFyTRWV1lT4qVd4caLOn94+U6lBposndHfLEN2Hb5ibi9MrsAQpDuIwHBGgrlAQHR7Ypv6fC+e7he1lcBBA4bRZ1wkprYXd0bA5GLrtgJxpIKQfa75KZ5eJDzocyIx4O15lLv1eWMltrHD8McSZ4cZxfggoXeedOGnCFXmejT9T7nbwa5Pb0sUIqslgsdlB8+936jErqsjLFXXzsMuvLqPkcSjTljGf9oN1sV208RE+qAmCjsbVhpEyxFecOKrstArwsBYZLMpYtdV6wNDRMhTXkabn+6lKU3G85eT86WNZXNOLMZu7bCoI0fJXeemE1Xb5O5RbafBosH2FJWzNUDAvhTPCbfcg6x+u278fOK+CzErF4KLgHR7YpvyOoT3sNET/uW2fwywXc0bitg8+eN0+gs/D+ABq2KMw9YSv8S4kzbucg="
+                    },
+                    {
+                      "functionCall": {
+                        "name": "calculate",
+                        "args": {
+                          "expression": "42 * 17"
+                        }
+                      }
+                    }
+                  ],
+                  "role": "model"
+                },
+                "finishReason": "STOP",
+                "index": 0,
+                "finishMessage": "Model generated function call(s)."
+              }
+            ],
+            "usageMetadata": {
+              "promptTokenCount": 114,
+              "candidatesTokenCount": 35,
+              "totalTokenCount": 220,
+              "promptTokensDetails": [
+                {
+                  "modality": "TEXT",
+                  "tokenCount": 114
+                }
+              ],
+              "thoughtsTokenCount": 71
+            },
+            "modelVersion": "gemini-2.5-flash",
+            "responseId": "mKgeaeyvFYPOnsEPhIPU8AY"
+          }
+        ],
+        "byte_segments": [],
+        "sdk_response_segments": [
+          {
+            "sdk_http_response": {
+              "headers": {
+                "Content-Type": "text/event-stream",
+                "Content-Disposition": "attachment",
+                "Vary": "Origin, X-Origin, Referer",
+                "Transfer-Encoding": "chunked",
+                "Server": "scaffolding on HTTPServer2",
+                "X-XSS-Protection": "0",
+                "X-Frame-Options": "SAMEORIGIN",
+                "X-Content-Type-Options": "nosniff",
+                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+              }
+            },
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "thought_signature": "Q2lRQjBlMktiOHppQzZHVVplY00rOXJiN2k5TlphRHRYVm53REsreFZRazBPY0N6ZTdjS1pnSFI3WXB2bnYvdHNRc2hBNTVPbUJhRDVUNkdqKzFVbCtoUzlzQmQvNlRXS0pMOUlQK3hILytaWjU2WGRNc1dkNDR6bmZ2MDJHRS95Z0xYRnlUUldWMWxUNHFWZDRjYUxPbjk0K1U2bEJwb3NuZEhmTEVOMkhiNWliaTlNcnNBUXBEdUl3SEJHZ3JsQVFIUjdZcHY2ZkMrZTdoZTFsY0JCQTRiUloxd2twcllYZDBiQTVHTHJ0Z0p4cElLUWZhNzVLWjVlSkR6b2N5SXg0TzE1bEx2MWVXTWx0ckhEOE1jU1o0Y1p4Zmdnb1hlZWRPR25DRlhtZWpUOVQ3bmJ3YTVQYjBzVUlxc2xnc2RsQjgrOTM2akVycXNqTEZYWHpzTXV2THFQa2NTalRsakdmOW9OMXNWMjA4UkUrcUFtQ2pzYlZocEV5eEZlY09LcnN0QXJ3c0JZWkxNcFl0ZFY2d05EUk1oVFhrYWJuKzZsS1UzRzg1ZVQ4NldOWlhOT0xNWnU3YkNvSTBmSlhlZW1FMVhiNU81UmJhZkJvc0gyRkpXek5VREF2aFRQQ2JmY2c2eCt1Mjc4Zk9LK0N6RXJGNEtMZ0hSN1lwdnlPb1Qzc05FVC91VzJmd3l3WGMwYml0ZzgrZU4wK2dzL0QrQUJxMktNdzlZU3Y4UzRremJ1Y2c9",
+                      "function_call": {
+                        "args": {
+                          "location": "Paris, France"
+                        },
+                        "name": "get_weather"
+                      }
+                    },
+                    {
+                      "function_call": {
+                        "args": {
+                          "expression": "42 * 17"
+                        },
+                        "name": "calculate"
+                      }
+                    }
+                  ],
+                  "role": "model"
+                },
+                "finish_reason": "STOP",
+                "index": 0
+              }
+            ],
+            "model_version": "gemini-2.5-flash",
+            "response_id": "mKgeaeyvFYPOnsEPhIPU8AY",
+            "usage_metadata": {
+              "candidates_token_count": 35,
+              "prompt_token_count": 114,
+              "prompt_tokens_details": [
+                {
+                  "modality": "TEXT",
+                  "token_count": 114
+                }
+              ],
+              "thoughts_token_count": 71,
+              "total_token_count": 220
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

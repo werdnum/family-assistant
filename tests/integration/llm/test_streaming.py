@@ -45,7 +45,7 @@ a single, consistent interface for all providers.
 
 import json
 import os
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 import pytest
@@ -67,11 +67,18 @@ from .vcr_helpers import sanitize_response
 
 
 @pytest_asyncio.fixture
-async def llm_client_factory() -> Callable[
-    # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
-    [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
-]:
+async def llm_client_factory() -> (  # type: ignore[misc]
+    AsyncIterator[
+        Callable[
+            # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
+            [str, str, str | None, dict[str, Any] | None],
+            Awaitable[LLMInterface],
+        ]
+    ]
+):
     """Factory fixture for creating LLM clients."""
+    # Track created clients so we can close them after tests
+    created_clients: list[Any] = []  # Use Any to avoid type issues with close()
 
     async def _create_client(
         provider: str,
@@ -105,9 +112,16 @@ async def llm_client_factory() -> Callable[
             if debug_config:
                 config["debug_config"] = debug_config
 
-        return LLMClientFactory.create_client(config)
+        client = LLMClientFactory.create_client(config)
+        created_clients.append(client)
+        return client
 
-    return _create_client
+    yield _create_client
+
+    # Clean up all created clients
+    for client in created_clients:
+        if hasattr(client, "close"):
+            await client.close()  # type: ignore[attr-defined]
 
 
 @pytest_asyncio.fixture
@@ -567,7 +581,7 @@ async def test_litellm_streaming_with_various_models(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash"),
     ],
 )
 async def test_basic_streaming_gemini(
@@ -619,7 +633,7 @@ async def test_basic_streaming_gemini(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash"),
     ],
 )
 async def test_streaming_with_system_message_gemini(
@@ -673,7 +687,7 @@ async def test_streaming_with_system_message_gemini(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash"),
     ],
 )
 async def test_streaming_with_tool_calls_gemini(
@@ -733,7 +747,7 @@ async def test_streaming_with_tool_calls_gemini(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash"),
     ],
 )
 async def test_streaming_error_handling_gemini(
@@ -778,7 +792,7 @@ async def test_streaming_error_handling_gemini(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash"),
     ],
 )
 async def test_streaming_with_multi_turn_conversation_gemini(
@@ -823,7 +837,7 @@ async def test_streaming_with_multi_turn_conversation_gemini(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash"),
     ],
 )
 async def test_streaming_reasoning_info_gemini(
@@ -880,7 +894,7 @@ async def test_streaming_reasoning_info_gemini(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash"),
     ],
 )
 async def test_google_streaming_with_multiturns_and_tool_calls(
@@ -1022,7 +1036,7 @@ async def test_google_streaming_pydantic_validation_reproducer(
     - PASS after fix: Snake_case keys allow SDK validation to succeed
     """
     client = await llm_client_factory(
-        "google", "gemini-2.5-flash-lite-preview-06-17", None, llm_replay_config
+        "google", "gemini-2.5-flash", None, llm_replay_config
     )
     assert isinstance(client, GoogleGenAIClient)
 

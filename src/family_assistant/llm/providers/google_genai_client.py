@@ -121,6 +121,25 @@ class GoogleGenAIClient(BaseLLMClient):
         """Whether to log detailed message debugging information."""
         return self._debug_messages
 
+    async def close(self) -> None:
+        """Close the client and flush any pending cassettes (for record/replay)."""
+        # Close the underlying API client to flush replay cassettes
+        # The _api_client may be a ReplayApiClient which has a close() method
+        try:
+            api_client = getattr(self.client, "_api_client", None)
+            if api_client and hasattr(api_client, "close"):
+                api_client.close()  # type: ignore[attr-defined]
+        except Exception as e:
+            logger.debug(f"Error closing API client: {e}")
+
+    async def __aenter__(self) -> "GoogleGenAIClient":
+        """Enter async context manager."""
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:  # noqa: ANN401
+        """Exit async context manager and close client."""
+        await self.close()
+
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _get_model_specific_params(self, model: str) -> dict[str, Any]:
         """Get parameters for a specific model based on pattern matching."""
