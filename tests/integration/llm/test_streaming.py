@@ -1016,8 +1016,7 @@ async def test_google_streaming_pydantic_validation_reproducer(
     ],
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     sample_tools: list[dict[str, Any]],
-    # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
-    llm_replay_config: dict[str, Any],
+    llm_record_mode: str,
 ) -> None:
     """Reproducer test for Pydantic validation error with Google GenAI streaming.
 
@@ -1035,9 +1034,14 @@ async def test_google_streaming_pydantic_validation_reproducer(
     - FAIL initially: Pydantic ValidationError due to camelCase keys in dicts
     - PASS after fix: Snake_case keys allow SDK validation to succeed
     """
-    client = await llm_client_factory(
-        "google", "gemini-2.5-flash", None, llm_replay_config
-    )
+    # Create debug config for this specific test (non-parameterized)
+    debug_config = {
+        "client_mode": llm_record_mode,
+        "replay_id": "integration.llm.test_streaming/test_google_streaming_pydantic_validation_reproducer/mldev",
+        "replays_directory": "tests/cassettes/gemini",
+    }
+
+    client = await llm_client_factory("google", "gemini-2.5-flash", None, debug_config)
     assert isinstance(client, GoogleGenAIClient)
 
     # Create conversation with tool calls - this triggers the buggy code path
