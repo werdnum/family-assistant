@@ -1,6 +1,6 @@
 interactions:
   - request:
-      body: '{"contents": [{"parts": [{"text": "Say ''Google Gemini test passed''"}], "role": "user"}], "generationConfig": {}}'
+      body: '{"contents": [{"parts": [{"text": "Count to 5"}], "role": "user"}], "generationConfig": {}}'
       headers:
         Content-Type:
           - application/json
@@ -12,7 +12,7 @@ interactions:
       uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Google Gemini test passed\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 8,\n    \"candidatesTokenCount\": 4,\n    \"totalTokenCount\": 12,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 8\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"dv4eabDhC7ugkdUP9dKloQc\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Here's counting to 5:\\n\\n1\\n2\\n3\\n4\\n5\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 5,\n    \"candidatesTokenCount\": 18,\n    \"totalTokenCount\": 23,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 5\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"S_4eaZrBI9Dbxs0Pn6Wh8AI\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -21,11 +21,11 @@ interactions:
         Content-Type:
           - application/json; charset=UTF-8
         Date:
-          - Thu, 20 Nov 2025 11:41:42 GMT
+          - Thu, 20 Nov 2025 11:40:59 GMT
         Server:
           - scaffolding on HTTPServer2
         Server-Timing:
-          - gfet4t7; dur=498
+          - gfet4t7; dur=579
         Transfer-Encoding:
           - chunked
         Vary:

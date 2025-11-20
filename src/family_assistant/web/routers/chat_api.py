@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -440,9 +440,7 @@ async def api_chat_send_message(
     )
 
     final_reply_content = result.text_reply
-    _final_assistant_message_internal_id = (
-        result.assistant_message_internal_id
-    )  # Not used by API response
+    final_assistant_message_internal_id = result.assistant_message_internal_id
     _final_reasoning_info = result.reasoning_info  # Not used by API response
     error_traceback = result.error_traceback
     _response_attachment_ids = result.attachment_ids  # Not yet included in API response
@@ -465,11 +463,51 @@ async def api_chat_send_message(
             detail="Assistant did not provide a textual reply.",
         )
 
+    # Fetch recent messages to get tool_calls if any
+    tool_calls_response = None
+    if final_assistant_message_internal_id:
+        # Get recent messages from this conversation
+        recent_messages = await db_context.message_history.get_recent(
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            limit=5,  # Get last few messages
+            max_age=timedelta(minutes=5),
+        )
+        # Find the assistant message with the matching internal_id
+        assistant_msg = next(
+            (
+                msg
+                for msg in recent_messages
+                if msg.get("internal_id") == final_assistant_message_internal_id
+            ),
+            None,
+        )
+        if assistant_msg and assistant_msg.get("tool_calls"):
+            # Convert ToolCallItem objects to dicts for API response
+            tool_calls_response = []
+            for tc in assistant_msg["tool_calls"]:
+                if isinstance(tc, ToolCallItem):
+                    # Ensure arguments is a JSON string
+                    args = tc.function.arguments
+                    if not isinstance(args, str):
+                        args = json.dumps(args)
+                    tool_calls_response.append({
+                        "id": tc.id,
+                        "type": tc.type,
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": args,
+                        },
+                    })
+                elif isinstance(tc, dict):
+                    tool_calls_response.append(tc)
+
     return ChatMessageResponse(
         reply=final_reply_content,  # Back to original field name
         conversation_id=conversation_id,  # Return the used/generated conversation_id
         turn_id=response_turn_id,  # Return the turn_id generated for the response model
         attachments=trigger_attachments,  # Include processed attachments in response
+        tool_calls=tool_calls_response,  # Include tool calls if any
     )
 
 
@@ -678,12 +716,16 @@ async def get_conversation_messages(
             for tc in msg["tool_calls"]:
                 if isinstance(tc, ToolCallItem):
                     # Convert ToolCallItem to dict
+                    # Ensure arguments is always a JSON string
+                    args = tc.function.arguments
+                    if not isinstance(args, str):
+                        args = json.dumps(args)
                     tc_dict = {
                         "id": tc.id,
                         "type": tc.type,
                         "function": {
                             "name": tc.function.name,
-                            "arguments": tc.function.arguments,
+                            "arguments": args,
                         },
                     }
                     # Note: provider_metadata is not included in API response

@@ -191,15 +191,27 @@ def message_to_dict(msg: LLMMessage | dict[str, Any]) -> dict[str, Any]:
     fields marked with exclude=True (_attachments, tool_result, parts).
     If the message is already a dict, it's returned as-is.
 
+    IMPORTANT: For AssistantMessage with tool_calls, preserves ToolCallItem objects
+    instead of converting them to dicts. This ensures type safety throughout the
+    message processing pipeline.
+
     Args:
         msg: The message to convert (can be a Pydantic message or dict)
 
     Returns:
-        Dictionary representation suitable for serialization
+        Dictionary representation with ToolCallItem objects preserved
     """
     if isinstance(msg, dict):
         return msg
-    return msg.model_dump(mode="json", exclude_none=True)
+
+    # Use model_dump to get the base dict
+    result = msg.model_dump(mode="python", exclude_none=True)
+
+    # For AssistantMessage, preserve ToolCallItem objects
+    if isinstance(msg, AssistantMessage) and msg.tool_calls is not None:
+        result["tool_calls"] = msg.tool_calls  # Keep as ToolCallItem objects
+
+    return result
 
 
 # ast-grep-ignore: no-dict-any - Generic deserialization function

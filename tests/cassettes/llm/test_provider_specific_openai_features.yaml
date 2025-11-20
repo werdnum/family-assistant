@@ -212,4 +212,112 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"messages":[{"role":"system","content":"You are a code reviewer."},{"role":"user","content":"Review this Python code: print(''hello'')"}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '160'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAA4xTTU8bMRC951eMfKGVkigBmig5FoqE1EOlVmqrBgXHnt01eD2uZzYBIf57ZQfY
+          0HLoxYd5b968+fDDAEA5q5agTKPFtNGPzuzu96I+2/48p92n7zXOf0zTeZCbz7K4+KKGOYM2N2jk
+          OWtsqI0exVHYwyahFsyq0/nsZHYyn0wWBWjJos9pdZTR6Xg6CjrQ6Hhy/GE0OR1NT5/SG3IGWS3h
+          1wAA4KG82WiweKeWMBk+R1pk1jWq5QsJQCXyOaI0s2PRQdSwBw0FwVC8f2sQDFmE65hckHdHDXpP
+          R++vwTGwyz2BDhYMpYRGxnApUJgM0iCwJBdqWKmStlIgVOKGApPHMazCKnzt6ho5j4aXqzCCywqk
+          cZwrVJRAA5vkogAl8DrVmCAmqpNuh0XHWUygrc2FivO7QjXUthiEx1nyghK0lHLhbPkOqJPYyRDu
+          qYPW1Y3ATgfJ9jpG2Ork9MYjZ6GqC6aYG2ezHzsBzeAE8tgsD8HJEcNWe2fLJHaUbjlT8C6iEbTj
+          w9EmrDrWeb+h8/4A0CGQ6FInL/XqCXl8WaOnOiba8F+pqnLBcbNOqJlCXhkLRVXQxwHAVTmX7tUF
+          qJiojbIWusVS7ni2l1P9lfbgfPoECon2fXwxH76htrYo2nk+ODdltGnQ9pn9berOOjoABgc9/2vm
+          Le193y7U/yPfA8ZgFLTrmNA687rhnpbwpqzwbdrLjIthxZi2zuBaHKa8B4uV7vz+Yym+Z8F2XblQ
+          YyofJFOquJ7qxXzzQeuZUYPHwR8AAAD//wMAItvfPmwEAAA=
+      headers:
+        CF-RAY:
+          - 9a177fc95b24371b-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Thu, 20 Nov 2025 11:10:10 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=KsNazGAZjfUKQmG5hD21XqoPLmi5rWx5DL5FPehHAmg-1763637010-1.0.1.1-dFb7T1gYZu3M4hY.zUQsngwsL2FyoaTGAE3hJjanePUjLbphslw605xkOsxHvAhvGHs0FZWqcjYYpmOmFEEkAhnv2nqf23gUgd4jBPhl2TI; path=/; expires=Thu, 20-Nov-25 11:40:10 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=xXnEoXGTqtLG4fQ7tT3f.ASMhT_tpbz6ukYWvcN2ctc-1763637010979-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '1034'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '1350'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199981'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 5ms
+        x-request-id:
+          - req_2d6843ec30f6490d8e8f901ea3996d44
+      status:
+        code: 200
+        message: OK
 version: 1
