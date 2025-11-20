@@ -1,0 +1,260 @@
+{
+  "replay_id": "integration.llm.test_streaming/test_google_streaming_with_multiturns_and_tool_calls[google-gemini-2.5-flash]/mldev",
+  "interactions": [
+    {
+      "request": {
+        "method": "post",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-goog-api-key": "{REDACTED}",
+          "user-agent": "google-genai-sdk/{VERSION_NUMBER} {LANGUAGE_LABEL}/{VERSION_NUMBER}",
+          "x-goog-api-client": "google-genai-sdk/{VERSION_NUMBER} {LANGUAGE_LABEL}/{VERSION_NUMBER}"
+        },
+        "body_segments": [
+          {
+            "contents": [
+              {
+                "parts": [
+                  {
+                    "text": "What's the weather in Paris?"
+                  }
+                ],
+                "role": "user"
+              },
+              {
+                "parts": [
+                  {
+                    "functionCall": {
+                      "args": {
+                        "location": "Paris, France",
+                        "unit": "celsius"
+                      },
+                      "name": "get_weather"
+                    }
+                  }
+                ],
+                "role": "model"
+              },
+              {
+                "parts": [
+                  {
+                    "functionResponse": {
+                      "name": "get_weather",
+                      "response": {
+                        "result": "The weather in Paris is 18°C and sunny."
+                      }
+                    }
+                  }
+                ],
+                "role": "function"
+              }
+            ],
+            "tools": [
+              {
+                "functionDeclarations": [
+                  {
+                    "description": "Get current weather for a location",
+                    "name": "get_weather",
+                    "parameters": {
+                      "properties": {
+                        "location": {
+                          "description": "The city and country",
+                          "type": "STRING"
+                        },
+                        "unit": {
+                          "description": "Temperature unit",
+                          "type": "STRING"
+                        }
+                      },
+                      "required": [
+                        "location"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  },
+                  {
+                    "description": "Perform mathematical calculations",
+                    "name": "calculate",
+                    "parameters": {
+                      "properties": {
+                        "expression": {
+                          "description": "Mathematical expression to evaluate",
+                          "type": "STRING"
+                        }
+                      },
+                      "required": [
+                        "expression"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              }
+            ],
+            "generationConfig": {}
+          }
+        ]
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "Content-Type": "text/event-stream",
+          "Content-Disposition": "attachment",
+          "Vary": "Origin, X-Origin, Referer",
+          "Transfer-Encoding": "chunked",
+          "Server": "scaffolding on HTTPServer2",
+          "X-XSS-Protection": "0",
+          "X-Frame-Options": "SAMEORIGIN",
+          "X-Content-Type-Options": "nosniff",
+          "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+        },
+        "body_segments": [
+          {
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": "The weather in Paris"
+                    }
+                  ],
+                  "role": "model"
+                },
+                "index": 0
+              }
+            ],
+            "usageMetadata": {
+              "promptTokenCount": 152,
+              "candidatesTokenCount": 4,
+              "totalTokenCount": 156,
+              "promptTokensDetails": [
+                {
+                  "modality": "TEXT",
+                  "tokenCount": 152
+                }
+              ]
+            },
+            "modelVersion": "gemini-2.5-flash",
+            "responseId": "mageac6ADcK5nsEPgfCGEQ"
+          },
+          {
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": " is 18°C and sunny."
+                    }
+                  ],
+                  "role": "model"
+                },
+                "finishReason": "STOP",
+                "index": 0
+              }
+            ],
+            "usageMetadata": {
+              "promptTokenCount": 152,
+              "candidatesTokenCount": 13,
+              "totalTokenCount": 165,
+              "promptTokensDetails": [
+                {
+                  "modality": "TEXT",
+                  "tokenCount": 152
+                }
+              ]
+            },
+            "modelVersion": "gemini-2.5-flash",
+            "responseId": "mageac6ADcK5nsEPgfCGEQ"
+          }
+        ],
+        "byte_segments": [],
+        "sdk_response_segments": [
+          {
+            "sdk_http_response": {
+              "headers": {
+                "Content-Type": "text/event-stream",
+                "Content-Disposition": "attachment",
+                "Vary": "Origin, X-Origin, Referer",
+                "Transfer-Encoding": "chunked",
+                "Server": "scaffolding on HTTPServer2",
+                "X-XSS-Protection": "0",
+                "X-Frame-Options": "SAMEORIGIN",
+                "X-Content-Type-Options": "nosniff",
+                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+              }
+            },
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": "The weather in Paris"
+                    }
+                  ],
+                  "role": "model"
+                },
+                "index": 0
+              }
+            ],
+            "model_version": "gemini-2.5-flash",
+            "response_id": "mageac6ADcK5nsEPgfCGEQ",
+            "usage_metadata": {
+              "candidates_token_count": 4,
+              "prompt_token_count": 152,
+              "prompt_tokens_details": [
+                {
+                  "modality": "TEXT",
+                  "token_count": 152
+                }
+              ],
+              "total_token_count": 156
+            }
+          },
+          {
+            "sdk_http_response": {
+              "headers": {
+                "Content-Type": "text/event-stream",
+                "Content-Disposition": "attachment",
+                "Vary": "Origin, X-Origin, Referer",
+                "Transfer-Encoding": "chunked",
+                "Server": "scaffolding on HTTPServer2",
+                "X-XSS-Protection": "0",
+                "X-Frame-Options": "SAMEORIGIN",
+                "X-Content-Type-Options": "nosniff",
+                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+              }
+            },
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": " is 18°C and sunny."
+                    }
+                  ],
+                  "role": "model"
+                },
+                "finish_reason": "STOP",
+                "index": 0
+              }
+            ],
+            "model_version": "gemini-2.5-flash",
+            "response_id": "mageac6ADcK5nsEPgfCGEQ",
+            "usage_metadata": {
+              "candidates_token_count": 13,
+              "prompt_token_count": 152,
+              "prompt_tokens_details": [
+                {
+                  "modality": "TEXT",
+                  "token_count": 152
+                }
+              ],
+              "total_token_count": 165
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
