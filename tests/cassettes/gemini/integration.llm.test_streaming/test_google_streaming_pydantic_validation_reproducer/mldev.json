@@ -115,7 +115,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "The result of"
+                      "text": "The result of "
                     }
                   ],
                   "role": "model"
@@ -135,7 +135,7 @@
               ]
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "e8oeaaqoAaeCxs0Ph-mN0Ac"
+            "responseId": "GvceaeDTCOvWxN8Pu9SDgQg"
           },
           {
             "candidates": [
@@ -143,7 +143,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": " 5 + 3 is 8."
+                      "text": "5 + 3 is 8."
                     }
                   ],
                   "role": "model"
@@ -164,7 +164,7 @@
               ]
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "e8oeaaqoAaeCxs0Ph-mN0Ac"
+            "responseId": "GvceaeDTCOvWxN8Pu9SDgQg"
           }
         ],
         "byte_segments": [],
@@ -188,7 +188,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "The result of"
+                      "text": "The result of "
                     }
                   ],
                   "role": "model"
@@ -197,7 +197,7 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "e8oeaaqoAaeCxs0Ph-mN0Ac",
+            "response_id": "GvceaeDTCOvWxN8Pu9SDgQg",
             "usage_metadata": {
               "candidates_token_count": 3,
               "prompt_token_count": 129,
@@ -229,7 +229,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": " 5 + 3 is 8."
+                      "text": "5 + 3 is 8."
                     }
                   ],
                   "role": "model"
@@ -239,7 +239,7 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "e8oeaaqoAaeCxs0Ph-mN0Ac",
+            "response_id": "GvceaeDTCOvWxN8Pu9SDgQg",
             "usage_metadata": {
               "candidates_token_count": 11,
               "prompt_token_count": 129,

@@ -215,4 +215,111 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"Generate a simple image for me"},{"role":"assistant","content":"I''ll generate a simple image for you.","tool_calls":[{"id":"call_123","type":"function","function":{"name":"generate_image","arguments":"{\"prompt\": \"simple\"}"}}]},{"role":"tool","tool_call_id":"call_123","content":"Generated a simple red pixel image","name":"test_tool"},{"role":"user","content":"What do you see in the image?"}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '460'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//jFJNj9owEL3nV0x96QUQWb663KptD1SVWvXWrlaRsSfBi+NxPQ4sWvHf
+          KydAoB9SLz7Mm/f85s28ZgDCaLEEoTYyqtrb4YPe//zo1GL14dvXnd79yN/tt9+/HD493H+evBeD
+          xKD1M6p4Zo0U1d5iNOQ6WAWUEZNqvphP5pPFOJ+2QE0abaJVPg6no3zopKPh3fhuNhxPh/n0RN+Q
+          UchiCY8ZAMBr+yajTuOLWMJ4cK7UyCwrFMtLE4AIZFNFSGbDUbooBj2oyEV0rfcVMCJIYJPsQ0AN
+          3rygBVPLCkewiqDIJQ0GKuG54dh2u8oiKLIUuv4BMEHcYECQAcERaIzSWNRQooxNQAYK0IXGsDNs
+          1hbBuES6fFbCgZq3GqzZJlM1Bex1KAB7VKY0qiMMwFuUjGAxQo2wdbR/cz1nwLJhmcJ2jbVXgHSO
+          okzLahN+OiHHS6aWKh9ozb9RRWmc4U0RUDK5lB9H8qJFjxnAU7u75mYdwgeqfSwibbH9bj7r5ER/
+          Mj04PYORorR9Pc9PC7+VK7p0+Gr5Qkm1Qd1T+0uRjTZ0BWRXQ//p5m/a3eDGVf8j3wNKoY+oCx9Q
+          G3U7cd8WMB3Hv9ouIbeGBWPYGYVFNBjSIjSWsrHdmQs+cMS6KI2rMPhgulsvfZHL+8V6JuVcieyY
+          /QIAAP//AwCa2FX3+gMAAA==
+      headers:
+        CF-RAY:
+          - 9a177fedee782bea-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Thu, 20 Nov 2025 11:10:15 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=XxTB7AVj5rqEKj6LJF8cCXmOnul_K0.E0Tztn49bx_c-1763637015-1.0.1.1-xQNeEhz3PJ.f4r1nlyEYD6UyU.1M0SBZrFRTo2fRwELrMXiOOjy_ls4Bb5Eq1PQoS2a2O9J6CtGAZPovWWMkway_EhcwCJk9RVgSIfOsuWM; path=/; expires=Thu, 20-Nov-25 11:40:15 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=EoQWralFQkOV6Sn7tTA.SB7jlSDcRB3OSTJg0SfcrDs-1763637015616-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '712'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '726'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199962'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 11ms
+        x-request-id:
+          - req_0b3658d6e92643ba8eda526a368aa772
+      status:
+        code: 200
+        message: OK
 version: 1

@@ -241,8 +241,8 @@ async def test_non_retriable_error_goes_to_fallback(
 @pytest.mark.parametrize(
     "primary_provider,primary_model,fallback_provider,fallback_model",
     [
-        ("openai", "gpt-4.1-nano", "google", "gemini-2.5-flash-lite-preview-06-17"),
-        ("google", "gemini-2.5-flash-lite-preview-06-17", "openai", "gpt-4.1-nano"),
+        ("openai", "gpt-4.1-nano", "google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-2.5-flash-lite", "openai", "gpt-4.1-nano"),
     ],
 )
 async def test_real_provider_fallback(

@@ -67,7 +67,7 @@ async def llm_client_factory() -> Callable[
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash-lite"),
     ],
 )
 async def test_basic_completion(
@@ -109,7 +109,7 @@ async def test_basic_completion(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash-lite"),
     ],
 )
 async def test_system_message_handling(
@@ -150,7 +150,7 @@ async def test_system_message_handling(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash-lite"),
     ],
 )
 async def test_multi_turn_conversation(
@@ -184,7 +184,7 @@ async def test_multi_turn_conversation(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash-lite"),
     ],
 )
 async def test_model_parameters(
@@ -220,9 +220,7 @@ async def test_provider_specific_google_features(
     if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
         pytest.skip("Skipping Google-specific test in CI without API key")
 
-    client = await llm_client_factory(
-        "google", "gemini-2.5-flash-lite-preview-06-17", None
-    )
+    client = await llm_client_factory("google", "gemini-2.5-flash-lite", None)
 
     # Test basic functionality specific to Google
     # For now, just ensure the client works with Google-specific config
@@ -268,7 +266,7 @@ async def test_provider_specific_openai_features(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash-lite"),
     ],
 )
 async def test_empty_conversation(
@@ -302,7 +300,7 @@ async def test_empty_conversation(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash-lite"),
     ],
 )
 async def test_reasoning_info_included(
@@ -350,9 +348,7 @@ async def test_gemini_multipart_content_with_images(
     if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
         pytest.skip("Skipping Gemini image test in CI without API key")
 
-    client = await llm_client_factory(
-        "google", "gemini-2.5-flash-lite-preview-06-17", None
-    )
+    client = await llm_client_factory("google", "gemini-2.5-flash-lite", None)
 
     # Generate a simple red square image
     # Create a 64x64 red image
@@ -403,9 +399,7 @@ async def test_gemini_system_message_with_multipart_content(
     if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
         pytest.skip("Skipping Gemini system+image test in CI without API key")
 
-    client = await llm_client_factory(
-        "google", "gemini-2.5-flash-lite-preview-06-17", None
-    )
+    client = await llm_client_factory("google", "gemini-2.5-flash-lite", None)
 
     # Create a valid blue square image
     # Create a 64x64 blue image
@@ -451,7 +445,7 @@ async def test_gemini_system_message_with_multipart_content(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash-lite"),
     ],
 )
 async def test_tool_message_with_image_attachment(
@@ -517,7 +511,7 @@ async def test_tool_message_with_image_attachment(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash-lite"),
     ],
 )
 async def test_tool_message_with_pdf_attachment(

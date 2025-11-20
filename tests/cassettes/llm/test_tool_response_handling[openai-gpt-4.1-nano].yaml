@@ -523,4 +523,216 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"What''s the weather in London, UK?"}],"model":"gpt-4.1-nano","tool_choice":"auto","tools":[{"type":"function","function":{"name":"get_weather","description":"Get the current weather in a given location","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The temperature unit"}},"required":["location"]}}}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '496'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//1FRRb9owEH7Pr7DuGSoCBGjepkq0UwfTVjFpjCo6nEtw59iZ7axliP8+
+          xbQk0E7q6/IQOff5++67y9m7gDEQKcQM+AYdL0rZvUoff91+mf25Wyw20SS6k666nlYfoodi+f0K
+          OjVDrx+IuxfWBddFKckJrQ4wN4SOatVwPBqMBuNev+eBQqcka1peuu7wIuwqVLrb7/Wjbm/YDYfP
+          9I0WnCzE7EfAGGM7/66NqpSeIGZezEcKshZzgvi4iTEwWtYRQGuFdagcdBqQa+VI1d5VJWULcFrL
+          hKOUTeLDs2utm26hlMmaf/u8rOZP83QyzebRCGfT2deb7ayV7yC9Lb2hrFL82KUWfozHZ8kYA4WF
+          5+bkkkdCtyFzRmcM0ORVQcrV1mG3Aqk51oIriNkKPmmVatVhi9sV7OGEu2997TvvKnr+sZovUVyO
+          +zfhdSH19no603IZ/adFH9f3rVkwlFUW5eshQaW081n8lNwHZ60DqfPS6LU9o0ImlLCbxBBaX3J7
+          3IIXI94CVCcTDaXRRekSp3+STzoZHEShOXUNOJw8g047lE08HISdN+SSlBwKP/HHQ8aRbyhtqM1h
+          wyoVugUErdJfu3lL+1C+UPl75BuAcyodpUlpKBX8tOJmm6H6UvrXtmOTvWGwZH4LTokTZOrfkVKG
+          lTzcFGC31lGRZELlZEoj/HUBWZmEeDleR4gjDsE++AsAAP//AwC7LOJAPQUAAA==
+      headers:
+        CF-RAY:
+          - 9a17800f9e0ea055-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Thu, 20 Nov 2025 11:10:20 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=G72H6mT6gEQbfR_mlcoJjjT44cJBaf3Karrn2ynSqts-1763637020-1.0.1.1-pRA5JUzERD9ilDl2R2SLj7lPP5klpkmsoZjxSSC8VzuJC3WJwEuyPkQ12Pfk9vQeyYAipJ6HqmitLvpa9cCQZYFT67rpYFlCsMVyqU2f3lk; path=/; expires=Thu, 20-Nov-25 11:40:20 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=_8nvcEEbn0W.tss8lYA2CMuOm4hwzJ1x0qIPdD6Ck14-1763637020741-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '479'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '495'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199989'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 3ms
+        x-request-id:
+          - req_83b5b6a9f34f4cda92c28b6debfd3796
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"What''s the weather in London, UK?"},{"role":"assistant","content":null,"tool_calls":[{"id":"call_bcVOZuNxNd8FfN56aMFMRHyM","type":"function","function":{"name":"get_weather","arguments":"{\"location\": \"London, UK\"}"}}]},{"role":"tool","tool_call_id":"call_bcVOZuNxNd8FfN56aMFMRHyM","content":"{\"location\": \"London, UK\", \"temperature\": 15, \"unit\": \"celsius\", \"condition\": \"Partly cloudy\"}","name":"test_tool"}],"model":"gpt-4.1-nano","tool_choice":"auto","tools":[{"type":"function","function":{"name":"get_weather","description":"Get the current weather in a given location","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The temperature unit"}},"required":["location"]}}}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '886'
+        content-type:
+          - application/json
+        cookie:
+          - __cf_bm=G72H6mT6gEQbfR_mlcoJjjT44cJBaf3Karrn2ynSqts-1763637020-1.0.1.1-pRA5JUzERD9ilDl2R2SLj7lPP5klpkmsoZjxSSC8VzuJC3WJwEuyPkQ12Pfk9vQeyYAipJ6HqmitLvpa9cCQZYFT67rpYFlCsMVyqU2f3lk; _cfuvid=_8nvcEEbn0W.tss8lYA2CMuOm4hwzJ1x0qIPdD6Ck14-1763637020741-0.0.1.1-604800000
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//jFLbjtMwEH3PV4z83FRNr9q+rpCALUgg0CKhVTS1J4kXxzb2hFJW/Se+
+          Yb8MJSlNFhaJFz/MmXN8zsw8JABCK7EFIStkWXuTXqvD15vy5eH17sU+ex9uP+m3Zveu/vFmd/vq
+          Xkxahtvfk+TfrKl0tTfE2tkeloGQqVXNNuvFerGZzWcdUDtFpqWVntPlNEstWpfOZ/NVOlum2fJM
+          r5yWFMUWPicAAA/d2xq1ir6LLXRiXaWmGLEksb00AYjgTFsRGKOOjJbFZACls0y28/6hIjgQckUB
+          tIWds8rZCXy8AR3BY2BzBGlco45w0FwBAlPtKSA3gcAVgME1VkG2evx5PR1/EqhoIrZJbWPMCEBr
+          HWM7qS7e3Rk5XQIZV/rg9vEPqii01bHKA2F0tjUf2XnRoacE4K4bXPNkFsIHV3vO2X2h7rtsse71
+          xLCwEXp1BtkxmlF9tZo8o5crYtQmjkYvJMqK1EAd9oSN0m4EJKPUf7t5TrtPrm35P/IDICV5JpX7
+          QErLp4mHtkDtPf+r7TLlzrCIFL5pSTlrCu0mFBXYmP7IRDxGpjovtC0p+KD7Syt8nuHVZr9CXEuR
+          nJJfAAAA//8DAIOEFBN4AwAA
+      headers:
+        CF-RAY:
+          - 9a178013c9d0a055-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Thu, 20 Nov 2025 11:10:21 GMT
+        Server:
+          - cloudflare
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '379'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '392'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199964'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 10ms
+        x-request-id:
+          - req_e9d91d05ab329f0a979f9cd61dfdeb8b
+      status:
+        code: 200
+        message: OK
 version: 1

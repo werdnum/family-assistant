@@ -132,7 +132,7 @@ def calculate_tool() -> dict[str, Any]:
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash-lite"),
     ],
 )
 async def test_single_tool_call(
@@ -176,7 +176,7 @@ async def test_single_tool_call(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash-lite"),
     ],
 )
 async def test_multiple_tool_options(
@@ -217,7 +217,7 @@ async def test_multiple_tool_options(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash-lite"),
     ],
 )
 async def test_no_tool_needed(
@@ -296,7 +296,7 @@ async def test_parallel_tool_calls(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash-lite"),
     ],
 )
 async def test_tool_call_with_conversation_history(
@@ -348,7 +348,7 @@ async def test_tool_call_with_conversation_history(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash-lite"),
     ],
 )
 async def test_tool_response_handling(
@@ -425,7 +425,7 @@ async def test_tool_response_handling(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite-preview-06-17"),
+        ("google", "gemini-2.5-flash-lite"),
     ],
 )
 async def test_tool_call_id_format(

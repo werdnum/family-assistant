@@ -209,4 +209,111 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"What is 25 times 4?"}],"model":"gpt-4.1-nano","tool_choice":"auto","tools":[{"type":"function","function":{"name":"get_weather","description":"Get the current weather in a given location","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The temperature unit"}},"required":["location"]}}},{"type":"function","function":{"name":"calculate","description":"Perform basic mathematical calculations","parameters":{"type":"object","properties":{"expression":{"type":"string","description":"The mathematical expression to evaluate"}},"required":["expression"]}}}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '749'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//jFPLbtswELzrK4g9FlYgyQ+lOqY5NA3QB1IkcOtAoKmVzJYiWZJq4xj+
+          90KUI8mOC1QHgdjZmZ3dJXcBIcALyAiwDXWs1iJ8V/z5dRutv9oPD3FyU0xv7PMyvbvefl6m9iNM
+          WoZa/0DmXlgXTNVaoONKdjAzSB22qnG6mC6maZREHqhVgaKlVdqFs4s4lFSqMImSeRjNwnh2oG8U
+          Z2ghI98DQgjZ+X9rVBb4BBnxYj5So7W0Qsj6JELAKNFGgFrLraPSwWQAmZIOZetdNkKMAKeUyBkV
+          YijcfbvReZgWFSK//XJ9f7V8SL+Zq4X6NJ/f3703hj7fjup10lvtDZWNZP2URngfz06KEQKS1ngo
+          yBpBHZ6QCQFqqqZG6VrjsFsBPmmD1nIlV5CtIJmTN2S2gj0cEffBufPjaCIGy8ZS8XpUVErlaOvY
+          z+rxgOz7tQhVaaPW9oQKJZfcbnKD1Ppux0MPXox4C9Ac7RW0UbV2uVM/0ReNo8tOFYbLN0IXB9Ap
+          R8UonswmZ/TyAh3lfvH9XWOUbbAYqMOdo03B1QgIRr2/dnNOu+ufy+p/5AeAMdQOi1wbLDg77nhI
+          M9i+zX+l9VP2hsGi+c0Z5o6jafdRYEkb0T0YsFvrsM5LLis02nD/aqDUeUzfpus5pQsGwT74CwAA
+          //8DAI6oEHtEBAAA
+      headers:
+        CF-RAY:
+          - 9a17800e68551903-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Thu, 20 Nov 2025 11:10:20 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=IKGJWHfeuaV.IufVADLH9Gu.Qtjfa7pTvtDBiLmZ6rY-1763637020-1.0.1.1-psZE1K25_zSntlBTV0K.gdOy7GENqKrvY9gFcMVh7YlGX30Qhrr94eU9KM8fdW4gMXQvm38DKcKjfuQzwUE_9R9ptX_m.BulgHXGVUMUxNU; path=/; expires=Thu, 20-Nov-25 11:40:20 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=6MsWSvUYIp_HsXJplUOZnlFwSMqkkrHy_xD6uRJUeY0-1763637020738-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '654'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '669'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199993'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 2ms
+        x-request-id:
+          - req_7facf8cb2b364525a66940a482aa2035
+      status:
+        code: 200
+        message: OK
 version: 1
