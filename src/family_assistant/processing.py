@@ -42,7 +42,7 @@ from .llm.messages import (
     SystemMessage,
     ToolMessage,
     UserMessage,
-    message_to_dict,
+    message_to_json_dict,
     tool_result_to_llm_message,
 )
 
@@ -824,7 +824,7 @@ class ProcessingService:
             )
 
             # Create history message from ToolMessage
-            history_message = message_to_dict(llm_message)
+            history_message = message_to_json_dict(llm_message)
             history_message["tool_name"] = func_name
 
             return ToolExecutionResult(
@@ -858,7 +858,7 @@ class ProcessingService:
             )
 
             # Create history message from ToolMessage
-            history_message = message_to_dict(llm_message)
+            history_message = message_to_json_dict(llm_message)
             history_message["tool_name"] = function_name
 
             return ToolExecutionResult(
@@ -1010,7 +1010,7 @@ class ProcessingService:
                     )
 
                 # Create history_message from the modified llm_message to preserve attachment IDs
-                history_message = message_to_dict(llm_message)
+                history_message = message_to_json_dict(llm_message)
                 history_message["tool_name"] = (
                     function_name  # Store tool name for database
                 )
@@ -1027,7 +1027,7 @@ class ProcessingService:
                     name=function_name,
                 )
                 # Create history message for string results
-                history_message = message_to_dict(llm_message)
+                history_message = message_to_json_dict(llm_message)
                 history_message["tool_name"] = function_name
                 stream_metadata = None
 
@@ -1112,7 +1112,7 @@ class ProcessingService:
             )
 
             # Create history message from ToolMessage
-            history_message = message_to_dict(llm_message)
+            history_message = message_to_json_dict(llm_message)
             history_message["tool_name"] = function_name
 
             return ToolExecutionResult(
@@ -1141,7 +1141,7 @@ class ProcessingService:
             )
 
             # Create history message from ToolMessage
-            history_message = message_to_dict(llm_message)
+            history_message = message_to_json_dict(llm_message)
             history_message["tool_name"] = function_name
 
             return ToolExecutionResult(

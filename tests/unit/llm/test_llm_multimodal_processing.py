@@ -4,9 +4,15 @@ Unit tests for LLM provider multimodal message processing.
 
 import base64
 import json
+from typing import Any, cast
 from unittest.mock import patch
 
 from family_assistant.llm import BaseLLMClient, LiteLLMClient
+from family_assistant.llm.messages import (
+    AssistantMessage,
+    ToolMessage,
+    UserMessage,
+)
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.llm.providers.openai_client import OpenAIClient
 from family_assistant.tools.types import ToolAttachment
@@ -37,15 +43,20 @@ class TestBaseLLMClient:
         """Test processing messages without attachments"""
         client = BaseLLMClient()
         messages = [
-            {"role": "user", "content": "Hello"},
-            {"role": "assistant", "content": "Hi there"},
-            {"role": "tool", "tool_call_id": "123", "content": "Tool result"},
+            UserMessage(content="Hello"),
+            AssistantMessage(content="Hi there"),
+            ToolMessage(tool_call_id="123", content="Tool result", name="test_tool"),
         ]
 
         result = client._process_tool_messages(messages)
 
         assert len(result) == 3
-        assert result == messages
+        assert isinstance(result[0], UserMessage)
+        assert result[0].content == "Hello"
+        assert isinstance(result[1], AssistantMessage)
+        assert result[1].content == "Hi there"
+        assert isinstance(result[2], ToolMessage)
+        assert result[2].content == "Tool result"
 
     def test_process_tool_messages_with_attachment_no_native_support(self) -> None:
         """Test processing messages with attachments (no native support)"""
@@ -55,13 +66,13 @@ class TestBaseLLMClient:
         )
 
         messages = [
-            {"role": "user", "content": "Process this image"},
-            {
-                "role": "tool",
-                "tool_call_id": "123",
-                "content": "Image processed",
-                "_attachments": [attachment],
-            },
+            UserMessage(content="Process this image"),
+            ToolMessage(
+                tool_call_id="123",
+                content="Image processed",
+                name="test_tool",
+                _attachments=[attachment],
+            ),
         ]
 
         result = client._process_tool_messages(messages)
@@ -70,45 +81,46 @@ class TestBaseLLMClient:
         assert len(result) == 3
 
         # First message unchanged
-        assert result[0] == {"role": "user", "content": "Process this image"}
+        assert isinstance(result[0], UserMessage)
+        assert result[0].content == "Process this image"
 
-        # Tool message modified (no _attachments, content updated)
-        assert result[1]["role"] == "tool"
-        assert result[1]["tool_call_id"] == "123"
-        assert "Image processed" in result[1]["content"]
-        assert "[File content in following message]" in result[1]["content"]
-        assert "_attachments" not in result[1]
+        # Tool message modified (no transient_attachments, content updated)
+        assert isinstance(result[1], ToolMessage)
+        assert result[1].tool_call_id == "123"
+        assert "Image processed" in result[1].content
+        assert "[File content in following message]" in result[1].content
+        assert (
+            not hasattr(result[1], "transient_attachments")
+            or result[1].transient_attachments is None
+        )
 
         # Injected user message
-        assert result[2]["role"] == "user"
-        assert "File from previous tool response" in result[2]["content"]
+        assert isinstance(result[2], UserMessage)
+        assert "File from previous tool response" in result[2].content
 
     def test_process_tool_messages_preserves_original(self) -> None:
         """Test that original messages are not modified (no side effects)"""
         client = BaseLLMClient()
         attachment = ToolAttachment(mime_type="text/plain", content=b"data")
 
-        original_messages = [
-            {
-                "role": "tool",
-                "tool_call_id": "123",
-                "content": "Original content",
-                "_attachments": [attachment],
-            }
-        ]
+        original_tool_msg = ToolMessage(
+            tool_call_id="123",
+            content="Original content",
+            name="test_tool",
+            _attachments=[attachment],
+        )
+        original_messages = [original_tool_msg]
 
-        # Keep reference to original for comparison
-        original_tool_msg = original_messages[0]
-
-        result = client._process_tool_messages(original_messages)
+        result = client._process_tool_messages(cast("list[Any]", original_messages))
 
         # Original message should be unchanged
-        assert "_attachments" in original_tool_msg
-        assert original_tool_msg["content"] == "Original content"
+        assert original_tool_msg.transient_attachments is not None
+        assert original_tool_msg.content == "Original content"
 
         # Result should be different
         assert len(result) == 2  # Tool + injected user message
-        assert "_attachments" not in result[0]
+        assert isinstance(result[0], ToolMessage)
+        assert result[0].transient_attachments is None
 
 
 class TestGoogleGenAIClient:
@@ -348,30 +360,31 @@ class TestLiteLLMClient:
             mime_type="image/png", content=fake_image_data, description="Test image"
         )
 
-        messages = [
-            {
-                "role": "tool",
-                "tool_call_id": "call_123",
-                "content": "Generated an image",
-                "_attachments": [attachment],
-            }
+        messages: list = [
+            ToolMessage(
+                tool_call_id="call_123",
+                content="Generated an image",
+                name="test_tool",
+                _attachments=[attachment],
+            )
         ]
 
         result = client._process_tool_messages(messages)
 
         assert len(result) == 1
-        assert result[0]["role"] == "tool"
-        assert isinstance(result[0]["content"], list)
-        assert len(result[0]["content"]) == 2
+        assert isinstance(result[0], ToolMessage)
+        assert isinstance(result[0].content, list)
+        assert len(result[0].content) == 2
 
         # First part should be text
-        assert result[0]["content"][0]["type"] == "text"
-        assert result[0]["content"][0]["text"] == "Generated an image"
+        content_list: list[Any] = result[0].content  # type: ignore[assignment]
+        assert content_list[0]["type"] == "text"  # type: ignore[index]
+        assert content_list[0]["text"] == "Generated an image"  # type: ignore[index]
 
         # Second part should be image
-        assert result[0]["content"][1]["type"] == "image"
-        assert result[0]["content"][1]["source"]["type"] == "base64"
-        assert result[0]["content"][1]["source"]["media_type"] == "image/png"
+        assert content_list[1]["type"] == "image"  # type: ignore[index]
+        assert content_list[1]["source"]["type"] == "base64"  # type: ignore[index]
+        assert content_list[1]["source"]["media_type"] == "image/png"  # type: ignore[index]
 
     def test_process_tool_messages_with_pdf_attachment(self) -> None:
         """Test processing tool messages with PDF attachments for Claude"""
@@ -382,30 +395,31 @@ class TestLiteLLMClient:
             mime_type="application/pdf", content=fake_pdf_data, description="Test PDF"
         )
 
-        messages = [
-            {
-                "role": "tool",
-                "tool_call_id": "call_456",
-                "content": "Retrieved a PDF document",
-                "_attachments": [attachment],
-            }
+        messages: list = [
+            ToolMessage(
+                tool_call_id="call_456",
+                content="Retrieved a PDF document",
+                name="test_tool",
+                _attachments=[attachment],
+            )
         ]
 
         result = client._process_tool_messages(messages)
 
         assert len(result) == 1
-        assert result[0]["role"] == "tool"
-        assert isinstance(result[0]["content"], list)
-        assert len(result[0]["content"]) == 2
+        assert isinstance(result[0], ToolMessage)
+        assert isinstance(result[0].content, list)
+        assert len(result[0].content) == 2
 
         # First part should be text
-        assert result[0]["content"][0]["type"] == "text"
-        assert result[0]["content"][0]["text"] == "Retrieved a PDF document"
+        content_list: list[Any] = result[0].content  # type: ignore[assignment]
+        assert content_list[0]["type"] == "text"  # type: ignore[index]
+        assert content_list[0]["text"] == "Retrieved a PDF document"  # type: ignore[index]
 
         # Second part should be document
-        assert result[0]["content"][1]["type"] == "document"
-        assert result[0]["content"][1]["source"]["type"] == "base64"
-        assert result[0]["content"][1]["source"]["media_type"] == "application/pdf"
+        assert content_list[1]["type"] == "document"  # type: ignore[index]
+        assert content_list[1]["source"]["type"] == "base64"  # type: ignore[index]
+        assert content_list[1]["source"]["media_type"] == "application/pdf"  # type: ignore[index]
 
     def test_process_tool_messages_with_unsupported_content_type(self) -> None:
         """Test processing tool messages with unsupported content types"""
@@ -416,22 +430,22 @@ class TestLiteLLMClient:
             mime_type="application/zip", content=fake_data, description="Test ZIP"
         )
 
-        messages = [
-            {
-                "role": "tool",
-                "tool_call_id": "call_789",
-                "content": "Created a ZIP file",
-                "_attachments": [attachment],
-            }
+        messages: list = [
+            ToolMessage(
+                tool_call_id="call_789",
+                content="Created a ZIP file",
+                name="test_tool",
+                _attachments=[attachment],
+            )
         ]
 
         result = client._process_tool_messages(messages)
 
         # Should have 2 messages: the tool message and the injected user message
         assert len(result) == 2
-        assert result[0]["role"] == "tool"
-        assert result[1]["role"] == "user"  # Injected message
-        assert "File from previous tool response" in result[1]["content"]
+        assert isinstance(result[0], ToolMessage)
+        assert isinstance(result[1], UserMessage)
+        assert "File from previous tool response" in result[1].content
 
     def test_process_tool_messages_with_file_path_only_attachment(self) -> None:
         """Test processing tool messages with file-path-only attachments"""
@@ -443,24 +457,24 @@ class TestLiteLLMClient:
             description="External PDF file",
         )
 
-        messages = [
-            {
-                "role": "tool",
-                "tool_call_id": "call_999",
-                "content": "Found an external document",
-                "_attachments": [attachment],
-            }
+        messages: list = [
+            ToolMessage(
+                tool_call_id="call_999",
+                content="Found an external document",
+                name="test_tool",
+                _attachments=[attachment],
+            )
         ]
 
         result = client._process_tool_messages(messages)
 
         # Should have 2 messages: the tool message and the injected user message
         assert len(result) == 2
-        assert result[0]["role"] == "tool"
-        assert result[1]["role"] == "user"  # Injected message
-        assert "File from previous tool response" in result[1]["content"]
+        assert isinstance(result[0], ToolMessage)
+        assert isinstance(result[1], UserMessage)
+        assert "File from previous tool response" in result[1].content
         assert (
-            "External PDF file" in result[1]["content"]
+            "External PDF file" in result[1].content
         )  # Uses description, not file_path
 
     def test_process_tool_messages_falls_back_to_base_class_for_non_claude(
@@ -474,22 +488,22 @@ class TestLiteLLMClient:
             mime_type="image/png", content=fake_image_data, description="Test image"
         )
 
-        messages = [
-            {
-                "role": "tool",
-                "tool_call_id": "call_000",
-                "content": "Generated an image",
-                "_attachments": [attachment],
-            }
+        messages: list = [
+            ToolMessage(
+                tool_call_id="call_000",
+                content="Generated an image",
+                name="test_tool",
+                _attachments=[attachment],
+            )
         ]
 
         result = client._process_tool_messages(messages)
 
         # Should have 2 messages: modified tool message + injected user message
         assert len(result) == 2
-        assert result[0]["role"] == "tool"
-        assert "[File content in following message]" in result[0]["content"]
-        assert result[1]["role"] == "user"  # Injected message
+        assert isinstance(result[0], ToolMessage)
+        assert "[File content in following message]" in result[0].content
+        assert isinstance(result[1], UserMessage)
 
     def test_create_attachment_injection_small_json(self) -> None:
         """Test small JSON files (≤10KiB) are inlined fully"""
