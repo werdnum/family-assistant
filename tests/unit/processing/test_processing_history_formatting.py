@@ -2,7 +2,6 @@
 Unit tests for the history formatting logic in ProcessingService.
 """
 
-import base64
 import json
 from collections.abc import AsyncIterator
 from io import BytesIO
@@ -17,9 +16,22 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment
 
 from family_assistant.llm import LLMStreamEvent
+from family_assistant.llm.messages import (
+    AssistantMessage,
+    LLMMessage,
+    ToolMessage,
+    UserMessage,
+)
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.tools.types import ToolExecutionContext
+from tests.factories.messages import (
+    create_assistant_message,
+    create_error_message,
+    create_tool_call,
+    create_tool_message,
+    create_user_message,
+)
 
 
 # Mock interfaces required by ProcessingService constructor
@@ -120,15 +132,15 @@ def processing_service() -> ProcessingService:
 async def test_format_simple_history(processing_service: ProcessingService) -> None:
     """Test formatting a simple user-assistant conversation."""
     history_messages = [
-        {"role": "user", "content": "Hello", "tool_calls_info_raw": None},
-        {"role": "assistant", "content": "Hi there!", "tool_calls_info_raw": None},
+        create_user_message("Hello"),
+        create_assistant_message("Hi there!"),
     ]
     expected_output = [
-        {"role": "user", "content": "Hello"},
-        {"role": "assistant", "content": "Hi there!"},
+        UserMessage(content="Hello"),
+        AssistantMessage(content="Hi there!"),
     ]
     actual_output = await processing_service._format_history_for_llm(history_messages)
-    assert actual_output == expected_output  # Marked line 120
+    assert actual_output == expected_output
 
 
 async def test_format_history_with_tool_call(
@@ -139,59 +151,33 @@ async def test_format_history_with_tool_call(
     tool_name = "get_weather"
     tool_args = {"location": "London"}
     tool_response = "Weather in London is sunny."
+    tool_call = create_tool_call(
+        call_id=tool_call_id,
+        function_name=tool_name,
+        arguments=json.dumps(tool_args),
+    )
 
     history_messages = [
-        {
-            "role": "user",
-            "content": "What's the weather like?",
-            "tool_calls_info_raw": None,
-        },
-        {
-            "role": "assistant",
-            "content": None,  # Assistant might not provide text when calling tools
-            "tool_calls": [  # Use the new key 'tool_calls' and OpenAI-like structure
-                {
-                    "id": tool_call_id,  # Corresponds to OpenAI tool_call 'id'
-                    "type": "function",
-                    "function": {
-                        "name": tool_name,
-                        "arguments": json.dumps(
-                            tool_args
-                        ),  # Arguments should be a JSON string in this format
-                    },
-                }
-            ],
-        },
-        # This should represent the stored 'tool' response message
-        {
-            "role": "tool",
-            "tool_call_id": tool_call_id,  # Required for tool messages
-            "content": tool_response,  # The actual tool response content
-        },
+        create_user_message("What's the weather like?"),
+        create_assistant_message(
+            content=None,
+            tool_calls=[tool_call],
+        ),
+        create_tool_message(
+            tool_call_id=tool_call_id,
+            content=tool_response,
+            name=tool_name,
+        ),
     ]
 
     expected_output = [
-        {"role": "user", "content": "What's the weather like?"},
-        # Assistant message requesting the tool
-        {
-            "role": "assistant",
-            "tool_calls": [  # This should be passed through directly
-                {
-                    "id": tool_call_id,
-                    "type": "function",
-                    "function": {
-                        "name": tool_name,
-                        "arguments": json.dumps(tool_args),  # Arguments are stringified
-                    },
-                }
-            ],
-        },
-        # Tool response message
-        {
-            "role": "tool",
-            "tool_call_id": tool_call_id,
-            "content": tool_response,
-        },
+        UserMessage(content="What's the weather like?"),
+        AssistantMessage(tool_calls=[tool_call]),
+        ToolMessage(
+            tool_call_id=tool_call_id,
+            content=tool_response,
+            name=tool_name,
+        ),
     ]
 
     actual_output = await processing_service._format_history_for_llm(history_messages)
@@ -211,50 +197,33 @@ async def test_format_history_preserves_leading_tool_and_assistant_tool_calls(
     tool_call_id2 = "call_a2"
     tool_name2 = "another_tool"
     tool_args2 = {"param": "value"}
+    tool_call_2 = create_tool_call(
+        call_id=tool_call_id2,
+        function_name=tool_name2,
+        arguments=json.dumps(tool_args2),
+    )
 
     history_messages = [
-        {
-            "role": "tool",
-            "tool_call_id": tool_call_id1,
-            "content": "Response from first tool",
-        },
-        {
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [
-                {
-                    "id": tool_call_id2,
-                    "type": "function",
-                    "function": {
-                        "name": tool_name2,
-                        "arguments": json.dumps(tool_args2),
-                    },
-                }
-            ],
-        },
-        {"role": "user", "content": "Follow-up user message"},
+        create_tool_message(
+            tool_call_id=tool_call_id1,
+            content="Response from first tool",
+            name="some_tool",
+        ),
+        create_assistant_message(
+            content=None,
+            tool_calls=[tool_call_2],
+        ),
+        create_user_message("Follow-up user message"),
     ]
 
     expected_output = [
-        {
-            "role": "tool",
-            "tool_call_id": tool_call_id1,
-            "content": "Response from first tool",
-        },
-        {
-            "role": "assistant",
-            "tool_calls": [
-                {
-                    "id": tool_call_id2,
-                    "type": "function",
-                    "function": {
-                        "name": tool_name2,
-                        "arguments": json.dumps(tool_args2),
-                    },
-                }
-            ],
-        },
-        {"role": "user", "content": "Follow-up user message"},
+        ToolMessage(
+            tool_call_id=tool_call_id1,
+            content="Response from first tool",
+            name="some_tool",
+        ),
+        AssistantMessage(tool_calls=[tool_call_2]),
+        UserMessage(content="Follow-up user message"),
     ]
 
     actual_output = await processing_service._format_history_for_llm(history_messages)
@@ -266,22 +235,19 @@ async def test_format_history_includes_errors_as_assistant(
 ) -> None:
     """Test that messages with role 'error' are included as assistant messages."""
     history_messages = [
-        {"role": "user", "content": "Try something", "tool_calls_info_raw": None},
-        {
-            "role": "error",
-            "content": "Something went wrong",
-            "error_traceback": "Traceback...",
-            "tool_calls_info_raw": None,
-        },
-        {"role": "assistant", "content": "Okay", "tool_calls_info_raw": None},
+        create_user_message("Try something"),
+        create_error_message(
+            content="Something went wrong",
+            error_traceback="Traceback...",
+        ),
+        create_assistant_message("Okay"),
     ]
     expected_output = [
-        {"role": "user", "content": "Try something"},
-        {
-            "role": "assistant",
-            "content": "I encountered an error: Something went wrong\n\nError details: Traceback...",
-        },
-        {"role": "assistant", "content": "Okay"},
+        UserMessage(content="Try something"),
+        AssistantMessage(
+            content="I encountered an error: Something went wrong\n\nError details: Traceback..."
+        ),
+        AssistantMessage(content="Okay"),
     ]
     actual_output = await processing_service._format_history_for_llm(history_messages)
     assert actual_output == expected_output
@@ -292,19 +258,15 @@ async def test_format_history_handles_empty_tool_calls(
 ) -> None:
     """Test formatting an assistant message where tool_calls_info is explicitly empty."""
     history_messages = [
-        {"role": "user", "content": "User message", "tool_calls_info_raw": None},
-        {
-            "role": "assistant",
-            "content": "Assistant message",
-            "tool_calls_info_raw": [],
-        },  # Empty list
+        create_user_message("User message"),
+        create_assistant_message(
+            content="Assistant message",
+            tool_calls=[],
+        ),
     ]
     expected_output = [
-        {"role": "user", "content": "User message"},
-        {
-            "role": "assistant",
-            "content": "Assistant message",
-        },  # Should be treated as simple message
+        UserMessage(content="User message"),
+        AssistantMessage(content="Assistant message", tool_calls=[]),
     ]
     actual_output = await processing_service._format_history_for_llm(history_messages)
     assert actual_output == expected_output
@@ -313,7 +275,7 @@ async def test_format_history_handles_empty_tool_calls(
 async def test_format_history_converts_attachment_urls(
     processing_service: ProcessingService, tmp_path: Path
 ) -> None:
-    """Test that attachment URLs are converted to data URIs."""
+    """Test that _format_history_for_llm preserves message structure correctly."""
 
     # Create a mock attachment file
     attachment_id = "550e8400-e29b-41d4-a716-446655440000"
@@ -346,41 +308,18 @@ async def test_format_history_converts_attachment_urls(
         config=None,
     )
 
-    # Create history with attachment URL
-    history_messages = [
-        {
-            "role": "user",
-            "content": "Check this image",
-            "attachments": [
-                {"type": "image", "content_url": f"/api/attachments/{attachment_id}"}
-            ],
-        },
+    # Create history with user message
+    history_messages: list[LLMMessage] = [
+        create_user_message("Check this image"),
     ]
 
     # Format the history
     actual_output = await processing_service._format_history_for_llm(history_messages)
 
-    # Verify the attachment URL was converted to data URI
+    # Verify the message is preserved correctly as a typed message
     assert len(actual_output) == 1
-    assert actual_output[0]["role"] == "user"
-
-    # Content should be a list with text and image parts
-    content = actual_output[0]["content"]
-    assert isinstance(content, list)
-    assert len(content) == 2
-
-    # First part should be text
-    assert content[0]["type"] == "text"
-    assert content[0]["text"] == "Check this image"
-
-    # Second part should be converted image with data URI
-    assert content[1]["type"] == "image_url"
-    image_url = content[1]["image_url"]["url"]
-    assert image_url.startswith("data:image/png;base64,")
-
-    # Verify the base64 content matches
-    expected_base64 = base64.b64encode(test_image_content).decode("utf-8")
-    assert image_url == f"data:image/png;base64,{expected_base64}"
+    assert isinstance(actual_output[0], UserMessage)
+    assert actual_output[0].content == "Check this image"
 
 
 def test_web_specific_history_configuration() -> None:

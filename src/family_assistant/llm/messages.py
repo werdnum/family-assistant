@@ -279,6 +279,27 @@ def message_to_dict(msg: LLMMessage | dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+# ast-grep-ignore: no-dict-any - Generic JSON serialization function
+def message_to_json_dict(msg: LLMMessage | dict[str, Any]) -> dict[str, Any]:
+    """
+    Convert a message to a fully serialized dictionary suitable for JSON encoding.
+
+    Unlike message_to_dict(), this function recursively serializes all nested objects
+    including ToolCallItem objects, making the result safe for json.dumps().
+
+    Args:
+        msg: The message to convert (can be a Pydantic message or dict)
+
+    Returns:
+        Fully serialized dictionary safe for JSON encoding
+    """
+    if isinstance(msg, dict):
+        return msg
+
+    # Use model_dump to get fully serialized dict (no nested Pydantic objects)
+    return msg.model_dump(mode="python", exclude_none=True)
+
+
 # ast-grep-ignore: no-dict-any - Generic deserialization function
 def dict_to_message(data: dict[str, Any]) -> LLMMessage:
     """
