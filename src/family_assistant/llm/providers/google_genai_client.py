@@ -366,7 +366,7 @@ class GoogleGenAIClient(BaseLLMClient):
                 # Add tool calls if present, with thought signatures attached per-call
                 if "tool_calls" in msg and msg["tool_calls"]:
                     for tc in msg["tool_calls"]:
-                        # Tool calls are now properly typed ToolCallItem objects
+                        # Tool calls must be properly typed ToolCallItem objects
                         if not isinstance(tc, ToolCallItem):
                             logger.warning(
                                 f"Expected ToolCallItem, got {type(tc)}. Skipping."
@@ -389,7 +389,7 @@ class GoogleGenAIClient(BaseLLMClient):
                         # Check if this tool call has a thought signature in provider_metadata
                         thought_signature_bytes = None
                         if tc_metadata:
-                            # Provider metadata is now properly typed GeminiProviderMetadata
+                            # Provider metadata must be properly typed GeminiProviderMetadata
                             if not isinstance(tc_metadata, GeminiProviderMetadata):
                                 logger.warning(
                                     f"Expected GeminiProviderMetadata, got {type(tc_metadata)}. Skipping thought signature."
@@ -399,23 +399,28 @@ class GoogleGenAIClient(BaseLLMClient):
                                     tc_metadata.thought_signature.to_google_format()
                                 )
 
-                        # Create FunctionCall Part with thought_signature
-                        # Use skip validator if no thought signature is available
-                        # (e.g., when transferring history from a different model)
-                        signature_value = (
-                            thought_signature_bytes
-                            if thought_signature_bytes
-                            else b"skip_thought_signature_validator"
-                        )
-                        assistant_parts.append(
-                            types.Part(
-                                function_call=types.FunctionCall(
-                                    name=func_name,
-                                    args=args,
-                                ),
-                                thought_signature=signature_value,
+                        # Create FunctionCall Part with thought_signature if present
+                        # Only include thought_signature if we actually have one
+                        # (per Google docs: pass it back exactly as received, or omit if not received)
+                        if thought_signature_bytes:
+                            assistant_parts.append(
+                                types.Part(
+                                    function_call=types.FunctionCall(
+                                        name=func_name,
+                                        args=args,
+                                    ),
+                                    thought_signature=thought_signature_bytes,
+                                )
                             )
-                        )
+                        else:
+                            assistant_parts.append(
+                                types.Part(
+                                    function_call=types.FunctionCall(
+                                        name=func_name,
+                                        args=args,
+                                    )
+                                )
+                            )
 
                 if assistant_parts:
                     contents.append(types.Content(role="model", parts=assistant_parts))
