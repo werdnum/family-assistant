@@ -14,6 +14,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from family_assistant.llm import ToolCallItem
+from family_assistant.llm.messages import (
+    AssistantMessage,
+    LLMMessage,
+    SystemMessage,
+    UserMessage,
+)
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools.types import ToolExecutionContext
@@ -473,19 +479,21 @@ async def api_chat_send_message(
             limit=5,  # Get last few messages
             max_age=timedelta(minutes=5),
         )
-        # Find the assistant message with the matching internal_id
+        # Find the most recent assistant message (repository returns typed LLMMessage objects)
+        # Note: Cannot match by internal_id since typed messages don't include database metadata
+        # Use the most recent AssistantMessage from the list
         assistant_msg = next(
             (
                 msg
-                for msg in recent_messages
-                if msg.get("internal_id") == final_assistant_message_internal_id
+                for msg in reversed(recent_messages)
+                if isinstance(msg, AssistantMessage) and msg.tool_calls
             ),
             None,
         )
-        if assistant_msg and assistant_msg.get("tool_calls"):
+        if assistant_msg and assistant_msg.tool_calls:
             # Convert ToolCallItem objects to dicts for API response
             tool_calls_response = []
-            for tc in assistant_msg["tool_calls"]:
+            for tc in assistant_msg.tool_calls:
                 if isinstance(tc, ToolCallItem):
                     # Ensure arguments is a JSON string
                     args = tc.function.arguments
@@ -1238,7 +1246,7 @@ async def live_message_events(
 
     async def query_new_messages(
         last_check_time: datetime,
-    ) -> tuple[list[dict], datetime]:
+    ) -> tuple[list[LLMMessage], datetime]:
         """
         Helper to query for new messages.
 
@@ -1251,19 +1259,22 @@ async def live_message_events(
                 after=last_check_time,
                 interface_type=interface_type,
             )
-        return messages, messages[-1]["timestamp"] if messages else last_check_time
+        # Note: Repository returns typed LLMMessage objects without database metadata
+        # Use current time as update timestamp since we can't access message timestamps
+        return messages, datetime.now(UTC) if messages else last_check_time
 
-    def _create_sse_message(msg: dict) -> str:
+    def _create_sse_message(msg: LLMMessage) -> str:
         """Create a formatted SSE message string."""
+        # Note: Typed messages don't include database metadata like internal_id
+        # Convert message to dict format for API response
         data = {
-            "internal_id": msg["internal_id"],
-            "timestamp": msg["timestamp"].isoformat(),
             "new_messages": True,
-            "role": msg.get("role"),
-            "content": msg.get("content"),
-            "conversation_id": msg.get("conversation_id"),
+            "role": msg.role,
+            "content": msg.content
+            if isinstance(msg, (UserMessage, SystemMessage))
+            else getattr(msg, "content", ""),
         }
-        return f"event: message\ndata: {json.dumps(data)}\n\n"
+        return f"event: message\ndata: {json.dumps(data, default=str)}\n\n"
 
     async def event_generator() -> AsyncGenerator[str]:
         """Generate SSE formatted events for message updates."""

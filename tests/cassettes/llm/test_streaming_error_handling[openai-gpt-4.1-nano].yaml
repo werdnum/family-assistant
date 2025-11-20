@@ -41,7 +41,7 @@ interactions:
         string: "{\n  \"error\": {\n    \"message\": \"Missing required parameter: 'messages[0].role'.\",\n    \"type\": \"invalid_request_error\",\n    \"param\": \"messages[0].role\",\n    \"code\": \"missing_required_parameter\"\n  }\n}"
       headers:
         CF-RAY:
-          - 9a1829d81b029bbc-FRA
+          - 9a1834e49bf87d53-FRA
         Connection:
           - keep-alive
         Content-Length:
@@ -49,12 +49,12 @@ interactions:
         Content-Type:
           - application/json
         Date:
-          - Thu, 20 Nov 2025 13:06:14 GMT
+          - Thu, 20 Nov 2025 13:13:47 GMT
         Server:
           - cloudflare
         Set-Cookie:
-          - __cf_bm=c22Be_n7A.hsCZNiJcbO7g6a7syMasAQlQGkiM3RvTU-1763643974-1.0.1.1-kHrAuAuDbqZRC6j_XBAb.SnRbIztB4edFWBMt30AowWLFogK54ncfFJY7Rj_E0e.b2a4tEcUws_sOPvBw2PElTduy8VP64e51wmWThXs6g8; path=/; expires=Thu, 20-Nov-25 13:36:14 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
-          - _cfuvid=3rYTkJb3vIIYjDLRZTZTwlUmcauLbD2Fb3qwFSWujXo-1763643974590-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - __cf_bm=Mf.GVQaSWde5ASOyCauoXirWNkDJroUDN18F02KE5qc-1763644427-1.0.1.1-Z_MGF_ttRsCmjlAtmgUz3AFDHazUu75n8oG3VWr.vT.zZB9Lw3WU5HRBhhriLAw_Pa1N3ACM949TZ.eAst5tkUuCIR5YlwwqBB8qJ3FsKXg; path=/; expires=Thu, 20-Nov-25 13:43:47 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=1no_pHx8_Ph_2c6vYVm5qz3NbqMgL8znzUHWCwHVSik-1763644427780-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
         Strict-Transport-Security:
           - max-age=31536000; includeSubDomains; preload
         X-Content-Type-Options:
@@ -68,13 +68,13 @@ interactions:
         openai-organization:
           - REDACTED
         openai-processing-ms:
-          - '13'
+          - '12'
         openai-project:
           - proj_wvaoRBrBR9ayhT5aPMqWgDtI
         openai-version:
           - '2020-10-01'
         x-envoy-upstream-service-time:
-          - '26'
+          - '224'
         x-openai-proxy-wasm:
           - v0.1
         x-ratelimit-limit-requests:
@@ -90,7 +90,7 @@ interactions:
         x-ratelimit-reset-tokens:
           - 3ms
         x-request-id:
-          - req_98d87e5e89dd4598a5b4e8f2e91ec973
+          - req_dfa0e3d37ccb4ee9bb897e3885a9dd8d
       status:
         code: 400
         message: Bad Request

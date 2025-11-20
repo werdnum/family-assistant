@@ -10,6 +10,15 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import functions as func
 
 from family_assistant.llm.google_types import GeminiProviderMetadata
+from family_assistant.llm.messages import (
+    AssistantMessage,
+    ErrorMessage,
+    LLMMessage,
+    SystemMessage,
+    ToolMessage,
+    UserMessage,
+    message_to_dict,
+)
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.base import BaseRepository
@@ -107,15 +116,32 @@ class MessageHistoryRepository(BaseRepository):
         if tool_calls:
             serialized_tool_calls = []
             for tc in tool_calls:
-                # tc must be a dict with potentially typed provider_metadata
-                tc_copy = tc.copy()
-                if "provider_metadata" in tc_copy and isinstance(
-                    tc_copy["provider_metadata"], GeminiProviderMetadata
+                # tc can be either a ToolCallItem object or a dict
+                if isinstance(tc, dict):
+                    tc_copy = tc.copy()
+                    if "provider_metadata" in tc_copy and isinstance(
+                        tc_copy["provider_metadata"], GeminiProviderMetadata
+                    ):
+                        tc_copy["provider_metadata"] = tc_copy[
+                            "provider_metadata"
+                        ].to_dict()
+                    serialized_tool_calls.append(tc_copy)
+                # tc is a ToolCallItem object
+                # Check for GeminiProviderMetadata BEFORE serializing
+                elif hasattr(tc, "provider_metadata") and isinstance(
+                    tc.provider_metadata, GeminiProviderMetadata
                 ):
-                    tc_copy["provider_metadata"] = tc_copy[
-                        "provider_metadata"
-                    ].to_dict()
-                serialized_tool_calls.append(tc_copy)
+                    # Serialize the object manually to properly handle nested metadata
+                    tc_dict = tc.model_dump(mode="python", exclude_none=True)
+                    # The model_dump already converted provider_metadata to dict, but we need to use to_dict()
+                    # to properly serialize thought signatures
+                    # So we replace the model_dump result with our custom serialization
+                    tc_dict["provider_metadata"] = tc.provider_metadata.to_dict()
+                    serialized_tool_calls.append(tc_dict)
+                else:
+                    # No special metadata, use standard serialization
+                    tc_dict = tc.model_dump(mode="python", exclude_none=True)
+                    serialized_tool_calls.append(tc_dict)
 
         serialized_provider_metadata = None
         if provider_metadata:
@@ -219,8 +245,7 @@ class MessageHistoryRepository(BaseRepository):
         max_age: timedelta | None = None,
         processing_profile_id: str | None = None,
         subconversation_id: str | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> list[dict[str, Any]]:
+    ) -> list[LLMMessage]:
         """
         Retrieves recent message history for a conversation.
 
@@ -230,9 +255,10 @@ class MessageHistoryRepository(BaseRepository):
             limit: Maximum number of messages to return
             max_age: Maximum age of messages to return
             processing_profile_id: Filter by processing profile
+            subconversation_id: Filter by subconversation ID
 
         Returns:
-            List of messages in chronological order
+            List of typed LLMMessage objects in chronological order
         """
         if max_age:
             cutoff = datetime.now(UTC) - max_age
@@ -276,6 +302,51 @@ class MessageHistoryRepository(BaseRepository):
 
         return [self._process_message_row(row) for row in rows]
 
+    async def get_recent_with_metadata(
+        self,
+        interface_type: str,
+        conversation_id: str,
+        limit: int | None = None,
+        max_age: timedelta | None = None,
+        # ast-grep-ignore: no-dict-any - Returns message content + database metadata (timestamp, internal_id, etc.)
+    ) -> list[dict[str, Any]]:
+        """
+        Retrieves recent messages with database metadata (timestamp, internal_id, etc.).
+
+        This method returns the full database rows including both message content and
+        metadata fields. Use this when you need access to timestamps or other metadata.
+        For just message content, use get_recent() which returns typed LLMMessage objects.
+
+        Args:
+            interface_type: Type of interface
+            conversation_id: Conversation identifier
+            limit: Maximum number of messages to return
+            max_age: Maximum age of messages to return
+
+        Returns:
+            List of dicts with message content + metadata (timestamp, internal_id, etc.)
+        """
+        if max_age:
+            cutoff = datetime.now(UTC) - max_age
+        else:
+            cutoff = datetime.now(UTC) - timedelta(hours=24)
+
+        stmt = (
+            select(message_history_table)
+            .where(
+                message_history_table.c.interface_type == interface_type,
+                message_history_table.c.conversation_id == conversation_id,
+                message_history_table.c.timestamp >= cutoff,
+            )
+            .order_by(message_history_table.c.timestamp.asc())
+        )
+
+        if limit:
+            stmt = stmt.limit(limit)
+
+        rows = await self._db.fetch_all(stmt)
+        return [dict(row) for row in rows]
+
     async def get_grouped(
         self,
         interface_type: str,
@@ -299,12 +370,15 @@ class MessageHistoryRepository(BaseRepository):
         # Get recent messages
         messages = await self.get_recent(interface_type, conversation_id, hours)
 
+        # Convert typed messages to dicts for backward compatibility
+        msg_dicts = [message_to_dict(msg) for msg in messages]
+
         # Group messages by turn_id
         grouped_messages = []
         current_turn = None
         current_turn_messages = []
 
-        for msg in messages:
+        for msg in msg_dicts:
             msg_turn_id = msg.get("turn_id")
 
             if msg_turn_id != current_turn:
@@ -338,8 +412,7 @@ class MessageHistoryRepository(BaseRepository):
         self,
         interface_type: str,
         interface_message_id: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any] | None:
+    ) -> LLMMessage | None:
         """
         Retrieves a message by its interface-specific ID.
 
@@ -348,7 +421,7 @@ class MessageHistoryRepository(BaseRepository):
             interface_message_id: Interface-specific message ID
 
         Returns:
-            Message data or None if not found
+            Typed LLMMessage or None if not found
         """
         stmt = select(message_history_table).where(
             message_history_table.c.interface_type == interface_type,
@@ -357,6 +430,34 @@ class MessageHistoryRepository(BaseRepository):
 
         row = await self._db.fetch_one(stmt)
         return self._process_message_row(row) if row else None
+
+    async def get_row_by_interface_id(
+        self,
+        interface_type: str,
+        interface_message_id: str,
+        # ast-grep-ignore: no-dict-any - Returns raw database row with metadata fields not in LLMMessage
+    ) -> dict[str, Any] | None:
+        """
+        Retrieves raw database row by interface-specific ID, including metadata.
+
+        This method returns the full database row including metadata fields like
+        internal_id, thread_root_id, and processing_profile_id that are not part
+        of the LLMMessage content types.
+
+        Args:
+            interface_type: Type of interface
+            interface_message_id: Interface-specific message ID
+
+        Returns:
+            Dict with all database fields including metadata, or None if not found
+        """
+        stmt = select(message_history_table).where(
+            message_history_table.c.interface_type == interface_type,
+            message_history_table.c.interface_message_id == interface_message_id,
+        )
+
+        row = await self._db.fetch_one(stmt)
+        return dict(row) if row else None
 
     async def get_interface_type_for_conversation(
         self, conversation_id: str
@@ -382,9 +483,7 @@ class MessageHistoryRepository(BaseRepository):
         row = await self._db.fetch_one(stmt)
         return row["interface_type"] if row else None
 
-    async def get_by_turn_id(
-        self, turn_id: str
-    ) -> list[dict[str, Any]]:  # ast-grep-ignore: no-dict-any
+    async def get_by_turn_id(self, turn_id: str) -> list[LLMMessage]:
         """
         Retrieves all messages for a specific turn.
 
@@ -392,7 +491,7 @@ class MessageHistoryRepository(BaseRepository):
             turn_id: The turn identifier
 
         Returns:
-            List of messages in the turn
+            List of typed LLMMessage objects in the turn
         """
         stmt = (
             select(message_history_table)
@@ -408,8 +507,7 @@ class MessageHistoryRepository(BaseRepository):
         thread_root_id: int,
         processing_profile_id: str | None = None,
         subconversation_id: str | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> list[dict[str, Any]]:
+    ) -> list[LLMMessage]:
         """
         Retrieves all messages in a thread.
 
@@ -418,7 +516,7 @@ class MessageHistoryRepository(BaseRepository):
             processing_profile_id: Filter by processing profile
 
         Returns:
-            List of messages in the thread, including the root message
+            List of typed LLMMessage objects in the thread, including the root message
         """
         # Include both the root message itself (where internal_id = thread_root_id)
         # and all child messages (where thread_root_id = thread_root_id)
@@ -539,7 +637,7 @@ class MessageHistoryRepository(BaseRepository):
         )
 
         rows = await self._db.fetch_all(stmt)
-        messages = [self._process_message_row(row) for row in rows]
+        messages = [self._process_message_row_as_dict(row) for row in rows]
 
         # Check if we have more messages
         has_more = len(messages) > limit
@@ -598,8 +696,7 @@ class MessageHistoryRepository(BaseRepository):
         after: datetime,
         interface_type: str | None = None,
         limit: int = 100,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> list[dict[str, Any]]:
+    ) -> list[LLMMessage]:
         """
         Get messages created after a specific timestamp.
 
@@ -612,7 +709,7 @@ class MessageHistoryRepository(BaseRepository):
             limit: Maximum number of messages to return (default 100)
 
         Returns:
-            List of messages in chronological order (oldest first)
+            List of typed LLMMessage objects in chronological order (oldest first)
         """
         conditions = [
             message_history_table.c.conversation_id == conversation_id,
@@ -632,9 +729,110 @@ class MessageHistoryRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return [self._process_message_row(row) for row in rows]
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def _process_message_row(self, row: dict[str, Any]) -> dict[str, Any]:
+    # ast-grep-ignore: no-dict-any - Database row deserialization requires untyped dict
+    def _process_message_row_as_dict(self, row: dict[str, Any]) -> dict[str, Any]:
+        """
+        Process a message row and return it as a dict with all database fields preserved.
+
+        This method performs the same deserialization as _process_message_row but returns
+        a dict instead of a typed LLMMessage. Use this when you need all database fields
+        (like user_id, interface_type, etc.) rather than a typed message object.
+
+        Args:
+            row: Database row
+
+        Returns:
+            Dictionary with properly deserialized complex types
+        """
+        msg = dict(row)
+
+        # Handle tool_calls deserialization: JSON columns return dicts/lists directly
+        if isinstance(msg.get("tool_calls"), str):
+            try:
+                msg["tool_calls"] = json.loads(msg["tool_calls"])
+            except json.JSONDecodeError:
+                self._logger.warning(
+                    f"Failed to parse tool_calls JSON for message {msg.get('internal_id')}"
+                )
+                msg["tool_calls"] = None
+
+        # Deserialize provider_metadata within each tool call to typed objects
+        if msg.get("tool_calls") and isinstance(msg["tool_calls"], list):
+            tool_call_items = []
+            for tc_dict in msg["tool_calls"]:
+                if isinstance(tc_dict, ToolCallItem):
+                    # Already a ToolCallItem, keep it as-is
+                    tool_call_items.append(tc_dict)
+                elif isinstance(tc_dict, dict):
+                    # Deserialize provider_metadata if present
+                    provider_metadata = tc_dict.get("provider_metadata")
+                    if (
+                        isinstance(provider_metadata, dict)
+                        and provider_metadata.get("provider") == "google"
+                    ):
+                        provider_metadata = GeminiProviderMetadata.from_dict(
+                            provider_metadata
+                        )
+
+                    # Create ToolCallItem with typed provider_metadata
+                    tool_call_items.append(
+                        ToolCallItem(
+                            id=tc_dict["id"],
+                            type=tc_dict["type"],
+                            function=ToolCallFunction(
+                                name=tc_dict["function"]["name"],
+                                arguments=tc_dict["function"]["arguments"],
+                            ),
+                            provider_metadata=provider_metadata,
+                        )
+                    )
+                else:
+                    self._logger.warning(
+                        f"Unexpected tool_call type: {type(tc_dict)}, skipping"
+                    )
+            msg["tool_calls"] = tool_call_items
+
+        # Handle reasoning_info deserialization
+        if isinstance(msg.get("reasoning_info"), str):
+            try:
+                msg["reasoning_info"] = json.loads(msg["reasoning_info"])
+            except json.JSONDecodeError:
+                self._logger.warning(
+                    f"Failed to parse reasoning_info JSON for message {msg.get('internal_id')}"
+                )
+                msg["reasoning_info"] = None
+
+        # Handle attachments deserialization
+        if isinstance(msg.get("attachments"), str):
+            try:
+                msg["attachments"] = json.loads(msg["attachments"])
+            except json.JSONDecodeError:
+                self._logger.warning(
+                    f"Failed to parse attachments JSON for message {msg.get('internal_id')}"
+                )
+                msg["attachments"] = None
+
+        # Handle provider_metadata deserialization at message level
+        provider_metadata = msg.get("provider_metadata")
+        if provider_metadata:
+            if isinstance(provider_metadata, str):
+                # String case: parse JSON first
+                try:
+                    provider_metadata = json.loads(provider_metadata)
+                except json.JSONDecodeError:
+                    self._logger.warning(
+                        f"Failed to parse provider_metadata JSON for message {msg.get('internal_id')}"
+                    )
+                    provider_metadata = None
+
+            # Keep message-level provider_metadata as dict for now
+            # (it has a different structure than tool-call-level provider_metadata)
+            msg["provider_metadata"] = provider_metadata
+
+        return msg
+
+    # ast-grep-ignore: no-dict-any - Database row deserialization requires untyped dict
+    def _process_message_row(self, row: dict[str, Any]) -> LLMMessage:
         """
         Process a message row from the database with proper type deserialization.
 
@@ -733,7 +931,58 @@ class MessageHistoryRepository(BaseRepository):
             # (it has a different structure than tool-call-level provider_metadata)
             msg["provider_metadata"] = provider_metadata
 
-        return msg
+        # Convert dict to typed LLMMessage
+        return self._dict_to_typed_message(msg)
+
+    # ast-grep-ignore: no-dict-any - Converts untyped dict to typed LLMMessage
+    def _dict_to_typed_message(self, msg: dict[str, Any]) -> LLMMessage:
+        """
+        Convert a processed message dict to a proper typed LLMMessage object.
+
+        The dict should have been processed by _process_message_row to ensure
+        proper deserialization of complex types (tool_calls as ToolCallItem objects,
+        provider_metadata as typed objects, etc.).
+
+        Args:
+            msg: Dictionary with deserialized message data
+
+        Returns:
+            Appropriate typed LLMMessage (UserMessage, AssistantMessage, ToolMessage,
+            SystemMessage, or ErrorMessage)
+
+        Raises:
+            ValueError: If role is unknown
+        """
+        role = msg.get("role")
+
+        if role == "user":
+            return UserMessage(
+                content=msg.get("content") or "",
+            )
+        elif role == "assistant":
+            return AssistantMessage(
+                content=msg.get("content"),
+                tool_calls=msg.get("tool_calls"),
+                provider_metadata=msg.get("provider_metadata"),
+            )
+        elif role == "tool":
+            return ToolMessage(
+                tool_call_id=msg.get("tool_call_id") or "",
+                content=msg.get("content") or "",
+                name=msg.get("tool_name") or "",
+                error_traceback=msg.get("error_traceback"),
+            )
+        elif role == "system":
+            return SystemMessage(
+                content=msg.get("content") or "",
+            )
+        elif role == "error":
+            return ErrorMessage(
+                content=msg.get("content") or "",
+                error_traceback=msg.get("error_traceback"),
+            )
+        else:
+            raise ValueError(f"Unknown message role: {role}")
 
     async def get_all_grouped(
         self,
@@ -786,7 +1035,7 @@ class MessageHistoryRepository(BaseRepository):
         grouped_history: dict[tuple[str, str], list[dict[str, Any]]] = {}
 
         for row in rows:
-            msg = self._process_message_row(row)
+            msg = self._process_message_row_as_dict(row)
             key = (msg["interface_type"], msg["conversation_id"])
 
             if key not in grouped_history:

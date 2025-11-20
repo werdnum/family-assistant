@@ -144,7 +144,7 @@ async def get_message_history_tool(
 
     try:
         max_age_delta = timedelta(hours=max_age_hours)
-        history_messages = await db_context.message_history.get_recent(
+        history_messages = await db_context.message_history.get_recent_with_metadata(
             interface_type=interface_type,  # Pass interface type
             conversation_id=conversation_id,  # Pass conversation ID
             limit=limit,

@@ -404,7 +404,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 if replied_to_interface_id:
                     try:
                         replied_to_db_msg = (
-                            await db_context.message_history.get_by_interface_id(
+                            await db_context.message_history.get_row_by_interface_id(
                                 interface_type=interface_type,
                                 interface_message_id=replied_to_interface_id,
                             )
@@ -690,7 +690,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 try:
                     async with self.get_db_context() as db_ctx_err:
                         user_msg_record = (
-                            await db_ctx_err.message_history.get_by_interface_id(
+                            await db_ctx_err.message_history.get_row_by_interface_id(
                                 interface_type=interface_type,
                                 interface_message_id=str(user_message_id),
                             )
@@ -1104,7 +1104,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 ):
                     try:
                         user_msg_record = (
-                            await db_ctx.message_history.get_by_interface_id(
+                            await db_ctx.message_history.get_row_by_interface_id(
                                 interface_type="telegram",
                                 interface_message_id=str(update.message.message_id),
                             )

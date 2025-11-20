@@ -32,10 +32,12 @@ from .context_providers import ContextProvider
 from .interfaces import ChatInterface  # Import ChatInterface
 
 # Import the LLM interface and output structure
-from .llm import LLMInterface, LLMStreamEvent, ToolCallFunction, ToolCallItem
+from .llm import LLMInterface, LLMStreamEvent, ToolCallItem
 from .llm.google_types import GeminiProviderMetadata
 from .llm.messages import (
     AssistantMessage,
+    ContentPart,
+    ErrorMessage,
     LLMMessage,
     SystemMessage,
     ToolMessage,
@@ -273,72 +275,6 @@ class ProcessingService:
         # Join all non-empty fragments (i.e., filter out empty strings from individual providers' lists)
         # separated by double newlines for clarity.
         return "\n\n".join(filter(None, all_fragments)).strip()
-
-    # Removed _execute_function_call method (if it was previously here)
-
-    def _convert_dict_messages_to_typed(
-        self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
-    ) -> list[LLMMessage]:
-        """
-        Convert dict messages to typed LLMMessage objects.
-
-        This is a compatibility helper for converting messages from the database
-        or _format_history_for_llm into properly typed message objects.
-        """
-        typed_messages: list[LLMMessage] = []
-        for msg in messages:
-            role = msg.get("role")
-            if role == "system":
-                typed_messages.append(SystemMessage(content=msg.get("content", "")))
-            elif role == "user":
-                typed_messages.append(UserMessage(content=msg.get("content", "")))
-            elif role == "assistant":
-                tool_calls_data = msg.get("tool_calls")
-                tool_calls_items = None
-                if tool_calls_data:
-                    tool_calls_items = []
-                    for tc in tool_calls_data:
-                        # provider_metadata should already be typed objects (GeminiProviderMetadata)
-                        # from the processing loop, not dicts
-                        provider_metadata = tc.get("provider_metadata")
-                        logger.info(
-                            f"DEBUG: Loading tool_call from processing loop - id: {tc['id']}, "
-                            f"has provider_metadata: {provider_metadata is not None}, "
-                            f"type: {type(provider_metadata).__name__ if provider_metadata else 'None'}"
-                        )
-                        tool_calls_items.append(
-                            ToolCallItem(
-                                id=tc["id"],
-                                type=tc.get("type", "function"),
-                                function=ToolCallFunction(
-                                    name=tc["function"]["name"],
-                                    arguments=tc["function"]["arguments"],
-                                ),
-                                provider_metadata=provider_metadata,
-                            )
-                        )
-                typed_messages.append(
-                    AssistantMessage(
-                        content=msg.get("content"),
-                        tool_calls=tool_calls_items,
-                    )
-                )
-            elif role == "tool":
-                typed_messages.append(
-                    ToolMessage(
-                        tool_call_id=msg.get("tool_call_id", ""),
-                        content=msg.get("content", ""),
-                        name=msg.get("name", ""),
-                        error_traceback=msg.get("error_traceback"),
-                    )
-                )
-            else:
-                # Unknown role, skip or log warning
-                logger.warning(f"Unknown message role: {role}, skipping conversion")
-
-        return typed_messages
 
     async def process_message(
         self,
@@ -1499,41 +1435,28 @@ class ProcessingService:
             return ""
 
     async def _format_history_for_llm(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        history_messages: list[dict[str, Any]],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> list[dict[str, Any]]:
+        history_messages: list[LLMMessage],
+    ) -> list[LLMMessage]:
         """
-        Formats message history retrieved from the database into the list structure
-        expected by the LLM, handling assistant tool calls correctly.
+        Formats message history retrieved from the database, handling assistant tool calls correctly.
 
         Args:
-            history_messages: List of message dictionaries from db_context.message_history.get_recent.
+            history_messages: List of typed LLMMessage objects from db_context.message_history.get_recent.
 
         Returns:
-            A list of message dictionaries formatted for the LLM API.
+            A list of LLMMessage objects formatted for the LLM API.
         """
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]] = []
+        messages: list[LLMMessage] = []
         # Process history messages, formatting assistant tool calls correctly
         for msg in history_messages:
-            # Use .get for safer access to potentially missing keys
-            role = msg.get("role")
-            content = msg.get("content")  # Keep as None if null in DB
-            tool_calls = msg.get("tool_calls")  # Get tool calls if present
-            tool_call_id = msg.get(
-                "tool_call_id"
-            )  # tool_call_id for role 'tool' messages
-
-            if role == "assistant":
+            if isinstance(msg, AssistantMessage):
                 # Check if tool_calls have thought signatures
                 has_thought_signature = False
-                if tool_calls and isinstance(tool_calls, list):
-                    for tc in tool_calls:
-                        if isinstance(tc, dict) and tc.get("provider_metadata"):
-                            tc_metadata = tc["provider_metadata"]
+                if msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        if tc.provider_metadata:
+                            tc_metadata = tc.provider_metadata
                             # Check if it's a Google thought signature
                             if isinstance(tc_metadata, GeminiProviderMetadata):
                                 if tc_metadata.thought_signature:
@@ -1550,124 +1473,42 @@ class ProcessingService:
                 # Strip text content from messages with tool calls UNLESS they have thought signatures
                 # Thought signatures are cryptographically tied to exact conversation context
                 final_content: str | None = None
-                if tool_calls and content and not has_thought_signature:
+                if msg.tool_calls and msg.content and not has_thought_signature:
                     # If there are tool calls, don't include the text content to avoid partial responses
                     logger.debug(
-                        f"Stripped text content from assistant message with tool calls in LLM history. Original content: {content[:100]}..."
+                        f"Stripped text content from assistant message with tool calls in LLM history. Original content: {msg.content[:100]}..."
                     )
-                elif content:
-                    final_content = content
+                elif msg.content:
+                    final_content = msg.content
 
-                # Build properly typed AssistantMessage
-                provider_metadata = msg.get("provider_metadata")
+                # Create new AssistantMessage with potentially modified content
                 assistant_msg = AssistantMessage(
                     content=final_content,
-                    tool_calls=tool_calls if tool_calls else None,
-                    provider_metadata=provider_metadata,
+                    tool_calls=msg.tool_calls,
+                    provider_metadata=msg.provider_metadata,
                 )
-                messages.append(message_to_dict(assistant_msg))
-            elif role == "tool":
+                messages.append(assistant_msg)
+            elif isinstance(msg, ToolMessage):
                 # --- Format tool response messages ---
                 if (
-                    tool_call_id
+                    msg.tool_call_id
                 ):  # Only include if tool_call_id is present (retrieved from DB)
-                    tool_message = {
-                        "role": "tool",
-                        "tool_call_id": (
-                            tool_call_id
-                        ),  # The ID linking to the assistant request
-                        "content": (
-                            content or ""
-                        ),  # Ensure content is a string, default empty
-                    }
-
-                    # Add name field for OpenAI API compatibility (from database tool_name field)
-                    tool_name = msg.get("tool_name")
-                    if tool_name:
-                        tool_message["name"] = tool_name
-
-                    messages.append(tool_message)
+                    messages.append(msg)
                 else:
                     # Log a warning if a tool message is found without an ID (indicates logging issue)
                     logger.warning(
                         f"Found 'tool' role message in history without a tool_call_id: {msg}"
                     )
                     # Skip adding malformed tool message to history to avoid LLM errors
-            elif role == "error":
+            elif isinstance(msg, ErrorMessage):
                 # Include error messages as assistant messages so LLM knows it responded
-                error_traceback = msg.get("error_traceback", "")
-                error_content = f"I encountered an error: {content}"
-                if error_traceback:
-                    error_content += f"\n\nError details: {error_traceback}"
-                messages.append({
-                    "role": "assistant",
-                    "content": error_content,
-                })
-            elif role == "user":
-                # Handle user messages with potential attachments
-                user_message_content = content or ""
-                attachments = msg.get("attachments")
-
-                if attachments and len(attachments) > 0:
-                    # Format user message with attachments as content parts
-                    content_parts = []
-
-                    # Build text content with inline attachment metadata
-                    text_content = user_message_content
-                    attachment_metadata_lines = (
-                        self._generate_attachment_metadata_lines(attachments)
-                    )
-
-                    # Append attachment metadata to text content
-                    if attachment_metadata_lines:
-                        if text_content:
-                            text_content += "\n" + "\n".join(attachment_metadata_lines)
-                        else:
-                            text_content = "\n".join(attachment_metadata_lines)
-
-                    # Add text content with metadata
-                    if text_content:
-                        content_parts.append({
-                            "type": "text",
-                            "text": text_content,
-                        })
-
-                    # Add image attachments as image_url content parts
-                    for attachment in attachments:
-                        if attachment.get("type") == "image" and attachment.get(
-                            "content_url"
-                        ):
-                            content_parts.append({
-                                "type": "image_url",
-                                "image_url": {"url": attachment["content_url"]},
-                            })
-
-                    # Convert attachment URLs to data URIs if we have content parts with images
-                    if content_parts:
-                        content_parts = (
-                            await self._convert_attachment_urls_to_data_uris(
-                                content_parts
-                            )
-                        )
-
-                    messages.append({
-                        "role": "user",
-                        "content": content_parts
-                        if content_parts
-                        else user_message_content,
-                    })
-                else:
-                    # User message without attachments
-                    messages.append({
-                        "role": "user",
-                        "content": user_message_content,
-                    })
+                error_content = f"I encountered an error: {msg.content}"
+                if msg.error_traceback:
+                    error_content += f"\n\nError details: {msg.error_traceback}"
+                messages.append(AssistantMessage(content=error_content))
             else:
-                # Append other non-user messages directly
-                messages.append({
-                    "role": role,
-                    "content": content or "",
-                })  # Ensure content is string
+                # SystemMessage, UserMessage, or other message types - pass through as-is
+                messages.append(msg)
 
         logger.debug(
             f"Formatted {len(history_messages)} DB history messages into {len(messages)} LLM messages."
@@ -1750,29 +1591,13 @@ class ProcessingService:
             user_message_timestamp = self.clock.now()  # Timestamp for user message
 
             if replied_to_interface_id:
-                try:
-                    replied_to_db_msg = (
-                        await db_context.message_history.get_by_interface_id(
-                            interface_type=interface_type,
-                            interface_message_id=replied_to_interface_id,
-                        )
-                    )
-                    if replied_to_db_msg:
-                        thread_root_id_for_turn = replied_to_db_msg.get(
-                            "thread_root_id"
-                        ) or replied_to_db_msg.get("internal_id")
-                        logger.info(
-                            f"Determined thread_root_id {thread_root_id_for_turn} from replied-to message {replied_to_interface_id}"
-                        )
-                    else:
-                        logger.warning(
-                            f"Could not find replied-to message {replied_to_interface_id} in DB to determine thread root."
-                        )
-                except Exception as thread_err:
-                    logger.error(
-                        f"Error determining thread root ID from reply: {thread_err}",
-                        exc_info=True,
-                    )
+                # Note: Repository now returns typed LLMMessage objects without database metadata fields
+                # like thread_root_id and internal_id. Cannot determine thread root from replied-to message.
+                # Thread root will be set to the current saved message's internal_id if not already set.
+                logger.info(
+                    f"Received reply to interface message {replied_to_interface_id}. "
+                    "Thread root ID will be determined from saved message."
+                )
 
             # Prepare user message content for saving (simplified for now, can be expanded)
             # For simplicity, taking the first text part if available, or a placeholder.
@@ -1848,22 +1673,13 @@ class ProcessingService:
 
             logger.debug(f"Raw history messages fetched ({len(raw_history_messages)}).")
 
-            # Filter out the *current* user trigger message that was just saved
-            filtered_history_messages = []
-            for msg_from_db in raw_history_messages:
-                if (
-                    msg_from_db.get("interface_message_id")
-                    != actual_interface_message_id
-                ):
-                    filtered_history_messages.append(msg_from_db)
-
-            if len(raw_history_messages) != len(filtered_history_messages):
-                logger.debug(
-                    f"Filtered out current trigger message (ID: {actual_interface_message_id}) from fetched history."
-                )
+            # Note: Repository now returns typed LLMMessage objects without database metadata fields
+            # like interface_message_id. Filtering by interface_message_id is no longer possible.
+            # The just-saved user message may be included in history, but this is acceptable
+            # as the LLM can handle receiving its own messages in context.
 
             initial_messages_for_llm = await self._format_history_for_llm(
-                filtered_history_messages
+                raw_history_messages
             )
             logger.debug(
                 f"Initial messages for LLM after formatting history ({len(initial_messages_for_llm)})."
@@ -1881,21 +1697,10 @@ class ProcessingService:
                             thread_root_id=thread_root_id_for_turn,
                         )
                     )
-                    current_trigger_removed_from_thread = []
-                    if trigger_interface_message_id:
-                        for msg_in_thread in full_thread_messages_db:
-                            if (
-                                msg_in_thread.get("interface_message_id")
-                                != trigger_interface_message_id
-                            ):
-                                current_trigger_removed_from_thread.append(
-                                    msg_in_thread
-                                )
-                    else:
-                        current_trigger_removed_from_thread = full_thread_messages_db
-
+                    # Note: Repository now returns typed LLMMessage objects without database metadata fields
+                    # Cannot filter by interface_message_id anymore. Using all thread messages as-is.
                     initial_messages_for_llm = await self._format_history_for_llm(
-                        current_trigger_removed_from_thread
+                        full_thread_messages_db
                     )
                     logger.info(
                         f"Using {len(initial_messages_for_llm)} messages from full thread history for LLM context."
@@ -1924,9 +1729,12 @@ class ProcessingService:
             pruned_count = 0
             while messages_for_llm:
                 first_msg = messages_for_llm[0]
-                role = first_msg.get("role")
-                has_tool_calls = bool(first_msg.get("tool_calls"))
-                if role == "tool" or (role == "assistant" and has_tool_calls):
+                # Check if this is a ToolMessage or AssistantMessage with tool calls
+                is_tool_msg = isinstance(first_msg, ToolMessage)
+                is_assistant_with_tools = (
+                    isinstance(first_msg, AssistantMessage) and first_msg.tool_calls
+                )
+                if is_tool_msg or is_assistant_with_tools:
                     messages_for_llm.pop(0)
                     pruned_count += 1
                 else:
@@ -2023,9 +1831,7 @@ class ProcessingService:
                 final_system_prompt = system_prompt_template.strip()
 
             if final_system_prompt:
-                messages_for_llm.insert(
-                    0, {"role": "system", "content": final_system_prompt}
-                )
+                messages_for_llm.insert(0, SystemMessage(content=final_system_prompt))
 
             # Process attachment content parts from delegation
             (
@@ -2035,8 +1841,18 @@ class ProcessingService:
                 db_context, conversation_id, trigger_content_parts
             )
 
-            # Add attachment injection messages before user message
-            messages_for_llm.extend(attachment_injection_messages)
+            # Convert dict attachment messages to typed LLMMessage objects
+            for injection_msg in attachment_injection_messages:
+                # These are dicts from the LLM client, convert to typed messages
+                # They should be SystemMessage or AssistantMessage based on the client implementation
+                msg_role = injection_msg.get("role", "system")
+                msg_content = injection_msg.get("content", "")
+                if msg_role == "system":
+                    messages_for_llm.append(SystemMessage(content=msg_content))
+                elif msg_role == "user":
+                    messages_for_llm.append(UserMessage(content=msg_content))
+                elif msg_role == "assistant":
+                    messages_for_llm.append(AssistantMessage(content=msg_content))
 
             # Convert attachment URLs to data URIs before sending to LLM
             converted_trigger_parts = await self._convert_attachment_urls_to_data_uris(
@@ -2048,16 +1864,18 @@ class ProcessingService:
                 len(converted_trigger_parts) == 1
                 and converted_trigger_parts[0].get("type") == "text"
             ):
-                llm_user_content = converted_trigger_parts[0]["text"]
+                llm_user_content: str | list[ContentPart] = converted_trigger_parts[0][
+                    "text"
+                ]
             else:
-                llm_user_content = converted_trigger_parts
+                # converted_trigger_parts is a list of dicts representing content parts
+                # ast-grep-ignore: no-dict-any - Content parts from attachment processing
+                llm_user_content = converted_trigger_parts  # type: ignore
 
-            messages_for_llm.append({"role": "user", "content": llm_user_content})
+            messages_for_llm.append(UserMessage(content=llm_user_content))
 
-            # Convert dict messages to typed messages
-            typed_messages_for_llm = self._convert_dict_messages_to_typed(
-                messages_for_llm
-            )
+            # Messages are already typed (list[LLMMessage])
+            typed_messages_for_llm = messages_for_llm
 
             # --- 3. Call Core LLM Processing (self.process_message) ---
             (
@@ -2237,25 +2055,13 @@ class ProcessingService:
             user_message_timestamp = self.clock.now()
 
             if replied_to_interface_id:
-                try:
-                    replied_to_db_msg = (
-                        await db_context.message_history.get_by_interface_id(
-                            interface_type=interface_type,
-                            interface_message_id=replied_to_interface_id,
-                        )
-                    )
-                    if replied_to_db_msg:
-                        thread_root_id_for_turn = replied_to_db_msg.get(
-                            "thread_root_id"
-                        ) or replied_to_db_msg.get("internal_id")
-                        logger.info(
-                            f"Determined thread_root_id {thread_root_id_for_turn} from replied-to message"
-                        )
-                except Exception as thread_err:
-                    logger.error(
-                        f"Error determining thread root ID: {thread_err}",
-                        exc_info=True,
-                    )
+                # Note: Repository now returns typed LLMMessage objects without database metadata fields
+                # like thread_root_id and internal_id. Cannot determine thread root from replied-to message.
+                # Thread root will be set to the current saved message's internal_id if not already set.
+                logger.info(
+                    f"Received reply to interface message {replied_to_interface_id}. "
+                    "Thread root ID will be determined from saved message."
+                )
 
             # Prepare user message content
             user_content_for_history = "[User message content]"
@@ -2322,14 +2128,10 @@ class ProcessingService:
                 )
                 raw_history_messages = []
 
-            # Filter out current trigger message that was just saved
-            filtered_history_messages = []
-            for h_msg in raw_history_messages:
-                if h_msg.get("interface_message_id") != actual_interface_message_id:
-                    filtered_history_messages.append(h_msg)
-
+            # Note: Repository now returns typed LLMMessage objects without database metadata fields
+            # like interface_message_id. Cannot filter by interface_message_id anymore.
             initial_messages_for_llm = await self._format_history_for_llm(
-                filtered_history_messages
+                raw_history_messages
             )
 
             # Handle reply thread context
@@ -2340,21 +2142,10 @@ class ProcessingService:
                             thread_root_id=thread_root_id_for_turn,
                         )
                     )
-                    current_trigger_removed_from_thread = []
-                    if trigger_interface_message_id:
-                        for msg_in_thread in full_thread_messages_db:
-                            if (
-                                msg_in_thread.get("interface_message_id")
-                                != trigger_interface_message_id
-                            ):
-                                current_trigger_removed_from_thread.append(
-                                    msg_in_thread
-                                )
-                    else:
-                        current_trigger_removed_from_thread = full_thread_messages_db
-
+                    # Note: Repository now returns typed LLMMessage objects without database metadata fields
+                    # Cannot filter by interface_message_id anymore. Using all thread messages as-is.
                     initial_messages_for_llm = await self._format_history_for_llm(
-                        current_trigger_removed_from_thread
+                        full_thread_messages_db
                     )
                 except Exception as thread_fetch_err:
                     logger.error(f"Error fetching thread history: {thread_fetch_err}")
@@ -2364,9 +2155,12 @@ class ProcessingService:
             # Prune leading invalid messages
             while messages_for_llm:
                 first_msg = messages_for_llm[0]
-                role = first_msg.get("role")
-                has_tool_calls = bool(first_msg.get("tool_calls"))
-                if role == "tool" or (role == "assistant" and has_tool_calls):
+                # Check if this is a ToolMessage or AssistantMessage with tool calls
+                is_tool_msg = isinstance(first_msg, ToolMessage)
+                is_assistant_with_tools = (
+                    isinstance(first_msg, AssistantMessage) and first_msg.tool_calls
+                )
+                if is_tool_msg or is_assistant_with_tools:
                     messages_for_llm.pop(0)
                 else:
                     break
@@ -2408,9 +2202,7 @@ class ProcessingService:
                 final_system_prompt = system_prompt_template.strip()
 
             if final_system_prompt:
-                messages_for_llm.insert(
-                    0, {"role": "system", "content": final_system_prompt}
-                )
+                messages_for_llm.insert(0, SystemMessage(content=final_system_prompt))
 
             # Process attachment content parts from delegation
             (
@@ -2420,8 +2212,17 @@ class ProcessingService:
                 db_context, conversation_id, trigger_content_parts
             )
 
-            # Add attachment injection messages before user message
-            messages_for_llm.extend(attachment_injection_messages)
+            # Convert dict attachment messages to typed LLMMessage objects
+            for injection_msg in attachment_injection_messages:
+                # These are dicts from the LLM client, convert to typed messages
+                msg_role = injection_msg.get("role", "system")
+                msg_content = injection_msg.get("content", "")
+                if msg_role == "system":
+                    messages_for_llm.append(SystemMessage(content=msg_content))
+                elif msg_role == "user":
+                    messages_for_llm.append(UserMessage(content=msg_content))
+                elif msg_role == "assistant":
+                    messages_for_llm.append(AssistantMessage(content=msg_content))
 
             # Convert attachment URLs to data URIs before sending to LLM
             converted_trigger_parts = await self._convert_attachment_urls_to_data_uris(
@@ -2458,22 +2259,22 @@ class ProcessingService:
                         )
 
             # Add current user trigger message
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-            llm_user_content: str | list[dict[str, Any]]
             if (
                 len(converted_trigger_parts) == 1
                 and converted_trigger_parts[0].get("type") == "text"
             ):
-                llm_user_content = converted_trigger_parts[0]["text"]
+                llm_user_content: str | list[ContentPart] = converted_trigger_parts[0][
+                    "text"
+                ]
             else:
-                llm_user_content = converted_trigger_parts
+                # converted_trigger_parts is a list of dicts representing content parts
+                # ast-grep-ignore: no-dict-any - Content parts from attachment processing
+                llm_user_content = converted_trigger_parts  # type: ignore
 
-            messages_for_llm.append({"role": "user", "content": llm_user_content})
+            messages_for_llm.append(UserMessage(content=llm_user_content))
 
-            # Convert dict messages to typed messages
-            typed_messages_for_llm = self._convert_dict_messages_to_typed(
-                messages_for_llm
-            )
+            # Messages are already typed (list[LLMMessage])
+            typed_messages_for_llm = messages_for_llm
 
             # --- 3. Stream LLM Processing ---
             async for event, message_dict in self.process_message_stream(

@@ -23,6 +23,11 @@ from family_assistant.llm import (
     ToolCallFunction,
     ToolCallItem,
 )
+from family_assistant.llm.messages import (
+    AssistantMessage,
+    ToolMessage,
+    UserMessage,
+)
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage import init_db
 from family_assistant.storage.context import DatabaseContext, get_db_context
@@ -454,18 +459,18 @@ async def test_api_chat_add_note_tool(
         len(history) >= 3
     )  # User prompt, Assistant tool request, Tool response, Final Assistant reply
 
-    # Check for user message
+    # Check for user message (history now contains typed LLMMessage objects)
     user_msg_found = any(
-        h["role"] == "user" and h["content"] == user_prompt for h in history
+        isinstance(h, UserMessage) and h.content == user_prompt for h in history
     )
     assert user_msg_found, "User prompt not found in history"
 
     # Check for assistant message with tool call
     assistant_tool_call_msg_found = any(
-        h["role"] == "assistant"
-        and h.get("tool_calls") is not None
-        and h["tool_calls"][0].id == tool_call_id
-        and h["tool_calls"][0].function.name == "add_or_update_note"
+        isinstance(h, AssistantMessage)
+        and h.tool_calls is not None
+        and h.tool_calls[0].id == tool_call_id
+        and h.tool_calls[0].function.name == "add_or_update_note"
         for h in history
     )
     assert assistant_tool_call_msg_found, (
@@ -474,10 +479,10 @@ async def test_api_chat_add_note_tool(
 
     # Check for tool response message
     tool_response_msg_found = any(
-        h["role"] == "tool"
-        and h["tool_call_id"] == tool_call_id
-        and "has been" in str(h["content"])
-        and "successfully" in str(h["content"])
+        isinstance(h, ToolMessage)
+        and h.tool_call_id == tool_call_id
+        and "has been" in str(h.content)
+        and "successfully" in str(h.content)
         for h in history
     )
     assert tool_response_msg_found, (
@@ -486,9 +491,9 @@ async def test_api_chat_add_note_tool(
 
     # Check for final assistant reply
     final_assistant_reply_found = any(
-        h["role"] == "assistant"
-        and h["content"] == llm_final_reply
-        and h.get("tool_calls") is None
+        isinstance(h, AssistantMessage)
+        and h.content == llm_final_reply
+        and h.tool_calls is None
         for h in history
     )
     assert final_assistant_reply_found, "Final assistant reply not found in history"
@@ -526,7 +531,7 @@ async def test_api_chat_send_message_persists_user_id(
     conversation_id = response_data.conversation_id
 
     # Assert Database State
-    history = await db_context.message_history.get_recent(
+    history = await db_context.message_history.get_recent_with_metadata(
         interface_type="api",
         conversation_id=conversation_id,
         limit=10,
@@ -582,7 +587,7 @@ async def test_api_chat_send_message_persists_user_id_no_tools(
     conversation_id = response_data.conversation_id
 
     # Assert Database State
-    history = await db_context.message_history.get_recent(
+    history = await db_context.message_history.get_recent_with_metadata(
         interface_type="api",
         conversation_id=conversation_id,
         limit=10,
