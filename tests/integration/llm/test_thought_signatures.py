@@ -10,9 +10,9 @@ import os
 import pytest
 import pytest_asyncio
 
+from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.messages import message_to_dict
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
-from family_assistant.llm.providers.google_types import GeminiProviderMetadata
 from tests.factories.messages import (
     create_tool_message,
     create_user_message,

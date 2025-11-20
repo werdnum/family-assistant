@@ -9,7 +9,7 @@ from sqlalchemy import insert, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import functions as func
 
-from family_assistant.llm.providers.google_types import GeminiProviderMetadata
+from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.base import BaseRepository
