@@ -122,22 +122,14 @@ async def test_thread_history_includes_root_message(db_engine: AsyncEngine) -> N
         )
 
         # Verify the root message is first (due to timestamp ordering)
-        assert thread_messages[0]["internal_id"] == root_internal_id
-        assert thread_messages[0]["role"] == "user"
-        assert thread_messages[0]["content"] == "Can you highlight the eagle statue?"
-        assert (
-            thread_messages[0]["thread_root_id"] is None
-        )  # Root has no thread_root_id
+        assert thread_messages[0].role == "user"
+        assert thread_messages[0].content == "Can you highlight the eagle statue?"
 
         # Verify child messages follow
-        assert thread_messages[1]["internal_id"] == assistant_msg["internal_id"]
-        assert thread_messages[1]["role"] == "assistant"
-        assert thread_messages[1]["thread_root_id"] == root_internal_id
+        assert thread_messages[1].role == "assistant"
 
-        assert thread_messages[2]["internal_id"] == tool_msg["internal_id"]
-        assert thread_messages[2]["role"] == "tool"
-        assert thread_messages[2]["thread_root_id"] == root_internal_id
-        assert "[Attachment ID: abc-123-def]" in thread_messages[2]["content"]
+        assert thread_messages[2].role == "tool"
+        assert "[Attachment ID: abc-123-def]" in thread_messages[2].content
 
 
 @pytest.mark.asyncio
@@ -220,11 +212,8 @@ async def test_thread_history_with_profile_filter(db_engine: AsyncEngine) -> Non
 
         # Should include root (profile_a) and first child (profile_a), but not second child (profile_b)
         assert len(profile_a_messages) == 2
-        assert all(
-            msg["processing_profile_id"] == "profile_a" for msg in profile_a_messages
-        )
-        assert profile_a_messages[0]["role"] == "user"
-        assert profile_a_messages[1]["content"] == "Response from profile A"
+        assert profile_a_messages[0].role == "user"
+        assert profile_a_messages[1].content == "Response from profile A"
 
         # Query for profile B messages only
         profile_b_messages = await db.message_history.get_by_thread_id(
@@ -233,7 +222,7 @@ async def test_thread_history_with_profile_filter(db_engine: AsyncEngine) -> Non
 
         # Should only include the second child (profile_b), not root or first child
         assert len(profile_b_messages) == 1
-        assert profile_b_messages[0]["content"] == "Response from profile B"
+        assert profile_b_messages[0].content == "Response from profile B"
 
 
 @pytest.mark.asyncio

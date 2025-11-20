@@ -281,17 +281,17 @@ async def test_thought_signatures_persist_and_roundtrip(
             (
                 msg
                 for msg in stored_messages
-                if msg["role"] == "assistant" and msg.get("tool_calls")
+                if msg.role == "assistant" and msg.tool_calls
             ),
             None,
         )
         assert assistant_msg is not None
-        assert assistant_msg["provider_metadata"] is not None
-        assert assistant_msg["provider_metadata"]["provider"] == "google"
-        assert "thought_signatures" in assistant_msg["provider_metadata"]
+        assert assistant_msg.provider_metadata is not None
+        assert assistant_msg.provider_metadata["provider"] == "google"
+        assert "thought_signatures" in assistant_msg.provider_metadata
 
         # Verify signature content
-        signatures = assistant_msg["provider_metadata"]["thought_signatures"]
+        signatures = assistant_msg.provider_metadata["thought_signatures"]
         assert len(signatures) == 1
         decoded_sig = base64.b64decode(signatures[0]["signature"])
         assert decoded_sig == b"mock_thought_123"
@@ -357,16 +357,16 @@ async def test_thought_signatures_without_tool_calls(
 
         # Find the assistant message
         assistant_msg = next(
-            (msg for msg in stored_messages if msg["role"] == "assistant"),
+            (msg for msg in stored_messages if msg.role == "assistant"),
             None,
         )
         assert assistant_msg is not None
-        assert assistant_msg["provider_metadata"] is not None
-        assert assistant_msg["provider_metadata"]["provider"] == "google"
-        assert "thought_signatures" in assistant_msg["provider_metadata"]
+        assert assistant_msg.provider_metadata is not None
+        assert assistant_msg.provider_metadata["provider"] == "google"
+        assert "thought_signatures" in assistant_msg.provider_metadata
 
         # Verify signature content
-        signatures = assistant_msg["provider_metadata"]["thought_signatures"]
+        signatures = assistant_msg.provider_metadata["thought_signatures"]
         assert len(signatures) == 1
         decoded_sig = base64.b64decode(signatures[0]["signature"])
         assert decoded_sig == b"mock_thought_456"

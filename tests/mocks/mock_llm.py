@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment
 
 from family_assistant.llm import LLMInterface, LLMMessage, LLMOutput, LLMStreamEvent
-from family_assistant.llm.messages import message_to_dict
+from family_assistant.llm.messages import message_to_json_dict
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +173,7 @@ class RuleBasedMockLLMClient(LLMInterface):
         # Convert messages to dicts and sanitize for JSON logging
         sanitized_messages = []
         for msg in messages:
-            msg_dict = message_to_dict(msg)
+            msg_dict = message_to_json_dict(msg)
             msg_dict.pop("_attachments", None)
             sanitized_messages.append(msg_dict)
         logger.warning(
@@ -203,6 +203,7 @@ class RuleBasedMockLLMClient(LLMInterface):
                     chunk = word if i == 0 else f" {word}"
                     yield LLMStreamEvent(type="content", content=chunk)
                     # Add a small delay to simulate streaming
+                    # ast-grep-ignore: no-asyncio-sleep-in-tests - Simulating LLM streaming delay
                     await asyncio.sleep(0.01)
 
             # Yield tool calls if present

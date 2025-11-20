@@ -114,7 +114,7 @@ class WebChatInterface(ChatInterface):
                         if not user_id:
                             # Fallback: query recent messages to find a user message
                             # (assistant messages don't have user_id, so we look for user messages)
-                            recent = await db_context.message_history.get_recent(
+                            recent = await db_context.message_history.get_recent_with_metadata(
                                 interface_type="web",
                                 conversation_id=conversation_id,
                                 limit=10,

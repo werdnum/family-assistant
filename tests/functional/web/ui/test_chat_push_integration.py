@@ -93,8 +93,8 @@ async def test_web_chat_message_saved_successfully(
             max_age=timedelta(hours=1),
         )
         assert len(recent) == 1
-        assert recent[0]["content"] == message_text
-        assert recent[0]["role"] == "assistant"
+        assert recent[0].content == message_text
+        assert recent[0].role == "assistant"
 
 
 @pytest.mark.asyncio
@@ -179,7 +179,7 @@ async def test_web_chat_handles_push_notification_error_gracefully(
             max_age=timedelta(hours=1),
         )
         assert len(recent) == 1
-        assert recent[0]["content"] == "Message should still be saved"
+        assert recent[0].content == "Message should still be saved"
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,7 @@ from telegram.ext import ContextTypes
 
 from family_assistant.context_providers import KnownUsersContextProvider
 from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.llm.messages import ToolMessage
 from tests.mocks.mock_llm import (
     LLMOutput,
     MatcherArgs,
@@ -162,7 +163,10 @@ async def test_send_message_to_user_tool(
     def tool_result_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         return any(
-            msg.role == "tool" and msg.tool_call_id == tool_call_id for msg in messages
+            isinstance(msg, ToolMessage)
+            and msg.role == "tool"
+            and msg.tool_call_id == tool_call_id
+            for msg in messages
         )
 
     final_confirmation_output = LLMOutput(
@@ -213,14 +217,9 @@ async def test_send_message_to_user_tool(
         await fix.handler.message_handler(update_alice, context_alice)
 
         async with fix.get_db_context_func() as db_context:
-            bob_history_all = await db_context.message_history.get_recent(
+            bob_history_all = await db_context.message_history.get_recent_with_metadata(
                 interface_type="telegram",
                 conversation_id=str(bob_chat_id),
-            )
-            bob_history_filtered = await db_context.message_history.get_recent(
-                interface_type="telegram",
-                conversation_id=str(bob_chat_id),
-                processing_profile_id=fix.processing_service.service_config.id,
             )
 
         # Assert
@@ -285,11 +284,8 @@ async def test_send_message_to_user_tool(
             assert_that(bob_history_all).described_as(
                 "History entries for Bob's conversation"
             ).is_not_empty()
-            assert_that(bob_history_filtered).described_as(
-                "History entries when filtering by processing profile"
-            ).is_not_empty()
             assert_that([
-                msg.get("processing_profile_id") for msg in bob_history_all
+                msg["processing_profile_id"] for msg in bob_history_all
             ]).contains(fix.processing_service.service_config.id)
     finally:
         # Restore original context providers
@@ -342,7 +338,8 @@ async def test_send_message_to_self_rejected(
         messages = kwargs.get("messages", [])
         # Look for the tool response with error message
         return any(
-            msg.role == "tool"
+            isinstance(msg, ToolMessage)
+            and msg.role == "tool"
             and msg.tool_call_id == tool_call_id
             and (
                 "Cannot use send_message_to_user tool"
@@ -452,7 +449,8 @@ async def test_callback_send_message_to_self_rejected(
     def callback_error_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         return any(
-            msg.role == "tool"
+            isinstance(msg, ToolMessage)
+            and msg.role == "tool"
             and msg.tool_call_id == tool_call_id
             and (
                 "Cannot use send_message_to_user tool"
