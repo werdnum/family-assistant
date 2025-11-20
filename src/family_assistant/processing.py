@@ -300,7 +300,17 @@ class ProcessingService:
                 if tool_calls_data:
                     tool_calls_items = []
                     for tc in tool_calls_data:
+                        # Deserialize provider_metadata if present
                         provider_metadata = tc.get("provider_metadata")
+                        if (
+                            provider_metadata
+                            and isinstance(provider_metadata, dict)
+                            and provider_metadata.get("provider") == "google"
+                        ):
+                            provider_metadata = GeminiProviderMetadata.from_dict(
+                                provider_metadata
+                            )
+
                         logger.info(
                             f"DEBUG: Loading tool_call from DB - id: {tc['id']}, "
                             f"has provider_metadata: {provider_metadata is not None}"
@@ -716,26 +726,12 @@ class ProcessingService:
             )
 
             # Add to context for next iteration
-            # Convert serialized tool calls to ToolCallItem objects for AssistantMessage
-            tool_call_items = []
-            if serialized_tool_calls:
-                for tc in serialized_tool_calls:
-                    tool_call_items.append(
-                        ToolCallItem(
-                            id=tc["id"],
-                            type=tc["type"],
-                            function=ToolCallFunction(
-                                name=tc["function"]["name"],
-                                arguments=tc["function"]["arguments"],
-                            ),
-                            provider_metadata=tc.get("provider_metadata"),
-                        )
-                    )
-
+            # Reuse the original ToolCallItem objects from the stream
+            # (no need to serialize and deserialize within the same function)
             llm_context_assistant_message = AssistantMessage(
                 role="assistant",
                 content=final_content,
-                tool_calls=tool_call_items or None,
+                tool_calls=tool_calls_from_stream,
             )
             messages.append(llm_context_assistant_message)
 
