@@ -23,8 +23,9 @@ Prevents dangerous shell commands and enforces best practices through PreToolUse
 
 - Container URL rewrites (localhost → devcontainer-backend-1)
 - Dev server blocking (prevents duplicate instances)
-- Test timeout requirements (pytest: 5min, poe test: 15min)
 - Command optimizations (npm --prefix, llm -f)
+- Test timeout requirements (pytest: 5min, poe test: 15min)
+- Background restrictions (poe test must run in foreground)
 
 ### 2. **format-and-lint** - Code Quality
 
@@ -60,9 +61,16 @@ Ensures code quality through test verification, pre-commit workflows, and stop v
 
 **Project Configuration**:
 
-- Code review enabled using `scripts/review-changes.py`
-- Test verification for pytest and poe test
-- Excludes documentation files from test requirements
+- **Code review**: Enabled using `scripts/review-changes.py`
+- **Test verification**: Checks that tests have been run before commits
+  - Triggers on `git commit`
+  - Excludes documentation and config files
+  - Accepts `poe test` and `.venv/bin/poe test` as valid test commands
+  - Checks `.report.json` for test results (max age: 5 minutes)
+- **Stop validation**: Validates completeness before stopping session
+  - Checks for clean working directory
+  - Verifies tests have been run
+  - Allows failure acknowledgment via `.claude/FAILURE_REASON`
 
 ### 4. **development-agents** - Specialized Agents
 
