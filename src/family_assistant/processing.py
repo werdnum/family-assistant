@@ -300,20 +300,13 @@ class ProcessingService:
                 if tool_calls_data:
                     tool_calls_items = []
                     for tc in tool_calls_data:
-                        # Deserialize provider_metadata if present
+                        # provider_metadata should already be typed objects (GeminiProviderMetadata)
+                        # from the processing loop, not dicts
                         provider_metadata = tc.get("provider_metadata")
-                        if (
-                            provider_metadata
-                            and isinstance(provider_metadata, dict)
-                            and provider_metadata.get("provider") == "google"
-                        ):
-                            provider_metadata = GeminiProviderMetadata.from_dict(
-                                provider_metadata
-                            )
-
                         logger.info(
-                            f"DEBUG: Loading tool_call from DB - id: {tc['id']}, "
-                            f"has provider_metadata: {provider_metadata is not None}"
+                            f"DEBUG: Loading tool_call from processing loop - id: {tc['id']}, "
+                            f"has provider_metadata: {provider_metadata is not None}, "
+                            f"type: {type(provider_metadata).__name__ if provider_metadata else 'None'}"
                         )
                         tool_calls_items.append(
                             ToolCallItem(
@@ -620,6 +613,8 @@ class ProcessingService:
             )
 
             # Convert tool calls to serialized format and extract provider_metadata
+            # IMPORTANT: Keep provider_metadata as typed objects (GeminiProviderMetadata)
+            # to avoid corrupting thought signatures. Only serialize to dict when writing to JSON storage.
             serialized_tool_calls = None
             provider_metadata = None
             if tool_calls_from_stream:
@@ -633,20 +628,11 @@ class ProcessingService:
                             "arguments": tool_call_item.function.arguments,
                         },
                     }
-                    # Include provider_metadata to preserve thought_signature
+                    # Preserve provider_metadata as typed object (don't serialize)
                     if tool_call_item.provider_metadata:
-                        # Serialize provider metadata objects to dicts for storage
-                        if isinstance(
-                            tool_call_item.provider_metadata, GeminiProviderMetadata
-                        ):
-                            tool_call_dict["provider_metadata"] = (
-                                tool_call_item.provider_metadata.to_dict()
-                            )
-                        else:
-                            # Already a dict or other serializable type
-                            tool_call_dict["provider_metadata"] = (
-                                tool_call_item.provider_metadata
-                            )
+                        tool_call_dict["provider_metadata"] = (
+                            tool_call_item.provider_metadata
+                        )
                     serialized_tool_calls.append(tool_call_dict)
 
                 # Extract provider_metadata from first tool call (all have the same metadata)
@@ -657,32 +643,14 @@ class ProcessingService:
             if not provider_metadata and done_provider_metadata:
                 provider_metadata = done_provider_metadata
 
-            # Serialize provider_metadata if it's a GeminiProviderMetadata object
-            serialized_provider_metadata = None
-            if provider_metadata:
-                if isinstance(provider_metadata, GeminiProviderMetadata):
-                    serialized_provider_metadata = provider_metadata.to_dict()
-                    # [DEBUG] Log what we're saving to database
-                    thought_sig_str = serialized_provider_metadata.get(
-                        "thought_signature"
-                    )
-                    if thought_sig_str:
-                        logger.error(
-                            f"[DB SAVE MSG] Saving message-level provider_metadata: "
-                            f"thought_signature type={type(thought_sig_str)}, "
-                            f"preview={thought_sig_str[:100] if isinstance(thought_sig_str, str) else None}"
-                        )
-                else:
-                    # Already a dict or other serializable type
-                    serialized_provider_metadata = provider_metadata
-
             # Create assistant message
+            # Keep provider_metadata as typed object to preserve thought signatures
             assistant_message_for_turn = {
                 "role": "assistant",
                 "content": final_content,
                 "tool_calls": serialized_tool_calls,
                 "reasoning_info": final_reasoning_info,
-                "provider_metadata": serialized_provider_metadata,
+                "provider_metadata": provider_metadata,
                 "tool_call_id": None,
                 "error_traceback": None,
             }
