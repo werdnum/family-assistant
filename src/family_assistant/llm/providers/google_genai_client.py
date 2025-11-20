@@ -10,7 +10,7 @@ import os
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment
@@ -29,6 +29,10 @@ from family_assistant.llm import (
     _format_messages_for_debug,
 )
 from family_assistant.llm.messages import LLMMessage, message_to_dict
+from family_assistant.llm.providers.google_types import (
+    GeminiProviderMetadata,
+    GeminiThoughtSignature,
+)
 
 from ..base import (
     AuthenticationError,
@@ -275,9 +279,16 @@ class GoogleGenAIClient(BaseLLMClient):
         # Build proper Content objects for the new API
         contents: list[types.ContentUnionDict] = []
 
-        for msg in messages:
+        for msg_idx, msg in enumerate(messages):
             role = msg["role"]
             content = msg.get("content", "")
+
+            # [DEBUG] Log message being converted
+            logger.info(
+                f"[MSG CONVERT] Message {msg_idx}: role={role}, "
+                f"has_tool_calls={bool(msg.get('tool_calls'))}, "
+                f"content_preview={str(content)[:50] if content else None}"
+            )
 
             if role == "system":
                 # System messages can be included as user messages with a prefix
@@ -359,61 +370,62 @@ class GoogleGenAIClient(BaseLLMClient):
                 if content:
                     assistant_parts.append(types.Part(text=content))
 
-                # Add tool calls if present
+                # Add tool calls if present, with thought signatures attached per-call
                 if "tool_calls" in msg and msg["tool_calls"]:
                     for tc in msg["tool_calls"]:
-                        if tc.get("type") == "function":
-                            func = tc.get("function", {})
-                            # Parse arguments if they're a string
-                            args = func.get("arguments", {})
-                            if isinstance(args, str):
-                                args = json.loads(args)
+                        # Tool calls are now properly typed ToolCallItem objects
+                        if not isinstance(tc, ToolCallItem):
+                            logger.warning(
+                                f"Expected ToolCallItem, got {type(tc)}. Skipping."
+                            )
+                            continue
 
-                            # Create FunctionCall using SDK types with snake_case
+                        if tc.type != "function":
+                            continue
+
+                        func_name = tc.function.name
+                        func_args_str = tc.function.arguments
+                        tc_metadata = tc.provider_metadata
+
+                        # Parse arguments if they're a string
+                        if isinstance(func_args_str, str):
+                            args = json.loads(func_args_str)
+                        else:
+                            args = func_args_str
+
+                        # Check if this tool call has a thought signature in provider_metadata
+                        thought_signature_bytes = None
+                        if tc_metadata:
+                            # Provider metadata is now properly typed GeminiProviderMetadata
+                            if not isinstance(tc_metadata, GeminiProviderMetadata):
+                                logger.warning(
+                                    f"Expected GeminiProviderMetadata, got {type(tc_metadata)}. Skipping thought signature."
+                                )
+                            elif tc_metadata.thought_signature:
+                                thought_signature_bytes = (
+                                    tc_metadata.thought_signature.to_google_format()
+                                )
+
+                        # Create FunctionCall Part with thought_signature if present
+                        if thought_signature_bytes:
                             assistant_parts.append(
                                 types.Part(
                                     function_call=types.FunctionCall(
-                                        name=func.get("name"),
+                                        name=func_name,
+                                        args=args,
+                                    ),
+                                    thought_signature=thought_signature_bytes,
+                                )
+                            )
+                        else:
+                            assistant_parts.append(
+                                types.Part(
+                                    function_call=types.FunctionCall(
+                                        name=func_name,
                                         args=args,
                                     )
                                 )
                             )
-
-                # Reconstruct thought signatures if present in provider_metadata
-                # The SDK's Part type supports thought_signature parameter directly
-                provider_metadata = msg.get("provider_metadata")
-                if provider_metadata and provider_metadata.get("provider") == "google":
-                    thought_signatures = provider_metadata.get("thought_signatures", [])
-                    for sig_data in thought_signatures:
-                        part_index = sig_data.get("part_index")
-                        signature_b64 = sig_data.get("signature")
-                        if (
-                            part_index is not None
-                            and signature_b64
-                            and part_index < len(assistant_parts)
-                        ):
-                            # Decode base64 signature
-                            signature_bytes = base64.b64decode(signature_b64)
-
-                            # Get the existing part and create a new one with thought_signature
-                            # Note: We need to recreate the Part because it's immutable
-                            existing_part = assistant_parts[part_index]
-                            if hasattr(existing_part, "text") and existing_part.text:
-                                # Text part with thought signature
-                                assistant_parts[part_index] = types.Part(
-                                    text=existing_part.text,
-                                    thought_signature=signature_bytes,
-                                )
-                            elif (
-                                hasattr(existing_part, "function_call")
-                                and existing_part.function_call
-                            ):
-                                # Function call with thought signature (unusual but handle it)
-                                assistant_parts[part_index] = types.Part(
-                                    function_call=existing_part.function_call,
-                                    thought_signature=signature_bytes,
-                                )
-                            # Add more cases if needed for other part types
 
                 if assistant_parts:
                     contents.append(types.Content(role="model", parts=assistant_parts))
@@ -602,6 +614,11 @@ class GoogleGenAIClient(BaseLLMClient):
             # Add tools to config if any are available
             if all_tools:
                 generation_config.tools = all_tools
+                # Disable automatic function calling so we can manually handle
+                # function calls and thought signatures
+                generation_config.automatic_function_calling = (
+                    types.AutomaticFunctionCallingConfig(disable=True)
+                )
 
             response = await self.client.aio.models.generate_content(
                 model=self.model_name,
@@ -644,29 +661,9 @@ class GoogleGenAIClient(BaseLLMClient):
                     and candidate.content.parts
                 ):
                     found_tool_calls = []
-                    thought_signatures = []
                     thought_summaries = []
 
                     for part_index, part in enumerate(candidate.content.parts):
-                        # Extract thought signature if present (encrypted for context preservation)
-                        if (
-                            hasattr(part, "thought_signature")
-                            and part.thought_signature
-                        ):
-                            # Convert to bytes if needed and base64 encode for storage
-                            thought_bytes = (
-                                part.thought_signature
-                                if isinstance(part.thought_signature, bytes)
-                                else str(part.thought_signature).encode("utf-8")
-                            )
-                            signature_b64 = base64.b64encode(thought_bytes).decode(
-                                "ascii"
-                            )
-                            thought_signatures.append({
-                                "part_index": part_index,
-                                "signature": signature_b64,
-                            })
-
                         # Extract thought summary if present (readable for debugging/introspection)
                         if hasattr(part, "thought") and part.thought:
                             # When part.thought is True, the thought text is in part.text
@@ -684,31 +681,43 @@ class GoogleGenAIClient(BaseLLMClient):
                                     "Received a tool call without a name: %s", func_call
                                 )
                                 continue
-                            # Tool call will be created below with provider_metadata
-                            found_tool_calls.append((part_index, func_call))
 
-                    # Build provider_metadata if we have signatures
-                    provider_metadata = None
-                    if thought_signatures:
-                        provider_metadata = {
-                            "provider": "google",
-                            "thought_signatures": thought_signatures,
-                        }
+                            # Extract thought signature for THIS specific part if present
+                            thought_sig = None
+                            if (
+                                hasattr(part, "thought_signature")
+                                and part.thought_signature
+                            ):
+                                # Wrap in opaque GeminiThoughtSignature - no processing
+                                thought_sig = GeminiThoughtSignature(
+                                    part.thought_signature
+                                )
 
-                    # Create ToolCallItem objects with provider_metadata
+                            # Store func_call with its thought signature
+                            found_tool_calls.append((func_call, thought_sig))
+
+                    # Create ToolCallItem objects, each with its own thought signature if present
                     if found_tool_calls:
-                        tool_calls = [
-                            ToolCallItem(
-                                id=f"call_{uuid.uuid4().hex[:24]}",
-                                type="function",
-                                function=ToolCallFunction(
-                                    name=func_call.name,
-                                    arguments=json.dumps(func_call.args),
-                                ),
-                                provider_metadata=provider_metadata,
+                        tool_calls = []
+                        for func_call, thought_sig in found_tool_calls:
+                            provider_metadata = None
+                            if thought_sig:
+                                # Create GeminiProviderMetadata object with thought signature
+                                provider_metadata = GeminiProviderMetadata(
+                                    thought_signature=thought_sig
+                                )
+
+                            tool_calls.append(
+                                ToolCallItem(
+                                    id=f"call_{uuid.uuid4().hex[:24]}",
+                                    type="function",
+                                    function=ToolCallFunction(
+                                        name=func_call.name,
+                                        arguments=json.dumps(func_call.args),
+                                    ),
+                                    provider_metadata=provider_metadata,
+                                )
                             )
-                            for _, func_call in found_tool_calls
-                        ]
 
             # Extract usage information if available
             reasoning_info = None
@@ -730,7 +739,7 @@ class GoogleGenAIClient(BaseLLMClient):
                 content=content,
                 tool_calls=tool_calls,
                 reasoning_info=reasoning_info,
-                provider_metadata=provider_metadata,
+                provider_metadata=None,  # Thought signatures are now on individual tool calls
             )
 
         except Exception as e:
@@ -879,8 +888,49 @@ class GoogleGenAIClient(BaseLLMClient):
             # Add tools to config if any are available
             if all_tools:
                 generation_config.tools = all_tools
+                # Disable automatic function calling so we can manually handle
+                # function calls and thought signatures
+                generation_config.automatic_function_calling = (
+                    types.AutomaticFunctionCallingConfig(disable=True)
+                )
                 # TODO: The tool_choice parameter is not currently mapped to Google's API
                 # This matches the behavior of the non-streaming implementation
+
+            # Log the contents structure before sending (for debugging)
+            logger.info(f"Sending {len(contents)} content blocks to Google API")
+            for i, content_union in enumerate(contents):
+                # Cast to types.Content for type checker (contents are always Content objects here)
+                content = cast("types.Content", content_union)
+                logger.info(
+                    f"Content[{i}]: role={content.role}, parts={len(content.parts) if content.parts else 0}"
+                )
+                if content.parts:
+                    for j, part_union in enumerate(content.parts):
+                        # Cast to types.Part for type checker
+                        part = cast("types.Part", part_union)
+                        part_desc = []
+                        if hasattr(part, "text") and part.text:
+                            text_preview = (
+                                part.text[:100] if len(part.text) > 100 else part.text
+                            )
+                            part_desc.append(f"text={repr(text_preview)}")
+                        if hasattr(part, "function_call") and part.function_call:
+                            part_desc.append(f"function_call={part.function_call.name}")
+                        if (
+                            hasattr(part, "thought_signature")
+                            and part.thought_signature
+                        ):
+                            part_desc.append(
+                                f"thought_sig_len={len(part.thought_signature)}"
+                            )
+                        if (
+                            hasattr(part, "function_response")
+                            and part.function_response
+                        ):
+                            part_desc.append(
+                                f"function_response={part.function_response.name}"
+                            )
+                        logger.info(f"  Part[{j}]: {', '.join(part_desc)}")
 
             # Make streaming API call using generate_content_stream
             stream_response = await self.client.aio.models.generate_content_stream(
@@ -889,9 +939,8 @@ class GoogleGenAIClient(BaseLLMClient):
                 config=generation_config,
             )
 
-            # Track tool calls, thought signatures, and thought summaries being accumulated
+            # Track tool calls and thought summaries being accumulated
             accumulated_tool_calls = []
-            thought_signatures = []
             thought_summaries = []
             part_index = 0
 
@@ -911,25 +960,6 @@ class GoogleGenAIClient(BaseLLMClient):
                             and candidate.content.parts is not None  # Fix None check
                         ):
                             for part in candidate.content.parts:
-                                # Extract thought signature if present (encrypted for context preservation)
-                                if (
-                                    hasattr(part, "thought_signature")
-                                    and part.thought_signature
-                                ):
-                                    # Convert to bytes if needed and base64 encode
-                                    thought_bytes = (
-                                        part.thought_signature
-                                        if isinstance(part.thought_signature, bytes)
-                                        else str(part.thought_signature).encode("utf-8")
-                                    )
-                                    signature_b64 = base64.b64encode(
-                                        thought_bytes
-                                    ).decode("ascii")
-                                    thought_signatures.append({
-                                        "part_index": part_index,
-                                        "signature": signature_b64,
-                                    })
-
                                 # Extract thought summary if present (readable for debugging/introspection)
                                 is_thought = hasattr(part, "thought") and part.thought
                                 if is_thought:
@@ -950,7 +980,7 @@ class GoogleGenAIClient(BaseLLMClient):
                                         type="content", content=part.text
                                     )
 
-                                # Accumulate function calls
+                                # Accumulate function calls with their thought signatures
                                 if (
                                     hasattr(part, "function_call")
                                     and part.function_call
@@ -960,24 +990,36 @@ class GoogleGenAIClient(BaseLLMClient):
                                         # Generate a unique ID for the tool call
                                         tool_call_id = f"call_{uuid.uuid4().hex[:24]}"
 
-                                        # Store func_call for later - will add provider_metadata when emitting
+                                        # Check if this part also has a thought signature
+                                        thought_sig = None
+                                        if (
+                                            hasattr(part, "thought_signature")
+                                            and part.thought_signature
+                                        ):
+                                            # Wrap in opaque GeminiThoughtSignature - no processing
+                                            thought_sig = GeminiThoughtSignature(
+                                                part.thought_signature
+                                            )
+
+                                        # Store func_call with its signature for later emission
                                         accumulated_tool_calls.append((
                                             tool_call_id,
                                             func_call,
+                                            thought_sig,
                                         ))
 
                                 part_index += 1
 
-            # Build provider_metadata if we have signatures
-            provider_metadata = None
-            if thought_signatures:
-                provider_metadata = {
-                    "provider": "google",
-                    "thought_signatures": thought_signatures,
-                }
+            # Emit accumulated tool calls, each with its own thought signature if present
+            for tool_call_id, func_call, thought_sig in accumulated_tool_calls:
+                # Build provider_metadata for this specific tool call if it has a signature
+                provider_metadata = None
+                if thought_sig:
+                    # Create GeminiProviderMetadata object with thought signature
+                    provider_metadata = GeminiProviderMetadata(
+                        thought_signature=thought_sig
+                    )
 
-            # Emit accumulated tool calls with provider_metadata
-            for tool_call_id, func_call in accumulated_tool_calls:
                 tool_call = ToolCallItem(
                     id=tool_call_id,
                     type="function",

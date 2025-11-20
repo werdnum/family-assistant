@@ -25,7 +25,7 @@ class ToolCallItem:
     id: str
     type: str  # Usually "function"
     function: ToolCallFunction
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    provider_metadata: dict[str, Any] | None = (
+    # ast-grep-ignore: no-dict-any - Accepts both dicts (for serialization) and provider metadata objects (e.g., GeminiProviderMetadata)
+    provider_metadata: Any | None = (
         None  # Provider-specific metadata (e.g., thought signatures)
     )

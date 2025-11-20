@@ -5,14 +5,14 @@ interactions:
         Content-Type:
           - application/json
         user-agent:
-          - google-genai-sdk/1.38.0 gl-python/3.12.3
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
         x-goog-api-client:
-          - google-genai-sdk/1.38.0 gl-python/3.12.3
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
       uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"San Francisco\"\n              }\n            },\n            \"thoughtSignature\": \"CsECAdHtim+jdithjwbCfXlEIdxQeJKAlOjk1j074YI+r0p1CjnN/EQlRuzOsp0x7Bc7qklC/8RZ+ruNvg3oQ3me2j7oQJK4pnpBvK0MMEL9rKMLfdUExr1vqFEB3GQGQ7tKw7tJaNA98co9s2PaM8teqy4eDKB9hVZwwG3RQgG3nk4bwo66q2+8euvG116JeBDZDC67GimyR+pnYdoB+iTt9TunPtWv+KT+Dnfw1DF9BSrDOIcTRpwfa/QYcAMuZVrG5G57Qq17IR6lwMEygevV3/KQkNlkV+br1MfKdNPWFu81y6QN4VTK6TWYBo3/t4xzDnxwf61xLj1rmzfnb6qSm2t3eO5OF5srR53MI7NLPcp/SKZgxAgauKeu+IrHgw0D4m5VMdf4D48+2zrz1Uq4fngjvxxcLDUusy3TqvWiHBg+\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 47,\n    \"candidatesTokenCount\": 16,\n    \"totalTokenCount\": 133,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 47\n      }\n    ],\n    \"thoughtsTokenCount\": 70\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"XVzfaOOGDJKEvdIP2J2YkQc\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"San Francisco\"\n              }\n            },\n            \"thoughtSignature\": \"CqkCAdHtim8uxMvTMXzmN+z2V9NJ2d/B95VQ/9wY22inndvRO3+95X2qRJgcntR16+nN0FXjsBt4e6sYfNdKgmmUCBcOViFgwVr1KDwVSwbYLaGtkEjdALyiy6B02qEmD+JJLlMuk92Gwhl9ZKKdO+DjfF8D+IIeB8+wOaf4ABO6F5WiER4VcyscZOeK4Vcobg89JWShd5Z2jWyUaOhHgmpV/44Z7SXuc0bPir5owk2rNPtYoKHHVwDu+yn4U1ptrH+68UBSuNUiZK7gwyJyLtSpO5LoPT6MudnA0iGHf7hyQSWdmlQzicMVFdoz8BnkdVUNzKDCvCOcAjjWC+jXz8cXsl16Q0m0Qh0ohR3S4XN3ijX6+47OXGNsX/VbSyWuyeJKcjpifx4IhdYN\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 47,\n    \"candidatesTokenCount\": 16,\n    \"totalTokenCount\": 127,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 47\n      }\n    ],\n    \"thoughtsTokenCount\": 64\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"nVwdaaKwI-mC7M8Pqeig8QI\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -21,53 +21,11 @@ interactions:
         Content-Type:
           - application/json; charset=UTF-8
         Date:
-          - Fri, 03 Oct 2025 05:17:17 GMT
+          - Wed, 19 Nov 2025 05:58:53 GMT
         Server:
           - scaffolding on HTTPServer2
         Server-Timing:
-          - gfet4t7; dur=949
-        Transfer-Encoding:
-          - chunked
-        Vary:
-          - Origin
-          - X-Origin
-          - Referer
-        X-Content-Type-Options:
-          - nosniff
-        X-Frame-Options:
-          - SAMEORIGIN
-        X-XSS-Protection:
-          - '0'
-      status:
-        code: 200
-        message: OK
-  - request:
-      body: '{"contents": [{"parts": [{"text": "What''s the weather in San Francisco?"}], "role": "user"}], "tools": [{"functionDeclarations": [{"description": "Get the current weather", "name": "get_weather", "parameters": {"properties": {"location": {"description": "City name", "type": "STRING"}}, "required": ["location"], "type": "OBJECT"}}]}], "generationConfig": {}}'
-      headers:
-        Content-Type:
-          - application/json
-        user-agent:
-          - google-genai-sdk/1.38.0 gl-python/3.13.7
-        x-goog-api-client:
-          - google-genai-sdk/1.38.0 gl-python/3.13.7
-      method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp:generateContent
-    response:
-      body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"San Francisco\"\n              }\n            },\n            \"thoughtSignature\": \"CpoCAdHtim/NbhFVZDV6JBqx3lOwDos984Ov+QHl+CTf6l6DLx9GH2mdxUOaB22tl8HhZ+7zdWqKXB/UIsqu5qxqzOu8TxubDgdv/sUrMiugmS7H2XSbmA2CIZIl5hnwp9XCeV/+3XJXbPz8/a7gn5l+glPERh2Z0BfzsRGYuTPMel3rSM2a4SKwF485qiztOsr3WGhKgNfrkRkRaNlI3SYSkdVj5NtE38USdqUCb85brMjE4rAiXYCF3xFf6EhgngityvP6vhkEf8Qdsfn50Bu7zMhocfqqi6bsSBpCIaG4LRj2UEjCh8paxce3i1WJHiqA5GP5IoW3ZCk98NeAEKxCNb9O598jQjmoCb+26UuqcPOyfw6xYJQeNOI2\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 47,\n    \"candidatesTokenCount\": 16,\n    \"totalTokenCount\": 122,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 47\n      }\n    ],\n    \"thoughtsTokenCount\": 59\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"Os8JacW2Fcn7xs0PzcaeqA0\"\n}\n"
-      headers:
-        Alt-Svc:
-          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-        Content-Encoding:
-          - gzip
-        Content-Type:
-          - application/json; charset=UTF-8
-        Date:
-          - Tue, 04 Nov 2025 10:02:34 GMT
-        Server:
-          - scaffolding on HTTPServer2
-        Server-Timing:
-          - gfet4t7; dur=871
+          - gfet4t7; dur=1169
         Transfer-Encoding:
           - chunked
         Vary:

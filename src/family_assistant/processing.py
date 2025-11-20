@@ -42,6 +42,7 @@ from .llm.messages import (
     message_to_dict,
     tool_result_to_llm_message,
 )
+from .llm.providers.google_types import GeminiProviderMetadata
 
 # Import DatabaseContext for type hinting
 from .storage.context import DatabaseContext, get_db_context
@@ -299,6 +300,11 @@ class ProcessingService:
                 if tool_calls_data:
                     tool_calls_items = []
                     for tc in tool_calls_data:
+                        provider_metadata = tc.get("provider_metadata")
+                        logger.info(
+                            f"DEBUG: Loading tool_call from DB - id: {tc['id']}, "
+                            f"has provider_metadata: {provider_metadata is not None}"
+                        )
                         tool_calls_items.append(
                             ToolCallItem(
                                 id=tc["id"],
@@ -307,6 +313,7 @@ class ProcessingService:
                                     name=tc["function"]["name"],
                                     arguments=tc["function"]["arguments"],
                                 ),
+                                provider_metadata=provider_metadata,
                             )
                         )
                 typed_messages.append(
@@ -511,8 +518,30 @@ class ProcessingService:
                 else "",
             )
 
-            # Add iteration context to system prompt
-            if messages and messages[0].role == "system":
+            # Check if conversation has thought signatures that must be preserved
+            # If so, we cannot modify the system prompt as it would invalidate signatures
+            has_thought_signatures = False
+            for msg in messages:
+                if isinstance(msg, AssistantMessage) and msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        if tc.provider_metadata:
+                            # Check if provider_metadata indicates Google thought signatures
+                            if isinstance(tc.provider_metadata, GeminiProviderMetadata):
+                                if tc.provider_metadata.thought_signature:
+                                    has_thought_signatures = True
+                                    break
+                            elif isinstance(tc.provider_metadata, dict) and (
+                                tc.provider_metadata.get("provider") == "google"
+                                and "thought_signature" in tc.provider_metadata
+                            ):
+                                has_thought_signatures = True
+                                break
+                if has_thought_signatures:
+                    break
+
+            # Add iteration context to system prompt ONLY if no thought signatures present
+            # Thought signatures are cryptographically tied to the exact conversation context
+            if messages and messages[0].role == "system" and not has_thought_signatures:
                 # Store original system content on first iteration
                 if original_system_content is None:
                     original_system_content = str(messages[0].content)
@@ -594,6 +623,20 @@ class ProcessingService:
                             "arguments": tool_call_item.function.arguments,
                         },
                     }
+                    # Include provider_metadata to preserve thought_signature
+                    if tool_call_item.provider_metadata:
+                        # Serialize provider metadata objects to dicts for storage
+                        if isinstance(
+                            tool_call_item.provider_metadata, GeminiProviderMetadata
+                        ):
+                            tool_call_dict["provider_metadata"] = (
+                                tool_call_item.provider_metadata.to_dict()
+                            )
+                        else:
+                            # Already a dict or other serializable type
+                            tool_call_dict["provider_metadata"] = (
+                                tool_call_item.provider_metadata
+                            )
                     serialized_tool_calls.append(tool_call_dict)
 
                 # Extract provider_metadata from first tool call (all have the same metadata)
@@ -604,13 +647,32 @@ class ProcessingService:
             if not provider_metadata and done_provider_metadata:
                 provider_metadata = done_provider_metadata
 
+            # Serialize provider_metadata if it's a GeminiProviderMetadata object
+            serialized_provider_metadata = None
+            if provider_metadata:
+                if isinstance(provider_metadata, GeminiProviderMetadata):
+                    serialized_provider_metadata = provider_metadata.to_dict()
+                    # [DEBUG] Log what we're saving to database
+                    thought_sig_str = serialized_provider_metadata.get(
+                        "thought_signature"
+                    )
+                    if thought_sig_str:
+                        logger.error(
+                            f"[DB SAVE MSG] Saving message-level provider_metadata: "
+                            f"thought_signature type={type(thought_sig_str)}, "
+                            f"preview={thought_sig_str[:100] if isinstance(thought_sig_str, str) else None}"
+                        )
+                else:
+                    # Already a dict or other serializable type
+                    serialized_provider_metadata = provider_metadata
+
             # Create assistant message
             assistant_message_for_turn = {
                 "role": "assistant",
                 "content": final_content,
                 "tool_calls": serialized_tool_calls,
                 "reasoning_info": final_reasoning_info,
-                "provider_metadata": provider_metadata,
+                "provider_metadata": serialized_provider_metadata,
                 "tool_call_id": None,
                 "error_traceback": None,
             }
@@ -666,13 +728,14 @@ class ProcessingService:
                                 name=tc["function"]["name"],
                                 arguments=tc["function"]["arguments"],
                             ),
+                            provider_metadata=tc.get("provider_metadata"),
                         )
                     )
 
             llm_context_assistant_message = AssistantMessage(
                 role="assistant",
                 content=final_content,
-                tool_calls=tool_call_items if tool_call_items else None,
+                tool_calls=tool_call_items or None,
             )
             messages.append(llm_context_assistant_message)
 
@@ -1501,26 +1564,50 @@ class ProcessingService:
             )  # tool_call_id for role 'tool' messages
 
             if role == "assistant":
-                # Format assistant message, including content and tool_calls if they exist
-                assistant_msg_for_llm = {"role": "assistant"}
-                # Strip text content from messages with tool calls to avoid partial responses
-                if tool_calls and content:
+                # Check if tool_calls have thought signatures
+                has_thought_signature = False
+                if tool_calls and isinstance(tool_calls, list):
+                    for tc in tool_calls:
+                        if isinstance(tc, dict) and tc.get("provider_metadata"):
+                            tc_metadata = tc["provider_metadata"]
+                            # Check if it's a Google thought signature
+                            if isinstance(tc_metadata, GeminiProviderMetadata):
+                                if tc_metadata.thought_signature:
+                                    has_thought_signature = True
+                                    logger.info(
+                                        "[THOUGHT SIG DETECTION] Found thought signature in tool call (GeminiProviderMetadata object), preserving assistant content"
+                                    )
+                                    break
+                            elif (
+                                isinstance(tc_metadata, dict)
+                                and tc_metadata.get("provider") == "google"
+                                and "thought_signature" in tc_metadata
+                            ):
+                                has_thought_signature = True
+                                logger.info(
+                                    "[THOUGHT SIG DETECTION] Found thought signature in tool call (dict), preserving assistant content"
+                                )
+                                break
+
+                # Strip text content from messages with tool calls UNLESS they have thought signatures
+                # Thought signatures are cryptographically tied to exact conversation context
+                final_content: str | None = None
+                if tool_calls and content and not has_thought_signature:
                     # If there are tool calls, don't include the text content to avoid partial responses
                     logger.debug(
                         f"Stripped text content from assistant message with tool calls in LLM history. Original content: {content[:100]}..."
                     )
                 elif content:
-                    assistant_msg_for_llm["content"] = content
-                # Check if tool_calls exists and is a non-empty list/dict
-                if tool_calls:
-                    assistant_msg_for_llm["tool_calls"] = tool_calls
-                # Pass provider_metadata if present (e.g., thought signatures)
+                    final_content = content
+
+                # Build properly typed AssistantMessage
                 provider_metadata = msg.get("provider_metadata")
-                if provider_metadata:
-                    assistant_msg_for_llm["provider_metadata"] = provider_metadata
-                # Only add the message if it has content or tool calls
-                if content or tool_calls:
-                    messages.append(assistant_msg_for_llm)
+                assistant_msg = AssistantMessage(
+                    content=final_content,
+                    tool_calls=tool_calls if tool_calls else None,
+                    provider_metadata=provider_metadata,
+                )
+                messages.append(message_to_dict(assistant_msg))
             elif role == "tool":
                 # --- Format tool response messages ---
                 if (
@@ -1746,10 +1833,16 @@ class ProcessingService:
                 elif trigger_content_parts[0].get("type") == "image_url":
                     user_content_for_history = "[Image Attached]"
 
+            # Generate a temporary interface_message_id if not provided
+            # This ensures the just-saved message can be filtered out of history
+            actual_interface_message_id = trigger_interface_message_id
+            if actual_interface_message_id is None:
+                actual_interface_message_id = f"temp_{turn_id}"
+
             saved_user_msg_record = await db_context.message_history.add(
                 interface_type=interface_type,
                 conversation_id=conversation_id,
-                interface_message_id=trigger_interface_message_id,
+                interface_message_id=actual_interface_message_id,
                 turn_id=turn_id,  # User message is part of the turn
                 thread_root_id=thread_root_id_for_turn,  # Use determined root ID
                 timestamp=user_message_timestamp,
@@ -1797,23 +1890,19 @@ class ProcessingService:
 
             logger.debug(f"Raw history messages fetched ({len(raw_history_messages)}).")
 
-            # Filter out the *current* user trigger message if it somehow got included in history
+            # Filter out the *current* user trigger message that was just saved
             filtered_history_messages = []
-            if (
-                trigger_interface_message_id
-            ):  # This ID is of the message *being processed*
-                for msg_from_db in raw_history_messages:
-                    if (
-                        msg_from_db.get("interface_message_id")
-                        != trigger_interface_message_id
-                    ):
-                        filtered_history_messages.append(msg_from_db)
-                if len(raw_history_messages) != len(filtered_history_messages):
-                    logger.debug(
-                        f"Filtered out current trigger message (ID: {trigger_interface_message_id}) from fetched history."
-                    )
-            else:
-                filtered_history_messages = raw_history_messages
+            for msg_from_db in raw_history_messages:
+                if (
+                    msg_from_db.get("interface_message_id")
+                    != actual_interface_message_id
+                ):
+                    filtered_history_messages.append(msg_from_db)
+
+            if len(raw_history_messages) != len(filtered_history_messages):
+                logger.debug(
+                    f"Filtered out current trigger message (ID: {actual_interface_message_id}) from fetched history."
+                )
 
             initial_messages_for_llm = await self._format_history_for_llm(
                 filtered_history_messages
@@ -2226,12 +2315,18 @@ class ProcessingService:
                 elif trigger_content_parts[0].get("type") == "image_url":
                     user_content_for_history = "[Image Attached]"
 
+            # Generate a temporary interface_message_id if not provided
+            # This ensures the just-saved message can be filtered out of history
+            actual_interface_message_id = trigger_interface_message_id
+            if actual_interface_message_id is None:
+                actual_interface_message_id = f"temp_{turn_id}"
+
             # Save user message in its own transaction to avoid long-running transactions
             async with get_db_context(engine=db_context.engine) as user_msg_db:
                 saved_user_msg_record = await user_msg_db.message_history.add(
                     interface_type=interface_type,
                     conversation_id=conversation_id,
-                    interface_message_id=trigger_interface_message_id,
+                    interface_message_id=actual_interface_message_id,
                     turn_id=turn_id,
                     thread_root_id=thread_root_id_for_turn,
                     timestamp=user_message_timestamp,
@@ -2269,17 +2364,11 @@ class ProcessingService:
                 )
                 raw_history_messages = []
 
-            # Filter out current trigger message
+            # Filter out current trigger message that was just saved
             filtered_history_messages = []
-            if trigger_interface_message_id:
-                for h_msg in raw_history_messages:
-                    if (
-                        h_msg.get("interface_message_id")
-                        != trigger_interface_message_id
-                    ):
-                        filtered_history_messages.append(h_msg)
-            else:
-                filtered_history_messages = raw_history_messages
+            for h_msg in raw_history_messages:
+                if h_msg.get("interface_message_id") != actual_interface_message_id:
+                    filtered_history_messages.append(h_msg)
 
             initial_messages_for_llm = await self._format_history_for_llm(
                 filtered_history_messages
