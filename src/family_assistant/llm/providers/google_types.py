@@ -5,7 +5,6 @@ exactly as received from the API.
 """
 
 import base64
-import hashlib
 import logging
 from typing import Any
 
@@ -36,25 +35,12 @@ class GeminiThoughtSignature:
             raise TypeError(f"Expected bytes, got {type(raw_value)}")
         self._opaque_bytes = raw_value
 
-        # Debug logging
-        sig_hash = hashlib.sha256(raw_value).hexdigest()[:16]
-        logger.debug(
-            f"[TRACE] GeminiThoughtSignature.__init__: "
-            f"len={len(raw_value)}, hash={sig_hash}"
-        )
-
     def to_google_format(self) -> bytes:
         """Return thought signature for sending to Google SDK.
 
         Returns:
             Thought signature as bytes, exactly as received.
         """
-        # Debug logging
-        sig_hash = hashlib.sha256(self._opaque_bytes).hexdigest()[:16]
-        logger.debug(
-            f"[TRACE] GeminiThoughtSignature.to_google_format: "
-            f"len={len(self._opaque_bytes)}, hash={sig_hash}"
-        )
         return self._opaque_bytes
 
     def to_storage_string(self) -> str:
@@ -63,18 +49,7 @@ class GeminiThoughtSignature:
         This is the ONLY place where encoding happens.
         Uses base64 encoding to safely store arbitrary binary data.
         """
-        encoded = base64.b64encode(self._opaque_bytes).decode("ascii")
-
-        # Debug logging
-        sig_hash = hashlib.sha256(self._opaque_bytes).hexdigest()[:16]
-        logger.debug(
-            f"[TRACE] GeminiThoughtSignature.to_storage_string: "
-            f"bytes_len={len(self._opaque_bytes)}, "
-            f"bytes_hash={sig_hash}, "
-            f"encoded_len={len(encoded)}, "
-            f"encoded_preview={encoded[:50]}..."
-        )
-        return encoded
+        return base64.b64encode(self._opaque_bytes).decode("ascii")
 
     @classmethod
     def from_storage_string(cls, value: str) -> "GeminiThoughtSignature":
@@ -83,23 +58,7 @@ class GeminiThoughtSignature:
         This is the ONLY place where decoding happens.
         Expects base64-encoded string from storage.
         """
-        # Debug logging - before decode
-        logger.debug(
-            f"[TRACE] GeminiThoughtSignature.from_storage_string (before decode): "
-            f"encoded_len={len(value)}, "
-            f"encoded_preview={value[:50]}..."
-        )
-
         decoded = base64.b64decode(value)
-        sig_hash = hashlib.sha256(decoded).hexdigest()[:16]
-
-        # Debug logging - after decode
-        logger.debug(
-            f"[TRACE] GeminiThoughtSignature.from_storage_string (after decode): "
-            f"bytes_len={len(decoded)}, "
-            f"bytes_hash={sig_hash}"
-        )
-
         return cls(decoded)
 
     def __repr__(self) -> str:
@@ -136,7 +95,6 @@ class GeminiProviderMetadata:
         result: dict[str, Any] = {"provider": "google"}
         if self.thought_signature:
             # Convert thought signature to string for storage
-            logger.debug("[TRACE] GeminiProviderMetadata.to_dict: Converting to dict")
             result["thought_signature"] = self.thought_signature.to_storage_string()
         return result
 
@@ -154,7 +112,6 @@ class GeminiProviderMetadata:
         thought_sig = None
         if "thought_signature" in data:
             # Convert string from storage back to thought signature
-            logger.debug("[TRACE] GeminiProviderMetadata.from_dict: Creating from dict")
             thought_sig = GeminiThoughtSignature.from_storage_string(
                 data["thought_signature"]
             )
