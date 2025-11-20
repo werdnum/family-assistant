@@ -92,4 +92,99 @@ interactions:
       status:
         code: 400
         message: Bad Request
+  - request:
+      body: '{"messages":[{"content":"This message is missing the role field"}],"model":"gpt-4.1-nano","stream":true}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '104'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: "{\n  \"error\": {\n    \"message\": \"Missing required parameter: 'messages[0].role'.\",\n    \"type\": \"invalid_request_error\",\n    \"param\": \"messages[0].role\",\n    \"code\": \"missing_required_parameter\"\n  }\n}"
+      headers:
+        CF-RAY:
+          - 9a177ff889ac03e0-FRA
+        Connection:
+          - keep-alive
+        Content-Length:
+          - '197'
+        Content-Type:
+          - application/json
+        Date:
+          - Thu, 20 Nov 2025 11:10:16 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=K8zL9TyRnmJmbT0Ntmc5afN3qVE2KfJeymWerXCndnk-1763637016-1.0.1.1-8U6ipI4pEJWGd8q8gboNQ.radoTEdHLE0N563GE2PV_pwJf0tSPk7x34zPDKi.SLfd2urGkKgNfaTY0Dhq8Usc84IMqGQ.w5BMvwu5DNRv0; path=/; expires=Thu, 20-Nov-25 11:40:16 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=AnVoYvmrKzzbbzuRSslYw0z6Z5rUc5vQoCEOm81njKs-1763637016612-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '10'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '22'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199988'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 3ms
+        x-request-id:
+          - req_a7b0661a3abe498e8ce0804570b0c5a3
+      status:
+        code: 400
+        message: Bad Request
 version: 1

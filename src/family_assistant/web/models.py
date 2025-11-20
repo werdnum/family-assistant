@@ -69,3 +69,5 @@ class ChatMessageResponse(BaseModel):
     turn_id: str
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     attachments: list[dict[str, Any]] | None = None  # Add attachments field
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    tool_calls: list[dict[str, Any]] | None = None  # Tool calls made by the assistant

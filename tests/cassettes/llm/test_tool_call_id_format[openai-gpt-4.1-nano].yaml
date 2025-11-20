@@ -209,4 +209,111 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"Calculate 42 divided by 7"}],"model":"gpt-4.1-nano","tool_choice":"auto","tools":[{"type":"function","function":{"name":"calculate","description":"Perform basic mathematical calculations","parameters":{"type":"object","properties":{"expression":{"type":"string","description":"The mathematical expression to evaluate"}},"required":["expression"]}}}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '389'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//jFNRa9swEH73rxD3HHd2Yieb37YMxkZgsJUyshSjSGdHmyypkty0hPz3
+          YjuxnbSD+cGI+/Tdfffd6RAQAoJDRoDtqGeVkeGS7x9Ws68/5YetsfO77+/3/OFLvItcsbp7hEnD
+          0Ns/yPyZdcN0ZSR6oVUHM4vUY5M1Xsxn89kimsYtUGmOsqGVxofJTRwqqnQ4jaZpGCVhnJzoOy0Y
+          OsjI74AQQg7tvxGqOD5BRqLJOVKhc7REyPpLhIDVsokAdU44T5WHyQAyrTyqRruqpRwBXmuZMyrl
+          ULj7DqPz4BaVMv+xZpikePtrvVry2/0nt/722cbLj6N6Xepn0woqasV6l0Z4H8+uihECilZ4Kshq
+          ST1ekQkBasu6QuUb4XDYAD4Zi84JrTaQbSCZvlts4AgXtGPw1vl+5IfFonZUvjaKKqU9bfS2Tt2f
+          kGM/FKlLY/XWXVGhEEq4XW6RurbXseXBWUgrAeqLqYKxujI+9/ovtkXTtEsKw+YNYHwGvfZUDvHF
+          aW0us+UcPRXt0Ps9Y5TtkA/MYd9ozYUeAcGo89di3srddS9U+T/pB4AxNB55bixywS4bHq5ZbN7l
+          v671HreCwaF9FAxzL9A20+BY0Fp2jwXcs/NY5YVQJVpjRftioDA5bmdRwZM0SSE4Bi8AAAD//wMA
+          1y5LKUAEAAA=
+      headers:
+        CF-RAY:
+          - 9a178015ebc49054-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Thu, 20 Nov 2025 11:10:21 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=Ow0PAGRqybeJ0AFDlzRpxo4mrR4ZPbRV19mtj95VSV4-1763637021-1.0.1.1-JDGLGmmIF2e2hyHFnyb0c6y_UzcRSU7V4qHeyhtCFDPGALOI9ygQ.JuasRs6uhVUdt_zy5VBPSm5b9eJ_.1jPGPcUzJbR.Ur.wB.wxyyEi8; path=/; expires=Thu, 20-Nov-25 11:40:21 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=cLgHO0AJCcwyOBiFyQXzdsrxagTlnbGNlNgvYo835eI-1763637021869-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '346'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '595'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199991'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 2ms
+        x-request-id:
+          - req_7aed6c9d3e624748a0a8513323f839fe
+      status:
+        code: 200
+        message: OK
 version: 1

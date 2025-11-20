@@ -224,4 +224,119 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"Find me a document about software management"},{"role":"assistant","content":"I''ll search for a document about software management.","tool_calls":[{"id":"call_456","type":"function","function":{"name":"search_documents","arguments":"{\"query\": \"software management\"}"}}]},{"role":"tool","tool_call_id":"call_456","content":"Found a PDF document about software management practices","name":"test_tool"},{"role":"user","content":"What is this document about? What are the main topics it covers?"}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '561'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//jFXfT+RGDH7fv8LKUyuFiAWOLXmproAo7SFxhSsP3dPKO+MkPiaeMD+W
+          257436tJsj9oOakvkWZsf/5sf/F8mwBkrLMSMtVgUG1nDs7189MvJ1dozKfjM9H1l1/Nw9nj2XV1
+          cX3JWZ4i7PILqbCJKpRtO0OBrQxm5QgDJdTp7PT49Hh2OJ32htZqMims7sLBSTE9EBR7cHR49O7g
+          8ORgejKGN5YV+ayEvyYAAN/6byIqmr5mJRzmm5uWvMeasnLrBJA5a9JNht6zDyghy3dGZSWQ9Nzv
+          GwJtVWxJAnTOrliTBxSwK3IrpmewFXhbhWd0BC0K1pR8c6isip6lBiuwJJ+iUYVEOoeWQmO1Nbbm
+          dETR4IPDQOkMwQJVFanAKzJr6AxKDppWZGw3OLfIEpBll9mvfaDWF5AIJzME27HywAFU4uqBRZmo
+          qZzLXKYF3G1CLwbkvsIPXBGcr5Uh+OHu4sP5jyXcNujJg4+qAfQ9G2GpExE0a88+cfNcSw6cRpxw
+          MM05h0A+9K6aOmPXQ1+2/ElQFBVzOSrg1tmkFrjZNhBYdhQvpWYhcix1CfekGuGnSB4q68CrhnQ0
+          fR5H3kanCNAYq0YWjv3jq8kkBk8RDYc1oPfRjTyO95py66wi7+EmqdGX8ICBXIXG5PC+ZkM53CkX
+          2xx+R1mm+STQ0BA7wK4zrHDJKUExl5M92D/oKbLrefi9Yku4wtD09Y19/Xvo26i88V7DCg1rTGdw
+          e1DFXN4VcG6l4jq6vu7e/bxBqelVoj/J+WROGnfW5KAGn/EMS4tOj5rcpO8Bi7mcFvBx7Nv7Td96
+          x/th0CXcvVax+Ji0ual+bPpWGG/9B5qS8iE4VI8sdTGXWQE3O730Tpcra2IiVQ61JaxtlthpDAlu
+          GWuo+OsGGTV2fdZgh6Lf6OJPBdxba/xYlWpkJFfCJ0/f+dch9CGGHwl+Y4c5XPEos+uLywQLAHN5
+          sNFoWNs4eCJoCsiGNPjYtujWCR5lDR26wCoadODTFrACSecdKa5YAUtlXTsMuXK2TbLbjurn/T3m
+          qIoe0zKVaMyeAUXsMNV+g34eLS/bnWls3Tm79P8KzSoW9s3CEXoraT/6YLust75MAD73uzm+WrdZ
+          52zbhUWwj9Snm50OcNnuSdgZj6az0RpsQLNnODvO38BbDE30e9s9U5hWwi509xRg1Gz3DJO9qv9L
+          5y3soXKW+v/A7wxKURdILzpHmtXrkndujtIS/J7btss94cyn90fRIjC5NAlNFUYzvGPZ8BwsKpaa
+          XOd4eMyqbjHFs9nyHeKpyiYvk38AAAD//wMA2G1pytsHAAA=
+      headers:
+        CF-RAY:
+          - 9a177fdc1e9fd2be-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Thu, 20 Nov 2025 11:10:14 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=bePBSiSz.Bv14pJpk6INKzE_isWVfbMd9k82CDbW4LE-1763637014-1.0.1.1-Tac8BdEk6kQugpwt4EvsctaSPpRvOl_CUA1oFmUm.SNuy5agP4KkCGgWVF4h847ohJ_XqE0kfMsjKqlAUbD3CNrr0DsJqYgc2bAqk8V00Lg; path=/; expires=Thu, 20-Nov-25 11:40:14 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=FB6DilC86u5M3.gG1cUQpGC4h6XkW1ID6qO2Cjx68vc-1763637014998-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '2957'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '2972'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199940'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 18ms
+        x-request-id:
+          - req_2ff077c03dd24d678eda8b861128c8c8
+      status:
+        code: 200
+        message: OK
 version: 1

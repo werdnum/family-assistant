@@ -95,7 +95,7 @@
                           "location": "Paris, France"
                         }
                       },
-                      "thoughtSignature": "CiQB0e2Kb8ziC6GUZecM+9rb7i9NZaDtXVnwDK+xVQk0OcCze7cKZgHR7Ypvnv/tsQshA55OmBaD5T6Gj+1Ul+hS9sBd/6TWKJL9IP+xH/+ZZ56XdMsWd44znfv02GE/ygLXFyTRWV1lT4qVd4caLOn94+U6lBposndHfLEN2Hb5ibi9MrsAQpDuIwHBGgrlAQHR7Ypv6fC+e7he1lcBBA4bRZ1wkprYXd0bA5GLrtgJxpIKQfa75KZ5eJDzocyIx4O15lLv1eWMltrHD8McSZ4cZxfggoXeedOGnCFXmejT9T7nbwa5Pb0sUIqslgsdlB8+936jErqsjLFXXzsMuvLqPkcSjTljGf9oN1sV208RE+qAmCjsbVhpEyxFecOKrstArwsBYZLMpYtdV6wNDRMhTXkabn+6lKU3G85eT86WNZXNOLMZu7bCoI0fJXeemE1Xb5O5RbafBosH2FJWzNUDAvhTPCbfcg6x+u278fOK+CzErF4KLgHR7YpvyOoT3sNET/uW2fwywXc0bitg8+eN0+gs/D+ABq2KMw9YSv8S4kzbucg="
+                      "thoughtSignature": "CikB0e2Kb+q86mo9Awz0lXza6/uaDTi5zw3eyY8KcuXm5KpRxd0IsWO08gp7AdHtim+1bLezWKhP0W5YM3MFap13GYaPrRNuPZv84oPREovFFah4yMzs80LeBe8VuqwKpPYUao4PezTHLdlGNEAyXCkvvtRkIVXTAofWnQakR0TIcVjAFV731OKFwm2b/FEOACbe/3v+9qfIrm6YiJ/hrHJSHufUPYU/CtgBAdHtim94fCSnj8BHRsa16/8RzeCUVXy022BeirEk9UDuLtr80bL0NqrO2p2SubMwos0J7Zll7EbmcxG/OqPh976kGiuhjqCw2D/mEsukSMkuOEWSLuUes1yFK5PQgrCSqNMKyZsNKg/nEx5FIxih3biqA6jTGYxplDiBUaMXXMEcOB44cEqTIU+sG/FI/SPpF0uLB89nV3GSCAGe23/XLh2eTjp8FyvFZWpnulMqHe/CjjBC2uofCvjvdDXmmfjhNhRaF6wdK/07LPR5J7H79P5q7ipVSisz"
                     },
                     {
                       "functionCall": {
@@ -126,7 +126,7 @@
               "thoughtsTokenCount": 71
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "mKgeaeyvFYPOnsEPhIPU8AY"
+            "responseId": "GPceacyqJ8O-vdIPpqSQ4QI"
           }
         ],
         "byte_segments": [],
@@ -150,7 +150,7 @@
                 "content": {
                   "parts": [
                     {
-                      "thought_signature": "Q2lRQjBlMktiOHppQzZHVVplY00rOXJiN2k5TlphRHRYVm53REsreFZRazBPY0N6ZTdjS1pnSFI3WXB2bnYvdHNRc2hBNTVPbUJhRDVUNkdqKzFVbCtoUzlzQmQvNlRXS0pMOUlQK3hILytaWjU2WGRNc1dkNDR6bmZ2MDJHRS95Z0xYRnlUUldWMWxUNHFWZDRjYUxPbjk0K1U2bEJwb3NuZEhmTEVOMkhiNWliaTlNcnNBUXBEdUl3SEJHZ3JsQVFIUjdZcHY2ZkMrZTdoZTFsY0JCQTRiUloxd2twcllYZDBiQTVHTHJ0Z0p4cElLUWZhNzVLWjVlSkR6b2N5SXg0TzE1bEx2MWVXTWx0ckhEOE1jU1o0Y1p4Zmdnb1hlZWRPR25DRlhtZWpUOVQ3bmJ3YTVQYjBzVUlxc2xnc2RsQjgrOTM2akVycXNqTEZYWHpzTXV2THFQa2NTalRsakdmOW9OMXNWMjA4UkUrcUFtQ2pzYlZocEV5eEZlY09LcnN0QXJ3c0JZWkxNcFl0ZFY2d05EUk1oVFhrYWJuKzZsS1UzRzg1ZVQ4NldOWlhOT0xNWnU3YkNvSTBmSlhlZW1FMVhiNU81UmJhZkJvc0gyRkpXek5VREF2aFRQQ2JmY2c2eCt1Mjc4Zk9LK0N6RXJGNEtMZ0hSN1lwdnlPb1Qzc05FVC91VzJmd3l3WGMwYml0ZzgrZU4wK2dzL0QrQUJxMktNdzlZU3Y4UzRremJ1Y2c9",
+                      "thought_signature": "Q2lrQjBlMktiK3E4Nm1vOUF3ejBsWHphNi91YURUaTV6dzNleVk4S2N1WG01S3BSeGQwSXNXTzA4Z3A3QWRIdGltKzFiTGV6V0toUDBXNVlNM01GYXAxM0dZYVByUk51UFp2ODRvUFJFb3ZGRmFoNHlNenM4MExlQmU4VnVxd0twUFlVYW80UGV6VEhMZGxHTkVBeVhDa3Z2dFJrSVZYVEFvZlduUWFrUjBUSWNWakFGVjczMU9LRndtMmIvRkVPQUNiZS8zdis5cWZJcm02WWlKL2hySEpTSHVmVVBZVS9DdGdCQWRIdGltOTRmQ1NuajhCSFJzYTE2LzhSemVDVVZYeTAyMkJlaXJFazlVRHVMdHI4MGJMME5xck8ycDJTdWJNd29zMEo3WmxsN0VibWN4Ry9PcVBoOTc2a0dpdWhqcUN3MkQvbUVzdWtTTWt1T0VXU0x1VWVzMXlGSzVQUWdyQ1NxTk1LeVpzTktnL25FeDVGSXhpaDNiaXFBNmpUR1l4cGxEaUJVYU1YWE1FY09CNDRjRXFUSVUrc0cvRkkvU1BwRjB1TEI4OW5WM0dTQ0FHZTIzL1hMaDJlVGpwOEZ5dkZaV3BudWxNcUhlL0NqakJDMnVvZkN2anZkRFhtbWZqaE5oUmFGNndkSy8wN0xQUjVKN0g3OVA1cTdpcFZTaXN6",
                       "function_call": {
                         "args": {
                           "location": "Paris, France"
@@ -174,7 +174,7 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "mKgeaeyvFYPOnsEPhIPU8AY",
+            "response_id": "GPceacyqJ8O-vdIPpqSQ4QI",
             "usage_metadata": {
               "candidates_token_count": 35,
               "prompt_token_count": 114,

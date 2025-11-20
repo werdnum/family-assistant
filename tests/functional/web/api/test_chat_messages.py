@@ -464,8 +464,8 @@ async def test_api_chat_add_note_tool(
     assistant_tool_call_msg_found = any(
         h["role"] == "assistant"
         and h.get("tool_calls") is not None
-        and h["tool_calls"][0]["id"] == tool_call_id
-        and h["tool_calls"][0]["function"]["name"] == "add_or_update_note"
+        and h["tool_calls"][0].id == tool_call_id
+        and h["tool_calls"][0].function.name == "add_or_update_note"
         for h in history
     )
     assert assistant_tool_call_msg_found, (

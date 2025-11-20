@@ -205,4 +205,109 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"My name is TestBot. What''s my name?"},{"role":"assistant","content":"Your name is TestBot."},{"role":"user","content":"What did I just tell you my name was?"}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '222'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//jFLLbtswELzrKxY8R4aV+AH7FrfoLeglhxRFINDkSmZCcRlylTYI/O8F
+          KdeS0xboRYedndHMcN8LAGG02IJQB8mq87b8pH+83H59+RLu/O7B2c2Tvd89PIfXz7fd5k5cJQbt
+          n1Dxb9ZMUectsiE3wCqgZEyq1Xp1s7pZz6t5BjrSaBOt9VwuZlXppKPyen69LOeLslqc6AcyCqPY
+          wvcCAOA9f5NRp/Gn2EIWy5MOY5Qtiu15CUAEsmkiZIwmsnQsrkZQkWN02fs36oHJaugQ3qgP4GSH
+          YCLcY+Qd8WzKC9j0USbzrrd2AkjniGUKnx0/npDj2aOl1gfaxw9U0Rhn4qEOKCO55CcyeZHRYwHw
+          mLvoL+IJH6jzXDM9Y/7dohrkxPgEI7g5YUws7Thenuq7FKs1sjQ2TqoUSqoD6pE59i57bWgCFJPI
+          f3r5m/YQ27j2f+RHQCn0jLr2AbVRl3nHtYDpPv+1dq44GxYRw6tRWLPBkJ5BYyN7OxyNiG+Rsasb
+          41oMPpjhchpfV3Kz3i+lXClRHItfAAAA//8DAJk6MA5IAwAA
+      headers:
+        CF-RAY:
+          - 9a177fcd5c57db0e-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Thu, 20 Nov 2025 11:10:10 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=ynYZQN.fUoSXOXftBVJweA0DDw53Ra.Bfb9UbIXh5rU-1763637010-1.0.1.1-ulfoz9JIzA6KcuQzuE4zHiSCApuoQuxiUjmw7DUGCW.MxLqRMbuRjzPyXiWjFwfMmarAgUHWJjxEM68TQr_6gB6dnNL6gONXgrKZ9JziIDc; path=/; expires=Thu, 20-Nov-25 11:40:10 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=hWj1nvw7tfiNJOQUr1Zx_KwhZGS34qE.ej9NUzMbtow-1763637010859-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '349'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '567'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199972'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 8ms
+        x-request-id:
+          - req_3e109543dd9447dca5d504a69f036c93
+      status:
+        code: 200
+        message: OK
 version: 1

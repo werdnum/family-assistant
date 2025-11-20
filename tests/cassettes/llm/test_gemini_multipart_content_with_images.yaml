@@ -5,14 +5,14 @@ interactions:
         Content-Type:
           - application/json
         user-agent:
-          - google-genai-sdk/1.22.0 gl-python/3.12.3
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
         x-goog-api-client:
-          - google-genai-sdk/1.22.0 gl-python/3.12.3
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"The image is a solid block of **bright red**. \\n\\nIt's a vibrant, saturated red, with no other colors or discernible shapes present. It's a very pure and intense red.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 271,\n    \"candidatesTokenCount\": 41,\n    \"totalTokenCount\": 312,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 13\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite-preview-06-17\",\n  \"responseId\": \"bQafaKeINvO6xN8Pz_akyA4\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"The image is a solid, vibrant **red**.\\n\\nThe color is a bright, intense, and saturated shade of red, with no other colors or patterns present. It's a pure red that commands attention.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 271,\n    \"candidatesTokenCount\": 43,\n    \"totalTokenCount\": 314,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 13\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"d_4eabSaGveKvdIPo57okQQ\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -21,53 +21,11 @@ interactions:
         Content-Type:
           - application/json; charset=UTF-8
         Date:
-          - Fri, 15 Aug 2025 10:05:34 GMT
+          - Thu, 20 Nov 2025 11:41:43 GMT
         Server:
           - scaffolding on HTTPServer2
         Server-Timing:
-          - gfet4t7; dur=995
-        Transfer-Encoding:
-          - chunked
-        Vary:
-          - Origin
-          - X-Origin
-          - Referer
-        X-Content-Type-Options:
-          - nosniff
-        X-Frame-Options:
-          - SAMEORIGIN
-        X-XSS-Protection:
-          - '0'
-      status:
-        code: 200
-        message: OK
-  - request:
-      body: '{"contents": [{"parts": [{"text": "What do you see in this image? Describe the color."}, {"inlineData": {"data": "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC-aJAAAAX0lEQVR4nO3PQQ0AIBDAMMC_50MEj4ZkVbDtWX87OuBVA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA9oFUoUBf3Xr7AgAAAAASUVORK5CYII=", "mimeType": "image/png"}}], "role": "user"}], "generationConfig": {}}'
-      headers:
-        Content-Type:
-          - application/json
-        user-agent:
-          - google-genai-sdk/1.38.0 gl-python/3.13.7
-        x-goog-api-client:
-          - google-genai-sdk/1.38.0 gl-python/3.13.7
-      method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent
-    response:
-      body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"I see a solid, vibrant **red** rectangle. The red is bright and saturated, appearing to be a pure, intense hue without any discernible variations in shade or tint.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 271,\n    \"candidatesTokenCount\": 35,\n    \"totalTokenCount\": 306,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 13\n      },\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 258\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite-preview-06-17\",\n  \"responseId\": \"Ns8JaZ6ZCMn7xs0PzcaeqA0\"\n}\n"
-      headers:
-        Alt-Svc:
-          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-        Content-Encoding:
-          - gzip
-        Content-Type:
-          - application/json; charset=UTF-8
-        Date:
-          - Tue, 04 Nov 2025 10:02:30 GMT
-        Server:
-          - scaffolding on HTTPServer2
-        Server-Timing:
-          - gfet4t7; dur=1582
+          - gfet4t7; dur=1632
         Transfer-Encoding:
           - chunked
         Vary:
