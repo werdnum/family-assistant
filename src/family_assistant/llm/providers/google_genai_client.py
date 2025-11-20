@@ -406,26 +406,23 @@ class GoogleGenAIClient(BaseLLMClient):
                                     tc_metadata.thought_signature.to_google_format()
                                 )
 
-                        # Create FunctionCall Part with thought_signature if present
-                        if thought_signature_bytes:
-                            assistant_parts.append(
-                                types.Part(
-                                    function_call=types.FunctionCall(
-                                        name=func_name,
-                                        args=args,
-                                    ),
-                                    thought_signature=thought_signature_bytes,
-                                )
+                        # Create FunctionCall Part with thought_signature
+                        # Use skip validator if no thought signature is available
+                        # (e.g., when transferring history from a different model)
+                        signature_value = (
+                            thought_signature_bytes
+                            if thought_signature_bytes
+                            else b"skip_thought_signature_validator"
+                        )
+                        assistant_parts.append(
+                            types.Part(
+                                function_call=types.FunctionCall(
+                                    name=func_name,
+                                    args=args,
+                                ),
+                                thought_signature=signature_value,
                             )
-                        else:
-                            assistant_parts.append(
-                                types.Part(
-                                    function_call=types.FunctionCall(
-                                        name=func_name,
-                                        args=args,
-                                    )
-                                )
-                            )
+                        )
 
                 if assistant_parts:
                     contents.append(types.Content(role="model", parts=assistant_parts))
