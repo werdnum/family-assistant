@@ -33,6 +33,7 @@ from .interfaces import ChatInterface  # Import ChatInterface
 
 # Import the LLM interface and output structure
 from .llm import LLMInterface, LLMStreamEvent, ToolCallFunction, ToolCallItem
+from .llm.google_types import GeminiProviderMetadata
 from .llm.messages import (
     AssistantMessage,
     LLMMessage,
@@ -42,7 +43,6 @@ from .llm.messages import (
     message_to_dict,
     tool_result_to_llm_message,
 )
-from .llm.providers.google_types import GeminiProviderMetadata
 
 # Import DatabaseContext for type hinting
 from .storage.context import DatabaseContext, get_db_context
