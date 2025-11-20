@@ -64,4 +64,4 @@ async def test_tool_call_events_are_emitted() -> None:
     tool_call_item = tool_call_events[0].tool_call
     assert tool_call_item is not None, "tool_call should not be None"
     assert tool_call_item.provider_metadata is not None
-    assert "thought_signature" in tool_call_item.provider_metadata
+    assert tool_call_item.provider_metadata.thought_signature is not None
