@@ -248,6 +248,76 @@ This project follows the patterns defined in CLAUDE.md:
 - Use virtualenv in .venv
 - Follow existing code conventions in the codebase
 
+## Linter and Type-Checker Bypasses
+
+**Severity: SHORTCUT (warning) - without justification**
+
+Any bypassing of type-checkers, ast-grep rules, ruff, or other linters must be accompanied by a
+specific justification comment explaining why the bypass is necessary.
+
+### Common Bypass Patterns
+
+All of these patterns require justification:
+
+- `# noqa: <code>` - Ruff/flake8 warning suppression
+- `# type: ignore` - Type checker suppression (mypy, basedpyright, pyright)
+- `# pylint: disable=<rule>` - Pylint warning suppression
+- `# ast-grep-ignore` - ast-grep rule bypass
+- `# pragma: no cover` - Test coverage exclusion
+
+### Justification Requirements
+
+The justification should:
+
+1. **Be specific** - Explain the exact reason for the bypass
+2. **Be inline** - Appear on the same line or immediately before the bypass
+3. **Reference the issue** - Mention what problem necessitates the bypass
+
+### Examples
+
+❌ **Unacceptable - no justification:**
+
+```python
+result = cast(str, value)  # type: ignore
+```
+
+```python
+# noqa: S603
+subprocess.run(command, shell=True)
+```
+
+✅ **Acceptable - clear justification:**
+
+```python
+# SQLAlchemy's Column.label() is incorrectly typed; it returns ColumnElement but should return Label
+result = cast(str, value)  # type: ignore[arg-type]
+```
+
+```python
+# Command is constructed from trusted configuration, not user input - S603 subprocess call with shell=True
+subprocess.run(command, shell=True)  # noqa: S603
+```
+
+```python
+# ast-grep incorrectly flags this as asyncio.sleep in test, but it's actually time.sleep
+time.sleep(0.1)  # ast-grep-ignore: no-asyncio-sleep-in-tests
+```
+
+### Review Process
+
+When reviewing code with linter bypasses:
+
+1. **Check for justification** - If missing, flag as **SHORTCUT**
+2. **Evaluate necessity** - Is the bypass actually needed or can the code be refactored?
+3. **Verify specificity** - Generic justifications like "needed" or "false positive" are
+   insufficient
+
+### When to Accept Without Justification
+
+- Automatically generated code (e.g., by tools like `alembic`)
+- Third-party code that shouldn't be modified
+- Code marked with a project-wide exception pattern (document these separately)
+
 ## Auto-Formatting Tools
 
 This project uses automatic code formatting tools. **The reviewer should NOT suggest style changes
