@@ -391,8 +391,8 @@ class LLMOutput:
     reasoning_info: dict[str, Any] | None = field(
         default=None
     )  # Store reasoning/usage data
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    provider_metadata: dict[str, Any] | None = field(
+    # ast-grep-ignore: no-dict-any - Accepts both dicts (for serialization) and provider metadata objects (e.g., GeminiProviderMetadata)
+    provider_metadata: Any | None = field(
         default=None
     )  # Provider-specific metadata (e.g., thought signatures)
 

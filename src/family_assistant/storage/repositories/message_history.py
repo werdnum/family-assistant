@@ -9,8 +9,12 @@ from sqlalchemy import insert, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import functions as func
 
+from family_assistant.llm.providers.google_types import GeminiProviderMetadata
+from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.base import BaseRepository
+
+# Note: ToolCallFunction, ToolCallItem, GeminiProviderMetadata are used in _process_message_row() method
 
 logger = logging.getLogger(__name__)
 
@@ -354,8 +358,9 @@ class MessageHistoryRepository(BaseRepository):
         row = await self._db.fetch_one(stmt)
         return row["interface_type"] if row else None
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def get_by_turn_id(self, turn_id: str) -> list[dict[str, Any]]:
+    async def get_by_turn_id(
+        self, turn_id: str
+    ) -> list[dict[str, Any]]:  # ast-grep-ignore: no-dict-any
         """
         Retrieves all messages for a specific turn.
 
@@ -607,17 +612,21 @@ class MessageHistoryRepository(BaseRepository):
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _process_message_row(self, row: dict[str, Any]) -> dict[str, Any]:
         """
-        Process a message row from the database.
+        Process a message row from the database with proper type deserialization.
+
+        Deserializes JSON fields and converts provider-specific metadata
+        to proper typed objects for type safety. Returns a dict that can be
+        used with database fields and converted to LLMMessage when needed.
 
         Args:
             row: Database row
 
         Returns:
-            Processed message dictionary
+            Dictionary with properly deserialized complex types
         """
         msg = dict(row)
 
-        # Handle JSON fields that might be stored as strings
+        # Handle tool_calls deserialization: JSON columns return dicts/lists directly
         if isinstance(msg.get("tool_calls"), str):
             try:
                 msg["tool_calls"] = json.loads(msg["tool_calls"])
@@ -627,6 +636,36 @@ class MessageHistoryRepository(BaseRepository):
                 )
                 msg["tool_calls"] = None
 
+        # Deserialize provider_metadata within each tool call to typed objects
+        if msg.get("tool_calls") and isinstance(msg["tool_calls"], list):
+            tool_call_items = []
+            for tc_dict in msg["tool_calls"]:
+                if isinstance(tc_dict, dict):
+                    # Deserialize provider_metadata if present
+                    provider_metadata = tc_dict.get("provider_metadata")
+                    if (
+                        isinstance(provider_metadata, dict)
+                        and provider_metadata.get("provider") == "google"
+                    ):
+                        provider_metadata = GeminiProviderMetadata.from_dict(
+                            provider_metadata
+                        )
+
+                    # Create ToolCallItem with typed provider_metadata
+                    tool_call_items.append(
+                        ToolCallItem(
+                            id=tc_dict["id"],
+                            type=tc_dict["type"],
+                            function=ToolCallFunction(
+                                name=tc_dict["function"]["name"],
+                                arguments=tc_dict["function"]["arguments"],
+                            ),
+                            provider_metadata=provider_metadata,
+                        )
+                    )
+            msg["tool_calls"] = tool_call_items
+
+        # Handle reasoning_info deserialization
         if isinstance(msg.get("reasoning_info"), str):
             try:
                 msg["reasoning_info"] = json.loads(msg["reasoning_info"])
@@ -636,6 +675,7 @@ class MessageHistoryRepository(BaseRepository):
                 )
                 msg["reasoning_info"] = None
 
+        # Handle attachments deserialization
         if isinstance(msg.get("attachments"), str):
             try:
                 msg["attachments"] = json.loads(msg["attachments"])
@@ -645,14 +685,29 @@ class MessageHistoryRepository(BaseRepository):
                 )
                 msg["attachments"] = None
 
-        if isinstance(msg.get("provider_metadata"), str):
-            try:
-                msg["provider_metadata"] = json.loads(msg["provider_metadata"])
-            except json.JSONDecodeError:
-                self._logger.warning(
-                    f"Failed to parse provider_metadata JSON for message {msg.get('internal_id')}"
+        # Handle provider_metadata deserialization at message level
+        provider_metadata = msg.get("provider_metadata")
+        if provider_metadata:
+            if isinstance(provider_metadata, str):
+                # String case: parse JSON first
+                try:
+                    provider_metadata = json.loads(provider_metadata)
+                except json.JSONDecodeError:
+                    self._logger.warning(
+                        f"Failed to parse provider_metadata JSON for message {msg.get('internal_id')}"
+                    )
+                    provider_metadata = None
+
+            # Deserialize to provider-specific metadata objects
+            if (
+                isinstance(provider_metadata, dict)
+                and provider_metadata.get("provider") == "google"
+            ):
+                msg["provider_metadata"] = GeminiProviderMetadata.from_dict(
+                    provider_metadata
                 )
-                msg["provider_metadata"] = None
+            else:
+                msg["provider_metadata"] = provider_metadata
 
         return msg
 
