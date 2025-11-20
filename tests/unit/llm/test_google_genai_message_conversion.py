@@ -16,8 +16,13 @@ if TYPE_CHECKING:
     from google.genai import types
     from google.genai import types as genai_types
 
+from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import UserMessage
-from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
+from family_assistant.llm.providers.google_genai_client import (
+    GeminiProviderMetadata,
+    GeminiThoughtSignature,
+    GoogleGenAIClient,
+)
 
 
 class TestThoughtSignatureConversion:
@@ -40,26 +45,23 @@ class TestThoughtSignatureConversion:
         when reconstructing messages for the API.
         """
         # Create an assistant message with a tool call that has a thought signature
-        # Thought signatures are stored as base64-encoded strings
-        signature_str = base64.b64encode(b"test_signature_bytes").decode("ascii")
+        thought_sig = GeminiThoughtSignature(b"test_signature_bytes")
+        provider_metadata = GeminiProviderMetadata(thought_signature=thought_sig)
 
         messages = [
             {
                 "role": "assistant",
                 "content": "",  # Empty content when only tool calls present
                 "tool_calls": [
-                    {
-                        "id": "call_abc123",
-                        "type": "function",
-                        "function": {
-                            "name": "search_calendar_events",
-                            "arguments": '{"query": "meetings today"}',
-                        },
-                        "provider_metadata": {
-                            "provider": "google",
-                            "thought_signature": signature_str,
-                        },
-                    }
+                    ToolCallItem(
+                        id="call_abc123",
+                        type="function",
+                        function=ToolCallFunction(
+                            name="search_calendar_events",
+                            arguments='{"query": "meetings today"}',
+                        ),
+                        provider_metadata=provider_metadata,
+                    )
                 ],
             }
         ]
@@ -105,39 +107,37 @@ class TestThoughtSignatureConversion:
         This catches the bug where all thought signatures were globally shared,
         causing all tool calls to get the same metadata.
         """
-        # Create signatures for two different function calls (as base64-encoded strings)
-        sig1_str = base64.b64encode(b"signature_for_call_1").decode("ascii")
-        sig2_str = base64.b64encode(b"signature_for_call_2").decode("ascii")
+        # Create signatures for two different function calls
+        sig1 = GeminiThoughtSignature(b"signature_for_call_1")
+        sig2 = GeminiThoughtSignature(b"signature_for_call_2")
 
         messages = [
             {
                 "role": "assistant",
                 "content": "I'll search the calendar and check the weather.",
                 "tool_calls": [
-                    {
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {
-                            "name": "search_calendar",
-                            "arguments": '{"query": "meetings"}',
-                        },
-                        "provider_metadata": {
-                            "provider": "google",
-                            "thought_signature": sig1_str,
-                        },
-                    },
-                    {
-                        "id": "call_2",
-                        "type": "function",
-                        "function": {
-                            "name": "get_weather",
-                            "arguments": '{"location": "Paris"}',
-                        },
-                        "provider_metadata": {
-                            "provider": "google",
-                            "thought_signature": sig2_str,
-                        },
-                    },
+                    ToolCallItem(
+                        id="call_1",
+                        type="function",
+                        function=ToolCallFunction(
+                            name="search_calendar",
+                            arguments='{"query": "meetings"}',
+                        ),
+                        provider_metadata=GeminiProviderMetadata(
+                            thought_signature=sig1
+                        ),
+                    ),
+                    ToolCallItem(
+                        id="call_2",
+                        type="function",
+                        function=ToolCallFunction(
+                            name="get_weather",
+                            arguments='{"location": "Paris"}',
+                        ),
+                        provider_metadata=GeminiProviderMetadata(
+                            thought_signature=sig2
+                        ),
+                    ),
                 ],
             }
         ]
@@ -195,16 +195,16 @@ class TestThoughtSignatureConversion:
                 "role": "assistant",
                 "content": "",
                 "tool_calls": [
-                    {
-                        "id": "call_xyz",
-                        "type": "function",
-                        "function": {
-                            "name": "get_weather",
-                            "arguments": '{"location": "Tokyo"}',
-                        },
-                    }
+                    ToolCallItem(
+                        id="call_xyz",
+                        type="function",
+                        function=ToolCallFunction(
+                            name="get_weather",
+                            arguments='{"location": "Tokyo"}',
+                        ),
+                        provider_metadata=None,
+                    )
                 ],
-                # No provider_metadata
             }
         ]
 
@@ -421,15 +421,15 @@ class TestThoughtSignatureConversion:
                 "role": "assistant",
                 "content": "I'll check the weather for you.",
                 "tool_calls": [
-                    {
-                        "id": tool_call.id,
-                        "type": "function",
-                        "function": {
-                            "name": "get_weather",
-                            "arguments": '{"location": "Paris"}',
-                        },
-                        "provider_metadata": tool_call.provider_metadata,  # Metadata on tool call
-                    }
+                    ToolCallItem(
+                        id=tool_call.id,
+                        type="function",
+                        function=ToolCallFunction(
+                            name="get_weather",
+                            arguments='{"location": "Paris"}',
+                        ),
+                        provider_metadata=tool_call.provider_metadata,
+                    )
                 ],
             },
             {
