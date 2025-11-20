@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from family_assistant.llm import ToolCallItem
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools.types import ToolExecutionContext
@@ -670,13 +671,34 @@ async def get_conversation_messages(
             except Exception as e:
                 logger.warning(f"Failed to parse message metadata: {e}")
 
+        # Convert tool_calls from ToolCallItem objects to dicts for Pydantic
+        tool_calls_dicts = None
+        if msg.get("tool_calls"):
+            tool_calls_dicts = []
+            for tc in msg["tool_calls"]:
+                if isinstance(tc, ToolCallItem):
+                    # Convert ToolCallItem to dict
+                    tc_dict = {
+                        "id": tc.id,
+                        "type": tc.type,
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    # Note: provider_metadata is not included in API response
+                    tool_calls_dicts.append(tc_dict)
+                elif isinstance(tc, dict):
+                    # Already a dict, use as-is
+                    tool_calls_dicts.append(tc)
+
         response_messages.append(
             ConversationMessage(
                 internal_id=msg["internal_id"],
                 role=msg["role"],
                 content=msg.get("content"),
                 timestamp=msg["timestamp"],
-                tool_calls=msg.get("tool_calls"),
+                tool_calls=tool_calls_dicts,
                 tool_call_id=msg.get("tool_call_id"),
                 error_traceback=msg.get("error_traceback"),
                 attachments=msg.get("attachments"),

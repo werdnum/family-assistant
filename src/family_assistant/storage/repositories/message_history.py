@@ -640,7 +640,10 @@ class MessageHistoryRepository(BaseRepository):
         if msg.get("tool_calls") and isinstance(msg["tool_calls"], list):
             tool_call_items = []
             for tc_dict in msg["tool_calls"]:
-                if isinstance(tc_dict, dict):
+                if isinstance(tc_dict, ToolCallItem):
+                    # Already a ToolCallItem, keep it as-is
+                    tool_call_items.append(tc_dict)
+                elif isinstance(tc_dict, dict):
                     # Deserialize provider_metadata if present
                     provider_metadata = tc_dict.get("provider_metadata")
                     if (
@@ -662,6 +665,10 @@ class MessageHistoryRepository(BaseRepository):
                             ),
                             provider_metadata=provider_metadata,
                         )
+                    )
+                else:
+                    self._logger.warning(
+                        f"Unexpected tool_call type: {type(tc_dict)}, skipping"
                     )
             msg["tool_calls"] = tool_call_items
 
@@ -698,16 +705,9 @@ class MessageHistoryRepository(BaseRepository):
                     )
                     provider_metadata = None
 
-            # Deserialize to provider-specific metadata objects
-            if (
-                isinstance(provider_metadata, dict)
-                and provider_metadata.get("provider") == "google"
-            ):
-                msg["provider_metadata"] = GeminiProviderMetadata.from_dict(
-                    provider_metadata
-                )
-            else:
-                msg["provider_metadata"] = provider_metadata
+            # Keep message-level provider_metadata as dict for now
+            # (it has a different structure than tool-call-level provider_metadata)
+            msg["provider_metadata"] = provider_metadata
 
         return msg
 
