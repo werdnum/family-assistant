@@ -1574,9 +1574,6 @@ class ProcessingService:
                             if isinstance(tc_metadata, GeminiProviderMetadata):
                                 if tc_metadata.thought_signature:
                                     has_thought_signature = True
-                                    logger.info(
-                                        "[THOUGHT SIG DETECTION] Found thought signature in tool call (GeminiProviderMetadata object), preserving assistant content"
-                                    )
                                     break
                             elif (
                                 isinstance(tc_metadata, dict)
@@ -1584,9 +1581,6 @@ class ProcessingService:
                                 and "thought_signature" in tc_metadata
                             ):
                                 has_thought_signature = True
-                                logger.info(
-                                    "[THOUGHT SIG DETECTION] Found thought signature in tool call (dict), preserving assistant content"
-                                )
                                 break
 
                 # Strip text content from messages with tool calls UNLESS they have thought signatures
