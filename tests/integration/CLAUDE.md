@@ -32,15 +32,63 @@ runs. When you make an HTTP request, VCR:
 - **Reproducibility**: Same inputs always produce same outputs - tests are deterministic
 - **CI-Friendly**: Tests can run offline or in CI without API keys
 
-### VCR Record Modes
+### Record Modes
 
-Configure record modes using the `VCR_RECORD_MODE` environment variable or the `--vcr-record`
-command-line flag.
+For LLM integration tests, use the `LLM_RECORD_MODE` environment variable to control recording and
+replay behavior. This provides a unified interface across all LLM providers (OpenAI, Gemini, etc.).
 
-#### `none` (Default)
+For other HTTP-based integration tests (e.g., Home Assistant), you can still use the
+`VCR_RECORD_MODE` environment variable or the `--vcr-record` command-line flag for direct VCR.py
+control.
+
+#### LLM Integration Test Modes
+
+**`replay` (Default)**
 
 ```bash
-VCR_RECORD_MODE=none pytest tests/integration/
+LLM_RECORD_MODE=replay pytest tests/integration/llm/
+```
+
+- **Behavior**: Only use existing recordings - does NOT make API calls
+- **What happens if recording is missing**: Test fails with recording not found error
+- **When to use**: Normal development and CI - use pre-recorded interactions
+- **Best for**: Fast, reliable test runs that don't require API keys
+- **Equivalent to**: VCR's `none` mode
+
+**`auto`**
+
+```bash
+LLM_RECORD_MODE=auto pytest tests/integration/llm/
+```
+
+- **Behavior**: Record if missing, else replay
+- **What happens**: Creates new recordings for any interactions not yet captured, replays all others
+- **When to use**: Development workflow - automatically records new tests while replaying existing
+  ones
+- **Best for**: Incremental test development without manually switching modes
+- **Equivalent to**: VCR's `once` mode
+
+**`record`**
+
+```bash
+LLM_RECORD_MODE=record pytest tests/integration/llm/
+```
+
+- **Behavior**: Force re-record everything, overwriting existing recordings
+- **What happens**: Makes real API calls for every request, even if recordings exist
+- **When to use**: When APIs have changed, responses need updating, or verifying current behavior
+- **Best for**: Refreshing all recordings after provider changes
+- **Warning**: Requires valid API keys in environment variables
+- **Equivalent to**: VCR's `all` mode
+
+#### VCR Record Modes (Non-LLM Tests)
+
+For other integration tests using VCR.py directly:
+
+**`none` (Default)**
+
+```bash
+VCR_RECORD_MODE=none pytest tests/integration/home_assistant/
 ```
 
 - **Behavior**: Replay only - does NOT record new interactions
@@ -48,39 +96,38 @@ VCR_RECORD_MODE=none pytest tests/integration/
 - **When to use**: Normal development and CI - use pre-recorded cassettes
 - **Best for**: Fast test runs once cassettes are recorded
 
-#### `once`
+**`once`**
 
 ```bash
-VCR_RECORD_MODE=once pytest tests/integration/
+VCR_RECORD_MODE=once pytest tests/integration/home_assistant/
 ```
 
 - **Behavior**: Record missing interactions, replay existing ones
 - **What happens**: Creates new cassettes for any requests not yet recorded, replays all others
-- **When to use**: First time recording cassettes, or when adding new test cases that make new API
-  calls
-- **Best for**: Initial cassette creation with real API access
+- **When to use**: First time recording cassettes, or when adding new test cases
+- **Best for**: Initial cassette creation with real service access
 
-#### `all`
+**`all`**
 
 ```bash
-VCR_RECORD_MODE=all pytest tests/integration/
+VCR_RECORD_MODE=all pytest tests/integration/home_assistant/
 ```
 
 - **Behavior**: Re-record all interactions, overwriting existing cassettes
-- **What happens**: Makes real API calls for every request, even if cassettes exist
-- **When to use**: When APIs have changed, responses need updating, or you want fresh recordings
+- **What happens**: Makes real HTTP calls for every request, even if cassettes exist
+- **When to use**: When APIs have changed or responses need updating
 - **Best for**: Updating cassettes after API changes
-- **Warning**: Requires valid API keys in environment variables
+- **Warning**: Requires valid API keys/service access
 
-#### `new_episodes`
+**`new_episodes`**
 
 ```bash
-VCR_RECORD_MODE=new_episodes pytest tests/integration/
+VCR_RECORD_MODE=new_episodes pytest tests/integration/home_assistant/
 ```
 
 - **Behavior**: Record new interactions, keep existing ones
 - **What happens**: Replays existing cassettes, records any new requests not yet seen
-- **When to use**: Extending tests to make additional API calls without re-recording everything
+- **When to use**: Extending tests with additional API calls
 - **Best for**: Adding new functionality while preserving existing cassettes
 
 ### Recording Cassettes
@@ -133,7 +180,7 @@ VCR_RECORD_MODE=once pytest tests/integration/home_assistant/ -xvs
 # 4. Cleans up the HA instance after tests
 
 # Verify cassettes are recorded
-ls tests/cassettes/llm/test_*[postgres,sqlite].yaml
+ls tests/cassettes/home_assistant/test_*[postgres,sqlite].yaml
 ```
 
 ### Cassette Files
@@ -500,13 +547,13 @@ def llm_request_matcher(r1, r2) -> bool:
 
    ```bash
    # Use test API keys for recording if available
-   VCR_RECORD_MODE=once OPENAI_API_KEY="sk-test-..." pytest tests/integration/llm/
+   LLM_RECORD_MODE=auto OPENAI_API_KEY="sk-test-..." pytest tests/integration/llm/
    ```
 
 3. **Limit what you record** - Only record specific tests:
 
    ```bash
-   VCR_RECORD_MODE=once pytest tests/integration/llm/test_providers.py::test_basic_completion -xvs
+   LLM_RECORD_MODE=auto pytest tests/integration/llm/test_providers.py::test_basic_completion -xvs
    ```
 
 ## Advanced Usage
