@@ -342,6 +342,7 @@ async def db_engine(
             # a session-scoped event loop where many tests run in sequence.
             # TODO: Investigate if asyncpg or SQLAlchemy provides a more deterministic way
             # to wait for all connections to be closed.
+            # ast-grep-ignore: no-asyncio-sleep-in-tests - Database connection cleanup delay
             await asyncio.sleep(0.1)
 
         logger.info("Test engine disposed.")
@@ -647,6 +648,7 @@ async def cleanup_task_worker(
 
     # Give a moment for database connections to fully close
     # This is crucial when using PostgreSQL to avoid "database is being accessed by other users" errors
+    # ast-grep-ignore: no-asyncio-sleep-in-tests - PostgreSQL connection cleanup delay
     await asyncio.sleep(0.5)
 
     # Force all pending tasks to complete
@@ -658,6 +660,7 @@ async def cleanup_task_worker(
     if pending:
         logger.warning(f"Found {len(pending)} pending tasks after {label} cleanup")
         # Give them a moment to complete
+        # ast-grep-ignore: no-asyncio-sleep-in-tests - Pending task cleanup delay
         await asyncio.sleep(0.1)
 
 
@@ -790,6 +793,7 @@ backtrace_on_debug = True
                     server_ready = True
                     break
             except (TimeoutError, ConnectionRefusedError):
+                # ast-grep-ignore: no-time-sleep-in-tests - Retry delay for Radicale startup
                 time.sleep(0.5)
                 if process.poll() is not None:  # Check if process terminated
                     process.communicate()  # Ensure process is reaped
@@ -808,6 +812,7 @@ backtrace_on_debug = True
             )
 
         # Give Radicale a moment more to settle after port is open
+        # ast-grep-ignore: no-time-sleep-in-tests - Radicale server initialization delay
         time.sleep(2)  # Added delay
 
         # Session fixture no longer creates a default calendar.
@@ -1118,6 +1123,9 @@ def llm_replay_config(
     - Consistent recording behavior across providers
     """
     # Detect provider from test parametrization
+    # Handle non-parameterized tests gracefully
+    if not hasattr(request.node, "callspec"):
+        return {}
     provider = request.node.callspec.params.get("provider", "")
 
     if provider == "google":
