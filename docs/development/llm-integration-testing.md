@@ -193,41 +193,43 @@ The CI pipeline runs tests in replay-only mode:
 
 ```yaml
 - name: Run LLM Integration Tests
+  env:
+    LLM_RECORD_MODE: replay
   run: |
-    pytest tests/integration/llm -m llm_integration --record-mode=none
+    pytest tests/integration/llm -m llm_integration
 ```
 
 This ensures:
 
 - No API calls are made in CI
-- Tests fail if cassettes are missing
+- Tests fail if recordings are missing
 - No accidental costs from CI runs
 
-### Refreshing Cassettes
+### Refreshing Recordings
 
-Cassettes should be refreshed periodically (e.g., monthly) to ensure they reflect current API
+Recordings should be refreshed periodically (e.g., monthly) to ensure they reflect current API
 behavior:
 
 1. Set up API keys locally
-2. Run tests with `--record-mode=rewrite`
-3. Review changes in cassettes
-4. Commit updated cassettes
+2. Run tests with `LLM_RECORD_MODE=record`
+3. Review changes in recording files
+4. Commit updated recordings
 
 ## Troubleshooting
 
-### Missing Cassettes
+### Missing Recordings
 
-If you see errors about missing cassettes:
+If you see errors about missing recordings:
 
 1. Check if you're running a new test that hasn't been recorded
-2. Record the cassette locally with proper API keys
-3. Commit the new cassette file
+2. Record the interaction locally with proper API keys using `LLM_RECORD_MODE=auto`
+3. Commit the new recording file
 
 ### API Changes
 
 If providers change their API format:
 
-1. Re-record affected cassettes
+1. Re-record affected interactions with `LLM_RECORD_MODE=record`
 2. Update tests if necessary to handle new formats
 3. Document any breaking changes
 
@@ -235,17 +237,19 @@ If providers change their API format:
 
 During recording, ensure:
 
-1. API keys are properly set in environment
+1. API keys are properly set in environment (e.g., `OPENAI_API_KEY`, `GEMINI_API_KEY`)
 2. Keys have necessary permissions
 3. Keys haven't expired or been revoked
 
-### Cassette Playback Errors
+### Recording Playback Errors
 
-If cassettes fail to replay:
+If recordings fail to replay:
 
-1. Check VCR record mode isn't set to `all` or `rewrite`
-2. Verify cassette file isn't corrupted
+1. Check `LLM_RECORD_MODE` isn't set to `record` (which forces re-recording)
+2. Verify recording file isn't corrupted
 3. Ensure request matching is working correctly
+4. For OpenAI tests: Check VCR cassette files in `tests/cassettes/llm/`
+5. For Gemini tests: Check replay files in `tests/cassettes/gemini/`
 
 ## Best Practices
 

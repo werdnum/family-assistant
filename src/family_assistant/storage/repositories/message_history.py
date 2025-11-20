@@ -101,6 +101,30 @@ class MessageHistoryRepository(BaseRepository):
                 f"Both 'name' and 'tool_name' provided with different values: name='{name}', tool_name='{tool_name}'. Using tool_name."
             )
 
+        # Serialize provider_metadata and tool_calls for JSON storage
+        # This is the ONLY place where serialization happens - callers must pass typed objects
+        serialized_tool_calls = None
+        if tool_calls:
+            serialized_tool_calls = []
+            for tc in tool_calls:
+                # tc must be a dict with potentially typed provider_metadata
+                tc_copy = tc.copy()
+                if "provider_metadata" in tc_copy and isinstance(
+                    tc_copy["provider_metadata"], GeminiProviderMetadata
+                ):
+                    tc_copy["provider_metadata"] = tc_copy[
+                        "provider_metadata"
+                    ].to_dict()
+                serialized_tool_calls.append(tc_copy)
+
+        serialized_provider_metadata = None
+        if provider_metadata:
+            if isinstance(provider_metadata, GeminiProviderMetadata):
+                serialized_provider_metadata = provider_metadata.to_dict()
+            else:
+                # For backwards compatibility or other providers
+                serialized_provider_metadata = provider_metadata
+
         values = {
             "interface_type": interface_type,
             "conversation_id": conversation_id,
@@ -110,7 +134,7 @@ class MessageHistoryRepository(BaseRepository):
             "timestamp": timestamp,
             "role": role,
             "content": content,
-            "tool_calls": tool_calls,
+            "tool_calls": serialized_tool_calls,
             "reasoning_info": reasoning_info,
             "tool_call_id": tool_call_id,
             "error_traceback": error_traceback,
@@ -118,7 +142,7 @@ class MessageHistoryRepository(BaseRepository):
             "subconversation_id": subconversation_id,
             "attachments": attachments,
             "tool_name": tool_name,
-            "provider_metadata": provider_metadata,
+            "provider_metadata": serialized_provider_metadata,
             "user_id": user_id,
         }
 
