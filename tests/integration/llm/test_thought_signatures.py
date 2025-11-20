@@ -12,6 +12,7 @@ import pytest_asyncio
 
 from family_assistant.llm.messages import message_to_dict
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
+from family_assistant.llm.providers.google_types import GeminiProviderMetadata
 from tests.factories.messages import (
     create_tool_message,
     create_user_message,
@@ -70,26 +71,21 @@ async def test_thought_signatures_with_tool_calls(
     assert response.tool_calls is not None, "Expected tool calls from thinking model"
     assert len(response.tool_calls) > 0
 
-    # Check that at least one tool call has provider_metadata with thought signatures
+    # Check that at least one tool call has provider_metadata with thought signature
     tool_call_with_thoughts = next(
         (tc for tc in response.tool_calls if tc.provider_metadata is not None), None
     )
 
     if tool_call_with_thoughts and tool_call_with_thoughts.provider_metadata:
-        # Verify structure
-        assert tool_call_with_thoughts.provider_metadata["provider"] == "google"
-        assert "thought_signatures" in tool_call_with_thoughts.provider_metadata
+        # Verify structure - NEW format has single thought_signature, not array
+        # provider_metadata is now a GeminiProviderMetadata object
+        metadata = tool_call_with_thoughts.provider_metadata
+        assert isinstance(metadata, GeminiProviderMetadata)
+        assert metadata.thought_signature is not None
 
-        signatures = tool_call_with_thoughts.provider_metadata["thought_signatures"]
-        assert isinstance(signatures, list)
-        assert len(signatures) > 0
-        assert "part_index" in signatures[0]
-        assert "signature" in signatures[0]
-
-        # Verify signature is base64 encoded and can be decoded
-        decoded_sig = base64.b64decode(signatures[0]["signature"])
-        assert isinstance(decoded_sig, bytes)
-        assert len(decoded_sig) > 0
+        # Verify signature is bytes
+        assert isinstance(metadata.thought_signature.to_google_format(), bytes)
+        assert len(metadata.thought_signature.to_google_format()) > 0
 
 
 @pytest.mark.no_db
@@ -98,7 +94,12 @@ async def test_thought_signatures_with_tool_calls(
 async def test_thought_signatures_without_tool_calls(
     google_client_thinking: GoogleGenAIClient,
 ) -> None:
-    """Test that thought signatures are extracted even without tool calls."""
+    """Test that responses work correctly even without tool calls.
+
+    Note: Thought signatures are only preserved on function calls in the current
+    implementation. Text-only responses don't preserve thought signatures at the
+    message level.
+    """
     if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
         pytest.skip("Skipping Google test in CI without API key")
 
@@ -107,23 +108,10 @@ async def test_thought_signatures_without_tool_calls(
     # Act: Call the real Gemini API without tools
     response = await google_client_thinking.generate_response(messages=messages)
 
-    # Assert: Should get a response
+    # Assert: Should get a response with content
     assert response.content is not None
-
-    # If the thinking model produces thoughts for this query, verify structure
-    if response.provider_metadata:
-        assert response.provider_metadata["provider"] == "google"
-        assert "thought_signatures" in response.provider_metadata
-
-        signatures = response.provider_metadata["thought_signatures"]
-        assert len(signatures) > 0
-        assert "part_index" in signatures[0]
-        assert "signature" in signatures[0]
-
-        # Verify signature is base64 encoded
-        decoded_sig = base64.b64decode(signatures[0]["signature"])
-        assert isinstance(decoded_sig, bytes)
-        assert len(decoded_sig) > 0
+    # Message-level provider_metadata is not used in new format
+    # Thought signatures are only on tool calls
 
 
 @pytest.mark.no_db
@@ -136,8 +124,10 @@ async def test_thought_signature_reconstruction(
     if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
         pytest.skip("Skipping Google test in CI without API key")
 
-    # Arrange: Create a message with provider_metadata containing thought signatures
+    # Arrange: Create a message with provider_metadata containing thought signature
     # This simulates a message retrieved from database that had thought signatures
+    # NEW format: thought_signature is on each tool call, not at message level
+    # Thought signatures are stored as base64-encoded strings
     mock_signature = base64.b64encode(b"test_signature_data").decode("ascii")
     messages = [
         create_user_message("First message"),
@@ -152,12 +142,12 @@ async def test_thought_signature_reconstruction(
                         "name": "get_weather",
                         "arguments": '{"location": "Paris"}',
                     },
+                    "provider_metadata": {
+                        "provider": "google",
+                        "thought_signature": mock_signature,
+                    },
                 }
             ],
-            "provider_metadata": {
-                "provider": "google",
-                "thought_signatures": [{"part_index": 1, "signature": mock_signature}],
-            },
         },
         create_tool_message(
             tool_call_id="call_123",
@@ -284,6 +274,7 @@ async def test_thought_signature_multiturn_with_api(
     conversation_history = initial_messages.copy()
 
     # Add the assistant's response with tool calls
+    # NEW format: provider_metadata is on each tool call, not at message level
     assistant_message = {
         "role": "assistant",
         "content": response1.content or "",
@@ -295,16 +286,13 @@ async def test_thought_signature_multiturn_with_api(
                     "name": tc.function.name,
                     "arguments": tc.function.arguments,
                 },
+                "provider_metadata": tc.provider_metadata,  # Metadata on tool call
             }
             for tc in response1.tool_calls
         ]
         if response1.tool_calls
         else None,
     }
-
-    # Include provider_metadata with thought signatures if present
-    if response1.provider_metadata:
-        assistant_message["provider_metadata"] = response1.provider_metadata
 
     conversation_history.append(assistant_message)  # type: ignore[arg-type]
 

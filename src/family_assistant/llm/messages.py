@@ -102,8 +102,8 @@ class AssistantMessage(BaseModel):
     role: Literal["assistant"] = "assistant"
     content: str | None = None
     tool_calls: list[ToolCallItem] | None = None
-    # ast-grep-ignore: no-dict-any - Provider-specific metadata structure is dynamic
-    provider_metadata: dict[str, Any] | None = None
+    # ast-grep-ignore: no-dict-any - Accepts both dicts (for serialization) and provider metadata objects (e.g., GeminiProviderMetadata)
+    provider_metadata: Any | None = None
 
     model_config = ConfigDict(extra="forbid")
 

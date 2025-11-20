@@ -5,14 +5,14 @@ interactions:
         Content-Type:
           - application/json
         user-agent:
-          - google-genai-sdk/1.38.0 gl-python/3.12.3
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
         x-goog-api-client:
-          - google-genai-sdk/1.38.0 gl-python/3.12.3
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
       uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"Paris\"\n              }\n            },\n            \"thoughtSignature\": \"CvIBAdHtim9bbv0vzqa3lBJjMjJzsyYJ7IQFABwT/sdv0QvpD7oIO3Jm9G+8BAAa+3MvpEtvLCHPQUfptojkLtbfmdihZ508G1JDDUKA/1zqopBTd5AF5DCelNoLPiXC3oXQQpWlVXjK+Xh6IyxCjMwmvN/dh924zlbfTvnxE/Ity81ItJ24SqXIuDpvLY1dwhQpwSQ4Bv9LRjgdSNJpjf6s3Z3xYUcGgz1qm3fvr7EC0tQCULJ6YPDUb8WUXdE0o4MToxzRj5nbkZaJmYAyvKZXvhhjzbc9QR+jIdipO4+KTAhcpXXYE4OKDomfwtokV+XR9iQ=\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 46,\n    \"candidatesTokenCount\": 15,\n    \"totalTokenCount\": 112,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 46\n      }\n    ],\n    \"thoughtsTokenCount\": 51\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"5UIDaYC2NurZvdIP_vq4yQ4\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"Paris\"\n              }\n            },\n            \"thoughtSignature\": \"CowCAdHtim922PRy6QZJNYOWb9J+94+1s5ctJrW5hbj+lrCFYW5LgogclhSYRAObCZIEWWY1Y7E788zr0YRbjfY4/F/83DMgxEID5aATaLoTOdBlMA7SawgmvKOYdg7xBFJmO4f+UMrQS08vD6PBEKK7QOUqTH3axFMp8PFQpjV3cYrex88Lna6jW9EmHjrJzE7R0DakvCFrONtzOPZ/TEJ66y5OFYtk+tWSpmvDR5bxnETUhubcDWhQZ1ja0TFSLFdQhwjfvPOEv3bSfhdc33t/toDKUeQi/ZttEb0r2sF7vbLc6k1xiXuCSrlqBTlTnUPj0zu2/r/ujGLpLcJVJcuxvPsFwkWBK1Z38k79KA==\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 46,\n    \"candidatesTokenCount\": 15,\n    \"totalTokenCount\": 117,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 46\n      }\n    ],\n    \"thoughtsTokenCount\": 56\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"nVwdabOVFZfk7M8PprPO0QY\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -21,11 +21,11 @@ interactions:
         Content-Type:
           - application/json; charset=UTF-8
         Date:
-          - Thu, 30 Oct 2025 10:50:13 GMT
+          - Wed, 19 Nov 2025 05:58:53 GMT
         Server:
           - scaffolding on HTTPServer2
         Server-Timing:
-          - gfet4t7; dur=1276
+          - gfet4t7; dur=956
         Transfer-Encoding:
           - chunked
         Vary:
@@ -42,19 +42,19 @@ interactions:
         code: 200
         message: OK
   - request:
-      body: '{"contents": [{"parts": [{"text": "What''s the weather in Paris?"}], "role": "user"}, {"parts": [{"thoughtSignature": "Q3ZJQkFkSHRpbTliYnYwdnpxYTNsQkpqTWpKenN5WUo3SVFGQUJ3VC9zZHYwUXZwRDdvSU8zSm05Rys4QkFBYSszTXZwRXR2TENIUFFVZnB0b2prTHRiZm1kaWhaNTA4RzFKRERVS0EvMXpxb3BCVGQ1QUY1RENlbE5vTFBpWEMzb1hRUXBXbFZYaksrWGg2SXl4Q2pNd212Ti9kaDkyNHpsYmZUdm54RS9JdHk4MUl0SjI0U3FYSXVEcHZMWTFkd2hRcHdTUTRCdjlMUmpnZFNOSnBqZjZzM1ozeFlVY0dnejFxbTNmdnI3RUMwdFFDVUxKNllQRFViOFdVWGRFMG80TVRveHpSajVuYmtaYUptWUF5dktaWHZoaGp6YmM5UVIraklkaXBPNCtLVEFoY3BYWFlFNE9LRG9tZnd0b2tWK1hSOWlRPQ==", "functionCall": {"args": {"location": "Paris"}, "name": "get_weather"}}], "role": "model"}, {"parts": [{"functionResponse": {"name": "unknown", "response": {"result": "15\u00b0C, sunny"}}}], "role": "function"}, {"parts": [{"text": "Thanks! What about London?"}], "role": "user"}], "tools": [{"functionDeclarations": [{"description": "Get the current weather", "name": "get_weather", "parameters": {"properties": {"location": {"description": "City name", "type": "STRING"}}, "required": ["location"], "type": "OBJECT"}}]}], "generationConfig": {}}'
+      body: '{"contents": [{"parts": [{"text": "What''s the weather in Paris?"}], "role": "user"}, {"parts": [{"thoughtSignature": "Q293Q0FkSHRpbTkyMlBSeTZRWkpOWU9XYjlKKzk0KzFzNWN0SnJXNWhiaitsckNGWVc1TGdvZ2NsaFNZUkFPYkNaSUVXV1kxWTdFNzg4enIwWVJiamZZNC9GLzgzRE1neEVJRDVhQVRhTG9UT2RCbE1BN1Nhd2dtdktPWWRnN3hCRkptTzRmK1VNclFTMDh2RDZQQkVLSzdRT1VxVEgzYXhGTXA4UEZRcGpWM2NZcmV4ODhMbmE2alc5RW1IanJKekU3UjBEYWt2Q0ZyT050ek9QWi9URUo2Nnk1T0ZZdGsrdFdTcG12RFI1YnhuRVRVaHViY0RXaFFaMWphMFRGU0xGZFFod2pmdlBPRXYzYlNmaGRjMzN0L3RvREtVZVFpL1p0dEViMHIyc0Y3dmJMYzZrMXhpWHVDU3JscUJUbFRuVVBqMHp1Mi9yL3VqR0xwTGNKVkpjdXh2UHNGd2tXQksxWjM4azc5S0E9PQ==", "functionCall": {"args": {"location": "Paris"}, "name": "get_weather"}}], "role": "model"}, {"parts": [{"functionResponse": {"name": "test_tool", "response": {"result": "15\u00b0C, sunny"}}}], "role": "function"}, {"parts": [{"text": "Thanks! What about London?"}], "role": "user"}], "tools": [{"functionDeclarations": [{"description": "Get the current weather", "name": "get_weather", "parameters": {"properties": {"location": {"description": "City name", "type": "STRING"}}, "required": ["location"], "type": "OBJECT"}}]}], "generationConfig": {}}'
       headers:
         Content-Type:
           - application/json
         user-agent:
-          - google-genai-sdk/1.38.0 gl-python/3.12.3
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
         x-goog-api-client:
-          - google-genai-sdk/1.38.0 gl-python/3.12.3
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
       method: post
       uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"London\"\n              }\n            },\n            \"thoughtSignature\": \"CtICAdHtim+jU4ujGvH7+Bx7YPksB4Atwa/JrnxSwyoEeyxVmvC7SGeVC4zQqWoavp2T/P2meXalBA4LS5H+YoXRE9Rr3r/a/8YEbD4kYkOe9sWf6WSxlruEVnPii1ApLsVwRTog78p7Yfn3XNv2Jm4T42IrGEA4VXrKupZQEO0FwO1SL6GmcqSIUpCRLMBEwuphwfx2mjPJsTpiZA2KSxCEY7OnQJ83WrX+z7qSGbzaW5uyV9tTJdnJxp+PNd0DYD9HX6K3Ofy0SL4cXZZI1K66WBTXGzv0NypyrV0T/ZJhgaaDZ8kATIVDG0SINfaQ4o095UtSsCDSLdY0dgT4g6mXNfMGJBZoZrLBqbtyF5usWt+RVH8J+qDod8ZaRmtM9w+YY/fT/0r15YarPiPHN1rdMqsqNNle8N+QJELn/I2syTg+vmY3aMZpWJ5T918HjkCDYi8=\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 86,\n    \"candidatesTokenCount\": 15,\n    \"totalTokenCount\": 183,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 86\n      }\n    ],\n    \"thoughtsTokenCount\": 82\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"50IDaZnKAe2kvdIPwv7GkQ4\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"London\"\n              }\n            },\n            \"thoughtSignature\": \"CoACAdHtim8jNUNXPix2wo7kGTwH7Lw7ee3e8awQJQwBkxoD/QbWR2YD2EZ/IBZDLFSHfLIbPGbxTmL0GzAGlsQtmTaE/xGV3BJefaMs7V/V+t++uY1fmsuQbRz5EGypBp5kN8IjExh9nPJgHKUFOeh4M5RFa7Zr53nmH5TyNLnkO41Vp0XF0Y211hi3OvvZzCNHgW+gkqE4soFTq4KkPfi2xuZkpkErG5XZx4OkP8jwzM1OukMlhjCQhLLpFamnuyTbO+/4hUOISwJ7l6kq+pwpL6L2SOECBa4DjgbF4suhJGCbNAjrpoJZ5kTLaIaPy99N37cMOZMh3Fb4GKhainiLCA==\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 88,\n    \"candidatesTokenCount\": 15,\n    \"totalTokenCount\": 156,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 88\n      }\n    ],\n    \"thoughtsTokenCount\": 53\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"nlwdaau4EarPnsEPw4G2yAY\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -63,11 +63,11 @@ interactions:
         Content-Type:
           - application/json; charset=UTF-8
         Date:
-          - Thu, 30 Oct 2025 10:50:15 GMT
+          - Wed, 19 Nov 2025 05:58:54 GMT
         Server:
           - scaffolding on HTTPServer2
         Server-Timing:
-          - gfet4t7; dur=1161
+          - gfet4t7; dur=949
         Transfer-Encoding:
           - chunked
         Vary:
@@ -96,7 +96,7 @@ interactions:
       uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"Paris\"\n              }\n            },\n            \"thoughtSignature\": \"CpQCAdHtim99jz7vUd201jdtyRqOXlZANcYT13L4jenKHIsKELxLYtxhoKr/sEOd/ZdefdIlItVmVvxOHFhVCP+Pn0Oug7m8mMZJSqHFfrooEMkr/bDNVFyoMqEFHjtsxaP3zhr9i3JraRYMLNz47BQSsq9S/wddfXosKSIAWACOlGeexcGtgVV6ZEeR3QhZtvZEgxgJW0B0KFJOW615mFRKMR5ykWIVG84q39oZE0aaQuaXRI/nl1NjXs2ej87MidiRTzacVqHQ8KTNK5cQBbUXDuhJL2XP8eWJNUAGTOPV+fYXGbsGWvKLzQ7drAm4YNHGIrCpD3vbXJS0eKlf53FeP9v+GqQO6I5hyt2y9vytFV/kmIQQ\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 46,\n    \"candidatesTokenCount\": 15,\n    \"totalTokenCount\": 121,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 46\n      }\n    ],\n    \"thoughtsTokenCount\": 60\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"Pc8JacSmG5brkdUP8qPBgQw\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"Paris\"\n              }\n            },\n            \"thoughtSignature\": \"CogCAdHtim+JPewJH5EcqXjbm2Cz1bnO6wYweGXfypdfCgo5MbTXV8pL3BDidfK5Bv8DswuGfRVUGZxjwRMZqsq0HCAIWFFLmyX548PFgkyWsE5N7+JwyXS5CxuKDuk2Tsaq6Pjfp3oGSEmVPmp0Lew/OI0CBm5nyFi8e1d1Fhr51H8oTNwuHvY/rvP9GWleCnLnTUw36XF7TsDcultABOur5XtFaiqCKRJE8dKnYsaJFYZU7jlDD+iRAHyzGzJg7n1fFmI4nTxQDgDSOu+6bbhdMZzSnRY6F/p7YvQD7GdiEQzU4oRWlyr0PfYUlxUTwYRiKhZVn9iITPiX7VlxWlpsfrsqSYGgy3AS\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 46,\n    \"candidatesTokenCount\": 15,\n    \"totalTokenCount\": 119,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 46\n      }\n    ],\n    \"thoughtsTokenCount\": 58\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"_8IeaeiEB_f5xN8Pppq3kAQ\"\n}\n"
       headers:
         Alt-Svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -105,95 +105,53 @@ interactions:
         Content-Type:
           - application/json; charset=UTF-8
         Date:
-          - Tue, 04 Nov 2025 10:02:37 GMT
+          - Thu, 20 Nov 2025 07:27:59 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=795
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": "What''s the weather in Paris?"}], "role": "user"}, {"parts": [{"functionResponse": {"name": "test_tool", "response": {"result": "15\u00b0C, sunny"}}}], "role": "function"}, {"parts": [{"text": "Thanks! What about London?"}], "role": "user"}], "tools": [{"functionDeclarations": [{"description": "Get the current weather", "name": "get_weather", "parameters": {"properties": {"location": {"description": "City name", "type": "STRING"}}, "required": ["location"], "type": "OBJECT"}}]}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"London\"\n              }\n            },\n            \"thoughtSignature\": \"CqICAdHtim/VdspZvinQv7awX9WHSQ5CGI6Sg+EQ8Op9485KpuGpL+7Dq6LKeqQfIF6bjUgx7bORWhwETIurYAg6SZK5FG7324ToJCa5M1Z3JSDiqthbYvESNHwegFDRVrIzviTJW1RV16SL4tkF/JDPA9uwvtCXRlstzaVMFCGkYbrlumewZw6UKXPW6lpCxHsnjqf+IN+wYBjgvmXQ0QNlnzpbP4cFLsoOiWt0+TbLAYELPqWHSTxnUNpRGH5yWyq8Su8+fGypK8tQnuA/bbeJCQg1mEtK5VoIXjVHAG6cZRB8FIRKY1nNcQTw3otDmyOB7NLst4VoufThUYChVJM/AkAGw0fyrzMEAFbTjk8hQdplH7OzNuWd1tthvCcOdIGgSfg=\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 72,\n    \"candidatesTokenCount\": 15,\n    \"totalTokenCount\": 153,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 72\n      }\n    ],\n    \"thoughtsTokenCount\": 66\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"_8IeaYjTMtbpvdIP78_eqAc\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Thu, 20 Nov 2025 07:27:59 GMT
         Server:
           - scaffolding on HTTPServer2
         Server-Timing:
           - gfet4t7; dur=704
-        Transfer-Encoding:
-          - chunked
-        Vary:
-          - Origin
-          - X-Origin
-          - Referer
-        X-Content-Type-Options:
-          - nosniff
-        X-Frame-Options:
-          - SAMEORIGIN
-        X-XSS-Protection:
-          - '0'
-      status:
-        code: 200
-        message: OK
-  - request:
-      body: '{"contents": [{"parts": [{"text": "What''s the weather in Paris?"}], "role": "user"}, {"parts": [{"thoughtSignature": "Q3BRQ0FkSHRpbTk5ano3dlVkMjAxamR0eVJxT1hsWkFOY1lUMTNMNGplbktISXNLRUx4TFl0eGhvS3Ivc0VPZC9aZGVmZElsSXRWbVZ2eE9IRmhWQ1ArUG4wT3VnN204bU1aSlNxSEZmcm9vRU1rci9iRE5WRnlvTXFFRkhqdHN4YVAzemhyOWkzSnJhUllNTE56NDdCUVNzcTlTL3dkZGZYb3NLU0lBV0FDT2xHZWV4Y0d0Z1ZWNlpFZVIzUWhadHZaRWd4Z0pXMEIwS0ZKT1c2MTVtRlJLTVI1eWtXSVZHODRxMzlvWkUwYWFRdWFYUkkvbmwxTmpYczJlajg3TWlkaVJUemFjVnFIUThLVE5LNWNRQmJVWER1aEpMMlhQOGVXSk5VQUdUT1BWK2ZZWEdic0dXdktMelE3ZHJBbTRZTkhHSXJDcEQzdmJYSlMwZUtsZjUzRmVQOXYrR3FRTzZJNWh5dDJ5OXZ5dEZWL2ttSVFR", "functionCall": {"args": {"location": "Paris"}, "name": "get_weather"}}], "role": "model"}, {"parts": [{"functionResponse": {"name": "test_tool", "response": {"result": "15\u00b0C, sunny"}}}], "role": "function"}, {"parts": [{"text": "Thanks! What about London?"}], "role": "user"}], "tools": [{"functionDeclarations": [{"description": "Get the current weather", "name": "get_weather", "parameters": {"properties": {"location": {"description": "City name", "type": "STRING"}}, "required": ["location"], "type": "OBJECT"}}]}], "generationConfig": {}}'
-      headers:
-        Content-Type:
-          - application/json
-        user-agent:
-          - google-genai-sdk/1.38.0 gl-python/3.13.7
-        x-goog-api-client:
-          - google-genai-sdk/1.38.0 gl-python/3.13.7
-      method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp:generateContent
-    response:
-      body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"London\"\n              }\n            }\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 88,\n    \"candidatesTokenCount\": 15,\n    \"totalTokenCount\": 103,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 88\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"Pc8JaYmWL8_j7M8P-4iUwQw\"\n}\n"
-      headers:
-        Alt-Svc:
-          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-        Content-Encoding:
-          - gzip
-        Content-Type:
-          - application/json; charset=UTF-8
-        Date:
-          - Tue, 04 Nov 2025 10:02:37 GMT
-        Server:
-          - scaffolding on HTTPServer2
-        Server-Timing:
-          - gfet4t7; dur=315
-        Transfer-Encoding:
-          - chunked
-        Vary:
-          - Origin
-          - X-Origin
-          - Referer
-        X-Content-Type-Options:
-          - nosniff
-        X-Frame-Options:
-          - SAMEORIGIN
-        X-XSS-Protection:
-          - '0'
-      status:
-        code: 200
-        message: OK
-  - request:
-      body: '{"contents": [{"parts": [{"text": "What''s the weather in Paris?"}], "role": "user"}, {"parts": [{"thoughtSignature": "Q3ZJQkFkSHRpbTliYnYwdnpxYTNsQkpqTWpKenN5WUo3SVFGQUJ3VC9zZHYwUXZwRDdvSU8zSm05Rys4QkFBYSszTXZwRXR2TENIUFFVZnB0b2prTHRiZm1kaWhaNTA4RzFKRERVS0EvMXpxb3BCVGQ1QUY1RENlbE5vTFBpWEMzb1hRUXBXbFZYaksrWGg2SXl4Q2pNd212Ti9kaDkyNHpsYmZUdm54RS9JdHk4MUl0SjI0U3FYSXVEcHZMWTFkd2hRcHdTUTRCdjlMUmpnZFNOSnBqZjZzM1ozeFlVY0dnejFxbTNmdnI3RUMwdFFDVUxKNllQRFViOFdVWGRFMG80TVRveHpSajVuYmtaYUptWUF5dktaWHZoaGp6YmM5UVIraklkaXBPNCtLVEFoY3BYWFlFNE9LRG9tZnd0b2tWK1hSOWlRPQ==", "functionCall": {"args": {"location": "Paris"}, "name": "get_weather"}}], "role": "model"}, {"parts": [{"functionResponse": {"name": "test_tool", "response": {"result": "15\u00b0C, sunny"}}}], "role": "function"}, {"parts": [{"text": "Thanks! What about London?"}], "role": "user"}], "tools": [{"functionDeclarations": [{"description": "Get the current weather", "name": "get_weather", "parameters": {"properties": {"location": {"description": "City name", "type": "STRING"}}, "required": ["location"], "type": "OBJECT"}}]}], "generationConfig": {}}'
-      headers:
-        Content-Type:
-          - application/json
-        user-agent:
-          - google-genai-sdk/1.38.0 gl-python/3.13.7
-        x-goog-api-client:
-          - google-genai-sdk/1.38.0 gl-python/3.13.7
-      method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp:generateContent
-    response:
-      body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"London\"\n              }\n            },\n            \"thoughtSignature\": \"Co0CAdHtim+JHnhvg3c4/MPMTM+ryNx6hndVaIDfjmhg/9u8/zApye8W8WstAZf810EIDVnSVIPJUPjxwHH+y3DFseYhbTGJssDgRPG1r9KQG5c+Bui3yy9UPOBK7Hjo/ksezmd/AhXwhsqBYMZvV2iY9t4dbW0KXeEx6GzwboUjWJpqGFAPoVs6V/lrUky0g1jLsFPCpBm9dPGkz5dVWpWK0iaEarcWkAGZkdjP1H3D6/yZ8JP/Kt9nU0OJwy8KTDqqiTrDmCYcm1NlzM+/ExyuqmA877uGI0SLEtniu1/SFLJGGV5NgonKrTb9zzFQ6ui2d9vPxzycHKVCmDaRRp8tai8nNOqE+xlikwCEMZg=\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 88,\n    \"candidatesTokenCount\": 15,\n    \"totalTokenCount\": 161,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 88\n      }\n    ],\n    \"thoughtsTokenCount\": 58\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"uM8JacvgBeuFvdIPsYCwkAQ\"\n}\n"
-      headers:
-        Alt-Svc:
-          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-        Content-Encoding:
-          - gzip
-        Content-Type:
-          - application/json; charset=UTF-8
-        Date:
-          - Tue, 04 Nov 2025 10:04:40 GMT
-        Server:
-          - scaffolding on HTTPServer2
-        Server-Timing:
-          - gfet4t7; dur=1418
         Transfer-Encoding:
           - chunked
         Vary:

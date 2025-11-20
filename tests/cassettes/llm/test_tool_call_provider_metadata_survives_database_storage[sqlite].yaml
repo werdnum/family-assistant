@@ -1,0 +1,86 @@
+interactions:
+  - request:
+      body: '{"contents": [{"parts": [{"text": "use Python to calculate 1 + 1"}], "role": "user"}], "tools": [{"functionDeclarations": [{"description": "Execute Python script", "name": "execute_script", "parameters": {"properties": {"script": {"description": "", "type": "STRING"}}, "required": ["script"], "type": "OBJECT"}}]}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"execute_script\",\n              \"args\": {\n                \"script\": \"print(1 + 1)\"\n              }\n            },\n            \"thoughtSignature\": \"CtIBAdHtim+6NS/vsQFsNJPfljzh7yYwd8jyyBBtpvZsYqxSiXEWEftYR/GG9Lx5O3SrZNxja/6GiBeoVuRMLcbb3iYx1C6tyFqwYgvrBBqN52TtGRgc+W8Lb8FRMQo+OhwxIBnoYRrXwHKzgup1HXgnf1gj/xLTjt9T74Mca+7RA25UtafBrTtabbOFhk1QCrRaBH9VR19ArIPaOEsdZ9kCP4XBdd2N+4VX/byTkRfY/e2yBUnHyDEI+J9DxvAHLeTCZOXG6LRoSBlCJtDR63C1QQ33\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 45,\n    \"candidatesTokenCount\": 20,\n    \"totalTokenCount\": 113,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 45\n      }\n    ],\n    \"thoughtsTokenCount\": 48\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"yW0dadfzEK3d7M8PgYaN4AY\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Wed, 19 Nov 2025 07:12:09 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=805
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": "use Python to calculate 1 + 1"}], "role": "user"}, {"parts": [{"functionCall": {"args": {"script": "print(1 + 1)"}, "name": "execute_script"}}], "role": "model"}, {"parts": [{"functionResponse": {"name": "execute_script", "response": {"result": "Script result: 2"}}}], "role": "function"}], "tools": [{"functionDeclarations": [{"description": "Execute Python script", "name": "execute_script", "parameters": {"properties": {"script": {"description": "", "type": "STRING"}}, "required": ["script"], "type": "OBJECT"}}]}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"The result of 1 + 1 is 2.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 84,\n    \"candidatesTokenCount\": 12,\n    \"totalTokenCount\": 96,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 84\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"yW0dabnnKM64nsEP8ene0AY\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Wed, 19 Nov 2025 07:12:09 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=356
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
+version: 1
