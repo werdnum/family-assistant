@@ -10,7 +10,7 @@ import os
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment
@@ -279,16 +279,9 @@ class GoogleGenAIClient(BaseLLMClient):
         # Build proper Content objects for the new API
         contents: list[types.ContentUnionDict] = []
 
-        for msg_idx, msg in enumerate(messages):
+        for _msg_idx, msg in enumerate(messages):
             role = msg["role"]
             content = msg.get("content", "")
-
-            # [DEBUG] Log message being converted
-            logger.info(
-                f"[MSG CONVERT] Message {msg_idx}: role={role}, "
-                f"has_tool_calls={bool(msg.get('tool_calls'))}, "
-                f"content_preview={str(content)[:50] if content else None}"
-            )
 
             if role == "system":
                 # System messages can be included as user messages with a prefix
@@ -892,42 +885,6 @@ class GoogleGenAIClient(BaseLLMClient):
                 )
                 # TODO: The tool_choice parameter is not currently mapped to Google's API
                 # This matches the behavior of the non-streaming implementation
-
-            # Log the contents structure before sending (for debugging)
-            logger.info(f"Sending {len(contents)} content blocks to Google API")
-            for i, content_union in enumerate(contents):
-                # Cast to types.Content for type checker (contents are always Content objects here)
-                content = cast("types.Content", content_union)
-                logger.info(
-                    f"Content[{i}]: role={content.role}, parts={len(content.parts) if content.parts else 0}"
-                )
-                if content.parts:
-                    for j, part_union in enumerate(content.parts):
-                        # Cast to types.Part for type checker
-                        part = cast("types.Part", part_union)
-                        part_desc = []
-                        if hasattr(part, "text") and part.text:
-                            text_preview = (
-                                part.text[:100] if len(part.text) > 100 else part.text
-                            )
-                            part_desc.append(f"text={repr(text_preview)}")
-                        if hasattr(part, "function_call") and part.function_call:
-                            part_desc.append(f"function_call={part.function_call.name}")
-                        if (
-                            hasattr(part, "thought_signature")
-                            and part.thought_signature
-                        ):
-                            part_desc.append(
-                                f"thought_sig_len={len(part.thought_signature)}"
-                            )
-                        if (
-                            hasattr(part, "function_response")
-                            and part.function_response
-                        ):
-                            part_desc.append(
-                                f"function_response={part.function_response.name}"
-                            )
-                        logger.info(f"  Part[{j}]: {', '.join(part_desc)}")
 
             # Make streaming API call using generate_content_stream
             stream_response = await self.client.aio.models.generate_content_stream(
