@@ -34,7 +34,7 @@ from .messages import (
     SystemMessage,
     ToolMessage,
     UserMessage,
-    message_to_dict,
+    message_to_json_dict,
     tool_result_to_llm_message,
 )
 from .tool_call import ToolCallFunction, ToolCallItem
@@ -176,40 +176,45 @@ class BaseLLMClient:
         }
 
     def _process_tool_messages(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> list[dict[str, Any]]:
+        messages: list[LLMMessage],
+    ) -> list[LLMMessage]:
         """Process messages, handling tool attachments"""
-        processed = []
+        processed: list[LLMMessage] = []
         pending_attachments: list[ToolAttachment] = []
 
         for original_msg in messages:
-            msg = original_msg.copy()  # Create copy to avoid side effects
-            if msg.get("role") == "tool" and msg.get("_attachments"):
+            msg = original_msg
+            if isinstance(msg, ToolMessage) and msg.transient_attachments:
                 # Store attachments for injection (they already have attachment_id populated)
-                pending_attachments = msg.pop("_attachments")
+                pending_attachments = msg.transient_attachments
                 if pending_attachments:
                     # Use singular form for single attachment, plural for multiple
                     if len(pending_attachments) == 1:
-                        msg["content"] = (
-                            msg.get("content", "")
-                            + "\n[File content in following message]"
+                        updated_content = (
+                            msg.content + "\n[File content in following message]"
                         )
                     else:
-                        msg["content"] = (
-                            msg.get("content", "")
+                        updated_content = (
+                            msg.content
                             + f"\n[{len(pending_attachments)} file(s) content in following message(s)]"
                         )
+                    # Create a new ToolMessage with updated content and no attachments
+                    msg = msg.model_copy(
+                        update={
+                            "content": updated_content,
+                            "transient_attachments": None,
+                        }
+                    )
 
             processed.append(msg)
 
             # Inject attachments after tool message if needed
             if pending_attachments and not self._supports_multimodal_tools():
                 for attachment in pending_attachments:
-                    injection_msg = self.create_attachment_injection(attachment)
+                    injection_dict = self.create_attachment_injection(attachment)
+                    # Convert dict to UserMessage
+                    injection_msg = UserMessage(content=injection_dict["content"])
                     processed.append(injection_msg)
                 pending_attachments = []
 
@@ -279,41 +284,51 @@ def _format_tool_calls_for_debug(tool_calls: list | None) -> str:
 
 
 def _format_messages_for_debug(
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    messages: list[dict[str, Any]],
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Backward compatibility: must accept both LLMMessage and dict formats from various callers
+    messages: list[LLMMessage] | list[dict[str, Any]],
+    # ast-grep-ignore: no-dict-any - LiteLLM SDK uses dict format for tool definitions
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | None = None,
 ) -> str:
-    """Format messages for debug logging."""
+    """Format messages for debug logging.
+
+    Accepts both typed LLMMessage objects and dict representations.
+    """
     lines = [f"=== LLM Request ({len(messages)} messages) ==="]
 
     for i, msg in enumerate(messages):
-        role = msg.get("role", "unknown")
-        content = msg.get("content", "")
+        # Handle both typed messages and dicts
+        if isinstance(msg, dict):
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+        else:
+            role = msg.role
+            content = msg.content if hasattr(msg, "content") else ""
 
         # Check for parts field (used by some providers like Gemini)
-        if "parts" in msg and not content:
-            parts = msg["parts"]
-            if isinstance(parts, list):
-                parts_strs = []
-                for part in parts:
-                    if isinstance(part, dict):
-                        if "text" in part:
-                            parts_strs.append(_truncate_content(part["text"]))
-                        elif "inline_data" in part:
-                            inline = part["inline_data"]
-                            mime = inline.get("mime_type", "unknown")
-                            data_size = len(inline.get("data", b""))
-                            parts_strs.append(
-                                f"[INLINE_DATA: {mime}, {data_size} bytes]"
-                            )
-                        else:
-                            parts_strs.append(f"[PART: {list(part.keys())}]")
+        parts_field = None
+        if isinstance(msg, dict):
+            parts_field = msg.get("parts")
+        elif isinstance(msg, UserMessage):
+            parts_field = msg.parts
+
+        if parts_field and not content and isinstance(parts_field, list):
+            parts_strs = []
+            for part in parts_field:
+                if isinstance(part, dict):
+                    if "text" in part:
+                        parts_strs.append(_truncate_content(part["text"]))
+                    elif "inline_data" in part:
+                        inline = part["inline_data"]
+                        mime = inline.get("mime_type", "unknown")
+                        data_size = len(inline.get("data", b""))
+                        parts_strs.append(f"[INLINE_DATA: {mime}, {data_size} bytes]")
                     else:
-                        # types.Part object or other
-                        parts_strs.append(f"[{type(part).__name__}]")
-                content = " + ".join(parts_strs) if parts_strs else "[empty parts]"
+                        parts_strs.append(f"[PART: {list(part.keys())}]")
+                else:
+                    # types.Part object or other
+                    parts_strs.append(f"[{type(part).__name__}]")
+            content = " + ".join(parts_strs) if parts_strs else "[empty parts]"
 
         # Handle different content types
         if isinstance(content, list):
@@ -336,19 +351,35 @@ def _format_messages_for_debug(
             content_str = _truncate_content(str(content))
 
         # Format tool calls if present
-        tool_calls_str = _format_tool_calls_for_debug(msg.get("tool_calls"))
+        tool_calls = None
+        if isinstance(msg, dict):
+            tool_calls = msg.get("tool_calls")
+        elif isinstance(msg, AssistantMessage):
+            tool_calls = msg.tool_calls
+
+        tool_calls_str = _format_tool_calls_for_debug(tool_calls)
 
         # Format tool call info for tool role
         tool_info = ""
         if role == "tool":
-            tool_call_id = msg.get("tool_call_id", "unknown")
-            name = msg.get("name", "unknown")
+            if isinstance(msg, dict):
+                tool_call_id = msg.get("tool_call_id", "unknown")
+                name = msg.get("name", "unknown")
+            elif isinstance(msg, ToolMessage):
+                tool_call_id = msg.tool_call_id
+                name = msg.name
+            else:
+                tool_call_id = "unknown"
+                name = "unknown"
             tool_info = f"({name}, id={tool_call_id})"
 
-        # Check for _attachments field
+        # Check for transient_attachments field (for typed messages)
         attachment_info = ""
-        if "_attachments" in msg:
+        attachments = None
+        if isinstance(msg, dict) and "_attachments" in msg:
             attachments = msg["_attachments"]
+        elif isinstance(msg, ToolMessage) and hasattr(msg, "transient_attachments"):
+            attachments = msg.transient_attachments
             if attachments:
                 att_count = len(attachments)
                 if hasattr(attachments[0], "mime_type"):
@@ -600,26 +631,27 @@ class LiteLLMClient(BaseLLMClient):
         return self.model.startswith("claude")
 
     def _process_tool_messages(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> list[dict[str, Any]]:
+        messages: list[LLMMessage],
+    ) -> list[LLMMessage]:
         """Process messages, using native support when available"""
         if not self._supports_multimodal_tools():
             return super()._process_tool_messages(messages)
 
         # Claude supports multimodal natively
-        processed = []
-        for msg in messages:
-            if msg.get("role") == "tool" and msg.get("_attachments"):
-                attachments = msg.pop("_attachments")
+        processed: list[LLMMessage] = []
+        for original_msg in messages:
+            if (
+                isinstance(original_msg, ToolMessage)
+                and original_msg.transient_attachments
+            ):
+                attachments = original_msg.transient_attachments
                 # Convert to Claude's format
-                content = [
-                    {"type": "text", "text": msg.get("content", "")},
+                # ast-grep-ignore: no-dict-any - LiteLLM SDK requires dict format for message content
+                content: list[dict[str, Any]] = [
+                    {"type": "text", "text": original_msg.content},
                 ]
-                injection_msgs = []
+                injection_msgs: list[LLMMessage] = []
                 for attachment in attachments:
                     if attachment.content and attachment.mime_type.startswith("image/"):
                         # Use helper method for base64 encoding
@@ -660,23 +692,29 @@ class LiteLLMClient(BaseLLMClient):
                         # Update the text content to indicate file content follows in next message
                         content[0]["text"] += "\n[File content in following message]"
                         # Fall back to base class injection method
+                        injection_dict = self.create_attachment_injection(attachment)
                         injection_msgs.append(
-                            self.create_attachment_injection(attachment)
+                            UserMessage(content=injection_dict["content"])
                         )
-                msg["content"] = content
-                processed.append(msg)
+                # Create a new ToolMessage with the multimodal content and no attachments
+                updated_msg = original_msg.model_copy(
+                    update={
+                        "content": content,
+                        "transient_attachments": None,
+                    }
+                )
+                processed.append(updated_msg)
                 # Add injection messages after the tool message if needed
                 if injection_msgs:
                     processed.extend(injection_msgs)
             else:
-                processed.append(msg)
+                processed.append(original_msg)
         return processed
 
     async def _attempt_completion(
         self,
         model_id: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: list[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None,
         tool_choice: str | None,
@@ -685,9 +723,12 @@ class LiteLLMClient(BaseLLMClient):
     ) -> LLMOutput:
         """Internal method to make a single attempt at LLM completion.
 
-        Note: This method still accepts list[dict[str, Any]] for messages because
-        it's an internal method called by generate_response which already converted
-        the messages.
+        Args:
+            model_id: The model identifier to use.
+            messages: List of typed LLMMessage objects.
+            tools: Optional list of tool definitions.
+            tool_choice: Tool choice setting.
+            specific_model_params: Model-specific parameters.
         """
         # Process tool attachments before sending
         messages = self._process_tool_messages(messages)
@@ -728,22 +769,25 @@ class LiteLLMClient(BaseLLMClient):
                 f"Adding 'reasoning' parameter for OpenRouter model '{model_id}': {reasoning_params_config}"
             )
 
+        # Convert to dicts for SDK/API calls (using message_to_json_dict for full serialization)
+        message_dicts = [message_to_json_dict(msg) for msg in messages]
+
         # LiteLLM automatically drops unsupported parameters, so we pass them all.
         if DEBUG_LLM_MESSAGES_ENABLED:
             logger.info(
                 f"LLM Request to {model_id}:\n"
-                f"{_format_messages_for_debug(messages, tools, tool_choice)}"
+                f"{_format_messages_for_debug(message_dicts, tools, tool_choice)}"
             )
 
         if tools:
             sanitized_tools_arg = _sanitize_tools_for_litellm(tools)
             logger.debug(
-                f"Calling LiteLLM model {model_id} with {len(messages)} messages. "
+                f"Calling LiteLLM model {model_id} with {len(message_dicts)} messages. "
                 f"Tools provided. Tool choice: {tool_choice}. Filtered params: {json.dumps(completion_params, default=str)}"
             )
             response = await acompletion(
                 model=model_id,
-                messages=messages,
+                messages=message_dicts,
                 tools=sanitized_tools_arg,
                 tool_choice=tool_choice,
                 stream=False,
@@ -752,12 +796,12 @@ class LiteLLMClient(BaseLLMClient):
             response = cast("ModelResponse", response)
         else:
             logger.debug(
-                f"Calling LiteLLM model {model_id} with {len(messages)} messages. "
+                f"Calling LiteLLM model {model_id} with {len(message_dicts)} messages. "
                 f"No tools provided. Filtered params: {json.dumps(completion_params, default=str)}"
             )
             _response_obj = await acompletion(
                 model=model_id,
-                messages=messages,
+                messages=message_dicts,
                 stream=False,
                 **completion_params,  # type: ignore[reportArgumentType]
             )
@@ -845,8 +889,8 @@ class LiteLLMClient(BaseLLMClient):
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Generates a response using LiteLLM, with one retry on primary model and fallback."""
-        # Convert typed messages to dicts for internal processing
-        message_dicts = [message_to_dict(msg) for msg in messages]
+        # Keep messages as typed objects throughout processing
+        message_list = list(messages)
 
         retriable_errors = (
             APIConnectionError,
@@ -862,7 +906,7 @@ class LiteLLMClient(BaseLLMClient):
             logger.info(f"Attempt 1: Primary model ({self.model})")
             return await self._attempt_completion(
                 model_id=self.model,
-                messages=message_dicts,
+                messages=message_list,
                 tools=tools,
                 tool_choice=tool_choice,
                 specific_model_params=self.model_parameters,
@@ -891,7 +935,7 @@ class LiteLLMClient(BaseLLMClient):
                 logger.info(f"Attempt 2: Retrying primary model ({self.model})")
                 return await self._attempt_completion(
                     model_id=self.model,
-                    messages=message_dicts,
+                    messages=message_list,
                     tools=tools,
                     tool_choice=tool_choice,
                     specific_model_params=self.model_parameters,
@@ -934,7 +978,7 @@ class LiteLLMClient(BaseLLMClient):
             try:
                 return await self._attempt_completion(
                     model_id=actual_fallback_model_id,
-                    messages=message_dicts,
+                    messages=message_list,
                     tools=tools,
                     tool_choice=tool_choice,
                     specific_model_params=self.fallback_model_parameters,
@@ -1155,11 +1199,11 @@ class LiteLLMClient(BaseLLMClient):
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses."""
         try:
-            # Convert typed messages to dicts for internal processing
-            message_dicts = [message_to_dict(msg) for msg in messages]
+            # Process tool attachments with typed messages
+            processed_messages = self._process_tool_messages(list(messages))
 
-            # Process tool attachments before sending
-            message_dicts = self._process_tool_messages(message_dicts)
+            # Convert to dicts only at SDK boundary
+            message_dicts = [message_to_json_dict(msg) for msg in processed_messages]
 
             # Use primary model for streaming
             completion_params = self.default_kwargs.copy()
@@ -1351,7 +1395,7 @@ class RecordingLLMClient:
     ) -> LLMOutput:
         """Calls the wrapped client's standard generate_response, records, and returns."""
         # Convert messages to dict for recording
-        messages_dict = [message_to_dict(msg) for msg in messages]
+        messages_dict = [message_to_json_dict(msg) for msg in messages]
         input_data = {
             "method": "generate_response",
             "messages": messages_dict,
@@ -1542,7 +1586,7 @@ class PlaybackLLMClient:
     ) -> LLMOutput:
         """Plays back for the standard generate_response method."""
         # Convert messages to dict for playback matching
-        messages_dict = [message_to_dict(msg) for msg in messages]
+        messages_dict = [message_to_json_dict(msg) for msg in messages]
         current_input_args = {
             "method": "generate_response",
             "messages": messages_dict,
@@ -1717,11 +1761,12 @@ __all__ = [
     "RecordingLLMClient",
     "PlaybackLLMClient",
     "LLMClientFactory",
-    "message_to_dict",
+    "message_to_json_dict",
     "tool_result_to_llm_message",
     "AssistantMessage",
     "ErrorMessage",
     "SystemMessage",
     "ToolMessage",
     "UserMessage",
+    "message_to_json_dict",
 ]

@@ -20,7 +20,7 @@ from family_assistant.llm import (
     ToolCallFunction,
     ToolCallItem,
 )
-from family_assistant.llm.messages import LLMMessage, message_to_dict
+from family_assistant.llm.messages import LLMMessage, message_to_json_dict
 
 from ..base import (
     AuthenticationError,
@@ -156,11 +156,11 @@ class OpenAIClient(BaseLLMClient):
     ) -> LLMOutput:
         """Generate response using OpenAI API."""
         try:
-            # Convert typed messages to dicts for internal processing
-            message_dicts = [message_to_dict(msg) for msg in messages]
+            # Process tool attachments with typed messages
+            processed_messages = self._process_tool_messages(list(messages))
 
-            # Process tool attachments before sending
-            message_dicts = self._process_tool_messages(message_dicts)
+            # Convert to dicts only at SDK boundary (use message_to_dict to preserve typed objects)
+            message_dicts = [message_to_json_dict(msg) for msg in processed_messages]
 
             # Build parameters with defaults, then model-specific overrides
             params = {
@@ -337,11 +337,11 @@ class OpenAIClient(BaseLLMClient):
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses."""
         try:
-            # Convert typed messages to dicts for internal processing
-            message_dicts = [message_to_dict(msg) for msg in messages]
+            # Process tool attachments with typed messages
+            processed_messages = self._process_tool_messages(list(messages))
 
-            # Process tool attachments before sending
-            message_dicts = self._process_tool_messages(message_dicts)
+            # Convert to dicts only at SDK boundary (use message_to_dict to preserve typed objects)
+            message_dicts = [message_to_json_dict(msg) for msg in processed_messages]
 
             # Build parameters with defaults, then model-specific overrides
             params = {
