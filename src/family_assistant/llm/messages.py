@@ -14,6 +14,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+# Import google_types for deserializing provider_metadata in tool calls
+# This import must be at runtime (not TYPE_CHECKING) because it's used in the
+# deserialize_tool_calls field validator, which needs the actual class to call from_dict().
+# The linter suggests TYPE_CHECKING, but that would cause runtime errors in the validator.
+from family_assistant.llm.google_types import (  # noqa: TCH001
+    GeminiProviderMetadata,
+)
+
 # These imports must be at runtime (not TYPE_CHECKING) because Pydantic needs them
 # for field validation in ToolMessage. The linter suggests TYPE_CHECKING, but that
 # would cause "model not fully defined" errors at runtime.
@@ -22,7 +30,7 @@ from family_assistant.tools.types import (  # noqa: TCH001
     ToolResult,
 )
 
-from .tool_call import ToolCallItem  # noqa: TCH001
+from .tool_call import ToolCallFunction, ToolCallItem  # noqa: TCH001
 
 # ===== Content Parts =====
 
@@ -106,6 +114,63 @@ class AssistantMessage(BaseModel):
     provider_metadata: Any | None = None
 
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("tool_calls", mode="before")
+    @classmethod
+    # ast-grep-ignore: no-dict-any - Deserialization from database JSON
+    def deserialize_tool_calls(
+        cls,
+        # ast-grep-ignore: no-dict-any - Deserialization from database JSON
+        tool_calls: list[ToolCallItem] | list[dict[str, Any]] | None,
+    ) -> list[ToolCallItem] | None:
+        """Deserialize tool_calls from dict format (from database) to ToolCallItem objects."""
+        if tool_calls is None:
+            return None
+
+        result = []
+        for tc in tool_calls:
+            # If already a ToolCallItem, keep it
+            if isinstance(tc, ToolCallItem):
+                result.append(tc)
+                continue
+
+            # Convert dict to ToolCallItem with properly typed provider_metadata
+            if not isinstance(tc, dict):
+                raise ValueError(f"Expected ToolCallItem or dict, got {type(tc)}")
+
+            # Deserialize provider_metadata if present
+            provider_metadata = tc.get("provider_metadata")
+            if (
+                provider_metadata
+                and isinstance(provider_metadata, dict)
+                and provider_metadata.get("provider") == "google"
+            ):
+                # Deserialize Google provider metadata
+                provider_metadata = GeminiProviderMetadata.from_dict(provider_metadata)
+                # Add other providers here as needed
+
+            # Deserialize function
+            func_data = tc.get("function")
+            if isinstance(func_data, dict):
+                func = ToolCallFunction(
+                    name=func_data["name"], arguments=func_data["arguments"]
+                )
+            elif isinstance(func_data, ToolCallFunction):
+                func = func_data
+            else:
+                raise ValueError(f"Invalid function data: {func_data}")
+
+            # Create ToolCallItem
+            result.append(
+                ToolCallItem(
+                    id=tc["id"],
+                    type=tc["type"],
+                    function=func,
+                    provider_metadata=provider_metadata,
+                )
+            )
+
+        return result
 
     @field_validator("tool_calls", mode="after")
     @classmethod

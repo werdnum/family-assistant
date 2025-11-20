@@ -28,11 +28,11 @@ from family_assistant.llm import (
     ToolCallItem,
     _format_messages_for_debug,
 )
-from family_assistant.llm.messages import LLMMessage, message_to_dict
-from family_assistant.llm.providers.google_types import (
+from family_assistant.llm.google_types import (
     GeminiProviderMetadata,
     GeminiThoughtSignature,
 )
+from family_assistant.llm.messages import LLMMessage, message_to_dict
 
 from ..base import (
     AuthenticationError,
