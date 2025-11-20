@@ -990,8 +990,6 @@ class GoogleGenAIClient(BaseLLMClient):
             # Signal completion
             # Note: Usage metadata might not be available in streaming mode
             done_metadata = {}
-            if provider_metadata:
-                done_metadata["provider_metadata"] = provider_metadata
 
             # Add thought summaries to reasoning_info for debugging/introspection
             if thought_summaries:
