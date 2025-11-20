@@ -247,38 +247,6 @@ LLMMessage = UserMessage | AssistantMessage | ToolMessage | SystemMessage | Erro
 # ===== Utility Functions =====
 
 
-# ast-grep-ignore: no-dict-any - Generic serialization function
-def message_to_dict(msg: LLMMessage | dict[str, Any]) -> dict[str, Any]:
-    """
-    Convert a message to a dictionary.
-
-    This uses Pydantic's model_dump() which automatically excludes
-    fields marked with exclude=True (_attachments, tool_result, parts).
-    If the message is already a dict, it's returned as-is.
-
-    IMPORTANT: For AssistantMessage with tool_calls, preserves ToolCallItem objects
-    instead of converting them to dicts. This ensures type safety throughout the
-    message processing pipeline.
-
-    Args:
-        msg: The message to convert (can be a Pydantic message or dict)
-
-    Returns:
-        Dictionary representation with ToolCallItem objects preserved
-    """
-    if isinstance(msg, dict):
-        return msg
-
-    # Use model_dump to get the base dict
-    result = msg.model_dump(mode="python", exclude_none=True)
-
-    # For AssistantMessage, preserve ToolCallItem objects
-    if isinstance(msg, AssistantMessage) and msg.tool_calls is not None:
-        result["tool_calls"] = msg.tool_calls  # Keep as ToolCallItem objects
-
-    return result
-
-
 # ast-grep-ignore: no-dict-any - Generic JSON serialization function
 def message_to_json_dict(msg: LLMMessage | dict[str, Any]) -> dict[str, Any]:
     """

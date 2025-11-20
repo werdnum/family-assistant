@@ -32,7 +32,7 @@ from family_assistant.llm.google_types import (
     GeminiProviderMetadata,
     GeminiThoughtSignature,
 )
-from family_assistant.llm.messages import LLMMessage, message_to_dict
+from family_assistant.llm.messages import LLMMessage, message_to_json_dict
 
 from ..base import (
     AuthenticationError,
@@ -274,8 +274,8 @@ class GoogleGenAIClient(BaseLLMClient):
         All parts use types.Part with proper snake_case field names (function_call,
         function_response, thought_signature) to ensure proper SDK validation.
         """
-        # First process any tool attachments
-        messages = self._process_tool_messages(messages)
+        # Note: messages are already converted to dicts before this method is called
+        # This method performs Gemini-specific formatting only
         # Build proper Content objects for the new API
         contents: list[types.ContentUnionDict] = []
 
@@ -565,25 +565,35 @@ class GoogleGenAIClient(BaseLLMClient):
     ) -> LLMOutput:
         """Generate response using Google GenAI."""
         try:
-            # Convert typed messages to dicts for internal processing
-            message_dicts = [message_to_dict(msg) for msg in messages]
+            # Keep messages as typed objects for processing
+            typed_messages = list(messages)
 
-            # Debug logging if enabled
+            # Debug logging if enabled (convert to dicts for display)
             if self.should_debug_messages:
+                message_dicts_for_display = [
+                    message_to_json_dict(msg) for msg in typed_messages
+                ]
                 logger.info(
                     f"=== LLM Request to {self.model_name} ===\n"
-                    f"{_format_messages_for_debug(message_dicts, tools, tool_choice)}"
+                    f"{_format_messages_for_debug(message_dicts_for_display, tools, tool_choice)}"
                 )
+
+            # Process tool attachments with typed messages
+            processed_typed_messages = self._process_tool_messages(typed_messages)
+
+            # Convert to dicts at the SDK boundary (only right before passing to Google SDK)
+            message_dicts = [
+                message_to_json_dict(msg) for msg in processed_typed_messages
+            ]
 
             # Convert messages to format expected by new API
             contents = self._convert_messages_to_genai_format(message_dicts)
 
             # Debug: Log post-processed messages if enabled
             if self.should_debug_messages:
-                processed_msgs = self._process_tool_messages(message_dicts.copy())
                 logger.info(
-                    f"=== After _process_tool_messages ({len(processed_msgs)} messages) ===\n"
-                    f"{_format_messages_for_debug(processed_msgs, None, None)}"
+                    f"=== After _process_tool_messages ({len(message_dicts)} messages) ===\n"
+                    f"{_format_messages_for_debug(message_dicts, None, None)}"
                 )
 
             # Build generation config
@@ -839,25 +849,35 @@ class GoogleGenAIClient(BaseLLMClient):
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses using Google GenAI."""
         try:
-            # Convert typed messages to dicts for internal processing
-            message_dicts = [message_to_dict(msg) for msg in messages]
+            # Keep messages as typed objects for processing
+            typed_messages = list(messages)
 
-            # Debug logging if enabled
+            # Debug logging if enabled (convert to dicts for display)
             if self.should_debug_messages:
+                message_dicts_for_display = [
+                    message_to_json_dict(msg) for msg in typed_messages
+                ]
                 logger.info(
                     f"=== LLM Streaming Request to {self.model_name} ===\n"
-                    f"{_format_messages_for_debug(message_dicts, tools, tool_choice)}"
+                    f"{_format_messages_for_debug(message_dicts_for_display, tools, tool_choice)}"
                 )
+
+            # Process tool attachments with typed messages
+            processed_typed_messages = self._process_tool_messages(typed_messages)
+
+            # Convert to dicts at the SDK boundary (only right before passing to Google SDK)
+            message_dicts = [
+                message_to_json_dict(msg) for msg in processed_typed_messages
+            ]
 
             # Convert messages to format expected by API
             contents = self._convert_messages_to_genai_format(message_dicts)
 
             # Debug: Log post-processed messages if enabled
             if self.should_debug_messages:
-                processed_msgs = self._process_tool_messages(message_dicts.copy())
                 logger.info(
-                    f"=== After _process_tool_messages ({len(processed_msgs)} messages) ===\n"
-                    f"{_format_messages_for_debug(processed_msgs, None, None)}"
+                    f"=== After _process_tool_messages ({len(message_dicts)} messages) ===\n"
+                    f"{_format_messages_for_debug(message_dicts, None, None)}"
                 )
 
             # Build generation config

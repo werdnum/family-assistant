@@ -11,7 +11,7 @@ import pytest
 import pytest_asyncio
 
 from family_assistant.llm.google_types import GeminiProviderMetadata
-from family_assistant.llm.messages import message_to_dict
+from family_assistant.llm.messages import message_to_json_dict
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from tests.factories.messages import (
     create_tool_message,
@@ -159,7 +159,8 @@ async def test_thought_signature_reconstruction(
     # Act: Convert messages to Gemini format (this should reconstruct thought signatures)
     # Convert Pydantic message objects to dicts
     message_dicts = [
-        message_to_dict(msg) if hasattr(msg, "model_dump") else msg for msg in messages
+        message_to_json_dict(msg) if hasattr(msg, "model_dump") else msg
+        for msg in messages
     ]
     genai_contents = google_client_thinking._convert_messages_to_genai_format(
         message_dicts
@@ -311,7 +312,7 @@ async def test_thought_signature_multiturn_with_api(
     # If we used the wrong field name, the API would reject this with validation errors
     # Convert any Pydantic message objects to dicts for the API
     conversation_history_dicts = [
-        message_to_dict(msg) if hasattr(msg, "model_dump") else msg
+        message_to_json_dict(msg) if hasattr(msg, "model_dump") else msg
         for msg in conversation_history
     ]
     response2 = await google_client_thinking.generate_response(

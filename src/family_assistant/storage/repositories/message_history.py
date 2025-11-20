@@ -17,7 +17,6 @@ from family_assistant.llm.messages import (
     SystemMessage,
     ToolMessage,
     UserMessage,
-    message_to_dict,
 )
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.storage.message_history import message_history_table
@@ -346,67 +345,6 @@ class MessageHistoryRepository(BaseRepository):
 
         rows = await self._db.fetch_all(stmt)
         return [dict(row) for row in rows]
-
-    async def get_grouped(
-        self,
-        interface_type: str,
-        conversation_id: str,
-        hours: int = 24,
-        limit: int | None = None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> list[dict[str, Any]]:
-        """
-        Retrieves and groups message history by turn_id.
-
-        Args:
-            interface_type: Type of interface
-            conversation_id: Conversation identifier
-            hours: How many hours back to look
-            limit: Maximum number of turns to return
-
-        Returns:
-            List of grouped message turns
-        """
-        # Get recent messages
-        messages = await self.get_recent(interface_type, conversation_id, hours)
-
-        # Convert typed messages to dicts for backward compatibility
-        msg_dicts = [message_to_dict(msg) for msg in messages]
-
-        # Group messages by turn_id
-        grouped_messages = []
-        current_turn = None
-        current_turn_messages = []
-
-        for msg in msg_dicts:
-            msg_turn_id = msg.get("turn_id")
-
-            if msg_turn_id != current_turn:
-                # Save previous turn if exists
-                if current_turn_messages:
-                    grouped_messages.append({
-                        "turn_id": current_turn,
-                        "messages": current_turn_messages,
-                    })
-
-                # Start new turn
-                current_turn = msg_turn_id
-                current_turn_messages = [msg]
-            else:
-                current_turn_messages.append(msg)
-
-        # Don't forget the last turn
-        if current_turn_messages:
-            grouped_messages.append({
-                "turn_id": current_turn,
-                "messages": current_turn_messages,
-            })
-
-        # Apply limit if specified
-        if limit and len(grouped_messages) > limit:
-            grouped_messages = grouped_messages[-limit:]
-
-        return grouped_messages
 
     async def get_by_interface_id(
         self,
