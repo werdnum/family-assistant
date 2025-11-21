@@ -145,7 +145,7 @@ dev = [
     "mdformat-frontmatter>=2.0.0",
     "mdformat-tables>=0.4.1",
     "llm>=0.26.0",
-    "llm-gemini>=0.23.0",
+    "llm-gemini>=0.27.0",
     "llm-openrouter>=0.4.1",
     "llm-fragments-github>=0.4.0",
     "llm-fragments-reader>=0.1",
@@ -400,4 +400,3 @@ explicit = true
 
 [tool.uv.sources]
 torch = { index = "torch-cpu" }
-

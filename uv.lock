@@ -1622,6 +1622,11 @@ pgserver = [
     { name = "pixeltable-pgserver" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "llm-gemini" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "aiofiles", specifier = ">=23.2.1" },
@@ -1723,6 +1728,9 @@ requires-dist = [
     { name = "watchdog", marker = "extra == 'dev'", specifier = ">=3.0.0" },
 ]
 provides-extras = ["dev", "local-embeddings", "pgserver"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "llm-gemini", specifier = ">=0.27.0" }]
 
 [[package]]
 name = "fastapi"
@@ -2914,16 +2922,16 @@ wheels = [
 
 [[package]]
 name = "llm-gemini"
-version = "0.25"
+version = "0.27"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "ijson" },
     { name = "llm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/08/05/cd66f8bdb5946e4f9ba9fca11d19c8b1a4e86e30933b8e9f68335f20eb73/llm_gemini-0.25.tar.gz", hash = "sha256:ebf1533c69f6d0ab4d03fe77d58192a267e2de03ec6bd3d2b9ad45159dbd170f", size = 16772, upload-time = "2025-08-18T23:55:32.744Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6c/37/630b045ecca1b5c8f3adf185c1a0e99140ae1d041ebc7b11569b29322d77/llm_gemini-0.27.tar.gz", hash = "sha256:8e3797a1dc9e297ffb9c3bf6abf4fe749db6c4a420f17e248882f6c3417c9180", size = 21720, upload-time = "2025-11-18T22:57:15.717Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/94/76201e91b48a100ff699e9c0283c17eae648471e869b6e51cfb26dc33f0b/llm_gemini-0.25-py3-none-any.whl", hash = "sha256:e5a7d090376937167cc95cffce7d9234497226a755e5a2c9492da4336031bec6", size = 15290, upload-time = "2025-08-18T23:55:31.906Z" },
+    { url = "https://files.pythonhosted.org/packages/f4/d2/7290d81f8593e118456b65c88655cc886d4bd5cad1bf54683c1a99d2cc0f/llm_gemini-0.27-py3-none-any.whl", hash = "sha256:e537716fab2fc08d519d57e3517c0966dce3021b5a07daecadd672aa10735c65", size = 17224, upload-time = "2025-11-18T22:57:14.335Z" },
 ]
 
 [[package]]
