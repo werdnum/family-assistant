@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment
 
 from family_assistant.llm import LLMInterface, LLMMessage, LLMOutput, LLMStreamEvent
-from family_assistant.llm.messages import message_to_json_dict
+from family_assistant.llm.messages import UserMessage, message_to_json_dict
 
 logger = logging.getLogger(__name__)
 
@@ -219,8 +219,7 @@ class RuleBasedMockLLMClient(LLMInterface):
     def create_attachment_injection(
         self,
         attachment: "ToolAttachment",
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> UserMessage:
         """
         Mock implementation of attachment injection for testing.
         Creates a simple user message with attachment information.
@@ -236,10 +235,7 @@ class RuleBasedMockLLMClient(LLMInterface):
             content_size = len(attachment.content)
             content += f"[Size: {content_size} bytes]\n"
 
-        return {
-            "role": "user",
-            "content": content,
-        }
+        return UserMessage(content=content)
 
     async def format_user_message_with_file(
         self,

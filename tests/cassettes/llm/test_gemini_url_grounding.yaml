@@ -125,4 +125,130 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": "Look at this URL https://github.com/simonw/llm-openrouter/releases/tag/0.5 and tell me what example prompt is mentioned for testing reasoning options support."}], "role": "user"}], "tools": [{"urlContext": {}}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"\\n\\nI have browsed the URL. Now I need to find the example prompt for testing reasoning options support. Looking at the content, I see the following bullet point: \\\"Support for reasoning options, for example `llm -m openrouter/openai/gpt-5 'prove dogs exist' -o reasoning_effort medium`.\\\"\\n\\nThis seems to be the exact information requested.\"\n          },\n          {\n            \"text\": \"The example prompt mentioned for testing reasoning options support is `llm -m openrouter/openai/gpt-5 'prove dogs exist' -o reasoning_effort medium`.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"groundingMetadata\": {\n        \"groundingChunks\": [\n          {\n            \"web\": {\n              \"uri\": \"https://github.com/simonw/llm-openrouter/releases/tag/0.5\",\n              \"title\": \"Release 0.5 · simonw/llm-openrouter · GitHub\"\n            }\n          }\n        ],\n        \"groundingSupports\": [\n          {\n            \"segment\": {\n              \"startIndex\": 103,\n              \"endIndex\": 285,\n              \"text\": \"Looking at the content, I see the following bullet point: \\\"Support for reasoning options, for example `llm -m openrouter/openai/gpt-5 'prove dogs exist' -o reasoning_effort medium`.\\\"\"\n            },\n            \"groundingChunkIndices\": [\n              0\n            ]\n          },\n          {\n            \"segment\": {\n              \"startIndex\": 336,\n              \"endIndex\": 485,\n              \"text\": \"The example prompt mentioned for testing reasoning options support is `llm -m openrouter/openai/gpt-5 'prove dogs exist' -o reasoning_effort medium`.\"\n            },\n            \"groundingChunkIndices\": [\n              0\n            ]\n          }\n        ]\n      },\n      \"urlContextMetadata\": {\n        \"urlMetadata\": [\n          {\n            \"retrievedUrl\": \"https://github.com/simonw/llm-openrouter/releases/tag/0.5\",\n            \"urlRetrievalStatus\": \"URL_RETRIEVAL_STATUS_SUCCESS\"\n          }\n        ]\n      }\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 42,\n    \"candidatesTokenCount\": 142,\n    \"totalTokenCount\": 4095,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 42\n      }\n    ],\n    \"toolUsePromptTokenCount\": 3867,\n    \"toolUsePromptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 3867\n      }\n    ],\n    \"thoughtsTokenCount\": 44\n  },\n  \"modelVersion\": \"gemini-2.5-flash\",\n  \"responseId\": \"0FQgadmkJKK-vdIP_tnJmQ0\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Fri, 21 Nov 2025 12:02:24 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=3330
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": "Look at this URL https://github.com/simonw/llm-openrouter/releases/tag/0.5 and tell me what example prompt is mentioned for testing reasoning options support."}], "role": "user"}], "tools": [{"urlContext": {}}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"\\nThe example prompt mentioned for testing reasoning options support is `llm -m openrouter/openai/gpt-5 'prove dogs exist' -o reasoning_effort medium`.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"groundingMetadata\": {\n        \"groundingChunks\": [\n          {\n            \"web\": {\n              \"uri\": \"https://github.com/simonw/llm-openrouter/releases/tag/0.5\",\n              \"title\": \"Release 0.5 · simonw/llm-openrouter · GitHub\"\n            }\n          }\n        ],\n        \"groundingSupports\": [\n          {\n            \"segment\": {\n              \"startIndex\": 1,\n              \"endIndex\": 150,\n              \"text\": \"The example prompt mentioned for testing reasoning options support is `llm -m openrouter/openai/gpt-5 'prove dogs exist' -o reasoning_effort medium`.\"\n            },\n            \"groundingChunkIndices\": [\n              0\n            ]\n          }\n        ]\n      },\n      \"urlContextMetadata\": {\n        \"urlMetadata\": [\n          {\n            \"retrievedUrl\": \"https://github.com/simonw/llm-openrouter/releases/tag/0.5\",\n            \"urlRetrievalStatus\": \"URL_RETRIEVAL_STATUS_SUCCESS\"\n          }\n        ]\n      }\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 42,\n    \"candidatesTokenCount\": 65,\n    \"totalTokenCount\": 4000,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 42\n      }\n    ],\n    \"toolUsePromptTokenCount\": 3858,\n    \"toolUsePromptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 3858\n      }\n    ],\n    \"thoughtsTokenCount\": 35\n  },\n  \"modelVersion\": \"gemini-2.5-flash\",\n  \"responseId\": \"XWAgady8JdWNvdIP8pzqOQ\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Fri, 21 Nov 2025 12:51:41 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=2498
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": "Look at this URL https://github.com/simonw/llm-openrouter/releases/tag/0.5 and tell me what example prompt is mentioned for testing reasoning options support."}], "role": "user"}], "tools": [{"urlContext": {}}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"\\nThe example prompt mentioned for testing reasoning options support is `llm -m openrouter/openai/gpt-5 'prove dogs exist' -o reasoning_effort medium`.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"groundingMetadata\": {\n        \"groundingChunks\": [\n          {\n            \"web\": {\n              \"uri\": \"https://github.com/simonw/llm-openrouter/releases/tag/0.5\",\n              \"title\": \"Release 0.5 · simonw/llm-openrouter · GitHub\"\n            }\n          }\n        ],\n        \"groundingSupports\": [\n          {\n            \"segment\": {\n              \"startIndex\": 1,\n              \"endIndex\": 150,\n              \"text\": \"The example prompt mentioned for testing reasoning options support is `llm -m openrouter/openai/gpt-5 'prove dogs exist' -o reasoning_effort medium`.\"\n            },\n            \"groundingChunkIndices\": [\n              0\n            ]\n          }\n        ]\n      },\n      \"urlContextMetadata\": {\n        \"urlMetadata\": [\n          {\n            \"retrievedUrl\": \"https://github.com/simonw/llm-openrouter/releases/tag/0.5\",\n            \"urlRetrievalStatus\": \"URL_RETRIEVAL_STATUS_SUCCESS\"\n          }\n        ]\n      }\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 42,\n    \"candidatesTokenCount\": 65,\n    \"totalTokenCount\": 3956,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 42\n      }\n    ],\n    \"toolUsePromptTokenCount\": 3816,\n    \"toolUsePromptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 3816\n      }\n    ],\n    \"thoughtsTokenCount\": 33\n  },\n  \"modelVersion\": \"gemini-2.5-flash\",\n  \"responseId\": \"5D8habfGCNyqkdUPiOvQsA0\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Sat, 22 Nov 2025 04:45:24 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=3047
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
 version: 1

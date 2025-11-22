@@ -47,7 +47,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "hello world"
+                      "text": "Hello world"
                     }
                   ],
                   "role": "model"
@@ -59,17 +59,17 @@
             "usageMetadata": {
               "promptTokenCount": 6,
               "candidatesTokenCount": 2,
-              "totalTokenCount": 27,
+              "totalTokenCount": 26,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
                   "tokenCount": 6
                 }
               ],
-              "thoughtsTokenCount": 19
+              "thoughtsTokenCount": 18
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "GPceaeqoN-qckdUP_NHn2Q8"
+            "responseId": "4j8haeG9N7CBkdUPjZqD-Qg"
           }
         ],
         "byte_segments": [],
@@ -93,7 +93,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "hello world"
+                      "text": "Hello world"
                     }
                   ],
                   "role": "model"
@@ -103,7 +103,7 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "GPceaeqoN-qckdUP_NHn2Q8",
+            "response_id": "4j8haeG9N7CBkdUPjZqD-Qg",
             "usage_metadata": {
               "candidates_token_count": 2,
               "prompt_token_count": 6,
@@ -113,8 +113,8 @@
                   "token_count": 6
                 }
               ],
-              "thoughts_token_count": 19,
-              "total_token_count": 27
+              "thoughts_token_count": 18,
+              "total_token_count": 26
             }
           }
         ]

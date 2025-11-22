@@ -10,27 +10,44 @@ while adding type safety and runtime validation.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-# Import google_types for deserializing provider_metadata in tool calls
-# This import must be at runtime (not TYPE_CHECKING) because it's used in the
-# deserialize_tool_calls field validator, which needs the actual class to call from_dict().
-# The linter suggests TYPE_CHECKING, but that would cause runtime errors in the validator.
-from family_assistant.llm.google_types import (  # noqa: TCH001
-    GeminiProviderMetadata,
-)
-
 # These imports must be at runtime (not TYPE_CHECKING) because Pydantic needs them
 # for field validation in ToolMessage. The linter suggests TYPE_CHECKING, but that
 # would cause "model not fully defined" errors at runtime.
-from family_assistant.tools.types import (  # noqa: TCH001
+from family_assistant.tools.types import (  # noqa: TCH001  # Pydantic needs runtime import for field validation
     ToolAttachment,
     ToolResult,
 )
 
-from .tool_call import ToolCallFunction, ToolCallItem  # noqa: TCH001
+from .content_parts import (
+    AttachmentContentPartDict,
+    ContentPartDict,
+    FileContentPartDict,
+    ImageUrlContentPartDict,
+    TextContentPartDict,
+    attachment_content,
+    image_url_content,
+    text_content,
+)
+from .tool_call import (
+    ToolCallItem,  # noqa: TCH001  # Pydantic needs runtime import for field validation
+)
+
+# Re-export content part types and helpers for backward compatibility
+__all__ = [
+    "ContentPartDict",
+    "TextContentPartDict",
+    "ImageUrlContentPartDict",
+    "AttachmentContentPartDict",
+    "FileContentPartDict",
+    "text_content",
+    "image_url_content",
+    "attachment_content",
+]
 
 # ===== Content Parts =====
 
@@ -105,7 +122,11 @@ class UserMessage(BaseModel):
 
 
 class AssistantMessage(BaseModel):
-    """Message from the LLM assistant."""
+    """Message from the LLM assistant.
+
+    This is a pure application-layer type - tool_calls must be properly typed ToolCallItem objects.
+    Deserialization from database dicts happens explicitly in the repository layer.
+    """
 
     role: Literal["assistant"] = "assistant"
     content: str | None = None
@@ -114,63 +135,6 @@ class AssistantMessage(BaseModel):
     provider_metadata: Any | None = None
 
     model_config = ConfigDict(extra="forbid")
-
-    @field_validator("tool_calls", mode="before")
-    @classmethod
-    # ast-grep-ignore: no-dict-any - Deserialization from database JSON
-    def deserialize_tool_calls(
-        cls,
-        # ast-grep-ignore: no-dict-any - Deserialization from database JSON
-        tool_calls: list[ToolCallItem] | list[dict[str, Any]] | None,
-    ) -> list[ToolCallItem] | None:
-        """Deserialize tool_calls from dict format (from database) to ToolCallItem objects."""
-        if tool_calls is None:
-            return None
-
-        result = []
-        for tc in tool_calls:
-            # If already a ToolCallItem, keep it
-            if isinstance(tc, ToolCallItem):
-                result.append(tc)
-                continue
-
-            # Convert dict to ToolCallItem with properly typed provider_metadata
-            if not isinstance(tc, dict):
-                raise ValueError(f"Expected ToolCallItem or dict, got {type(tc)}")
-
-            # Deserialize provider_metadata if present
-            provider_metadata = tc.get("provider_metadata")
-            if (
-                provider_metadata
-                and isinstance(provider_metadata, dict)
-                and provider_metadata.get("provider") == "google"
-            ):
-                # Deserialize Google provider metadata
-                provider_metadata = GeminiProviderMetadata.from_dict(provider_metadata)
-                # Add other providers here as needed
-
-            # Deserialize function
-            func_data = tc.get("function")
-            if isinstance(func_data, dict):
-                func = ToolCallFunction(
-                    name=func_data["name"], arguments=func_data["arguments"]
-                )
-            elif isinstance(func_data, ToolCallFunction):
-                func = func_data
-            else:
-                raise ValueError(f"Invalid function data: {func_data}")
-
-            # Create ToolCallItem
-            result.append(
-                ToolCallItem(
-                    id=tc["id"],
-                    type=tc["type"],
-                    function=func,
-                    provider_metadata=provider_metadata,
-                )
-            )
-
-        return result
 
     @field_validator("tool_calls", mode="after")
     @classmethod
@@ -247,25 +211,107 @@ LLMMessage = UserMessage | AssistantMessage | ToolMessage | SystemMessage | Erro
 # ===== Utility Functions =====
 
 
-# ast-grep-ignore: no-dict-any - Generic JSON serialization function
-def message_to_json_dict(msg: LLMMessage | dict[str, Any]) -> dict[str, Any]:
+# Helper to serialize typed tool calls into JSON-safe dicts
+def _serialize_tool_call_item(tool_call: ToolCallItem) -> dict[str, object]:
+    """Serialize a ToolCallItem into a JSON-safe dict."""
+    # Ensure arguments is a JSON string
+    args = tool_call.function.arguments
+    if not isinstance(args, str):
+        args = json.dumps(args)
+
+    provider_metadata = None
+    if tool_call.provider_metadata is not None:
+        provider_metadata = (
+            tool_call.provider_metadata.to_dict()
+            if hasattr(tool_call.provider_metadata, "to_dict")
+            else tool_call.provider_metadata
+        )
+
+    tc_dict = {
+        "id": tool_call.id,
+        "type": tool_call.type,
+        "function": {
+            "name": tool_call.function.name,
+            "arguments": args,
+        },
+    }
+
+    if provider_metadata is not None:
+        tc_dict["provider_metadata"] = provider_metadata
+
+    return tc_dict
+
+
+def message_to_json_dict(msg: LLMMessage) -> dict[str, object]:
     """
     Convert a message to a fully serialized dictionary suitable for JSON encoding.
 
-    Unlike message_to_dict(), this function recursively serializes all nested objects
-    including ToolCallItem objects, making the result safe for json.dumps().
-
-    Args:
-        msg: The message to convert (can be a Pydantic message or dict)
-
-    Returns:
-        Fully serialized dictionary safe for JSON encoding
+    This recursively serializes all nested objects including ToolCallItem objects,
+    making the result safe for json.dumps().
     """
-    if isinstance(msg, dict):
-        return msg
+    if isinstance(msg, UserMessage):
+        return {
+            "role": "user",
+            "content": [
+                part.model_dump(mode="json", exclude_none=True) for part in msg.content
+            ]
+            if isinstance(msg.content, list)
+            else msg.content,
+        }
 
-    # Use model_dump to get fully serialized dict (no nested Pydantic objects)
-    return msg.model_dump(mode="python", exclude_none=True)
+    if isinstance(msg, AssistantMessage):
+        tool_calls = (
+            [_serialize_tool_call_item(tc) for tc in msg.tool_calls]
+            if msg.tool_calls
+            else None
+        )
+
+        provider_metadata = msg.provider_metadata
+        if provider_metadata is not None and hasattr(provider_metadata, "to_dict"):
+            provider_metadata = provider_metadata.to_dict()
+
+        return {
+            "role": "assistant",
+            "content": msg.content,
+            "tool_calls": tool_calls,
+            "provider_metadata": provider_metadata,
+        }
+
+    if isinstance(msg, ToolMessage):
+        return {
+            "role": "tool",
+            "tool_call_id": msg.tool_call_id,
+            "content": msg.content,
+            "name": msg.name,
+            "error_traceback": msg.error_traceback,
+        }
+
+    if isinstance(msg, SystemMessage):
+        return {
+            "role": "system",
+            "content": msg.content,
+        }
+
+    if isinstance(msg, ErrorMessage):
+        return {
+            "role": "error",
+            "content": msg.content,
+            "error_traceback": msg.error_traceback,
+        }
+
+    # If we ever hit this, the caller is providing an unsupported type.
+    raise TypeError(f"Unsupported message type for serialization: {type(msg)}")
+
+
+# Backwards-compatible alias for callers still expecting message_to_dict
+def message_to_dict(msg: LLMMessage) -> dict[str, object]:
+    """
+    Serialize a typed LLMMessage to a JSON-safe dict.
+
+    This intentionally accepts only typed message objects to keep APIs strict;
+    callers must perform deserialization before invoking this helper.
+    """
+    return message_to_json_dict(msg)
 
 
 # ast-grep-ignore: no-dict-any - Generic deserialization function

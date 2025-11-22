@@ -2,6 +2,7 @@
 
 import json
 import logging
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -47,8 +48,8 @@ class MessageHistoryRepository(BaseRepository):
         role: str,  # 'user', 'assistant', 'system', 'tool', 'error'
         content: str | None,  # Content can be optional now
         # --- Renamed/Added Fields ---
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tool_calls: list[dict[str, Any]] | None = None,  # Renamed from tool_calls_info
+        tool_calls: list[ToolCallItem]
+        | None = None,  # Renamed from tool_calls_info - ONLY accepts typed objects
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         reasoning_info: dict[str, Any] | None = None,  # Added
         # Note: `tool_call_id` is now a separate parameter below for 'tool' role messages
@@ -72,6 +73,10 @@ class MessageHistoryRepository(BaseRepository):
         """
         Stores a message in the history table.
 
+        Repository is responsible for serialization to JSON. Callers MUST pass typed
+        ToolCallItem objects, not dicts. The repository will serialize them using
+        dataclass.asdict() with special handling for GeminiProviderMetadata.
+
         Args:
             interface_type: Type of interface (e.g., 'telegram', 'web')
             conversation_id: Unique conversation identifier
@@ -81,7 +86,7 @@ class MessageHistoryRepository(BaseRepository):
             timestamp: Message timestamp
             role: Message role
             content: Message content
-            tool_calls: Tool calls made by assistant
+            tool_calls: Typed ToolCallItem objects (NOT dicts - will be serialized by repository)
             reasoning_info: LLM reasoning/usage info
             error_traceback: Error traceback if applicable
             tool_call_id: ID linking tool response to request
@@ -109,37 +114,27 @@ class MessageHistoryRepository(BaseRepository):
                 f"Both 'name' and 'tool_name' provided with different values: name='{name}', tool_name='{tool_name}'. Using tool_name."
             )
 
-        # Serialize provider_metadata and tool_calls for JSON storage
-        # This is the ONLY place where serialization happens - callers must pass typed objects
+        # Serialize tool_calls for JSON storage
+        # Repository is responsible for serialization - callers MUST pass typed ToolCallItem objects
         serialized_tool_calls = None
         if tool_calls:
             serialized_tool_calls = []
             for tc in tool_calls:
-                # tc can be either a ToolCallItem object or a dict
-                if isinstance(tc, dict):
-                    tc_copy = tc.copy()
-                    if "provider_metadata" in tc_copy and isinstance(
-                        tc_copy["provider_metadata"], GeminiProviderMetadata
-                    ):
-                        tc_copy["provider_metadata"] = tc_copy[
-                            "provider_metadata"
-                        ].to_dict()
-                    serialized_tool_calls.append(tc_copy)
-                # tc is a ToolCallItem object
-                # Check for GeminiProviderMetadata BEFORE serializing
-                elif hasattr(tc, "provider_metadata") and isinstance(
-                    tc.provider_metadata, GeminiProviderMetadata
-                ):
-                    # Serialize the object manually to properly handle nested metadata
-                    tc_dict = tc.model_dump(mode="python", exclude_none=True)
-                    # The model_dump already converted provider_metadata to dict, but we need to use to_dict()
-                    # to properly serialize thought signatures
-                    # So we replace the model_dump result with our custom serialization
+                if not isinstance(tc, ToolCallItem):
+                    raise TypeError(
+                        f"tool_calls must contain ToolCallItem objects; got {type(tc)}"
+                    )
+                # tc is a ToolCallItem object (enforced by type signature)
+                # Check for GeminiProviderMetadata which needs special serialization for thought signatures
+                if isinstance(tc.provider_metadata, GeminiProviderMetadata):
+                    # Serialize the ToolCallItem dataclass to dict
+                    tc_dict = asdict(tc)
+                    # Override provider_metadata with proper serialization (bytes -> base64)
                     tc_dict["provider_metadata"] = tc.provider_metadata.to_dict()
                     serialized_tool_calls.append(tc_dict)
                 else:
-                    # No special metadata, use standard serialization
-                    tc_dict = tc.model_dump(mode="python", exclude_none=True)
+                    # No special metadata, use standard dataclass serialization
+                    tc_dict = asdict(tc)
                     serialized_tool_calls.append(tc_dict)
 
         serialized_provider_metadata = None
@@ -575,6 +570,7 @@ class MessageHistoryRepository(BaseRepository):
         )
 
         rows = await self._db.fetch_all(stmt)
+        # Process rows to dicts with database fields preserved for API
         messages = [self._process_message_row_as_dict(row) for row in rows]
 
         # Check if we have more messages
@@ -667,107 +663,45 @@ class MessageHistoryRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return [self._process_message_row(row) for row in rows]
 
-    # ast-grep-ignore: no-dict-any - Database row deserialization requires untyped dict
-    def _process_message_row_as_dict(self, row: dict[str, Any]) -> dict[str, Any]:
+    async def get_messages_after_as_dict(
+        self,
+        conversation_id: str,
+        after: datetime,
+        interface_type: str | None = None,
+        limit: int = 100,
+        # ast-grep-ignore: no-dict-any - Returns database rows with ALL fields (internal_id, timestamp, etc) for API endpoints. Cannot use typed LLMMessage as it strips database metadata needed by frontend.
+    ) -> list[dict[str, Any]]:
         """
-        Process a message row and return it as a dict with all database fields preserved.
+        Get messages created after a specific timestamp as dicts with database fields.
 
-        This method performs the same deserialization as _process_message_row but returns
-        a dict instead of a typed LLMMessage. Use this when you need all database fields
-        (like user_id, interface_type, etc.) rather than a typed message object.
+        Used for SSE endpoints that need to send database metadata to the frontend.
 
         Args:
-            row: Database row
+            conversation_id: The conversation identifier
+            after: Get messages created after this timestamp
+            interface_type: Optional filter by interface type
+            limit: Maximum number of messages to return (default 100)
 
         Returns:
-            Dictionary with properly deserialized complex types
+            List of message dicts with database fields in chronological order (oldest first)
         """
-        msg = dict(row)
+        conditions = [
+            message_history_table.c.conversation_id == conversation_id,
+            message_history_table.c.timestamp > after,
+        ]
 
-        # Handle tool_calls deserialization: JSON columns return dicts/lists directly
-        if isinstance(msg.get("tool_calls"), str):
-            try:
-                msg["tool_calls"] = json.loads(msg["tool_calls"])
-            except json.JSONDecodeError:
-                self._logger.warning(
-                    f"Failed to parse tool_calls JSON for message {msg.get('internal_id')}"
-                )
-                msg["tool_calls"] = None
+        if interface_type:
+            conditions.append(message_history_table.c.interface_type == interface_type)
 
-        # Deserialize provider_metadata within each tool call to typed objects
-        if msg.get("tool_calls") and isinstance(msg["tool_calls"], list):
-            tool_call_items = []
-            for tc_dict in msg["tool_calls"]:
-                if isinstance(tc_dict, ToolCallItem):
-                    # Already a ToolCallItem, keep it as-is
-                    tool_call_items.append(tc_dict)
-                elif isinstance(tc_dict, dict):
-                    # Deserialize provider_metadata if present
-                    provider_metadata = tc_dict.get("provider_metadata")
-                    if (
-                        isinstance(provider_metadata, dict)
-                        and provider_metadata.get("provider") == "google"
-                    ):
-                        provider_metadata = GeminiProviderMetadata.from_dict(
-                            provider_metadata
-                        )
+        stmt = (
+            select(message_history_table)
+            .where(*conditions)
+            .order_by(message_history_table.c.timestamp.asc())
+            .limit(limit)
+        )
 
-                    # Create ToolCallItem with typed provider_metadata
-                    tool_call_items.append(
-                        ToolCallItem(
-                            id=tc_dict["id"],
-                            type=tc_dict["type"],
-                            function=ToolCallFunction(
-                                name=tc_dict["function"]["name"],
-                                arguments=tc_dict["function"]["arguments"],
-                            ),
-                            provider_metadata=provider_metadata,
-                        )
-                    )
-                else:
-                    self._logger.warning(
-                        f"Unexpected tool_call type: {type(tc_dict)}, skipping"
-                    )
-            msg["tool_calls"] = tool_call_items
-
-        # Handle reasoning_info deserialization
-        if isinstance(msg.get("reasoning_info"), str):
-            try:
-                msg["reasoning_info"] = json.loads(msg["reasoning_info"])
-            except json.JSONDecodeError:
-                self._logger.warning(
-                    f"Failed to parse reasoning_info JSON for message {msg.get('internal_id')}"
-                )
-                msg["reasoning_info"] = None
-
-        # Handle attachments deserialization
-        if isinstance(msg.get("attachments"), str):
-            try:
-                msg["attachments"] = json.loads(msg["attachments"])
-            except json.JSONDecodeError:
-                self._logger.warning(
-                    f"Failed to parse attachments JSON for message {msg.get('internal_id')}"
-                )
-                msg["attachments"] = None
-
-        # Handle provider_metadata deserialization at message level
-        provider_metadata = msg.get("provider_metadata")
-        if provider_metadata:
-            if isinstance(provider_metadata, str):
-                # String case: parse JSON first
-                try:
-                    provider_metadata = json.loads(provider_metadata)
-                except json.JSONDecodeError:
-                    self._logger.warning(
-                        f"Failed to parse provider_metadata JSON for message {msg.get('internal_id')}"
-                    )
-                    provider_metadata = None
-
-            # Keep message-level provider_metadata as dict for now
-            # (it has a different structure than tool-call-level provider_metadata)
-            msg["provider_metadata"] = provider_metadata
-
-        return msg
+        rows = await self._db.fetch_all(stmt)
+        return [self._process_message_row_as_dict(row) for row in rows]
 
     # ast-grep-ignore: no-dict-any - Database row deserialization requires untyped dict
     def _process_message_row(self, row: dict[str, Any]) -> LLMMessage:
@@ -865,12 +799,119 @@ class MessageHistoryRepository(BaseRepository):
                     )
                     provider_metadata = None
 
-            # Keep message-level provider_metadata as dict for now
-            # (it has a different structure than tool-call-level provider_metadata)
+            # Convert Google provider metadata to typed object for in-app use
+            if (
+                isinstance(provider_metadata, dict)
+                and provider_metadata.get("provider") == "google"
+            ):
+                provider_metadata = GeminiProviderMetadata.from_dict(provider_metadata)
+
             msg["provider_metadata"] = provider_metadata
 
         # Convert dict to typed LLMMessage
         return self._dict_to_typed_message(msg)
+
+    # ast-grep-ignore: no-dict-any - Returns dict with database fields for API
+    def _process_message_row_as_dict(self, row: dict[str, Any]) -> dict[str, Any]:
+        """
+        Process a message row and return as dict with all database fields preserved.
+
+        This method deserializes complex types (tool_calls, provider_metadata) while
+        keeping all database fields (internal_id, timestamp, user_id, etc.).
+        Use this for API endpoints that need complete message data.
+
+        Args:
+            row: Database row
+
+        Returns:
+            Dictionary with deserialized complex types and all database fields
+        """
+        msg = dict(row)
+
+        # Handle tool_calls deserialization: JSON columns return dicts/lists directly
+        if isinstance(msg.get("tool_calls"), str):
+            try:
+                msg["tool_calls"] = json.loads(msg["tool_calls"])
+            except json.JSONDecodeError:
+                self._logger.warning(
+                    f"Failed to parse tool_calls JSON for message {msg.get('internal_id')}"
+                )
+                msg["tool_calls"] = None
+
+        # Deserialize provider_metadata within each tool call to typed objects
+        if msg.get("tool_calls") and isinstance(msg["tool_calls"], list):
+            tool_call_items = []
+            for tc_dict in msg["tool_calls"]:
+                if isinstance(tc_dict, ToolCallItem):
+                    # Already a ToolCallItem, keep it as-is
+                    tool_call_items.append(tc_dict)
+                elif isinstance(tc_dict, dict):
+                    # Deserialize provider_metadata if present
+                    provider_metadata = tc_dict.get("provider_metadata")
+                    if (
+                        isinstance(provider_metadata, dict)
+                        and provider_metadata.get("provider") == "google"
+                    ):
+                        provider_metadata = GeminiProviderMetadata.from_dict(
+                            provider_metadata
+                        )
+
+                    # Create ToolCallItem with typed provider_metadata
+                    tool_call_items.append(
+                        ToolCallItem(
+                            id=tc_dict["id"],
+                            type=tc_dict["type"],
+                            function=ToolCallFunction(
+                                name=tc_dict["function"]["name"],
+                                arguments=tc_dict["function"]["arguments"],
+                            ),
+                            provider_metadata=provider_metadata,
+                        )
+                    )
+                else:
+                    self._logger.warning(
+                        f"Unexpected tool_call type: {type(tc_dict)}, skipping"
+                    )
+            msg["tool_calls"] = tool_call_items
+
+        # Handle reasoning_info deserialization
+        if isinstance(msg.get("reasoning_info"), str):
+            try:
+                msg["reasoning_info"] = json.loads(msg["reasoning_info"])
+            except json.JSONDecodeError:
+                self._logger.warning(
+                    f"Failed to parse reasoning_info JSON for message {msg.get('internal_id')}"
+                )
+                msg["reasoning_info"] = None
+
+        # Handle attachments deserialization
+        if isinstance(msg.get("attachments"), str):
+            try:
+                msg["attachments"] = json.loads(msg["attachments"])
+            except json.JSONDecodeError:
+                self._logger.warning(
+                    f"Failed to parse attachments JSON for message {msg.get('internal_id')}"
+                )
+                msg["attachments"] = None
+
+        # Handle provider_metadata deserialization at message level
+        provider_metadata = msg.get("provider_metadata")
+        if provider_metadata:
+            if isinstance(provider_metadata, str):
+                # String case: parse JSON first
+                try:
+                    provider_metadata = json.loads(provider_metadata)
+                except json.JSONDecodeError:
+                    self._logger.warning(
+                        f"Failed to parse provider_metadata JSON for message {msg.get('internal_id')}"
+                    )
+                    provider_metadata = None
+
+            # Keep message-level provider_metadata as dict for now
+            # (it has a different structure than tool-call-level provider_metadata)
+            msg["provider_metadata"] = provider_metadata
+
+        return msg
 
     # ast-grep-ignore: no-dict-any - Converts untyped dict to typed LLMMessage
     def _dict_to_typed_message(self, msg: dict[str, Any]) -> LLMMessage:
@@ -974,7 +1015,7 @@ class MessageHistoryRepository(BaseRepository):
 
         for row in rows:
             msg = self._process_message_row_as_dict(row)
-            key = (msg["interface_type"], msg["conversation_id"])
+            key = (row["interface_type"], row["conversation_id"])
 
             if key not in grouped_history:
                 grouped_history[key] = []

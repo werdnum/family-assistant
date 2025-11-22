@@ -4,7 +4,6 @@ Tests the internal message conversion logic, particularly for thought signatures
 and their association with function calls.
 """
 
-import base64
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -17,7 +16,12 @@ if TYPE_CHECKING:
     from google.genai import types as genai_types
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
-from family_assistant.llm.messages import UserMessage
+from family_assistant.llm.messages import (
+    AssistantMessage,
+    LLMMessage,
+    ToolMessage,
+    UserMessage,
+)
 from family_assistant.llm.providers.google_genai_client import (
     GeminiProviderMetadata,
     GeminiThoughtSignature,
@@ -48,11 +52,11 @@ class TestThoughtSignatureConversion:
         thought_sig = GeminiThoughtSignature(b"test_signature_bytes")
         provider_metadata = GeminiProviderMetadata(thought_signature=thought_sig)
 
-        messages = [
-            {
-                "role": "assistant",
-                "content": "",  # Empty content when only tool calls present
-                "tool_calls": [
+        messages: list[LLMMessage] = [
+            AssistantMessage(
+                role="assistant",
+                content="",  # Empty content when only tool calls present
+                tool_calls=[
                     ToolCallItem(
                         id="call_abc123",
                         type="function",
@@ -63,7 +67,7 @@ class TestThoughtSignatureConversion:
                         provider_metadata=provider_metadata,
                     )
                 ],
-            }
+            )
         ]
 
         # Convert to GenAI format
@@ -111,11 +115,11 @@ class TestThoughtSignatureConversion:
         sig1 = GeminiThoughtSignature(b"signature_for_call_1")
         sig2 = GeminiThoughtSignature(b"signature_for_call_2")
 
-        messages = [
-            {
-                "role": "assistant",
-                "content": "I'll search the calendar and check the weather.",
-                "tool_calls": [
+        messages: list[LLMMessage] = [
+            AssistantMessage(
+                role="assistant",
+                content="I'll search the calendar and check the weather.",
+                tool_calls=[
                     ToolCallItem(
                         id="call_1",
                         type="function",
@@ -139,7 +143,7 @@ class TestThoughtSignatureConversion:
                         ),
                     ),
                 ],
-            }
+            )
         ]
 
         # Convert to GenAI format
@@ -190,11 +194,11 @@ class TestThoughtSignatureConversion:
         This ensures backward compatibility with models/scenarios that don't
         use thought signatures.
         """
-        messages = [
-            {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
+        messages: list[LLMMessage] = [
+            AssistantMessage(
+                role="assistant",
+                content="",
+                tool_calls=[
                     ToolCallItem(
                         id="call_xyz",
                         type="function",
@@ -205,7 +209,7 @@ class TestThoughtSignatureConversion:
                         provider_metadata=None,
                     )
                 ],
-            }
+            )
         ]
 
         # Should not raise an exception
@@ -246,17 +250,12 @@ class TestThoughtSignatureConversion:
         associates thought signatures with function calls.
         """
         test_signature = b"thought_for_text_response"
-        signature_b64 = base64.b64encode(test_signature).decode("ascii")
 
-        messages = [
-            {
-                "role": "assistant",
-                "content": "Based on my analysis, the answer is 42.",
-                "provider_metadata": {
-                    "provider": "google",
-                    "thought_signature": signature_b64,
-                },
-            }
+        messages: list[LLMMessage] = [
+            AssistantMessage(
+                role="assistant",
+                content="Based on my analysis, the answer is 42.",
+            )
         ]
 
         contents = google_client._convert_messages_to_genai_format(messages)
@@ -276,27 +275,19 @@ class TestThoughtSignatureConversion:
         self, google_client: GoogleGenAIClient
     ) -> None:
         """Test that empty or invalid provider_metadata doesn't break conversion."""
-        messages = [
-            {
-                "role": "assistant",
-                "content": "Hello",
-                "provider_metadata": {},  # Empty
-            },
-            {
-                "role": "assistant",
-                "content": "World",
-                "provider_metadata": {
-                    "provider": "openai"  # Wrong provider
-                },
-            },
-            {
-                "role": "assistant",
-                "content": "Test",
-                "provider_metadata": {
-                    "provider": "google",
-                    # No thought_signature field
-                },
-            },
+        messages: list[LLMMessage] = [
+            AssistantMessage(
+                role="assistant",
+                content="Hello",
+            ),
+            AssistantMessage(
+                role="assistant",
+                content="World",
+            ),
+            AssistantMessage(
+                role="assistant",
+                content="Test",
+            ),
         ]
 
         # Should not raise exceptions
@@ -413,14 +404,14 @@ class TestThoughtSignatureConversion:
 
         # Step 2: Build conversation history like the real application does
         messages = [
-            {
-                "role": "user",
-                "content": "What's the weather in Paris?",
-            },
-            {
-                "role": "assistant",
-                "content": "I'll check the weather for you.",
-                "tool_calls": [
+            UserMessage(
+                role="user",
+                content="What's the weather in Paris?",
+            ),
+            AssistantMessage(
+                role="assistant",
+                content="I'll check the weather for you.",
+                tool_calls=[
                     ToolCallItem(
                         id=tool_call.id,
                         type="function",
@@ -431,12 +422,13 @@ class TestThoughtSignatureConversion:
                         provider_metadata=tool_call.provider_metadata,
                     )
                 ],
-            },
-            {
-                "role": "tool",
-                "name": "get_weather",
-                "content": '{"temperature": 72, "condition": "sunny"}',
-            },
+            ),
+            ToolMessage(
+                role="tool",
+                tool_call_id=tool_call.id,
+                name="get_weather",
+                content='{"temperature": 72, "condition": "sunny"}',
+            ),
         ]
 
         # Step 3: Convert back for next API call (this is where the bug manifests)

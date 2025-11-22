@@ -14,9 +14,11 @@ from typing import TYPE_CHECKING, Any, cast
 
 import telegramify_markdown
 
+from family_assistant.llm.content_parts import text_content
 from family_assistant.tools.types import ToolAttachment, ToolResult
 
 if TYPE_CHECKING:
+    from family_assistant.llm.content_parts import ContentPartDict
     from family_assistant.tools.types import ToolExecutionContext
 
 
@@ -231,7 +233,7 @@ async def delegate_to_service_tool(
                 )
 
     # Process attachments if provided
-    content_parts = [{"type": "text", "text": user_request}]
+    content_parts: list[ContentPartDict] = [text_content(user_request)]
 
     if attachment_ids:
         if not exec_context.attachment_registry:

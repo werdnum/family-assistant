@@ -136,7 +136,7 @@
               ]
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "GfceaePcHuPensEPo9Tj4Qo"
+            "responseId": "4z8habaMAvConsEPwoCFyQ0"
           },
           {
             "candidates": [
@@ -144,7 +144,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": " is 18°C and sunny."
+                      "text": " is 18°C and sunny. \n"
                     }
                   ],
                   "role": "model"
@@ -165,7 +165,7 @@
               ]
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "GfceaePcHuPensEPo9Tj4Qo"
+            "responseId": "4z8habaMAvConsEPwoCFyQ0"
           }
         ],
         "byte_segments": [],
@@ -198,7 +198,7 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "GfceaePcHuPensEPo9Tj4Qo",
+            "response_id": "4z8habaMAvConsEPwoCFyQ0",
             "usage_metadata": {
               "candidates_token_count": 4,
               "prompt_token_count": 152,
@@ -230,7 +230,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": " is 18°C and sunny."
+                      "text": " is 18°C and sunny. \n"
                     }
                   ],
                   "role": "model"
@@ -240,7 +240,7 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "GfceaePcHuPensEPo9Tj4Qo",
+            "response_id": "4z8habaMAvConsEPwoCFyQ0",
             "usage_metadata": {
               "candidates_token_count": 13,
               "prompt_token_count": 152,

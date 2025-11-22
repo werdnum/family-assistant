@@ -6,19 +6,24 @@ To record new cassettes, run with a valid GEMINI_API_KEY.
 
 import base64
 import os
+from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
 
+from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.google_types import GeminiProviderMetadata
-from family_assistant.llm.messages import message_to_json_dict
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from tests.factories.messages import (
+    create_assistant_message,
     create_tool_message,
     create_user_message,
 )
 
 from .vcr_helpers import sanitize_response
+
+if TYPE_CHECKING:
+    from family_assistant.llm.messages import LLMMessage
 
 
 @pytest_asyncio.fixture
@@ -129,26 +134,24 @@ async def test_thought_signature_reconstruction(
     # NEW format: thought_signature is on each tool call, not at message level
     # Thought signatures are stored as base64-encoded strings
     mock_signature = base64.b64encode(b"test_signature_data").decode("ascii")
-    messages = [
-        create_user_message("First message"),
-        {
-            "role": "assistant",
-            "content": "I'll help with that",
-            "tool_calls": [
-                {
-                    "id": "call_123",
-                    "type": "function",
-                    "function": {
-                        "name": "get_weather",
-                        "arguments": '{"location": "Paris"}',
-                    },
-                    "provider_metadata": {
-                        "provider": "google",
-                        "thought_signature": mock_signature,
-                    },
-                }
-            ],
+    tool_call = ToolCallItem(
+        id="call_123",
+        type="function",
+        function=ToolCallFunction(
+            name="get_weather",
+            arguments='{"location": "Paris"}',
+        ),
+        provider_metadata={
+            "provider": "google",
+            "thought_signature": mock_signature,
         },
+    )
+    messages: list[LLMMessage] = [
+        create_user_message("First message"),
+        create_assistant_message(
+            content="I'll help with that",
+            tool_calls=[tool_call],
+        ),
         create_tool_message(
             tool_call_id="call_123",
             content="Weather in Paris: 15°C, cloudy",
@@ -157,14 +160,7 @@ async def test_thought_signature_reconstruction(
     ]
 
     # Act: Convert messages to Gemini format (this should reconstruct thought signatures)
-    # Convert Pydantic message objects to dicts
-    message_dicts = [
-        message_to_json_dict(msg) if hasattr(msg, "model_dump") else msg
-        for msg in messages
-    ]
-    genai_contents = google_client_thinking._convert_messages_to_genai_format(
-        message_dicts
-    )
+    genai_contents = google_client_thinking._convert_messages_to_genai_format(messages)
 
     # Assert: Verify signature was reconstructed in the assistant message
     # genai_contents now contains types.Content objects (Pydantic models)
@@ -272,30 +268,16 @@ async def test_thought_signature_multiturn_with_api(
 
     # Build conversation history including the response with thought signatures
     # This simulates what would be stored in the database
-    conversation_history = initial_messages.copy()
+    conversation_history: list[LLMMessage] = list(initial_messages)
 
     # Add the assistant's response with tool calls
     # NEW format: provider_metadata is on each tool call, not at message level
-    assistant_message = {
-        "role": "assistant",
-        "content": response1.content or "",
-        "tool_calls": [
-            {
-                "id": tc.id,
-                "type": "function",
-                "function": {
-                    "name": tc.function.name,
-                    "arguments": tc.function.arguments,
-                },
-                "provider_metadata": tc.provider_metadata,  # Metadata on tool call
-            }
-            for tc in response1.tool_calls
-        ]
-        if response1.tool_calls
-        else None,
-    }
+    assistant_message = create_assistant_message(
+        content=response1.content or "",
+        tool_calls=response1.tool_calls,
+    )
 
-    conversation_history.append(assistant_message)  # type: ignore[arg-type]
+    conversation_history.append(assistant_message)
 
     # Add tool response
     tool_msg = create_tool_message(
@@ -310,13 +292,8 @@ async def test_thought_signature_multiturn_with_api(
 
     # This is the critical test: send messages with reconstructed thought signatures
     # If we used the wrong field name, the API would reject this with validation errors
-    # Convert any Pydantic message objects to dicts for the API
-    conversation_history_dicts = [
-        message_to_json_dict(msg) if hasattr(msg, "model_dump") else msg
-        for msg in conversation_history
-    ]
     response2 = await google_client_thinking.generate_response(
-        messages=conversation_history_dicts,  # type: ignore[arg-type]
+        messages=conversation_history,
         tools=tools,
     )
 

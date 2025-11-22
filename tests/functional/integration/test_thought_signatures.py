@@ -1,6 +1,5 @@
 """Functional tests for thought signature round-trip through ProcessingService."""
 
-import base64
 from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +16,11 @@ from family_assistant.llm import (
     ToolCallFunction,
     ToolCallItem,
 )
+from family_assistant.llm.google_types import (
+    GeminiProviderMetadata,
+    GeminiThoughtSignature,
+)
+from family_assistant.llm.messages import UserMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import get_db_context
 from family_assistant.tools.types import ToolResult
@@ -76,7 +80,10 @@ class MockLLMWithThoughtSignatures:
 
         # First call: Return response with tool call and thought signature
         if self.call_count == 1:
-            mock_signature = base64.b64encode(b"mock_thought_123").decode("ascii")
+            # Create a proper GeminiThoughtSignature object
+            thought_sig = GeminiThoughtSignature(b"mock_thought_123")
+            provider_metadata = GeminiProviderMetadata(thought_signature=thought_sig)
+
             return LLMOutput(
                 content="I'll use the test tool",
                 tool_calls=[
@@ -87,12 +94,7 @@ class MockLLMWithThoughtSignatures:
                             name="test_tool",
                             arguments='{"query": "test"}',
                         ),
-                        provider_metadata={
-                            "provider": "google",
-                            "thought_signatures": [
-                                {"part_index": 0, "signature": mock_signature}
-                            ],
-                        },
+                        provider_metadata=provider_metadata,
                     )
                 ],
             )
@@ -148,13 +150,9 @@ class MockLLMWithThoughtSignatures:
     def create_attachment_injection(
         self,
         attachment: "ToolAttachment",
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> "UserMessage":
         """Mock implementation - not needed for these tests."""
-        return {
-            "role": "user",
-            "content": "[System: File from previous tool response]",
-        }
+        return UserMessage(content="[System: File from previous tool response]")
 
 
 class MockLLMWithThoughtSignaturesNoToolCalls:
@@ -168,13 +166,13 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Generate mock response with thought signature but no tool calls."""
-        mock_signature = base64.b64encode(b"mock_thought_456").decode("ascii")
+        # Create a proper GeminiThoughtSignature object
+        thought_sig = GeminiThoughtSignature(b"mock_thought_456")
+        provider_metadata = GeminiProviderMetadata(thought_signature=thought_sig)
+
         return LLMOutput(
             content="Here's my response",
-            provider_metadata={
-                "provider": "google",
-                "thought_signatures": [{"part_index": 0, "signature": mock_signature}],
-            },
+            provider_metadata=provider_metadata,
         )
 
     def generate_response_stream(
@@ -221,13 +219,9 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
     def create_attachment_injection(
         self,
         attachment: "ToolAttachment",
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> "UserMessage":
         """Mock implementation - not needed for these tests."""
-        return {
-            "role": "user",
-            "content": "[System: File from previous tool response]",
-        }
+        return UserMessage(content="[System: File from previous tool response]")
 
 
 @pytest.mark.asyncio
@@ -287,14 +281,14 @@ async def test_thought_signatures_persist_and_roundtrip(
         )
         assert assistant_msg is not None
         assert assistant_msg.provider_metadata is not None
-        assert assistant_msg.provider_metadata["provider"] == "google"
-        assert "thought_signatures" in assistant_msg.provider_metadata
+        # provider_metadata is now a GeminiProviderMetadata object, not a dict
+        assert isinstance(assistant_msg.provider_metadata, GeminiProviderMetadata)
+        assert assistant_msg.provider_metadata.thought_signature is not None
 
         # Verify signature content
-        signatures = assistant_msg.provider_metadata["thought_signatures"]
-        assert len(signatures) == 1
-        decoded_sig = base64.b64decode(signatures[0]["signature"])
-        assert decoded_sig == b"mock_thought_123"
+        thought_sig = assistant_msg.provider_metadata.thought_signature
+        # GeminiThoughtSignature stores raw bytes, use to_google_format() to retrieve
+        assert thought_sig.to_google_format() == b"mock_thought_123"
 
     # Assert: Verify thought signature round-trip happened (2 LLM calls made)
     # The first call returns a message with tool calls and provider_metadata
@@ -362,11 +356,11 @@ async def test_thought_signatures_without_tool_calls(
         )
         assert assistant_msg is not None
         assert assistant_msg.provider_metadata is not None
-        assert assistant_msg.provider_metadata["provider"] == "google"
-        assert "thought_signatures" in assistant_msg.provider_metadata
+        # provider_metadata is now a GeminiProviderMetadata object, not a dict
+        assert isinstance(assistant_msg.provider_metadata, GeminiProviderMetadata)
+        assert assistant_msg.provider_metadata.thought_signature is not None
 
         # Verify signature content
-        signatures = assistant_msg.provider_metadata["thought_signatures"]
-        assert len(signatures) == 1
-        decoded_sig = base64.b64decode(signatures[0]["signature"])
-        assert decoded_sig == b"mock_thought_456"
+        thought_sig = assistant_msg.provider_metadata.thought_signature
+        # GeminiThoughtSignature stores raw bytes, use to_google_format() to retrieve
+        assert thought_sig.to_google_format() == b"mock_thought_456"

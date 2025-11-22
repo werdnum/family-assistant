@@ -53,7 +53,6 @@ import pytest_asyncio
 
 from family_assistant.llm import LLMInterface, LLMStreamEvent
 from family_assistant.llm.factory import LLMClientFactory
-from family_assistant.llm.messages import message_to_json_dict
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from tests.factories.messages import (
     create_assistant_message,
@@ -946,8 +945,7 @@ async def test_google_streaming_with_multiturns_and_tool_calls(
     ]
 
     # Capture what gets sent to the API by inspecting _convert_messages_to_genai_format
-    message_dicts = [message_to_json_dict(msg) for msg in messages]
-    converted = client._convert_messages_to_genai_format(message_dicts)
+    converted = client._convert_messages_to_genai_format(messages)
 
     # Check if using camelCase (bug) or snake_case (correct)
     converted_json = json.dumps(converted, default=str)
