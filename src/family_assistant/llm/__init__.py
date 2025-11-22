@@ -9,9 +9,9 @@ import io
 import json
 import logging
 import os
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field  # Added asdict
-from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
 
 import aiofiles  # type: ignore[import-untyped] # For async file operations
 import litellm  # Import litellm
@@ -57,6 +57,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class ParsedChoice(TypedDict, total=False):
+    delta: Mapping[str, object]
+
+
+class ParsedSSEChunk(TypedDict, total=False):
+    choices: list[ParsedChoice]
+
+
+StreamingMetadata = dict[str, object]
+
+
 class BaseLLMClient:
     """Base class providing common functionality for LLM clients"""
 
@@ -68,8 +79,7 @@ class BaseLLMClient:
     def create_attachment_injection(
         self,
         attachment: "ToolAttachment",
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> "UserMessage":
         """Create a message to inject attachment content after tool response
 
         For JSON/text attachments:
@@ -102,10 +112,7 @@ class BaseLLMClient:
                     if attachment.attachment_id:
                         content += f"[Attachment ID: {attachment.attachment_id}]\n"
                     content += f"[Content ({content_size} bytes)]:\n{decoded_content}"
-                    return {
-                        "role": "user",
-                        "content": content,
-                    }
+                    return UserMessage(content=content)
                 except UnicodeDecodeError:
                     # Fall through to default handling
                     pass
@@ -136,10 +143,7 @@ class BaseLLMClient:
                             content += "\nNote: Use the 'jq' tool to query this data symbolically. "
                             content += f"Reference attachment ID {attachment.attachment_id} in tool calls."
 
-                            return {
-                                "role": "user",
-                                "content": content,
-                            }
+                            return UserMessage(content=content)
                         except json.JSONDecodeError:
                             # Not valid JSON, fall through to text handling
                             pass
@@ -156,10 +160,7 @@ class BaseLLMClient:
                     content += f"[MIME type: {attachment.mime_type}]\n"
                     content += "\nNote: Content too large for inline display. Use tools to access this data."
 
-                    return {
-                        "role": "user",
-                        "content": content,
-                    }
+                    return UserMessage(content=content)
                 except UnicodeDecodeError:
                     # Fall through to default handling
                     pass
@@ -170,10 +171,7 @@ class BaseLLMClient:
         )
         if attachment.attachment_id:
             content += f"\n[Attachment ID: {attachment.attachment_id}]"
-        return {
-            "role": "user",
-            "content": content,
-        }
+        return UserMessage(content=content)
 
     def _process_tool_messages(
         self,
@@ -212,9 +210,8 @@ class BaseLLMClient:
             # Inject attachments after tool message if needed
             if pending_attachments and not self._supports_multimodal_tools():
                 for attachment in pending_attachments:
-                    injection_dict = self.create_attachment_injection(attachment)
-                    # Convert dict to UserMessage
-                    injection_msg = UserMessage(content=injection_dict["content"])
+                    injection_msg = self.create_attachment_injection(attachment)
+                    # create_attachment_injection now returns proper UserMessage
                     processed.append(injection_msg)
                 pending_attachments = []
 
@@ -266,69 +263,45 @@ def _truncate_content(content: str, max_length: int = 500) -> str:
     return content[:max_length] + f"...[truncated {len(content) - max_length} chars]"
 
 
-def _format_tool_calls_for_debug(tool_calls: list | None) -> str:
-    """Format tool calls for debug logging."""
+def _format_tool_calls_for_debug(tool_calls: Sequence[ToolCallItem] | None) -> str:
+    """Format typed tool calls for debug logging."""
     if not tool_calls:
         return ""
 
-    formatted_calls = []
-    for call in tool_calls:
-        if isinstance(call, dict):
-            name = call.get("function", {}).get("name", call.get("name", "unknown"))
-            call_id = call.get("id", "no_id")
-            formatted_calls.append(f"{name}(id={call_id})")
-        else:
-            formatted_calls.append(str(call))
-
+    formatted_calls = [f"{call.function.name}(id={call.id})" for call in tool_calls]
     return " + tool_call(" + ", ".join(formatted_calls) + ")"
 
 
 def _format_messages_for_debug(
-    # ast-grep-ignore: no-dict-any - Backward compatibility: must accept both LLMMessage and dict formats from various callers
-    messages: list[LLMMessage] | list[dict[str, Any]],
-    # ast-grep-ignore: no-dict-any - LiteLLM SDK uses dict format for tool definitions
-    tools: list[dict[str, Any]] | None = None,
+    messages: Sequence[LLMMessage],
+    tools: Sequence[dict[str, object]] | None = None,
     tool_choice: str | None = None,
 ) -> str:
-    """Format messages for debug logging.
-
-    Accepts both typed LLMMessage objects and dict representations.
-    """
+    """Format typed messages for debug logging."""
     lines = [f"=== LLM Request ({len(messages)} messages) ==="]
 
     for i, msg in enumerate(messages):
-        # Handle both typed messages and dicts
-        if isinstance(msg, dict):
-            role = msg.get("role", "unknown")
-            content = msg.get("content", "")
-        else:
-            role = msg.role
-            content = msg.content if hasattr(msg, "content") else ""
+        role = msg.role
+        content = msg.content
 
-        # Check for parts field (used by some providers like Gemini)
-        parts_field = None
-        if isinstance(msg, dict):
-            parts_field = msg.get("parts")
-        elif isinstance(msg, UserMessage):
-            parts_field = msg.parts
-
-        if parts_field and not content and isinstance(parts_field, list):
-            parts_strs = []
+        parts_field = msg.parts if isinstance(msg, UserMessage) else None
+        if parts_field and not content:
+            part_descriptions: list[str] = []
             for part in parts_field:
-                if isinstance(part, dict):
-                    if "text" in part:
-                        parts_strs.append(_truncate_content(part["text"]))
-                    elif "inline_data" in part:
-                        inline = part["inline_data"]
-                        mime = inline.get("mime_type", "unknown")
-                        data_size = len(inline.get("data", b""))
-                        parts_strs.append(f"[INLINE_DATA: {mime}, {data_size} bytes]")
-                    else:
-                        parts_strs.append(f"[PART: {list(part.keys())}]")
+                if isinstance(part, dict) and "text" in part:
+                    part_descriptions.append(_truncate_content(str(part["text"])))
+                elif isinstance(part, dict) and "inline_data" in part:
+                    inline = part["inline_data"]
+                    mime = inline.get("mime_type", "unknown")
+                    data_size = len(inline.get("data", b""))
+                    part_descriptions.append(
+                        f"[INLINE_DATA: {mime}, {data_size} bytes]"
+                    )
                 else:
-                    # types.Part object or other
-                    parts_strs.append(f"[{type(part).__name__}]")
-            content = " + ".join(parts_strs) if parts_strs else "[empty parts]"
+                    part_descriptions.append(f"[{type(part).__name__}]")
+            content = (
+                " + ".join(part_descriptions) if part_descriptions else "[empty parts]"
+            )
 
         # Handle different content types
         if isinstance(content, list):
@@ -351,34 +324,18 @@ def _format_messages_for_debug(
             content_str = _truncate_content(str(content))
 
         # Format tool calls if present
-        tool_calls = None
-        if isinstance(msg, dict):
-            tool_calls = msg.get("tool_calls")
-        elif isinstance(msg, AssistantMessage):
-            tool_calls = msg.tool_calls
-
+        tool_calls = msg.tool_calls if isinstance(msg, AssistantMessage) else None
         tool_calls_str = _format_tool_calls_for_debug(tool_calls)
 
         # Format tool call info for tool role
         tool_info = ""
-        if role == "tool":
-            if isinstance(msg, dict):
-                tool_call_id = msg.get("tool_call_id", "unknown")
-                name = msg.get("name", "unknown")
-            elif isinstance(msg, ToolMessage):
-                tool_call_id = msg.tool_call_id
-                name = msg.name
-            else:
-                tool_call_id = "unknown"
-                name = "unknown"
-            tool_info = f"({name}, id={tool_call_id})"
+        if role == "tool" and isinstance(msg, ToolMessage):
+            tool_info = f"({msg.name}, id={msg.tool_call_id})"
 
         # Check for transient_attachments field (for typed messages)
         attachment_info = ""
         attachments = None
-        if isinstance(msg, dict) and "_attachments" in msg:
-            attachments = msg["_attachments"]
-        elif isinstance(msg, ToolMessage) and hasattr(msg, "transient_attachments"):
+        if isinstance(msg, ToolMessage) and hasattr(msg, "transient_attachments"):
             attachments = msg.transient_attachments
             if attachments:
                 att_count = len(attachments)
@@ -397,17 +354,102 @@ def _format_messages_for_debug(
         line = f'  [{i}] {role}{tool_info}: "{content_str}"{tool_calls_str}{attachment_info}'
         lines.append(line)
 
-    # Add tools information
+    # Include tool info header if provided
     if tools:
-        tool_names = [tool.get("function", {}).get("name", "unknown") for tool in tools]
-        lines.append(f"Tools: {', '.join(tool_names)} ({len(tools)} available)")
-    else:
-        lines.append("Tools: none")
-
+        lines.append("\nTools:")
+        for tool in tools:
+            lines.append(f"  - {tool}")
     if tool_choice:
         lines.append(f"Tool choice: {tool_choice}")
 
-    lines.append("=" * 50)
+    return "\n".join(lines)
+
+
+def _format_serialized_messages_for_debug(
+    messages: Sequence[dict[str, object]],
+    tools: Sequence[dict[str, object]] | None = None,
+    tool_choice: str | None = None,
+) -> str:
+    """Format already-serialized messages (dict form) for debug logging."""
+    lines = [f"=== LLM Request ({len(messages)} messages) ==="]
+
+    for i, msg in enumerate(messages):
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+
+        parts_field = msg.get("parts")
+        if parts_field and not content and isinstance(parts_field, list):
+            parts_strs = []
+            for part in parts_field:
+                if isinstance(part, dict):
+                    if "text" in part:
+                        parts_strs.append(_truncate_content(part["text"]))
+                    elif "inline_data" in part:
+                        inline = part["inline_data"]
+                        mime = inline.get("mime_type", "unknown")
+                        data_size = len(inline.get("data", b""))
+                        parts_strs.append(f"[INLINE_DATA: {mime}, {data_size} bytes]")
+                    else:
+                        parts_strs.append(f"[PART: {list(part.keys())}]")
+                else:
+                    parts_strs.append(f"[{type(part).__name__}]")
+            content = " + ".join(parts_strs) if parts_strs else "[empty parts]"
+
+        if isinstance(content, list):
+            content_parts = []
+            for part in content:
+                if isinstance(part, dict):
+                    if part.get("type") == "text":
+                        text = part.get("text", "")
+                        content_parts.append(_truncate_content(text))
+                    elif part.get("type") == "image_url":
+                        url = part.get("image_url", {}).get("url", "")
+                        content_parts.append(_truncate_content(url))
+                    else:
+                        content_parts.append(f"[{part.get('type', 'unknown')}]")
+                else:
+                    content_parts.append(_truncate_content(str(part)))
+            content_str = " + ".join(content_parts)
+        else:
+            content_str = _truncate_content(str(content))
+
+        tool_calls_str = ""
+        tool_calls = msg.get("tool_calls") if isinstance(msg, dict) else None
+        if isinstance(tool_calls, list):
+            formatted_calls = []
+            for call in tool_calls:
+                if isinstance(call, dict):
+                    name = ""
+                    function_block = call.get("function")
+                    if isinstance(function_block, dict):
+                        name = str(function_block.get("name", ""))
+                    call_id = str(call.get("id", ""))
+                    formatted_calls.append(f"{name}(id={call_id})")
+            if formatted_calls:
+                tool_calls_str = " + tool_call(" + ", ".join(formatted_calls) + ")"
+
+        tool_info = ""
+        if role == "tool":
+            tool_call_id = msg.get("tool_call_id", "unknown")
+            name = msg.get("name", "unknown")
+            tool_info = f"({name}, id={tool_call_id})"
+
+        attachment_info = ""
+        attachments = msg.get("_attachments") if isinstance(msg, dict) else None
+        if isinstance(attachments, Sequence):
+            attachment_info = f" [_attachments: {len(attachments)}]"
+        elif attachments:
+            attachment_info = " [_attachments]"
+
+        line = f'  [{i}] {role}{tool_info}: "{content_str}"{tool_calls_str}{attachment_info}'
+        lines.append(line)
+
+    if tools:
+        lines.append("\nTools:")
+        for tool in tools:
+            lines.append(f"  - {tool}")
+    if tool_choice:
+        lines.append(f"Tool choice: {tool_choice}")
 
     return "\n".join(lines)
 
@@ -558,8 +600,7 @@ class LLMInterface(Protocol):
     def create_attachment_injection(
         self,
         attachment: "ToolAttachment",
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> "UserMessage":
         """
         Create a message to inject attachment content into the conversation.
 
@@ -575,7 +616,7 @@ class LLMInterface(Protocol):
             attachment: The attachment to inject
 
         Returns:
-            A dictionary representing a user message with the attachment content
+            A UserMessage containing the formatted attachment content
         """
         ...
 
@@ -692,10 +733,8 @@ class LiteLLMClient(BaseLLMClient):
                         # Update the text content to indicate file content follows in next message
                         content[0]["text"] += "\n[File content in following message]"
                         # Fall back to base class injection method
-                        injection_dict = self.create_attachment_injection(attachment)
-                        injection_msgs.append(
-                            UserMessage(content=injection_dict["content"])
-                        )
+                        injection_msg = self.create_attachment_injection(attachment)
+                        injection_msgs.append(injection_msg)
                 # Create a new ToolMessage with the multimodal content and no attachments
                 updated_msg = original_msg.model_copy(
                     update={
@@ -776,7 +815,7 @@ class LiteLLMClient(BaseLLMClient):
         if DEBUG_LLM_MESSAGES_ENABLED:
             logger.info(
                 f"LLM Request to {model_id}:\n"
-                f"{_format_messages_for_debug(message_dicts, tools, tool_choice)}"
+                f"{_format_serialized_messages_for_debug(message_dicts, tools, tool_choice)}"
             )
 
         if tools:
@@ -1244,7 +1283,7 @@ class LiteLLMClient(BaseLLMClient):
             if DEBUG_LLM_MESSAGES_ENABLED:
                 logger.info(
                     f"LLM Streaming Request to {self.model}:\n"
-                    f"{_format_messages_for_debug(message_dicts, tools, tool_choice)}"
+                    f"{_format_serialized_messages_for_debug(message_dicts, tools, tool_choice)}"
                 )
 
             logger.debug(
@@ -1258,67 +1297,91 @@ class LiteLLMClient(BaseLLMClient):
             # Track current tool calls being built
             # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             current_tool_calls: dict[int, dict[str, Any]] = {}
-            chunk = None  # Initialize for pylint
+            chunk: Any | None = None
+            last_chunk_with_usage: Any | None = None
+            content_emitted = False
 
             async for chunk in stream:  # type: ignore[misc]
                 if not chunk or not chunk.choices:
                     continue
 
+                try:
+                    logger.debug(
+                        "Raw streaming chunk choice dump: %s",
+                        chunk.choices[0].model_dump()
+                        if hasattr(chunk.choices[0], "model_dump")
+                        else chunk.choices[0],
+                    )
+                except Exception:
+                    logger.debug("Could not dump streaming chunk choice", exc_info=True)
+
                 delta = chunk.choices[0].delta
                 if not delta:
                     continue
 
-                # Stream content chunks
-                if hasattr(delta, "content") and delta.content:
-                    yield LLMStreamEvent(type="content", content=delta.content)
+                last_chunk_with_usage = chunk
 
-                # Handle tool calls
-                if hasattr(delta, "tool_calls") and delta.tool_calls:
-                    for tc_delta in delta.tool_calls:
-                        # LiteLLM should always provide an index for tool calls
-                        if not hasattr(tc_delta, "index"):
-                            logger.warning(
-                                "Tool call delta missing index attribute, defaulting to 0. "
-                                "This may cause issues with multiple tool calls."
-                            )
-                            idx = 0
-                        else:
-                            idx = tc_delta.index
+                logger.debug(
+                    "Streaming delta payload: %s (type=%s)", delta, type(delta)
+                )
 
-                        # Initialize new tool call
-                        if idx not in current_tool_calls:
-                            current_tool_calls[idx] = {
-                                "id": tc_delta.id if hasattr(tc_delta, "id") else None,
-                                "type": tc_delta.type
-                                if hasattr(tc_delta, "type")
-                                else "function",
-                                "function": {"name": "", "arguments": ""},
-                            }
+                # Extract content
+                delta_content = delta.content if hasattr(delta, "content") else None
+                if delta_content is None:
+                    logger.debug(
+                        "Delta content missing; available attributes: %s",
+                        {
+                            attr: getattr(delta, attr)
+                            for attr in dir(delta)
+                            if not attr.startswith("_")
+                        },
+                    )
 
-                        # Update tool call info
-                        tc_data = current_tool_calls[idx]
-                        if hasattr(tc_delta, "id") and tc_delta.id:
-                            tc_data["id"] = tc_delta.id
-                        if hasattr(tc_delta, "type") and tc_delta.type:
-                            tc_data["type"] = tc_delta.type
+                if delta_content:
+                    logger.debug("Streaming content chunk: %s", delta_content)
+                    yield LLMStreamEvent(type="content", content=delta_content)
+                    content_emitted = True
 
-                        # Accumulate function info
-                        if hasattr(tc_delta, "function") and tc_delta.function:
-                            if (
-                                hasattr(tc_delta.function, "name")
-                                and tc_delta.function.name
-                            ):
-                                tc_data["function"]["name"] = tc_delta.function.name
-                            if (
-                                hasattr(tc_delta.function, "arguments")
-                                and tc_delta.function.arguments
-                            ):
-                                tc_data["function"]["arguments"] += (
-                                    tc_delta.function.arguments
-                                )
+                # Extract tool calls
+                tool_calls_delta = (
+                    delta.tool_calls if hasattr(delta, "tool_calls") else None
+                ) or []
 
-                        # Continue accumulating tool call data
-                        # We'll emit complete tool calls after the stream ends
+                for tc_delta in tool_calls_delta:
+                    if not hasattr(tc_delta, "index"):
+                        logger.warning(
+                            "Tool call delta missing index attribute, defaulting to 0. "
+                            "This may cause issues with multiple tool calls."
+                        )
+                        idx = 0
+                    else:
+                        idx = tc_delta.index
+                    tc_id = tc_delta.id if hasattr(tc_delta, "id") else None
+                    tc_type = tc_delta.type if hasattr(tc_delta, "type") else "function"
+                    func_name = ""
+                    func_args = ""
+                    if hasattr(tc_delta, "function") and tc_delta.function:
+                        if getattr(tc_delta.function, "name", None):
+                            func_name = tc_delta.function.name
+                        if getattr(tc_delta.function, "arguments", None):
+                            func_args = tc_delta.function.arguments
+
+                    if idx not in current_tool_calls:
+                        current_tool_calls[idx] = {
+                            "id": tc_id,
+                            "type": tc_type,
+                            "function": {"name": "", "arguments": ""},
+                        }
+
+                    tc_data = current_tool_calls[idx]
+                    if tc_id:
+                        tc_data["id"] = tc_id
+                    if tc_type:
+                        tc_data["type"] = tc_type
+                    if func_name:
+                        tc_data["function"]["name"] = func_name
+                    if func_args:
+                        tc_data["function"]["arguments"] += func_args
 
             # Emit any remaining tool calls
             for tc_data in current_tool_calls.values():
@@ -1337,13 +1400,53 @@ class LiteLLMClient(BaseLLMClient):
                         tool_call_id=tc_data["id"],
                     )
 
-            # Extract usage info if available
-            metadata = {}
-            if chunk and hasattr(chunk, "usage") and chunk.usage:
+            # If we never emitted content (e.g., provider returned only a terminal chunk),
+            # fall back to a non-streaming completion to preserve expected behaviour.
+            if not content_emitted:
                 try:
-                    metadata["reasoning_info"] = chunk.usage.model_dump(mode="json")
+                    fallback_output = await self._attempt_completion(
+                        model_id=self.model,
+                        messages=list(messages),
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        specific_model_params=self.model_parameters,
+                    )
+                    if fallback_output.content:
+                        yield LLMStreamEvent(
+                            type="content", content=fallback_output.content
+                        )
+                        content_emitted = True
+                    if fallback_output.tool_calls:
+                        for tc in fallback_output.tool_calls:
+                            yield LLMStreamEvent(
+                                type="tool_call",
+                                tool_call=tc,
+                                tool_call_id=tc.id,
+                            )
+                    if fallback_output.reasoning_info:
+                        yield LLMStreamEvent(
+                            type="done",
+                            metadata={"reasoning_info": fallback_output.reasoning_info},
+                        )
+                        return
+                except Exception as exc:  # pragma: no cover - best effort fallback
+                    logger.debug("Fallback non-streaming completion failed: %s", exc)
+
+            # Extract usage info if available
+            metadata: StreamingMetadata = {}
+            if (
+                last_chunk_with_usage
+                and hasattr(last_chunk_with_usage, "usage")
+                and last_chunk_with_usage.usage
+            ):
+                try:
+                    metadata["reasoning_info"] = last_chunk_with_usage.usage.model_dump(
+                        mode="json"
+                    )
                 except Exception as e:
-                    logger.warning(f"Could not serialize streaming usage data: {e}")
+                    logger.warning(
+                        f"Could not serialize streaming usage data: {e}", exc_info=False
+                    )
 
             # Signal completion
             yield LLMStreamEvent(type="done", metadata=metadata)

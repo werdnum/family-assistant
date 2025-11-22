@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 # Import necessary components from the application
 from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.llm.messages import ContentPartDict, text_content
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
@@ -391,7 +392,7 @@ async def test_mcp_time_conversion_stdio(db_engine: AsyncEngine) -> None:
     # --- Execute the Request ---
     logger.info("--- Sending request requiring MCP tool call ---")
     user_request_text = f"Please convert {SOURCE_TIME} New York time ({SOURCE_TZ}) to Los Angeles time ({TARGET_TZ})"
-    user_request_trigger = [{"type": "text", "text": user_request_text}]
+    user_request_trigger: list[ContentPartDict] = [text_content(user_request_text)]
     user_message_id = 101
 
     async with DatabaseContext(engine=db_engine) as db_context:
@@ -588,7 +589,7 @@ async def test_mcp_time_conversion_sse(
     logger.info("--- Sending request requiring MCP tool call (SSE) ---")
     user_request_text = f"Please convert {SOURCE_TIME} New York time ({SOURCE_TZ}) to Los Angeles time ({TARGET_TZ}) using SSE"
     # Revert to trigger_content_parts for generate_llm_response_for_chat
-    user_request_trigger = [
+    user_request_trigger: list[ContentPartDict] = [
         {"type": "text", "text": user_request_text}  # Correct input format
     ]
 

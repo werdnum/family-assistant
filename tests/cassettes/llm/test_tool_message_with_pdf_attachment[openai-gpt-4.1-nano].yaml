@@ -1,0 +1,566 @@
+interactions:
+  - request:
+      body: '{"messages":[{"role":"user","content":"Find me a document about software management"},{"role":"assistant","content":"I''ll search for a document about software management.","tool_calls":[{"id":"call_456","type":"function","function":{"name":"search_documents","arguments":"{\"query\": \"software management\"}"}}]},{"role":"tool","tool_call_id":"call_456","content":"Found a PDF document about software management practices\n[File content in following message]","name":"test_tool"},{"role":"user","content":[{"type":"text","text":"[System: File from previous tool response]"},{"type":"text","text":"[PDF Document: Document from search results (0.0MB) - Content cannot be displayed but was provided as context from the previous tool response]"}]},{"role":"user","content":"What is this document about? What are the main topics it covers?"}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '862'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//jFVNc9tGDL3rV6C81PFIjuVv+ZZISapO3fFXmkOd0ayWIIl6CbCLpRw1
+          4//eWVKipFad6UUc4QF4bwEs9nsPIKE0uYbEFibYsnKDMX6s3n+6uvk8ulvYn+fPd5/pr2+/nl7w
+          T8OTedKPETL/A21YRx1ZKSuHgYRb2Ho0AWPW4eXF6eXxaHR13gClpOhiWF6FwdnRcMCGZXByfHI+
+          OD4bDM9W4YWQRU2u4fceAMD35jcK5RS/Jddw3F9bSlQ1OSbXnRNA4sVFS2JUSYPhkPQ3oBUOyI32
+          90YxBWEIBYKi8bYAj1q7oP3GloqtS+QAFfpgiBWCgEoWXoxHKA2bHFvcGxui5iP4UpBDmEIq/GOA
+          wiywSZXVzsGKGyRrbLeTj/2OQ6OQfbnDsiJrnFuClQV6CFKRVdDaFmD0+omfeHgEh4dTDl7S2sY2
+          RJ0P61w3Xa7DwycGgAFMMCOmxtNwClRW4oNhiyv8kxinDdR2mhaokegkEnWJJ7hAJ1Wj8hfK0C6t
+          Q+1Ibp1hJs77kKJSzvHbBfQhoIYVWjlZtsbSUCxRK+WJTyPfrZeoYescQAz7VHTUNxgKScVJTqhw
+          8C4nh314sL4u+/DFBPSZce7NyvseVWpvEYxzYk0sywp5sAWmtSPOm2LM6zTHKDpqO9upxV1tHIUl
+          vFOtfZTfaXlszwkavAkYBa2AsaQIHheEL2vTOkuJwZNtSn4eacbCGeW1N13LxoXhfG9vf0Ov0SsO
+          mxe3Jmv9Pf5Zo8aBFYuqbVcvIsUjmnK7xA2JOGfm0tJ2BPfisB0Oj1oJK83JUdg+WFnWTG0lIYi4
+          huayoYn/muBHtAWvWtTlnnLAPNYp3ZmuD7wgL9zek4Pp5IOue7cejq0Ls75EnRoOxLXU2mUn4bdb
+          5kk3gHAwnr4dT95EuVdR7j3p874iT1PkQNlyPRklBcpN02dP+tycdxQTTFbXe6tzcVnSzojsOsWV
+          lRqfajeeee1MEB83wDo2EkwzWEoNjJhCisGQwxSIlfIirhMPWqGljCwoNmtBIfNS7qy2PlQOjSI4
+          DFAiPLO8/LC9Lz1mtZq4tLl2bgswzNIqbjb11xXy2u1mJ3nlZa7/CE3i6tFi5tGocNzDGqRKGvS1
+          B/C1eQPqnbWeVF7KKsyCPGNDNzy5aPMlm7dng56cn67QIMG4DXB6OervSThrq6dbz0hiTbz7m9DN
+          m2PqlGQL6G0d+99y9uVuj06c/5/0G8BarAKms8pjSnb3yBs3j/FC/JdbV+ZGcKLoF2RxFgh9bEWK
+          mald+2AmutSA5SwjztFXntpXM6tmQzO6nJ8bc2GT3mvvbwAAAP//AwCTMMnIRAgAAA==
+      headers:
+        CF-RAY:
+          - 9a1e756bc885d3ad-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Fri, 21 Nov 2025 07:26:27 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=oM2CFt9wB1zi2Sop0xNOTI5Mo.kNt8y54EfRuKLyyLM-1763709987-1.0.1.1-MD_4js8Eo_Ya6qwlXq047CZXmxzp8PA9DByQczQq1qnDxzMOFgErKBczizrqfiwh.mJWhrHjB5TMH0oQp3Ww7NMcq7FsCvpLmAWdyVTH_lM; path=/; expires=Fri, 21-Nov-25 07:56:27 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=zm85dUZvzYpc8LhvrlXEMoQOuK40KyIyAnO1V5Vh0UA-1763709987723-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '2063'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '2268'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199884'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 34ms
+        x-request-id:
+          - req_b1a92084fc1e4d34bd15435931898fc8
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"Find me a document about software management"},{"role":"assistant","content":"I''ll search for a document about software management.","tool_calls":[{"id":"call_456","type":"function","function":{"name":"search_documents","arguments":"{\"query\": \"software management\"}"}}],"provider_metadata":null},{"role":"tool","tool_call_id":"call_456","content":"Found a PDF document about software management practices\n[File content in following message]","name":"test_tool","error_traceback":null},{"role":"user","content":[{"type":"text","text":"[System: File from previous tool response]"},{"type":"text","text":"[PDF Document: Document from search results (0.0MB) - Content cannot be displayed but was provided as context from the previous tool response]"}]},{"role":"user","content":"What is this document about? What are the main topics it covers?"}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '910'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAA4xVTW8bNxC961dM99LWkIRItvx1c+we3MapG7sogioQKHJ2dyIuhyG5doTA/70Y
+          rqSVHQfoRVhoOPPevPn6NgAoyBTnUOhaJd14O7rEP04vPv7t2bz/fdUsr07P+OYjv794+3lWnxRD
+          8eDlZ9Rp6zXW3HiLidh1Zh1QJZSok5Pjw5Pp8ezwNBsaNmjFrfJpdDSejJxyPJq+mc5Gb45Gk6ON
+          e82kMRbn8O8AAOBb/hWizuDX4hzeDLf/NBijqrA43z0CKAJb+adQMVJMyqVi2Bs1u4Quc3+rIhpg
+          B6lGMKzbBl0CteQ2QeQyPaqA0CinKhTLECiBpRXaNWh+wBBhhWtI7ElHCGglZ0icw3mrnCNXDcHg
+          A1r2XQSD3vK6+1bOQKNI6CinEbjsUX1gUTiO4X7tSSubX26xyEFsdQ2qZ01O29bg+dzN3WQMBwfX
+          LgU2rZaqCKm7beibXUIHB+fw5wOGB8JHQX+s1auJA7qkyMbMmFIEajyHJKTHczcVtF30qz5beEcl
+          wuVaW4Rf7q7eXf4qgLe1ihg3/EW2Ly2FDCPxlV1HiqJTpMoNQbPJIiaMaaPmDwUcz92hcLnttNtL
+          FG4DOU3eYhQKN5hqNmy5Ioy5onBRkcUh3OnQNkP4RyUMpbK2w0g1UgDlvSWtsp5SgO9KNXdHAn+P
+          qtnHlgiXbK1acsjeQuEDW4xDCBg9u0hLspRI/pHXWJaoEz0g6H0/UA27attPGGInS/4Qt5jUCmu2
+          BoOQmWUyzJu63aOu3SZnYXD3Sp1Tfl1yAOlugZRpCWyHQDG2CCkovcp1EAO5llvpxoRVR7Ej0tdo
+          PHfHQuOvVllKa7iIsQ252TtKuajC5jcX20Cu6mX9snFJdeC2qiGuY8JGJdLbZsgxAubu9YE1xoiS
+          +IkgfqC4etHq1wZdonKd+St5HLtPaSNKVKkcNVBcRTAv6OxN8XjuTgXiajN7m+I4A3dJOaOCyQJf
+          74ZEZsvsP972tZSsc+hY5D1Km14+E4ybvf2QEVovUfMgcUyjXmpQ0jK5i2TcUQTFvS7FUHJodoFa
+          b1TKcs3ddQlrbqFWDwjRo6aSNETMqyMCBzDYzX8ZuHm+LNfc/my6ERLQr95ywCF4iyoiWEzQIKwc
+          P/60v4MDlm1Ucghca+2eQTnHnUR5+3/aWJ52+95y5QMv4wvXoiRHsV4EVJGd7PaY2BfZ+jQA+JTv
+          SvvsVBQ+cOPTIvEKM9xketzFK/p71luns9nGmjgp2xsOTyfDVwIuNqLtnaZCK12j6V37O6ZaQ7xn
+          GOyl/T2d12J3qZOr/k/43qA1+oRm4QMa0s9T7p8FlBX3o2c7mTPhIspF0bhIhEFKYbBUre2OcNGN
+          8aIkV2HwgbpLXPrFRJ2dLGdKHeti8DT4DwAA//8DAHAj6L2YCAAA
+      headers:
+        CF-RAY:
+          - 9a20098c9aa335f6-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Fri, 21 Nov 2025 12:02:21 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=e638FNi8k0n8ONwEDRy2d62LiJANBmiJv5im6ts_6k0-1763726541-1.0.1.1-tW7h.4EHkvoP6euy2bJMnSvSzOChfP8OYKPzThaCeivOCD9WvsgpETtRY4EFQ0u7O3OvzEFpWV17N2hkSvdoYLnolKuQEDyBOVGbCdzrcKg; path=/; expires=Fri, 21-Nov-25 12:32:21 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=FKM0DJ0JjSfE9v.LrW701Cp_XAoXsK5eRUCkEhl2M.0-1763726541176-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '2827'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '2935'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199884'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 34ms
+        x-request-id:
+          - req_f385aece54c34abe91a841ea84549182
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"Find me a document about software management"},{"role":"assistant","content":"I''ll search for a document about software management.","tool_calls":[{"id":"call_456","type":"function","function":{"name":"search_documents","arguments":"{\"query\": \"software management\"}"}}],"provider_metadata":null},{"role":"tool","tool_call_id":"call_456","content":"Found a PDF document about software management practices\n[File content in following message]","name":"test_tool","error_traceback":null},{"role":"user","content":[{"type":"text","text":"[System: File from previous tool response]"},{"type":"text","text":"[PDF Document: Document from search results (0.0MB) - Content cannot be displayed but was provided as context from the previous tool response]"}]},{"role":"user","content":"What is this document about? What are the main topics it covers?"}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '910'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//jFTLbhsxDLz7Kwid14btOkmTW9EHGvRSoEAPfcCgJe6uWq2oilw3RpF/
+          LyS7WacPoJc9cMjhkBztjxmA8c7cgLE9qh1SmD+nN6rYvr7Yf3hxl+j96u349PZlt/y2TO+emaZU
+          8O4LWf1VtbA8pEDqOR5hmwmVCuvq6vLJ1fp6c31VgYEdhVLWJZ1vFqt5xMjz9XJ9MV9u5qvNqbxn
+          b0nMDXycAQD8qN8iNDq6MzewbH5FBhLBjszNQxKAyRxKxKCIF8WopplAy1EpVu23CpgSYRbQHhW0
+          J3Bsx4GighfIFMoYoAzCrX7HTDBgxI5KRgM7FHLAEbwKqNdAgNFB7XCnC3gWtOex6+EWLMbICkJU
+          u9AdWoWTFAFua/Tti1cNyGj7BxUCekjeYggHsLynDMrJW4Hgv9IkytGeAqeqO/iW7MEGaiBlLmc6
+          0wwDac+OA3eepIEdiULKaLUsHFrOE+m3EYPXA6DImDFaamBPWTzHKjxzaEAJB7AcAu44YzFAA45S
+          4EPtljJbEimdymIG9GXgwgWiGZWKigV8ip/ibQsHHsueStXeOwJJZH3rLQjZQi3AGRwp+iDQZh4e
+          Haw5bhm4bSkDwsB1MSWbHMg4DJgPi3MnZGpHwWLHOIZwBtRb1WmqBz+fkPsH1wXuUuad/FZqWh+9
+          9NtMKByLw0Q5mYrezwA+V3ePjwxrUuYh6Vb5K9V2q/Xlkc9Mr2pCn25OoLJimOLr1elNPObbntZ1
+          9j6MRduTm0qnx4Sj83wGzM6m/lPN37iPk/vY/Q/9BFhLScltUybn7eOJp7RMxc3/SnvYchVshPLe
+          W9qqp1wu4ajFMRz/BEYOojRsWx87yin74++gTdsVXl/tLhAvrZndz34CAAD//wMA5JKZmB0FAAA=
+      headers:
+        CF-RAY:
+          - 9a2051ce7fba9bb0-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Fri, 21 Nov 2025 12:51:38 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=4XEBcdDZpMoh0qGziUVvRMorBi0kvYp5KjP199xTcBU-1763729498-1.0.1.1-UetEt.c9lXZxe1kcbmGge12dnTXPAAzoZR3yqmJp2JznbJOmFQJwaKL.J3HTp9fZ8nvxcrNE4k3UNrbWcKDrkcG.8sp2MQBrpxQVZjloExE; path=/; expires=Fri, 21-Nov-25 13:21:38 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=RJ3eiNtius7qG_t5y3pzYCky5H0.1jcjZ9ZcZZ_GkFI-1763729498995-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '1183'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '1455'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199883'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 34ms
+        x-request-id:
+          - req_7a5946b03c12413fbc58f2a2fbf53682
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"Find me a document about software management"},{"role":"assistant","content":"I''ll search for a document about software management.","tool_calls":[{"id":"call_456","type":"function","function":{"name":"search_documents","arguments":"{\"query\": \"software management\"}"}}],"provider_metadata":null},{"role":"tool","tool_call_id":"call_456","content":"Found a PDF document about software management practices\n[File content in following message]","name":"test_tool","error_traceback":null},{"role":"user","content":[{"type":"text","text":"[System: File from previous tool response]"},{"type":"text","text":"[PDF Document: Document from search results (0.0MB) - Content cannot be displayed but was provided as context from the previous tool response]"}]},{"role":"user","content":"What is this document about? What are the main topics it covers?"}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '910'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//jFVNb+NGDL37V7A620LsfDW+LdIt0GIDZJEUi7ZeGMwMJU09GirDGWe9
+          i/z3glJsK7sp0Isg6A35Hsk31LcJQOFssYTCNJhM2/nZNX34/Wzz9eO9ub78VIXFlRWTP949/rm7
+          +vWvYqoR/PAPmbSPKg23nafkOAywiYSJNOv88uL08nR+cv5zD7RsyWtY3aXZWTmfBQw8W5wszmcn
+          Z7P52Ut4w86QFEv4ewIA8K1/qtBg6UuxhJPp/ktLIlhTsTwcAigie/1SoIiThCEV0yNoOCQKvfb7
+          hsCyyS2FBE4AHzgnEK7SE0aCFgPWpOAUKjZZXKiBA6SGoItokooEDBa66IJxnScBF7bst2TBBaCq
+          IpPclvxuSKYJDuktbclz15NrkhadKsNgND0bEiEpYRVWQYUqDIk7ZwRcAu82mtbwlqKyGp8tLfXw
+          vIS7PccvI44PriKzM56WcNugkIBk0wAKRHrMLvaVaj3od+JkCpbE1WEKhq0L9RQSSepfLHWed0Nj
+          vlNersKihNvI6g+4OXRQ23FQ9T7ULhBFF+ol3HoMoU8rpiGbff8eSThHQ4Des0G11sAVnWxGkylX
+          4XRU78eM3qUdvBPJUfUs4X2QHF81viVKAo8vR9UgFqMVSE3kXDcQaevoSUYFDzPuRwKu7SJvh2aV
+          q3BWwjWHytU59ipHNS/hPqLZKLcmUONF9lofmAZD3bvlKCvx0Eids/azjipPI1NEQ/jgVG+5Cuej
+          gm8oRXWEHrshlBxfqP/o3fqYMSSXUE0I7YCLMqGaS7SoOpLIdN+OQ602q3MHwosS3tXOU4/dR7RO
+          K0Wv7A1b9lw7kiVcc9th32vsushoGpLeqPAJE8UKvZ/CnYm5HWg4NWreiuMb16MbPKQ9vizhntkP
+          Vd6TacKB8u7HywqpP7s3t94PnctL+0F2kqiV6Z5gHLknH+RhTtwOQ+1Tlnq7fqtgxxmeOHs71IZg
+          KaHzZEFy22LcAUeQjoyrnAHRFcBBgL7oHBPZKXSeUAg8JWgJNoGffhqvqEhVFtQ9GbL3IwBD4NQr
+          6pfj5xfk+bAOPddd5Af5LrSoXHDSrCOhcNDVJ4m7okefJwCf+7WbX23SoovcdmmdeEM93XxxMeQr
+          jut+hF7t0cQJ/RE4XSymbyRcD02T0eYujDrGHkOPax6zdTwCJqOyf5TzVu6hdBfq/5P+CBhDXSK7
+          7iJZZ16XfDwWSZ30X8cObe4FF0Jx6wytk6Ooo7BUYfbDP6oY3LmuXKgp6m+l/1FV3XqOV5cP54gX
+          ppg8T/4FAAD//wMALlihWLcHAAA=
+      headers:
+        CF-RAY:
+          - 9a2077e9b8b6927d-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Fri, 21 Nov 2025 13:17:40 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=aGU__g9wnlf6uRenJeYlYMyccdOYpizoM6E08l3vtws-1763731060-1.0.1.1-o52SSK5ts3IS15If_VPJWEFTRq9mZG6CkQ52FoNvQgnhaW5zSmtJlwxV014rcQ5puO2QQCxvZhq94VO_0AF8aClOfLXGNJaDglkzb2W4tfM; path=/; expires=Fri, 21-Nov-25 13:47:40 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=iQd5Oi51KTQg7FQJrp9JaFra87wOIeTj7cMi.D_Pw_s-1763731060855-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '2454'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '2468'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '498'
+        x-ratelimit-remaining-tokens:
+          - '199884'
+        x-ratelimit-reset-requests:
+          - 218ms
+        x-ratelimit-reset-tokens:
+          - 34ms
+        x-request-id:
+          - req_1b4ed0fc322d42c999263a1218aa297f
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"Find me a document about software management"},{"role":"assistant","content":"I''ll search for a document about software management.","tool_calls":[{"id":"call_456","type":"function","function":{"name":"search_documents","arguments":"{\"query\": \"software management\"}"}}],"provider_metadata":null},{"role":"tool","tool_call_id":"call_456","content":"Found a PDF document about software management practices\n[File content in following message]","name":"test_tool","error_traceback":null},{"role":"user","content":[{"type":"text","text":"[System: File from previous tool response]"},{"type":"text","text":"[PDF Document: Document from search results (0.0MB) - Content cannot be displayed but was provided as context from the previous tool response]"}]},{"role":"user","content":"What is this document about? What are the main topics it covers?"}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '910'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//jFPBbtswDL3nKwidnSDp0qTNcQM29LAddtihaxEwEm2rkURVorMGRf99
+          kNPW7tYBuxiwnt7TI/n4OAFQ1qgNKN2iaB/d9BNde3930fnYrvXy8+7b14v7L/PveNdd/2hUVRi8
+          uyMtL6yZZh8dieVwgnUiFCqqi/Xqw/pitV6sesCzIVdoTZTpcraYBgw8PZufnU/ny+li+Uxv2WrK
+          agM/JwAAj/23GA2GHtQG5tXLiaecsSG1eb0EoBK7cqIwZ5sFg6hqADUHodB7/4iZDHAAaQkM685T
+          EMAddwKZa/mFicBjwIYKUoEVcHZP7giaD5Qy7OkImCNpyZA73QLmgWnoQI5jL+psTfqoHVUQE5fm
+          jYTBk7Rs2HFjKVewoywQE2opbYCaE3i0QdAGGxrAYKCLTUJT/l6eq0AIPWh2DnecsEyjguLScoBS
+          dWJXwX2HzkpxnbuEQVPV6yWb9yNHM7gJN+GqhiN3oDEU0wdrCEqttrYaMunyQgZOQA+aUpQMdWL/
+          ppkVXPV0rmtKgOC574ugdWQgd95jOgLXYCXD82R6P6VeEI5W59l4eonqLmOJUOicGwEYAktfdJ+b
+          22fk6TUpjpuYeJf/oKraBpvbbSLMHEoqsnBUPfo0AbjtE9m9CZmKiX2UrfCe+ucWZ6uTnho2YUDX
+          i2dQWNCNWJfr6h297ak/eZRppVG3ZAbqsADYGcsjYDKq+m8372mfKreh+R/5AdCaopDZxkTG6rcV
+          D9cSlaz/69prl3vDKlM6WE1bsZTKJAzV2LnT9qp8zEJ+W9vQUIrJnla4jtsFXq5354grrSZPk98A
+          AAD//wMA1Y24JtEEAAA=
+      headers:
+        CF-RAY:
+          - 9a25c6c2d9b28dee-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Sat, 22 Nov 2025 04:45:17 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=TyOQGWcNPJogMlaKUE9cX0qXKQpWql.SbQKloNaUceg-1763786717-1.0.1.1-_7NJGKWn_2WMxASuSTJ.FrlhLHRekW8WAe.EKLHT5alZ9XQ1CcZ0mPsAgPKWIiY0S5pYTJ73dOyGl.9rOphFK9O47rFdvx__BXxfbBbs4jo; path=/; expires=Sat, 22-Nov-25 05:15:17 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=5mU0Y3dPktx54vU3zyW7WVlEP_GtfMtPDQwmSVn1oPs-1763786717250-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '483'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '497'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199884'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 34ms
+        x-request-id:
+          - req_bf2262adc0524f15b9be529a4665e268
+      status:
+        code: 200
+        message: OK
+version: 1

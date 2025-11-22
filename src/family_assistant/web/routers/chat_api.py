@@ -7,7 +7,7 @@ import logging
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, TypedDict
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -16,9 +16,9 @@ from pydantic import BaseModel, Field
 from family_assistant.llm import ToolCallItem
 from family_assistant.llm.messages import (
     AssistantMessage,
-    LLMMessage,
-    SystemMessage,
-    UserMessage,
+    ContentPartDict,
+    image_url_content,
+    text_content,
 )
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
@@ -32,6 +32,29 @@ from family_assistant.web.dependencies import (
     get_web_chat_interface,
 )
 from family_assistant.web.models import ChatMessageResponse, ChatPromptRequest
+
+
+class MessageDict(TypedDict):
+    """Message dict with database fields for SSE delivery."""
+
+    # Required fields
+    internal_id: str
+    timestamp: datetime
+    role: str
+    content: str
+    conversation_id: str
+    interface_type: str
+    # Optional fields
+    interface_message_id: str | None
+    user_id: str | None
+    turn_id: str | None
+    tool_calls: Any
+    tool_call_id: str | None
+    # ast-grep-ignore: no-dict-any - Arbitrary JSON metadata from database, structure varies by message type and cannot be statically typed
+    metadata: dict[str, Any] | None
+    thread_root_id: str | None
+    replied_to_id: str | None
+
 
 if TYPE_CHECKING:
     from family_assistant.services.attachment_registry import (
@@ -51,9 +74,8 @@ async def _process_user_attachments(
     attachment_registry: "AttachmentRegistry",
     db_context: DatabaseContext,
     user_id: str,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None]:
+    # ast-grep-ignore: no-dict-any - Attachment metadata has dynamic structure from various sources
+) -> tuple[list[ContentPartDict], list[dict[str, Any]] | None]:
     """
     Process user attachments from the request payload.
 
@@ -66,10 +88,7 @@ async def _process_user_attachments(
     Returns:
         Tuple of (trigger_content_parts, trigger_attachments)
     """
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    trigger_content_parts: list[dict[str, Any]] = [
-        {"type": "text", "text": payload.prompt}
-    ]
+    trigger_content_parts: list[ContentPartDict] = [text_content(payload.prompt)]
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     trigger_attachments: list[dict[str, Any]] | None = None
 
@@ -118,17 +137,16 @@ async def _process_user_attachments(
                                 )
                             )
 
-                        if not attachment_record:
+                        if not attachment_record or not attachment_record.content_url:
                             raise HTTPException(
                                 status_code=status.HTTP_404_NOT_FOUND,
-                                detail="Attachment not found",
+                                detail="Attachment not found or missing content URL",
                             )
 
                         # Add image content for LLM processing using the content_url
-                        trigger_content_parts.append({
-                            "type": "image_url",
-                            "image_url": {"url": attachment_record.content_url},
-                        })
+                        trigger_content_parts.append(
+                            image_url_content(attachment_record.content_url)
+                        )
 
                         # Store attachment metadata for message history
                         trigger_attachments.append({
@@ -200,11 +218,16 @@ async def _process_user_attachments(
                             )
                         )
 
+                        if not attachment_record.content_url:
+                            raise HTTPException(
+                                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail="Failed to generate content URL for attachment",
+                            )
+
                         # Add image content for LLM processing using the content_url
-                        trigger_content_parts.append({
-                            "type": "image_url",
-                            "image_url": {"url": attachment_record.content_url},
-                        })
+                        trigger_content_parts.append(
+                            image_url_content(attachment_record.content_url)
+                        )
 
                         # Store attachment metadata for message history with stable attachment_id
                         trigger_attachments.append({
@@ -385,9 +408,8 @@ async def api_chat_send_message(
         )
 
     # Process user attachments if present
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    trigger_content_parts: list[dict[str, Any]] = [
-        {"type": "text", "text": payload.prompt}
+    trigger_content_parts: list[ContentPartDict] = [
+        {"type": "text", "text": payload.prompt}  # type: ignore[typeddict-item]  # Runtime dict matches TypedDict structure
     ]
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     trigger_attachments: list[dict[str, Any]] | None = None
@@ -828,9 +850,8 @@ async def api_chat_send_message_stream(
         )
 
     # Process user attachments if present
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    trigger_content_parts: list[dict[str, Any]] = [
-        {"type": "text", "text": payload.prompt}
+    trigger_content_parts: list[ContentPartDict] = [
+        {"type": "text", "text": payload.prompt}  # type: ignore[typeddict-item]  # Runtime dict matches TypedDict structure
     ]
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     attachment_metadata: list[dict[str, Any]] | None = None
@@ -1246,33 +1267,38 @@ async def live_message_events(
 
     async def query_new_messages(
         last_check_time: datetime,
-    ) -> tuple[list[LLMMessage], datetime]:
+    ) -> tuple[list[MessageDict], datetime]:
         """
         Helper to query for new messages.
 
         Returns:
-            Tuple of (messages list, updated last_check timestamp)
+            Tuple of (message dicts with database fields, updated last_check timestamp)
         """
         async with get_db_context(request.app.state.database_engine) as db_context:
-            messages = await db_context.message_history.get_messages_after(
+            raw_messages = await db_context.message_history.get_messages_after_as_dict(
                 conversation_id=conversation_id,
                 after=last_check_time,
                 interface_type=interface_type,
             )
-        # Note: Repository returns typed LLMMessage objects without database metadata
-        # Use current time as update timestamp since we can't access message timestamps
-        return messages, datetime.now(UTC) if messages else last_check_time
+        # Type cast: Repository returns dict[str, Any] but we know the structure matches MessageDict
+        messages: list[MessageDict] = raw_messages  # type: ignore[assignment]
+        # Get the latest timestamp from messages, or use current time if no messages
+        if messages:
+            latest_timestamp = max(msg["timestamp"] for msg in messages)
+            return messages, latest_timestamp
+        return messages, last_check_time
 
-    def _create_sse_message(msg: LLMMessage) -> str:
-        """Create a formatted SSE message string."""
-        # Note: Typed messages don't include database metadata like internal_id
-        # Convert message to dict format for API response
+    def _create_sse_message(msg: MessageDict) -> str:
+        """Create a formatted SSE message string from a message dict with database fields."""
+        # Frontend expects: internal_id, timestamp, new_messages, role, content
         data = {
+            "internal_id": msg["internal_id"],
+            "timestamp": msg["timestamp"].isoformat()
+            if isinstance(msg["timestamp"], datetime)
+            else msg["timestamp"],
             "new_messages": True,
-            "role": msg.role,
-            "content": msg.content
-            if isinstance(msg, (UserMessage, SystemMessage))
-            else getattr(msg, "content", ""),
+            "role": msg["role"],
+            "content": msg.get("content", ""),
         }
         return f"event: message\ndata: {json.dumps(data, default=str)}\n\n"
 

@@ -41,7 +41,12 @@ from family_assistant.tools.types import (
 )
 from family_assistant.utils.clock import SystemClock
 from tests.helpers import wait_for_tasks_to_complete
-from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
+from tests.mocks.mock_llm import (
+    LLMOutput,
+    RuleBasedMockLLMClient,
+    extract_text_from_content,
+    get_message_content,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +118,9 @@ if motion_detected:
             messages = args.get("messages", [])
             if messages:
                 last_msg = messages[-1]
-                content = str(last_msg.content or "")
+                # Use helper functions to work with typed messages
+                msg_content = get_message_content(last_msg)
+                content = extract_text_from_content(msg_content)
                 # Check if it's a wake_llm call with our attachment ID
                 return (
                     "Script wake_llm call" in content
@@ -166,7 +173,7 @@ if motion_detected:
             context_providers=[],
             server_url="http://test:8000",
             app_config={},
-            clock=MagicMock(),
+            clock=SystemClock(),
             attachment_registry=attachment_registry,
         )
 
@@ -338,7 +345,9 @@ wake_llm({
             messages = args.get("messages", [])
             if messages:
                 last_msg = messages[-1]
-                content = str(last_msg.content or "")
+                # Use helper functions to work with typed messages
+                msg_content = get_message_content(last_msg)
+                content = extract_text_from_content(msg_content)
                 # Check if wake_llm was called with our content
                 if (
                     "Motion detected!" in content

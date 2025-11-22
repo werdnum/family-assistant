@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext
@@ -65,14 +66,14 @@ async def test_thread_history_includes_root_message(db_engine: AsyncEngine) -> N
             timestamp=datetime.now(UTC),
             tool_call_id=None,
             tool_calls=[
-                {
-                    "id": "call_123",
-                    "type": "function",
-                    "function": {
-                        "name": "get_camera_snapshot",
-                        "arguments": '{"camera_entity_id": "camera.test"}',
-                    },
-                }
+                ToolCallItem(
+                    id="call_123",
+                    type="function",
+                    function=ToolCallFunction(
+                        name="get_camera_snapshot",
+                        arguments='{"camera_entity_id": "camera.test"}',
+                    ),
+                )
             ],
             reasoning_info=None,
             error_traceback=None,

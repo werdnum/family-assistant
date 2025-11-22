@@ -18,6 +18,7 @@ from sqlalchemy.sql import select
 # Import necessary components from the application
 from family_assistant.interfaces import ChatInterface  # Import ChatInterface
 from family_assistant.llm import ToolCallFunction, ToolCallItem  # Added imports
+from family_assistant.llm.messages import ContentPartDict, text_content
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import DatabaseContext
 
@@ -234,7 +235,9 @@ async def test_schedule_and_execute_callback(
     schedule_request_text = (
         f"Please schedule a reminder with context: {CALLBACK_CONTEXT}"
     )
-    schedule_request_trigger = [{"type": "text", "text": schedule_request_text}]
+    schedule_request_trigger: list[ContentPartDict] = [
+        text_content(schedule_request_text)
+    ]
 
     async with DatabaseContext(engine=db_engine) as db_context:
         # Correct unpacking to 4 values now
@@ -1746,13 +1749,14 @@ async def test_list_pending_callbacks(db_engine: AsyncEngine) -> None:
 
     # --- Part 2: Test list_pending_callbacks ---
     logger.info("--- Part 2: Testing list_pending_callbacks ---")
+    list_callbacks_trigger: list[ContentPartDict] = [text_content("List my callbacks")]
     async with DatabaseContext(engine=db_engine) as db_context:
         result = await processing_service.handle_chat_interaction(
             db_context=db_context,
             chat_interface=mock_chat_interface,
             interface_type="test",
             conversation_id=test_chat_id,
-            trigger_content_parts=[{"type": "text", "text": "List my callbacks"}],
+            trigger_content_parts=list_callbacks_trigger,
             trigger_interface_message_id=str(user_message_id),
             user_name=TEST_USER_NAME,
         )

@@ -115,7 +115,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "The result of "
+                      "text": "The answer"
                     }
                   ],
                   "role": "model"
@@ -125,8 +125,8 @@
             ],
             "usageMetadata": {
               "promptTokenCount": 129,
-              "candidatesTokenCount": 3,
-              "totalTokenCount": 132,
+              "candidatesTokenCount": 2,
+              "totalTokenCount": 131,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
@@ -135,7 +135,7 @@
               ]
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "GvceaeDTCOvWxN8Pu9SDgQg"
+            "responseId": "4z8haaeLHZThnsEPzrbyQA"
           },
           {
             "candidates": [
@@ -143,7 +143,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "5 + 3 is 8."
+                      "text": " is 8.\n"
                     }
                   ],
                   "role": "model"
@@ -154,8 +154,8 @@
             ],
             "usageMetadata": {
               "promptTokenCount": 129,
-              "candidatesTokenCount": 11,
-              "totalTokenCount": 140,
+              "candidatesTokenCount": 6,
+              "totalTokenCount": 135,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
@@ -164,7 +164,7 @@
               ]
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "GvceaeDTCOvWxN8Pu9SDgQg"
+            "responseId": "4z8haaeLHZThnsEPzrbyQA"
           }
         ],
         "byte_segments": [],
@@ -188,7 +188,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "The result of "
+                      "text": "The answer"
                     }
                   ],
                   "role": "model"
@@ -197,9 +197,9 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "GvceaeDTCOvWxN8Pu9SDgQg",
+            "response_id": "4z8haaeLHZThnsEPzrbyQA",
             "usage_metadata": {
-              "candidates_token_count": 3,
+              "candidates_token_count": 2,
               "prompt_token_count": 129,
               "prompt_tokens_details": [
                 {
@@ -207,7 +207,7 @@
                   "token_count": 129
                 }
               ],
-              "total_token_count": 132
+              "total_token_count": 131
             }
           },
           {
@@ -229,7 +229,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "5 + 3 is 8."
+                      "text": " is 8.\n"
                     }
                   ],
                   "role": "model"
@@ -239,9 +239,9 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "GvceaeDTCOvWxN8Pu9SDgQg",
+            "response_id": "4z8haaeLHZThnsEPzrbyQA",
             "usage_metadata": {
-              "candidates_token_count": 11,
+              "candidates_token_count": 6,
               "prompt_token_count": 129,
               "prompt_tokens_details": [
                 {
@@ -249,7 +249,7 @@
                   "token_count": 129
                 }
               ],
-              "total_token_count": 140
+              "total_token_count": 135
             }
           }
         ]

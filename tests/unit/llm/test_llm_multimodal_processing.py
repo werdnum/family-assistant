@@ -35,9 +35,9 @@ class TestBaseLLMClient:
 
         result = client.create_attachment_injection(attachment)
 
-        assert result["role"] == "user"
-        assert "Test image" in result["content"]
-        assert "File from previous tool response" in result["content"]
+        assert result.role == "user"
+        assert "Test image" in result.content
+        assert "File from previous tool response" in result.content
 
     def test_process_tool_messages_no_attachments(self) -> None:
         """Test processing messages without attachments"""
@@ -143,18 +143,17 @@ class TestGoogleGenAIClient:
 
             result = client.create_attachment_injection(attachment)
 
-            assert result["role"] == "user"
-            assert "parts" in result
-            assert len(result["parts"]) == 2
+            assert result.role == "user"
+            assert result.parts is not None
+            assert len(result.parts) == 2
 
             # First part should be system message
             assert (
-                result["parts"][0]["text"]
-                == "[System: File from previous tool response]"
+                result.parts[0]["text"] == "[System: File from previous tool response]"
             )
 
             # Second part should be a types.Part object with inline_data
-            part = result["parts"][1]
+            part = result.parts[1]
             assert hasattr(part, "inline_data")
             assert part.inline_data.mime_type == "image/png"
             assert part.inline_data.data == b"fake png data"
@@ -174,17 +173,17 @@ class TestGoogleGenAIClient:
 
             result = client.create_attachment_injection(attachment)
 
-            assert result["role"] == "user"
-            assert len(result["parts"]) == 2
+            assert result.role == "user"
+            assert result.parts is not None
+            assert len(result.parts) == 2
 
             # First part should be system message
             assert (
-                result["parts"][0]["text"]
-                == "[System: File from previous tool response]"
+                result.parts[0]["text"] == "[System: File from previous tool response]"
             )
 
             # Second part should be a types.Part object with inline_data for PDF
-            part = result["parts"][1]
+            part = result.parts[1]
             assert hasattr(part, "inline_data")
             assert part.inline_data.mime_type == "application/pdf"
             assert part.inline_data.data == fake_data
@@ -204,11 +203,12 @@ class TestGoogleGenAIClient:
 
             result = client.create_attachment_injection(attachment)
 
-            assert result["role"] == "user"
-            assert len(result["parts"]) == 2
+            assert result.role == "user"
+            assert result.parts is not None
+            assert len(result.parts) == 2
 
             # Should describe the non-PDF binary content
-            text_part = result["parts"][1]["text"]
+            text_part = result.parts[1]["text"]
             assert "application/zip" in text_part
             assert "0.0MB" in text_part  # 1KB shows as 0.0MB
             assert "Test ZIP archive" in text_part
@@ -227,10 +227,11 @@ class TestGoogleGenAIClient:
 
             result = client.create_attachment_injection(attachment)
 
-            assert result["role"] == "user"
-            assert len(result["parts"]) == 2
+            assert result.role == "user"
+            assert result.parts is not None
+            assert len(result.parts) == 2
 
-            text_part = result["parts"][1]["text"]
+            text_part = result.parts[1]["text"]
             assert "/path/to/document.pdf" in text_part
             assert "File not found or inaccessible" in text_part
 
@@ -253,17 +254,17 @@ class TestOpenAIClient:
 
         result = client.create_attachment_injection(attachment)
 
-        assert result["role"] == "user"
-        assert isinstance(result["content"], list)
-        assert len(result["content"]) == 2
+        assert result.role == "user"
+        assert isinstance(result.content, list)
+        assert len(result.content) == 2
 
         # First part should be system message
-        assert result["content"][0]["type"] == "text"
-        assert "File from previous tool response" in result["content"][0]["text"]
+        assert result.content[0].type == "text"
+        assert "File from previous tool response" in result.content[0].text
 
         # Second part should be image_url
-        assert result["content"][1]["type"] == "image_url"
-        image_url = result["content"][1]["image_url"]["url"]
+        assert result.content[1].type == "image_url"
+        image_url = result.content[1].image_url["url"]
         assert image_url.startswith("data:image/jpeg;base64,")
 
         # Verify base64 decoding works
@@ -283,20 +284,21 @@ class TestOpenAIClient:
 
         result = client.create_attachment_injection(attachment)
 
-        assert result["role"] == "user"
-        assert len(result["content"]) == 2
+        assert result.role == "user"
+        assert isinstance(result.content, list)
+        assert len(result.content) == 2
 
         # First part should be system message
-        assert result["content"][0]["type"] == "text"
-        assert "File from previous tool response" in result["content"][0]["text"]
+        assert result.content[0].type == "text"
+        assert "File from previous tool response" in result.content[0].text
 
         # Second part should be text description for PDF (fallback approach)
-        text_part = result["content"][1]
-        assert text_part["type"] == "text"
-        assert "PDF Document" in text_part["text"]
-        assert "Test document" in text_part["text"]
-        assert "0.0MB" in text_part["text"]
-        assert "Content cannot be displayed" in text_part["text"]
+        text_part = result.content[1]
+        assert text_part.type == "text"
+        assert "PDF Document" in text_part.text
+        assert "Test document" in text_part.text
+        assert "0.0MB" in text_part.text
+        assert "Content cannot be displayed" in text_part.text
 
     def test_create_attachment_injection_non_pdf_binary_content(self) -> None:
         """Test OpenAI attachment injection for non-PDF binary content"""
@@ -309,16 +311,17 @@ class TestOpenAIClient:
 
         result = client.create_attachment_injection(attachment)
 
-        assert result["role"] == "user"
-        assert len(result["content"]) == 2
+        assert result.role == "user"
+        assert isinstance(result.content, list)
+        assert len(result.content) == 2
 
         # Should have descriptive text for non-PDF binary content
-        desc_part = result["content"][1]
-        assert desc_part["type"] == "text"
-        assert "application/zip" in desc_part["text"]
-        assert "0.0MB" in desc_part["text"]  # 1KB shows as 0.0MB
-        assert "Test archive" in desc_part["text"]
-        assert "Binary content not accessible" in desc_part["text"]
+        desc_part = result.content[1]
+        assert desc_part.type == "text"
+        assert "application/zip" in desc_part.text
+        assert "0.0MB" in desc_part.text  # 1KB shows as 0.0MB
+        assert "Test archive" in desc_part.text
+        assert "Binary content not accessible" in desc_part.text
 
     def test_create_attachment_injection_file_path_only(self) -> None:
         """Test OpenAI attachment injection with file path only"""
@@ -330,12 +333,13 @@ class TestOpenAIClient:
 
         result = client.create_attachment_injection(attachment)
 
-        assert result["role"] == "user"
-        assert len(result["content"]) == 2
+        assert result.role == "user"
+        assert isinstance(result.content, list)
+        assert len(result.content) == 2
 
-        file_part = result["content"][1]
-        assert file_part["type"] == "text"
-        assert "/path/to/file.txt" in file_part["text"]
+        file_part = result.content[1]
+        assert file_part.type == "text"
+        assert "/path/to/file.txt" in file_part.text
 
 
 class TestLiteLLMClient:
@@ -523,8 +527,9 @@ class TestLiteLLMClient:
 
         result = client.create_attachment_injection(attachment)
 
-        assert result["role"] == "user"
-        content = result["content"]
+        assert result.role == "user"
+        assert isinstance(result.content, str)
+        content = result.content
         assert "[System: File from previous tool response]" in content
         assert "[Description: Small dataset]" in content
         assert "[Attachment ID: test-123]" in content
@@ -565,8 +570,9 @@ class TestLiteLLMClient:
 
         result = client.create_attachment_injection(attachment)
 
-        assert result["role"] == "user"
-        content = result["content"]
+        assert result.role == "user"
+        assert isinstance(result.content, str)
+        content = result.content
         assert "[System: Large data attachment from previous tool response]" in content
         assert "[Description: Large dataset]" in content
         assert f"[Size: {len(json_bytes)} bytes" in content
@@ -599,8 +605,9 @@ class TestLiteLLMClient:
 
         result = client.create_attachment_injection(attachment)
 
-        assert result["role"] == "user"
-        content = result["content"]
+        assert result.role == "user"
+        assert isinstance(result.content, str)
+        content = result.content
         assert "[System: File from previous tool response]" in content
         assert "[Description: Small notes]" in content
         assert "[Attachment ID: text-123]" in content
@@ -626,8 +633,9 @@ class TestLiteLLMClient:
 
         result = client.create_attachment_injection(attachment)
 
-        assert result["role"] == "user"
-        content = result["content"]
+        assert result.role == "user"
+        assert isinstance(result.content, str)
+        content = result.content
         assert "[System: Large text file from previous tool response]" in content
         assert "[Description: Large document]" in content
         assert f"[Size: {len(text_bytes)} bytes" in content
@@ -657,8 +665,9 @@ class TestLiteLLMClient:
 
         result = client.create_attachment_injection(attachment)
 
-        assert result["role"] == "user"
-        content = result["content"]
+        assert result.role == "user"
+        assert isinstance(result.content, str)
+        content = result.content
         assert "[System: File from previous tool response]" in content
         assert "[Description: Small CSV]" in content
         assert "id,name,value" in content
@@ -683,8 +692,9 @@ class TestLiteLLMClient:
 
         result = client.create_attachment_injection(attachment)
 
-        assert result["role"] == "user"
-        content = result["content"]
+        assert result.role == "user"
+        assert isinstance(result.content, str)
+        content = result.content
         assert "[System: Large text file from previous tool response]" in content
         assert "[Description: Large CSV]" in content
         assert f"[Size: {len(csv_bytes)} bytes" in content
@@ -709,8 +719,9 @@ class TestLiteLLMClient:
 
         result = client.create_attachment_injection(attachment)
 
-        assert result["role"] == "user"
-        content = result["content"]
+        assert result.role == "user"
+        assert isinstance(result.content, str)
+        content = result.content
         # Should fall back to text summary (not schema)
         assert "[System: Large text file from previous tool response]" in content
         assert "Content too large for inline display" in content

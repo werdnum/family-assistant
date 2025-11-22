@@ -83,4 +83,130 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": "What''s the weather in San Francisco?"}], "role": "user"}], "tools": [{"functionDeclarations": [{"description": "Get the current weather", "name": "get_weather", "parameters": {"properties": {"location": {"description": "City name", "type": "STRING"}}, "required": ["location"], "type": "OBJECT"}}]}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"San Francisco\"\n              }\n            },\n            \"thoughtSignature\": \"CtMCAdHtim8dnn9y5bkZnW9HfUqisCXBWJx8j3a8z4jwK6384iJ4y3Vae+Le0It/uphLsRt103NEinBRlxd7xwYLi4aCmtV8/EKaArDmn4HHeBm8LA3Zd14Lfs3fhkGRsFWQmOfdveOa2br6kJyPvtW+62yQE+d1QQ1NHVLyi/Ej3gekmIGmS77/VaYfuvY+K/fNlO+jH6inOYd6NjrQyk56i6mh+Khn6Lw651g+Ujv8gGKRByWMd9fRuVQl6494TrNAcA1hNJb6TiJd2EgQ2L5+Fn3NCPa673/pzxJ7STHZWTqUFd2TeI8mVdebPfnqih0jcoJ0saW3Q3rBT2IMVh+A3F0CPA89/4gD7D/OnXcrkbG98XFPRyrSAbh3c7lKldTh4mqB5DaZ27SPHBCeeeix7KukjupYFDq5yXQowEBtU3IrJxIHIZ3s1gOKOHXKl4ufysZg\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 47,\n    \"candidatesTokenCount\": 16,\n    \"totalTokenCount\": 136,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 47\n      }\n    ],\n    \"thoughtsTokenCount\": 73\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"z1QgafCaNuPZxs0Pj8ee4A8\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Fri, 21 Nov 2025 12:02:23 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=733
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": "What''s the weather in San Francisco?"}], "role": "user"}], "tools": [{"functionDeclarations": [{"description": "Get the current weather", "name": "get_weather", "parameters": {"properties": {"location": {"description": "City name", "type": "STRING"}}, "required": ["location"], "type": "OBJECT"}}]}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"San Francisco\"\n              }\n            },\n            \"thoughtSignature\": \"CrICAdHtim/kaP7gM4TE0EtRVSRkuKyzzjV+J/XRpl++Qq1Q2NQBIBHF18zgLeeY4HyHO2Ax/zKs7CmVloZY6lkCeEeb31Y3C/Gvp3DTYrl+uvk42kw5I1ich3BN/8pK/Tl06IZKBwfLCoxb+0AJyNrV64DQBqVr9fzMsdymlTnd9CMf6TO/0MzehSMxDEj0+Ff3hcquhDeg939pgoYSpsZa/OwO7wtJMvB5uNDFdW3/tHGD1NzjV4Jg5QIME6fj8QfCZCSryflSxB6iacEVmS4hnfOSusUfYxGY4/S5SGuhbu3y5Qyfd6a5KENMHrvZZ4+FfPHDdulV1YHGVm1dNRyX1RIB9aoU+yRNviWK4GuE+Wnuh3/Ln8GdLJFM8meNrPiQ1jF3XOVs71tj9S+dIFEdtfaf\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 47,\n    \"candidatesTokenCount\": 16,\n    \"totalTokenCount\": 129,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 47\n      }\n    ],\n    \"thoughtsTokenCount\": 66\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"X2AgaeDZNt-TvdIP7rbuQA\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Fri, 21 Nov 2025 12:51:43 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=742
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": "What''s the weather in San Francisco?"}], "role": "user"}], "tools": [{"functionDeclarations": [{"description": "Get the current weather", "name": "get_weather", "parameters": {"properties": {"location": {"description": "City name", "type": "STRING"}}, "required": ["location"], "type": "OBJECT"}}]}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"location\": \"San Francisco\"\n              }\n            },\n            \"thoughtSignature\": \"Cr4CAdHtim9OVhdX8dAmZyqHXd8s7jq9CZVO55dV25oU19HVhHWADHSR28oBuRw9SBu8oD3kAbux7cXMDVMUU9e/u5QLj2BGa5qEZC8/1FeI/vJhmglPWEYzQxMmS7G4u5y21YTcIy/M6fJWkHoWteIzh6hd3VqQV/X/FTf0VJAfHRtge9uo2Rotz/Xvc/gYlrKJ0gtTRmB+pIacsuMC29iFQdSgAzXrikEvDGWJbTbaxQhUJ3b0bZL3cnDXrx6P1KOTp9FM0CvffZre+m1I/ynS0sUoO9ZW5aPKYFaJMbQ+NvVCmBDlDq4tIh2C0bMXqk4+N9dICS56GJyeXheCeU/zLNAfbx4S9P2rVYUDpftyo2TOeCethVjVybsFuTE1F9GTY8MWb3aqqoCsslP4dZxTGjhPGhdy+2htRvwPZETk\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 47,\n    \"candidatesTokenCount\": 16,\n    \"totalTokenCount\": 132,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 47\n      }\n    ],\n    \"thoughtsTokenCount\": 69\n  },\n  \"modelVersion\": \"gemini-2.0-flash-thinking-exp-01-21\",\n  \"responseId\": \"4z8hacC_Lp2rnsEPtM-VqQk\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Sat, 22 Nov 2025 04:45:23 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=644
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
 version: 1

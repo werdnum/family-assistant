@@ -95,7 +95,7 @@
                           "location": "Paris, France"
                         }
                       },
-                      "thoughtSignature": "CikB0e2Kb+q86mo9Awz0lXza6/uaDTi5zw3eyY8KcuXm5KpRxd0IsWO08gp7AdHtim+1bLezWKhP0W5YM3MFap13GYaPrRNuPZv84oPREovFFah4yMzs80LeBe8VuqwKpPYUao4PezTHLdlGNEAyXCkvvtRkIVXTAofWnQakR0TIcVjAFV731OKFwm2b/FEOACbe/3v+9qfIrm6YiJ/hrHJSHufUPYU/CtgBAdHtim94fCSnj8BHRsa16/8RzeCUVXy022BeirEk9UDuLtr80bL0NqrO2p2SubMwos0J7Zll7EbmcxG/OqPh976kGiuhjqCw2D/mEsukSMkuOEWSLuUes1yFK5PQgrCSqNMKyZsNKg/nEx5FIxih3biqA6jTGYxplDiBUaMXXMEcOB44cEqTIU+sG/FI/SPpF0uLB89nV3GSCAGe23/XLh2eTjp8FyvFZWpnulMqHe/CjjBC2uofCvjvdDXmmfjhNhRaF6wdK/07LPR5J7H79P5q7ipVSisz"
+                      "thoughtSignature": "CiQB0e2Kb24aZJ+my9Lqh8QEADYEW++R0N61Nid18fEA7uTipwEKYAHR7YpvFgV+xl2DYaEMkzEZPwwxavh/ApgJzT0ExoRadYxUO6328wgxvbkNXPVHhJaQjCzDw7OSYesU+HwwA59f8weTUvpCw8Ta9gnNYwGWa15Bt34XuiTn4CeP1+hCngrSAQHR7YpvGrCocfqAP45WIELbIEAcX9yLV3mU34dn3lZW6xxoOREqQlhOmvv64V0S4LfIxIsd9d3DZ7cwqE/HonvgnYHZYLS6iAGaSstzNiUn8bCjegw3pZZJo9VjTZ2/pR5oG2IekuPLTRovZJ5Y1Z/UZdaYNXHpTkwEnipK2kIgQNG28W/n2ByVmNNf6xy7QC+q7H+67SBu1smXLZxk28WVinOGwPkGDP7XM9i0N/63ritfHtTshq/3j6RoSpNFA3vZ1J6ipFH490h2ZYyxjs8GWwo+AdHtim9EiZ/dB4nyZMQCF+FBcaUJNC1Asu/s9Io2MEEFi5qNAPXQZfr2bOaHRWLR/UxnTKkTbZvWclxNMgQ="
                     },
                     {
                       "functionCall": {
@@ -116,17 +116,17 @@
             "usageMetadata": {
               "promptTokenCount": 114,
               "candidatesTokenCount": 35,
-              "totalTokenCount": 220,
+              "totalTokenCount": 223,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
                   "tokenCount": 114
                 }
               ],
-              "thoughtsTokenCount": 71
+              "thoughtsTokenCount": 74
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "GPceacyqJ8O-vdIPpqSQ4QI"
+            "responseId": "4T8hac_-KJ2rnsEPtM-VqQk"
           }
         ],
         "byte_segments": [],
@@ -150,7 +150,7 @@
                 "content": {
                   "parts": [
                     {
-                      "thought_signature": "Q2lrQjBlMktiK3E4Nm1vOUF3ejBsWHphNi91YURUaTV6dzNleVk4S2N1WG01S3BSeGQwSXNXTzA4Z3A3QWRIdGltKzFiTGV6V0toUDBXNVlNM01GYXAxM0dZYVByUk51UFp2ODRvUFJFb3ZGRmFoNHlNenM4MExlQmU4VnVxd0twUFlVYW80UGV6VEhMZGxHTkVBeVhDa3Z2dFJrSVZYVEFvZlduUWFrUjBUSWNWakFGVjczMU9LRndtMmIvRkVPQUNiZS8zdis5cWZJcm02WWlKL2hySEpTSHVmVVBZVS9DdGdCQWRIdGltOTRmQ1NuajhCSFJzYTE2LzhSemVDVVZYeTAyMkJlaXJFazlVRHVMdHI4MGJMME5xck8ycDJTdWJNd29zMEo3WmxsN0VibWN4Ry9PcVBoOTc2a0dpdWhqcUN3MkQvbUVzdWtTTWt1T0VXU0x1VWVzMXlGSzVQUWdyQ1NxTk1LeVpzTktnL25FeDVGSXhpaDNiaXFBNmpUR1l4cGxEaUJVYU1YWE1FY09CNDRjRXFUSVUrc0cvRkkvU1BwRjB1TEI4OW5WM0dTQ0FHZTIzL1hMaDJlVGpwOEZ5dkZaV3BudWxNcUhlL0NqakJDMnVvZkN2anZkRFhtbWZqaE5oUmFGNndkSy8wN0xQUjVKN0g3OVA1cTdpcFZTaXN6",
+                      "thought_signature": "Q2lRQjBlMktiMjRhWkorbXk5THFoOFFFQURZRVcrK1IwTjYxTmlkMThmRUE3dVRpcHdFS1lBSFI3WXB2RmdWK3hsMkRZYUVNa3pFWlB3d3hhdmgvQXBnSnpUMEV4b1JhZFl4VU82MzI4d2d4dmJrTlhQVkhoSmFRakN6RHc3T1NZZXNVK0h3d0E1OWY4d2VUVXZwQ3c4VGE5Z25OWXdHV2ExNUJ0MzRYdWlUbjRDZVAxK2hDbmdyU0FRSFI3WXB2R3JDb2NmcUFQNDVXSUVMYklFQWNYOXlMVjNtVTM0ZG4zbFpXNnh4b09SRXFRbGhPbXZ2NjRWMFM0TGZJeElzZDlkM0RaN2N3cUUvSG9udmduWUhaWUxTNmlBR2FTc3R6TmlVbjhiQ2plZ3czcFpaSm85VmpUWjIvcFI1b0cySWVrdVBMVFJvdlpKNVkxWi9VWmRhWU5YSHBUa3dFbmlwSzJrSWdRTkcyOFcvbjJCeVZtTk5mNnh5N1FDK3E3SCs2N1NCdTFzbVhMWnhrMjhXVmluT0d3UGtHRFA3WE05aTBOLzYzcml0Zkh0VHNocS8zajZSb1NwTkZBM3ZaMUo2aXBGSDQ5MGgyWll5eGpzOEdXd28rQWRIdGltOUVpWi9kQjRueVpNUUNGK0ZCY2FVSk5DMUFzdS9zOUlvMk1FRUZpNXFOQVBYUVpmcjJiT2FIUldMUi9VeG5US2tUYlp2V2NseE5NZ1E9",
                       "function_call": {
                         "args": {
                           "location": "Paris, France"
@@ -174,7 +174,7 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "GPceacyqJ8O-vdIPpqSQ4QI",
+            "response_id": "4T8hac_-KJ2rnsEPtM-VqQk",
             "usage_metadata": {
               "candidates_token_count": 35,
               "prompt_token_count": 114,
@@ -184,8 +184,8 @@
                   "token_count": 114
                 }
               ],
-              "thoughts_token_count": 71,
-              "total_token_count": 220
+              "thoughts_token_count": 74,
+              "total_token_count": 223
             }
           }
         ]

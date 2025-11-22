@@ -32,7 +32,14 @@ from family_assistant.llm.google_types import (
     GeminiProviderMetadata,
     GeminiThoughtSignature,
 )
-from family_assistant.llm.messages import LLMMessage, message_to_json_dict
+from family_assistant.llm.messages import (
+    AssistantMessage,
+    ImageUrlContentPart,
+    LLMMessage,
+    TextContentPart,
+    ToolMessage,
+    UserMessage,
+)
 
 from ..base import (
     AuthenticationError,
@@ -164,7 +171,7 @@ class GoogleGenAIClient(BaseLLMClient):
         self,
         attachment: "ToolAttachment",
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> UserMessage:
         """Create user message with attachment for Gemini"""
         # Handle JSON/text attachments using base class logic first
         if (
@@ -176,10 +183,8 @@ class GoogleGenAIClient(BaseLLMClient):
             )
         ):
             # Delegate to base class for intelligent JSON/text handling
-            base_message = super().create_attachment_injection(attachment)
-            # Convert base class format {"role": "user", "content": "..."}
-            # to Gemini format {"role": "user", "parts": [{"text": "..."}]}
-            return {"role": "user", "parts": [{"text": base_message["content"]}]}
+            # This returns a UserMessage object
+            return super().create_attachment_injection(attachment)
 
         # Handle multimodal content (images/PDFs) with provider-specific format
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
@@ -257,15 +262,17 @@ class GoogleGenAIClient(BaseLLMClient):
                     "text": f"[File: {attachment.file_path} - Error reading file: {str(e)}]"
                 })
 
-        return {"role": "user", "parts": parts}
+        # Return UserMessage with parts for provider-specific handling
+        return UserMessage(
+            content="[Multimodal attachment]",  # Fallback content for serialization
+            parts=parts,
+        )
 
     def _convert_messages_to_genai_format(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: list[dict[str, Any]],
+        messages: list[LLMMessage],
     ) -> list[types.ContentUnionDict]:
-        """Convert OpenAI-style messages to Gemini format using SDK types.
+        """Convert typed LLMMessage objects to Gemini format using SDK types.
 
         Returns a list compatible with the SDK's ContentListUnionDict type. In practice,
         we return types.Content objects, but ContentUnionDict allows for the full
@@ -274,14 +281,12 @@ class GoogleGenAIClient(BaseLLMClient):
         All parts use types.Part with proper snake_case field names (function_call,
         function_response, thought_signature) to ensure proper SDK validation.
         """
-        # Note: messages are already converted to dicts before this method is called
-        # This method performs Gemini-specific formatting only
         # Build proper Content objects for the new API
         contents: list[types.ContentUnionDict] = []
 
         for _msg_idx, msg in enumerate(messages):
-            role = msg["role"]
-            content = msg.get("content", "")
+            role = msg.role
+            content = msg.content or ""
 
             if role == "system":
                 # System messages can be included as user messages with a prefix
@@ -293,11 +298,11 @@ class GoogleGenAIClient(BaseLLMClient):
                 )
             elif role == "user":
                 # Check if message already has parts (e.g., from attachment injection)
-                if "parts" in msg:
+                if isinstance(msg, UserMessage) and msg.parts:
                     # Parts from _inject_tool_attachments can be mix of Part objects and dicts
                     # The SDK will accept both, but we document this flexibility here
                     # This is safe because _inject_tool_attachments uses types.Part.from_bytes()
-                    contents.append(types.Content(role="user", parts=msg["parts"]))
+                    contents.append(types.Content(role="user", parts=msg.parts))
                 # Handle both simple string content and multi-part content (text + images)
                 elif isinstance(content, str):
                     # Simple text content
@@ -308,41 +313,38 @@ class GoogleGenAIClient(BaseLLMClient):
                     # Multi-part content (e.g., text + images)
                     user_parts: list[types.Part] = []
                     for part in content:
-                        if isinstance(part, dict):
-                            if part.get("type") == "text":
-                                user_parts.append(types.Part(text=part.get("text", "")))
-                            elif part.get("type") == "image_url":
-                                # Extract base64 image data
-                                image_url = part.get("image_url", {}).get("url", "")
-                                if image_url.startswith("data:"):
-                                    # Parse data URL: data:image/jpeg;base64,<base64_data>
-                                    try:
-                                        # Split on comma to separate metadata from data
-                                        header, base64_data = image_url.split(",", 1)
-                                        # Extract MIME type
-                                        mime_type = header.split(";")[0].split(":")[1]
+                        if isinstance(part, TextContentPart):
+                            user_parts.append(types.Part(text=part.text))
+                        elif isinstance(part, ImageUrlContentPart):
+                            # Extract base64 image data
+                            image_url = part.image_url["url"]
+                            if image_url.startswith("data:"):
+                                # Parse data URL: data:image/jpeg;base64,<base64_data>
+                                try:
+                                    # Split on comma to separate metadata from data
+                                    header, base64_data = image_url.split(",", 1)
+                                    # Extract MIME type
+                                    mime_type = header.split(";")[0].split(":")[1]
 
-                                        # Decode base64 to bytes
-                                        image_bytes = base64.b64decode(base64_data)
+                                    # Decode base64 to bytes
+                                    image_bytes = base64.b64decode(base64_data)
 
-                                        # Create inline data part using SDK types
-                                        user_parts.append(
-                                            types.Part.from_bytes(
-                                                data=image_bytes,
-                                                mime_type=mime_type,
-                                            )
+                                    # Create inline data part using SDK types
+                                    user_parts.append(
+                                        types.Part.from_bytes(
+                                            data=image_bytes,
+                                            mime_type=mime_type,
                                         )
-                                    except Exception as e:
-                                        logger.error(
-                                            f"Failed to parse image data URL: {e}"
-                                        )
-                                        # Skip this image part if parsing fails
-                                else:
-                                    # Non-data URLs should already be converted by ProcessingService
-                                    # Log a warning if we still see them here
-                                    logger.warning(
-                                        f"Non-data URL images not supported by Gemini API: {image_url[:50]}..."
                                     )
+                                except Exception as e:
+                                    logger.error(f"Failed to parse image data URL: {e}")
+                                    # Skip this image part if parsing fails
+                            else:
+                                # Non-data URLs should already be converted by ProcessingService
+                                # Log a warning if we still see them here
+                                logger.warning(
+                                    f"Non-data URL images not supported by Gemini API: {image_url[:50]}..."
+                                )
                         elif isinstance(part, str):
                             # Fallback for string parts
                             user_parts.append(types.Part(text=part))
@@ -360,12 +362,12 @@ class GoogleGenAIClient(BaseLLMClient):
                 assistant_parts: list[types.Part] = []
 
                 # Add text content if present
-                if content:
+                if content and isinstance(content, str):
                     assistant_parts.append(types.Part(text=content))
 
                 # Add tool calls if present, with thought signatures attached per-call
-                if "tool_calls" in msg and msg["tool_calls"]:
-                    for tc in msg["tool_calls"]:
+                if isinstance(msg, AssistantMessage) and msg.tool_calls:
+                    for tc in msg.tool_calls:
                         # Tool calls must be properly typed ToolCallItem objects
                         if not isinstance(tc, ToolCallItem):
                             logger.warning(
@@ -426,7 +428,10 @@ class GoogleGenAIClient(BaseLLMClient):
                     contents.append(types.Content(role="model", parts=assistant_parts))
             elif role == "tool":
                 # Handle tool responses
-                tool_content = msg.get("content", "")
+                if not isinstance(msg, ToolMessage):
+                    continue
+
+                tool_content = msg.content
 
                 # Try to parse the content as JSON
                 try:
@@ -449,7 +454,7 @@ class GoogleGenAIClient(BaseLLMClient):
                         parts=[
                             types.Part(
                                 function_response=types.FunctionResponse(
-                                    name=msg.get("name", "unknown"),
+                                    name=msg.name,
                                     response=response_data,
                                 )
                             )
@@ -568,32 +573,25 @@ class GoogleGenAIClient(BaseLLMClient):
             # Keep messages as typed objects for processing
             typed_messages = list(messages)
 
-            # Debug logging if enabled (convert to dicts for display)
+            # Debug logging if enabled
             if self.should_debug_messages:
-                message_dicts_for_display = [
-                    message_to_json_dict(msg) for msg in typed_messages
-                ]
                 logger.info(
                     f"=== LLM Request to {self.model_name} ===\n"
-                    f"{_format_messages_for_debug(message_dicts_for_display, tools, tool_choice)}"
+                    f"{_format_messages_for_debug(typed_messages, tools, tool_choice)}"
                 )
 
             # Process tool attachments with typed messages
             processed_typed_messages = self._process_tool_messages(typed_messages)
 
-            # Convert to dicts at the SDK boundary (only right before passing to Google SDK)
-            message_dicts = [
-                message_to_json_dict(msg) for msg in processed_typed_messages
-            ]
-
             # Convert messages to format expected by new API
-            contents = self._convert_messages_to_genai_format(message_dicts)
+            # _convert_messages_to_genai_format expects typed LLMMessage objects
+            contents = self._convert_messages_to_genai_format(processed_typed_messages)
 
             # Debug: Log post-processed messages if enabled
             if self.should_debug_messages:
                 logger.info(
-                    f"=== After _process_tool_messages ({len(message_dicts)} messages) ===\n"
-                    f"{_format_messages_for_debug(message_dicts, None, None)}"
+                    f"=== After _process_tool_messages ({len(processed_typed_messages)} messages) ===\n"
+                    f"{_format_messages_for_debug(processed_typed_messages, None, None)}"
                 )
 
             # Build generation config
@@ -852,32 +850,25 @@ class GoogleGenAIClient(BaseLLMClient):
             # Keep messages as typed objects for processing
             typed_messages = list(messages)
 
-            # Debug logging if enabled (convert to dicts for display)
+            # Debug logging if enabled
             if self.should_debug_messages:
-                message_dicts_for_display = [
-                    message_to_json_dict(msg) for msg in typed_messages
-                ]
                 logger.info(
                     f"=== LLM Streaming Request to {self.model_name} ===\n"
-                    f"{_format_messages_for_debug(message_dicts_for_display, tools, tool_choice)}"
+                    f"{_format_messages_for_debug(typed_messages, tools, tool_choice)}"
                 )
 
             # Process tool attachments with typed messages
             processed_typed_messages = self._process_tool_messages(typed_messages)
 
-            # Convert to dicts at the SDK boundary (only right before passing to Google SDK)
-            message_dicts = [
-                message_to_json_dict(msg) for msg in processed_typed_messages
-            ]
-
             # Convert messages to format expected by API
-            contents = self._convert_messages_to_genai_format(message_dicts)
+            # _convert_messages_to_genai_format expects typed LLMMessage objects
+            contents = self._convert_messages_to_genai_format(processed_typed_messages)
 
             # Debug: Log post-processed messages if enabled
             if self.should_debug_messages:
                 logger.info(
-                    f"=== After _process_tool_messages ({len(message_dicts)} messages) ===\n"
-                    f"{_format_messages_for_debug(message_dicts, None, None)}"
+                    f"=== After _process_tool_messages ({len(processed_typed_messages)} messages) ===\n"
+                    f"{_format_messages_for_debug(processed_typed_messages, None, None)}"
                 )
 
             # Build generation config

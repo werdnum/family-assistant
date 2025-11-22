@@ -1,0 +1,561 @@
+interactions:
+  - request:
+      body: '{"messages":[{"role":"user","content":"Generate a simple image for me"},{"role":"assistant","content":"I''ll generate a simple image for you.","tool_calls":[{"id":"call_123","type":"function","function":{"name":"generate_image","arguments":"{\"prompt\": \"simple\"}"}}],"provider_metadata":null},{"role":"tool","tool_call_id":"call_123","content":"Generated a simple red pixel image\n[File content in following message]","name":"test_tool","error_traceback":null},{"role":"user","content":[{"type":"text","text":"[System: File from previous tool response]"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="}}]},{"role":"user","content":"What do you see in the image?"}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '803'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//jFPLjtswDLz7KwhdeomDvNPk2O2hi7300qJosTBkibbVyqIg0WndRf69
+          sPJw0gfQiwBxOBQ5Q71kAMJosQehGsmq9TZ/wKfXbz4fyvAYNhvZ2Pfx4dPTW/zY90v6ICYDg8qv
+          qPjCmipqvUU25E6wCigZh6rz7Wa5XWzWy10CWtJoB1rtOV9N57mTjvLFbLHOZ6t8vjrTGzIKo9jD
+          lwwA4CWdQ6NO4w+xh9nkEmkxRlmj2F+TAEQgO0SEjNFElo7FZAQVOUaXen8EJd0rhogIFMA4xuAD
+          MnCDcM6LQFW6m1bWCNoEVGz7Kbyj73jAMAFTQU8daIwqmBLBMDBBixNI9aFB61OGdNL2P9NTPtDB
+          aISWAoJxFYVWDvKBLKljMDy9bTlg1UU56OY6a28A6RxxIiaxns/I8SqPpdoHKuNvVFEZZ2JTBJSR
+          3CBFZPIioccM4DnZ0N0pK3yg1nPB9A3Tc7uzC2J0fwSXyzPIxNKO8fniAtyVKzSyNDbe+CiUVA3q
+          kTqaLjtt6AbIbob+s5u/1T4Nblz9P+VHQCn0jLrwAbVR9xOPaQGHz/GvtKvIqWERMRyMwoINhsEI
+          jZXs7GljRewjY1tUxtXDZprT2la+mMvdtlxLuVEiO2a/AAAA//8DAFdEtujFAwAA
+      headers:
+        CF-RAY:
+          - 9a200999bdd7348f-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Fri, 21 Nov 2025 12:02:20 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=.o3mNXYcmyeL26_gsPJVOcLni7Nd9M.NEVppQSWZSbM-1763726540-1.0.1.1-EBGXYw_ljAtFUF0ERYZSjll06ICZnLa4NVg.QcmjoFdHsL5TLPNreIakmZtiDbV.OWc.nMg7pTYwD7.ydpZkwVM0pi.cN5VFLeVkLhsl3tU; path=/; expires=Fri, 21-Nov-25 12:32:20 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=KZGICZX6mOhUJtmr15JvS2qiBGDgaeFf_GM1GVMRIVU-1763726540550-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '604'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '622'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-input-images:
+          - '50000'
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-input-images:
+          - '49999'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199176'
+        x-ratelimit-reset-input-images:
+          - 1ms
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 246ms
+        x-request-id:
+          - req_439c3f278f624ed2b226e17881dc67c1
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"Generate a simple image for me"},{"role":"assistant","content":"I''ll generate a simple image for you.","tool_calls":[{"id":"call_123","type":"function","function":{"name":"generate_image","arguments":"{\"prompt\": \"simple\"}"}}],"provider_metadata":null},{"role":"tool","tool_call_id":"call_123","content":"Generated a simple red pixel image\n[File content in following message]","name":"test_tool","error_traceback":null},{"role":"user","content":[{"type":"text","text":"[System: File from previous tool response]"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="}}]},{"role":"user","content":"What do you see in the image?"}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '803'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAA4ySTW/bMAyG7/4VhM5xEKdJU+fa0zC0h2HoZSgMRqIdNbIkiHKWrsh/H+R82NkH
+          0IsPfPjS70vqIwMQWok1CLnFKFtv8kf6Grvnnd18f949LDU/PR72L0+/vpUvP2dBTJLCbd5Ixotq
+          Kl3rDUXt7AnLQBgpTS1W93erebkoH3rQOkUmyRof88W0yC1al89n82U+W+TF4izfOi2JxRp+ZAAA
+          H/03GbWKDmINs8ml0hIzNiTW1yYAEZxJFYHMmiPaKCYDlM5Gsr33L8BEgLCn8A7cojGgW2wIpLNJ
+          qW0DrgYE1rYxBIEUeH0gMx0PDFR3jCmV7YwZAbTWRUxb6aO8nsnxat64xge34T+kotZW87YKhOxs
+          MsrRedHTYwbw2i+pu8ktfHCtj1V0O+p/V553JIbbDLC4O8PoIppRfXYBN+MqRRG14dGWhUS5JTVI
+          h5Ngp7QbgWwU+m83/5p9Cq5t85nxA5CSfCRV+UBKy9vEQ1ug9HT/13Zdcm9YMIW9llRFTSEdQlGN
+          nTm9J8HvHKmtam0bCj7o06OqfVVgudosEe+lyI7ZbwAAAP//AwAMKn+MYwMAAA==
+      headers:
+        CF-RAY:
+          - 9a2051d75c56b212-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Fri, 21 Nov 2025 12:51:39 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=VDxtEK9mbURRFUIQJtLqPmI9up.KfMGsPJYoF3.N0f4-1763729499-1.0.1.1-ufr9aiZDhsHWQmgxf7gs72UwHKrdC_WBvdx3eVY_O1BFi_iSep2iEcYEXUMaKiBGBKM3_iPsAu1K6VFh3TI37wUyoqZFNLML4lAYtfGhSE4; path=/; expires=Fri, 21-Nov-25 13:21:39 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=MX3KumT007LtqxIPKt1VW9YNSfeL_x12ypmbZ738pNM-1763729499349-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '412'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '434'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-input-images:
+          - '50000'
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-input-images:
+          - '49999'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199177'
+        x-ratelimit-reset-input-images:
+          - 1ms
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 246ms
+        x-request-id:
+          - req_75a28afa5d24469c9fc1c13df258afc8
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"Generate a simple image for me"},{"role":"assistant","content":"I''ll generate a simple image for you.","tool_calls":[{"id":"call_123","type":"function","function":{"name":"generate_image","arguments":"{\"prompt\": \"simple\"}"}}],"provider_metadata":null},{"role":"tool","tool_call_id":"call_123","content":"Generated a simple red pixel image\n[File content in following message]","name":"test_tool","error_traceback":null},{"role":"user","content":[{"type":"text","text":"[System: File from previous tool response]"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="}}]},{"role":"user","content":"What do you see in the image?"}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '803'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAA4xSwYrbMBC9+ysGneMQZ5OY5NhSKHRPZUsLZTETaWyrK2tUSe5mWfLvRXYSJ90W
+          etFh3ryneW/mNQMQWokdCNlilJ0z+Xu6/3Bff/m495+ePxt5aL7yu+3i2/PToVy+iFli8P4HyXhm
+          zSV3zlDUbEdYesJISbUoN3fl3aLcrAegY0Um0RoX89W8yC1azpeL5TpfrPJidaK3rCUFsYPvGQDA
+          6/CmQa2ig9jBYnaudBQCNiR2lyYA4dmkisAQdIhoo5hNoGQbyQ6zP7QEusOGQAdACDq5mEFgoxV4
+          UhB+9uhpDg8teQL0BJYBldLJKhpQFFGbAOxhTCSAthDPsvPrfz3VfcBk3vbGXAFoLUdMioPjxxNy
+          vHg03DjP+/AHVdTa6tBWnjCwTX5CZCcG9JgBPA5Z9jfxCOe5c7GK/ETDd9tTlGJa4QQuixMYOaKZ
+          6kVxBm7kqlMcV8sQEmVLaqJOm8Neab4CsivTb6f5m/ZoXNvmf+QnQEpykVTlPCktbx1PbZ7SPv/V
+          dgl5GFgE8r+0pCpq8mkRimrszXh2IryESF1Va9uQd16Pt1e7qsBtuV8jbqTIjtlvAAAA//8DANyE
+          /WWKAwAA
+      headers:
+        CF-RAY:
+          - 9a2070c4edd5d28c-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Fri, 21 Nov 2025 13:12:46 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=wpsEYY_Q3u__ZHJDXF6XsReeQ.CRv4pjGrXzvDw6oWI-1763730766-1.0.1.1-nMNxH6eGrheyNXkkpr0A.3R7qlafIaTm7CokdJdkvV1oBRuf.PA0rpG3Lkhirq226p2waAbseMxfw9rEKG3Z_4Ne6pp8yINt2n6tZpkERoE; path=/; expires=Fri, 21-Nov-25 13:42:46 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=lSRl5tTNjTe_HPGRkxalbRrybMX1sfHlvk_Y9w1rHco-1763730766499-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '603'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '763'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-input-images:
+          - '50000'
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-input-images:
+          - '49999'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199177'
+        x-ratelimit-reset-input-images:
+          - 1ms
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 246ms
+        x-request-id:
+          - req_c1b1eef26d904505b0badf353f07b271
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"Generate a simple image for me"},{"role":"assistant","content":"I''ll generate a simple image for you.","tool_calls":[{"id":"call_123","type":"function","function":{"name":"generate_image","arguments":"{\"prompt\": \"simple\"}"}}],"provider_metadata":null},{"role":"tool","tool_call_id":"call_123","content":"Generated a simple red pixel image\n[File content in following message]","name":"test_tool","error_traceback":null},{"role":"user","content":[{"type":"text","text":"[System: File from previous tool response]"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="}}]},{"role":"user","content":"What do you see in the image?"}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '803'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAA4ySy47bMAxF9/4KQuskiPNEsmu7KNIWxWyLYmAwMm0zI0uCRE9nMMi/F3IeTqYt
+          0I0XPLw076XeMgDFpdqC0g2Kbr0Zf6JvX+bdx+rp++bzj80HfQgb/xB2teyah69qlBRufyAtF9VE
+          u9YbEnb2hHUgFEpT8/Vqvp7n0+W6B60rySRZ7WW8mORji9aNZ9PZcjxdjPPFWd441hTVFn5mAABv
+          /Tctakt6UVuYji6VlmLEmtT22gSggjOpojBGjoJW1GiA2lkh2+++g0gEaIFbrAmkQQHtbBJFcBUg
+          RLa1IQhUgucXMhPYCXAEhGcKrxA5+R5By5ZbNByF9XnYL5YGDl0UcJZAO+PC5HaNQFUXMWVhO2Nu
+          AFrrBFOWfQCPZ3K8Wjau9sHt4zupqthybIpAGJ1N9qI4r3p6zAAe+2i7u7SUD671Uoh7ov53m3Oy
+          arjoAGerMxQnaIZ6nl/A3biiJEE28eY2SqNuqBykwyGxK9ndgOzG9J/b/G32yTjb+n/GD0Br8kJl
+          4QOVrO8dD22B0oP/V9s15H5hFSk8s6ZCmEI6REkVdub0ClV8jUJtUbGtKfjAp6dY+SLHzXq/RFxp
+          lR2z3wAAAP//AwDzqKYGmQMAAA==
+      headers:
+        CF-RAY:
+          - 9a2077e39b8e2be2-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Fri, 21 Nov 2025 13:17:38 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=7.sHDVpvr9tSk7qMNwUxr9iwY8vEkO_D1WLfs4vHmjc-1763731058-1.0.1.1-GWXuzhCsI5vrXPGMr1vKj3ehkubP8wJWR8wWuLYaFqGWMw3dAtFDXdwTC80g0v4Oi2xwA1HczCqQJNHkcapgobYnxLmKZc2EwbDkiU3ss.g; path=/; expires=Fri, 21-Nov-25 13:47:38 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=IRDaggVCNXZygJt508ssnxntjR3iEMGfjIESg7m2yNA-1763731058111-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '553'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '715'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-input-images:
+          - '50000'
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-input-images:
+          - '49999'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199177'
+        x-ratelimit-reset-input-images:
+          - 1ms
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 246ms
+        x-request-id:
+          - req_d7966e71f6ed4f488f92c7e2feae816a
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"Generate a simple image for me"},{"role":"assistant","content":"I''ll generate a simple image for you.","tool_calls":[{"id":"call_123","type":"function","function":{"name":"generate_image","arguments":"{\"prompt\": \"simple\"}"}}],"provider_metadata":null},{"role":"tool","tool_call_id":"call_123","content":"Generated a simple red pixel image\n[File content in following message]","name":"test_tool","error_traceback":null},{"role":"user","content":[{"type":"text","text":"[System: File from previous tool response]"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="}}]},{"role":"user","content":"What do you see in the image?"}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '803'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAA4ySTW/bMAyG7/4VhM5xEKdp0uS4HopdBmzrqUNhMBJtK5NFQaK7FkX++2Dnw0m3
+          AbvowIcvxZfkewagrFEbULpB0W1w+T09tcH4x68V1d++tE8Pd5+q+cPsvrLm+05NegVvd6TlpJpq
+          boMjsewPWEdCob5qsVrerO6Wq2I9gJYNuV5WB8kX0yL36Dmfz+a3+WyRF4ujvGGrKakN/MgAAN6H
+          t2/UG3pVG5hNTpGWUsKa1OacBKAiuz6iMCWbBL2oyQg1eyE/9P7YENgWawKbACHZ3sUEEjtrIJKB
+          YF/JTeGzAIZAGBMIw5YA4YXiG6QWnTtW+GWlgV2XBNgTaHYcp5ffRqq6hL133zl3AdB7FuxnNxh+
+          PpL92aLjOkTepg9SVVlvU1NGwsS+t5OEgxroPgN4HkbZXU1HhchtkFL4Jw3frY+TVOMGRzi/OUJh
+          QTfGi+IErsqVhgStSxe7UBp1Q2aUjovDzli+ANmF6T+7+Vvtg3Hr6/8pPwKtKQiZMkQyVl87HtMi
+          9Qf+r7TzkIeGVaL4YjWVYin2izBUYecOV6fSWxJqy8r6mmKI9nB6VSgLXK+2t4hLrbJ99hsAAP//
+          AwA3NqJ8iQMAAA==
+      headers:
+        CF-RAY:
+          - 9a25c6d48d75975b-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Sat, 22 Nov 2025 04:45:20 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=ACNlXhcxKSQOcysdpsbbNzhV.xw30AtjBlfbMhzUx0o-1763786720-1.0.1.1-cbstzxvUUFrnc0ZBvssYAZyyW2xc9bPyV_HL6k4LThGk5u3Qng6sIHkxrqzuAnrn7pufipqOdKnvaxr3q3XT6roivooM.7q9yn00pWqXStg; path=/; expires=Sat, 22-Nov-25 05:15:20 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=VlDimBwZd6v6M8R3Sg_94dDoPJ6dmzUhZFo6_O7mHi8-1763786720269-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '592'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '632'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-input-images:
+          - '50000'
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-input-images:
+          - '49999'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199177'
+        x-ratelimit-reset-input-images:
+          - 1ms
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 246ms
+        x-request-id:
+          - req_1f7ba8fcc3014ec8b1a98127f14891a8
+      status:
+        code: 200
+        message: OK
+version: 1
