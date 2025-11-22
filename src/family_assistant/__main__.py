@@ -157,7 +157,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
         "gemini_api_key": None,
         "allowed_user_ids": [],
         "developer_chat_id": None,
-        "model": "gemini/gemini-3-pro-preview",
+        "model": "gemini/gemini-2.5-pro",
         # Migrated from gemini-embedding-exp-03-07 to stable gemini-embedding-001
         # on 2025-10-03. Models are compatible - no re-embedding required.
         # Ref: https://developers.googleblog.com/en/gemini-embedding-available-gemini-api/
@@ -254,7 +254,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
                 "web_max_history_messages": 100,  # Much higher for web conversations
                 "web_history_max_age_hours": 720,  # 30 days - web conversations can be resumed later
                 # Default LLM model for profiles, can be overridden per profile
-                "llm_model": "gemini/gemini-3-pro-preview",  # Use actual default model string
+                "llm_model": "gemini/gemini-2.5-pro",  # Use actual default model string
             },
             "chat_id_to_name_map": {},  # Added for known user mapping
             "tools_config": {
