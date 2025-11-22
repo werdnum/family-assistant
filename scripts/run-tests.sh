@@ -273,7 +273,7 @@ BACKGROUND_PIDS+=("$TEST_PID")
 # Start frontend unit tests (always runs)
 echo "${BLUE}  ▸ Starting frontend unit tests...${NC}"
 FRONTEND_TEST_START=$(date +%s)
-(cd frontend && npm run test -- --run) &
+(cd frontend && exec npm run test -- --run) &
 FRONTEND_TEST_PID=$!
 BACKGROUND_PIDS+=("$FRONTEND_TEST_PID")
 
@@ -296,7 +296,7 @@ if [ $SKIP_LINT -eq 0 ]; then
     # Start frontend linting
     echo "${BLUE}  ▸ Starting frontend linting...${NC}"
     FRONTEND_START=$(date +%s)
-    (cd frontend && npm run check) &
+    (cd frontend && exec npm run check) &
     FRONTEND_PID=$!
     BACKGROUND_PIDS+=("$FRONTEND_PID")
 fi
