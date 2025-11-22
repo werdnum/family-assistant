@@ -5,12 +5,13 @@ import os
 import pathlib
 from collections.abc import Awaitable, Callable
 from io import BytesIO
+from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
 from PIL import Image
 
-from family_assistant.llm import LLMInterface, LLMOutput
+from family_assistant.llm import LLMInterface, LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.llm.messages import ImageUrlContentPart, TextContentPart
 from family_assistant.tools.types import ToolAttachment
@@ -22,6 +23,9 @@ from tests.factories.messages import (
 )
 
 from .vcr_helpers import sanitize_response
+
+if TYPE_CHECKING:
+    from family_assistant.llm.messages import LLMMessage
 
 
 @pytest_asyncio.fixture
@@ -471,22 +475,21 @@ async def test_tool_message_with_image_attachment(
     )
 
     # Simulate a conversation where a tool has returned an image
-    messages = [
+    messages: list[LLMMessage] = [
         create_user_message("Generate a simple image for me"),
-        {
-            "role": "assistant",
-            "content": "I'll generate a simple image for you.",
-            "tool_calls": [
-                {
-                    "id": "call_123",
-                    "type": "function",
-                    "function": {
-                        "name": "generate_image",
-                        "arguments": '{"prompt": "simple"}',
-                    },
-                }
+        create_assistant_message(
+            content="I'll generate a simple image for you.",
+            tool_calls=[
+                ToolCallItem(
+                    id="call_123",
+                    type="function",
+                    function=ToolCallFunction(
+                        name="generate_image",
+                        arguments='{"prompt": "simple"}',
+                    ),
+                )
             ],
-        },
+        ),
         create_tool_message(
             tool_call_id="call_123",
             content="Generated a simple red pixel image",
@@ -542,22 +545,21 @@ async def test_tool_message_with_pdf_attachment(
     )
 
     # Simulate a conversation where a tool has returned a PDF about software updates
-    messages = [
+    messages: list[LLMMessage] = [
         create_user_message("Find me a document about software management"),
-        {
-            "role": "assistant",
-            "content": "I'll search for a document about software management.",
-            "tool_calls": [
-                {
-                    "id": "call_456",
-                    "type": "function",
-                    "function": {
-                        "name": "search_documents",
-                        "arguments": '{"query": "software management"}',
-                    },
-                }
+        create_assistant_message(
+            content="I'll search for a document about software management.",
+            tool_calls=[
+                ToolCallItem(
+                    id="call_456",
+                    type="function",
+                    function=ToolCallFunction(
+                        name="search_documents",
+                        arguments='{"query": "software management"}',
+                    ),
+                )
             ],
-        },
+        ),
         create_tool_message(
             tool_call_id="call_456",
             content="Found a PDF document about software management practices",

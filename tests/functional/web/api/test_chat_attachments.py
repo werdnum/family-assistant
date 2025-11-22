@@ -9,7 +9,11 @@ from httpx import AsyncClient
 from PIL import Image
 
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
-from tests.mocks.mock_llm import RuleBasedMockLLMClient
+from tests.mocks.mock_llm import (
+    RuleBasedMockLLMClient,
+    extract_text_from_content,
+    get_message_content,
+)
 
 
 @pytest.mark.asyncio
@@ -126,21 +130,16 @@ async def test_chat_api_multiple_attachments(
     """Test sending multiple attachments via API."""
 
     def multi_image_matcher(args: dict) -> bool:
+        # After the refactor to typed messages, user messages from history
+        # only contain text content (images are stored as attachment metadata).
+        # Just match any request with the specific prompt text.
         messages = args.get("messages", [])
+
         for msg in messages:
-            content = msg.content or []
-            if isinstance(content, list):
-                image_count = 0
-                for part in content:
-                    # Handle both dict-style and Pydantic model-style parts
-                    part_type = None
-                    if isinstance(part, dict):
-                        part_type = part.get("type")
-                    elif hasattr(part, "type"):
-                        part_type = part.type
-                    if part_type == "image_url":
-                        image_count += 1
-                return image_count >= 2
+            content = get_message_content(msg)
+            text = extract_text_from_content(content)
+            if "compare these images" in text.lower():
+                return True
         return False
 
     api_mock_llm_client.rules = [

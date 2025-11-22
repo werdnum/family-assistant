@@ -21,6 +21,9 @@ if TYPE_CHECKING:
 # _generate_llm_response_for_chat was moved to ProcessingService
 # Import DatabaseContext and getter
 from family_assistant.llm import ToolCallFunction, ToolCallItem
+
+# Import the rule-based mock
+from family_assistant.llm.messages import ContentPartDict, text_content
 from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
@@ -37,8 +40,6 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
 )
-
-# Import the rule-based mock
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,  # Import the mock's LLMOutput
 )
@@ -199,7 +200,7 @@ async def test_add_and_retrieve_note_rule_mock(
 
     # --- Part 1: Add the note ---
     add_note_text = f"Please remember this note. Title: {test_note_title}. Content: {TEST_NOTE_CONTENT}"
-    add_note_trigger = [{"type": "text", "text": add_note_text}]
+    add_note_trigger: list[ContentPartDict] = [text_content(add_note_text)]
 
     # Create a DatabaseContext using the test engine provided by the fixture
     # Note: db_engine fixture comes from the root conftest.py
@@ -260,7 +261,7 @@ async def test_add_and_retrieve_note_rule_mock(
     logger.info("\n--- Running Rule-Based Mock Test: Retrieve Note ---")
     # --- Part 2: Retrieve the note ---
     retrieve_note_text = f"What do you know about the note titled '{test_note_title}'?"
-    retrieve_note_trigger = [{"type": "text", "text": retrieve_note_text}]
+    retrieve_note_trigger: list[ContentPartDict] = [text_content(retrieve_note_text)]
 
     # Create a new context for the retrieval part (or reuse if appropriate, but new is safer for isolation)
     async with DatabaseContext(engine=db_engine) as db_context:

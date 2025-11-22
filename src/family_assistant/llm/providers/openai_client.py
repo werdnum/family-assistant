@@ -20,7 +20,14 @@ from family_assistant.llm import (
     ToolCallFunction,
     ToolCallItem,
 )
-from family_assistant.llm.messages import LLMMessage, message_to_json_dict
+from family_assistant.llm.messages import (
+    ContentPart,
+    ImageUrlContentPart,
+    LLMMessage,
+    TextContentPart,
+    UserMessage,
+    message_to_json_dict,
+)
 
 from ..base import (
     AuthenticationError,
@@ -32,6 +39,9 @@ from ..base import (
     ProviderTimeoutError,
     RateLimitError,
 )
+
+StreamingMetadata = dict[str, object]
+
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +82,7 @@ class OpenAIClient(BaseLLMClient):
     def create_attachment_injection(
         self,
         attachment: "ToolAttachment",
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> UserMessage:
         """Create user message with attachment for OpenAI"""
         # Handle JSON/text attachments using base class logic first
         if (
@@ -85,55 +94,60 @@ class OpenAIClient(BaseLLMClient):
             )
         ):
             # Delegate to base class for intelligent JSON/text handling
-            base_message = super().create_attachment_injection(attachment)
-            # Convert base class format {"role": "user", "content": "..."}
-            # to OpenAI format {"role": "user", "content": [{"type": "text", "text": "..."}]}
-            return {
-                "role": "user",
-                "content": [{"type": "text", "text": base_message["content"]}],
-            }
+            # Base class now returns UserMessage, just return it directly
+            return super().create_attachment_injection(attachment)
 
-        # Handle multimodal content (images) with provider-specific format
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        content: list[dict[str, Any]] = [
-            {"type": "text", "text": "[System: File from previous tool response]"}
+        # Handle multimodal content (images) with typed content parts
+        # Use ContentPart type to ensure type compatibility with UserMessage
+        content_parts: list[ContentPart] = [
+            TextContentPart(
+                type="text", text="[System: File from previous tool response]"
+            )
         ]
 
         if attachment.content and attachment.mime_type.startswith("image/"):
             # Use image_url format for images
             b64_data = attachment.get_content_as_base64()
             if b64_data:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{attachment.mime_type};base64,{b64_data}"
-                    },
-                })
+                content_parts.append(
+                    ImageUrlContentPart(
+                        type="image_url",
+                        image_url={
+                            "url": f"data:{attachment.mime_type};base64,{b64_data}"
+                        },
+                    )
+                )
         elif attachment.content and attachment.mime_type == "application/pdf":
             # OpenAI models don't officially support PDF attachments in chat completions
             # Fall back to describing the PDF to the model
             size_mb = len(attachment.content) / (1024 * 1024)
-            content.append({
-                "type": "text",
-                "text": f"[PDF Document: {attachment.description or 'document.pdf'} "
-                f"({size_mb:.1f}MB) - Content cannot be displayed but was provided "
-                f"as context from the previous tool response]",
-            })
+            content_parts.append(
+                TextContentPart(
+                    type="text",
+                    text=f"[PDF Document: {attachment.description or 'document.pdf'} "
+                    f"({size_mb:.1f}MB) - Content cannot be displayed but was provided "
+                    f"as context from the previous tool response]",
+                )
+            )
         elif attachment.content:
             # Other binary content with data - describe what we have
             size_mb = len(attachment.content) / (1024 * 1024)
-            content.append({
-                "type": "text",
-                "text": f"[File content: {attachment.mime_type}, {size_mb:.1f}MB - {attachment.description}. Note: Binary content not accessible to model, text extraction may be needed]",
-            })
+            content_parts.append(
+                TextContentPart(
+                    type="text",
+                    text=f"[File content: {attachment.mime_type}, {size_mb:.1f}MB - {attachment.description}. Note: Binary content not accessible to model, text extraction may be needed]",
+                )
+            )
         elif attachment.file_path:
             # File path reference without content
-            content.append({
-                "type": "text",
-                "text": f"[File: {attachment.file_path} - Note: File content not accessible to model]",
-            })
+            content_parts.append(
+                TextContentPart(
+                    type="text",
+                    text=f"[File: {attachment.file_path} - Note: File content not accessible to model]",
+                )
+            )
 
-        return {"role": "user", "content": content}
+        return UserMessage(content=content_parts)
 
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def _get_model_specific_params(self, model: str) -> dict[str, Any]:
@@ -156,10 +170,10 @@ class OpenAIClient(BaseLLMClient):
     ) -> LLMOutput:
         """Generate response using OpenAI API."""
         try:
-            # Process tool attachments with typed messages
+            # Process tool attachments before sending
             processed_messages = self._process_tool_messages(list(messages))
 
-            # Convert to dicts only at SDK boundary (use message_to_dict to preserve typed objects)
+            # Convert typed messages to dicts
             message_dicts = [message_to_json_dict(msg) for msg in processed_messages]
 
             # Build parameters with defaults, then model-specific overrides
@@ -337,10 +351,10 @@ class OpenAIClient(BaseLLMClient):
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses."""
         try:
-            # Process tool attachments with typed messages
+            # Process tool attachments before sending
             processed_messages = self._process_tool_messages(list(messages))
 
-            # Convert to dicts only at SDK boundary (use message_to_dict to preserve typed objects)
+            # Convert typed messages to dicts for SDK boundary
             message_dicts = [message_to_json_dict(msg) for msg in processed_messages]
 
             # Build parameters with defaults, then model-specific overrides
@@ -363,14 +377,20 @@ class OpenAIClient(BaseLLMClient):
             # Track current tool call being built
             # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             current_tool_calls: dict[int, dict[str, Any]] = {}
-            chunk = None  # Initialize for pylint
+            chunk: Any | None = None
+            last_chunk_with_usage: Any | None = None
 
             async for chunk in stream:
-                delta = chunk.choices[0].delta if chunk.choices else None
+                if not chunk or not hasattr(chunk, "choices") or not chunk.choices:
+                    continue
+
+                delta = chunk.choices[0].delta
                 if not delta:
                     continue
 
-                # Stream content chunks
+                last_chunk_with_usage = chunk
+
+                # Handle content
                 if delta.content:
                     yield LLMStreamEvent(type="content", content=delta.content)
 
@@ -378,28 +398,32 @@ class OpenAIClient(BaseLLMClient):
                 if delta.tool_calls:
                     for tc_delta in delta.tool_calls:
                         idx = tc_delta.index
+                        tc_id = tc_delta.id
+                        tc_type = tc_delta.type
+                        func_name = tc_delta.function.name if tc_delta.function else ""
+                        func_args = (
+                            tc_delta.function.arguments if tc_delta.function else ""
+                        )
 
-                        # Initialize new tool call
                         if idx not in current_tool_calls:
                             current_tool_calls[idx] = {
-                                "id": tc_delta.id,
-                                "type": tc_delta.type,
+                                "id": tc_id,
+                                "type": tc_type,
                                 "function": {
-                                    "name": tc_delta.function.name
-                                    if tc_delta.function
-                                    else "",
+                                    "name": "",
                                     "arguments": "",
                                 },
                             }
 
-                        # Accumulate function arguments
-                        if tc_delta.function and tc_delta.function.arguments:
-                            current_tool_calls[idx]["function"]["arguments"] += (
-                                tc_delta.function.arguments
-                            )
-
-                        # Continue accumulating tool call data
-                        # We'll emit complete tool calls after the stream ends
+                        tc_data = current_tool_calls[idx]
+                        if tc_id:
+                            tc_data["id"] = tc_id
+                        if tc_type:
+                            tc_data["type"] = tc_type
+                        if func_name:
+                            tc_data["function"]["name"] = func_name
+                        if func_args:
+                            tc_data["function"]["arguments"] += func_args
 
             # Emit any remaining tool calls
             for tc_data in current_tool_calls.values():
@@ -419,12 +443,16 @@ class OpenAIClient(BaseLLMClient):
                     )
 
             # Extract usage information if available
-            metadata = {}
-            if chunk and hasattr(chunk, "usage") and chunk.usage:
+            metadata: StreamingMetadata = {}
+            if (
+                last_chunk_with_usage
+                and hasattr(last_chunk_with_usage, "usage")
+                and last_chunk_with_usage.usage
+            ):
                 metadata["reasoning_info"] = {
-                    "prompt_tokens": chunk.usage.prompt_tokens,
-                    "completion_tokens": chunk.usage.completion_tokens,
-                    "total_tokens": chunk.usage.total_tokens,
+                    "prompt_tokens": last_chunk_with_usage.usage.prompt_tokens,
+                    "completion_tokens": last_chunk_with_usage.usage.completion_tokens,
+                    "total_tokens": last_chunk_with_usage.usage.total_tokens,
                 }
 
             # Signal completion

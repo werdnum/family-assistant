@@ -67,13 +67,9 @@ class MockLLMClient:
     def create_attachment_injection(
         self,
         attachment: "ToolAttachment",
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> UserMessage:
         """Mock implementation - not needed for these tests."""
-        return {
-            "role": "user",
-            "content": "[System: File from previous tool response]",
-        }
+        return UserMessage(content="[System: File from previous tool response]")
 
 
 class MockToolsProvider:

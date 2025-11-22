@@ -1,0 +1,430 @@
+interactions:
+  - request:
+      body: '{"messages":[{"role":"user","content":"Calculate 42 divided by 7"}],"model":"gpt-4.1-nano","tool_choice":"auto","tools":[{"type":"function","function":{"name":"calculate","description":"Perform basic mathematical calculations","parameters":{"type":"object","properties":{"expression":{"type":"string","description":"The mathematical expression to evaluate"}},"required":["expression"]}}}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '389'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//jFPBjpswEL3zFdacwzYhQLrcqqqqtNv20mqrbbNCjhnAjbFd22yJovx7
+          BSRAsllpOSBr3ryZN2/svUcI8AwSAqykjlVa+B/x/v3d7u/3bXmrm41A/dgU8fbDDxc8fAlg1jLU
+          5g8yd2LdMFVpgY4r2cPMIHXYVl2s4uUqiKNw1QGVylC0tEI7P7xZ+JJK5QfzIPLnob8Ij/RScYYW
+          EvLbI4SQffdvhcoMG0jIfHaKVGgtLRCSIYkQMEq0EaDWcuuodDAbQaakQ9lql7UQE8ApJVJGhRgb
+          999+ch7dokKkZV5/rZqfn7a3z7/+PWy4/na//HwXP0769aV3uhOU15INLk3wIZ5cNCMEJK3w2JDV
+          gjq8IBMC1BR1hdK1wmG/Bmy0QWu5kmtI1hAG5B1ZreEAZ8SDd+38NHHEYF5bKl5aRaVUjraKO6+e
+          jshhWItQhTZqYy+okHPJbZkapLabdmq6dxLSSYD6bK+gjaq0S53aYtc0ivqiMN69EVzER9ApR8UY
+          Xy1mV6qlGTrKu7UPN41RVmI2MscbR+uMqwngTSZ/KeZa7X56Lou3lB8BxlA7zFJtMOPsfOAxzWD7
+          Ml9LGzzuBINF88wZpo6jabeRYU5r0T8XsDvrsEpzLgs02vDuzUCuU9ws53kWRmEE3sH7DwAA//8D
+          AJ+mebVCBAAA
+      headers:
+        CF-RAY:
+          - 9a2009c7de57a592-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Fri, 21 Nov 2025 12:02:27 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=Tkfw5Y8f2VrKZZpUdDSA1CkDtGqVj.kZGdE_jhqrdA8-1763726547-1.0.1.1-Rwcwinn3W.H_dL8onTvuBVA4zo772xtIxV8nga8Q49PK.EBb3rcK0ueeU4fkYVWlAiaDcla1A7eJD73tuB6PlwOyGMNIIwATq2U0RWRq7cU; path=/; expires=Fri, 21-Nov-25 12:32:27 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=nsECHZzPsbt6zj9AkRRHLby2o.7pkx5YrNpza5gfCJ4-1763726547617-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '291'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '304'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199991'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 2ms
+        x-request-id:
+          - req_3951863c12e64410a84d5d4b64b06a3c
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"Calculate 42 divided by 7"}],"model":"gpt-4.1-nano","tool_choice":"auto","tools":[{"type":"function","function":{"name":"calculate","description":"Perform basic mathematical calculations","parameters":{"type":"object","properties":{"expression":{"type":"string","description":"The mathematical expression to evaluate"}},"required":["expression"]}}}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '389'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//jFNNj5swEL3zK6w5hy0hUBquPWYPrap+qVkhxx7Au8a2bJMmjfLfKyAB
+          kt1K5YCseX4zb96MTwEhIDjkBFhNPWuMDD/ipl3Vx5YfvnxqfrjYZ/TwUq5/bn7/oREsOobePSPz
+          V9YD042R6IVWA8wsUo9d1mX2fpXF6zTKeqDRHGVHq4wPk4dlqKjSYRzFaRgl4TK50GstGDrIya+A
+          EEJO/b8TqjgeICfR4hpp0DlaIeTjJULAatlFgDonnKfKw2ICmVYeVaddtVLOAK+1LBiVcio8fKfZ
+          eXKLSllsGrv6dtzXj9lafvZ7y79/SJn+uprVG1IfTS+obBUbXZrhYzy/K0YIKNrgpSBrJfV4RyYE
+          qK3aBpXvhMNpC3gwFp0TWm0h30ISv8u2cIYb2jl46/w088Ni2ToqXxtFldKednp7p54uyHkcitSV
+          sXrn7qhQCiVcXVikru91bnlwFdJLgPZmqmCsbowvvH7BvmiaDklh2rwJXF5Brz2VUzy7rM1ttoKj
+          p6If+rhnjLIa+cSc9o22XOgZEMw6fy3mrdxD90JV/5N+AhhD45EXxiIX7Lbh6ZrF7l3+69rocS8Y
+          HNq9YFh4gbabBseStnJ4LOCOzmNTlEJVaI0V/YuB0hS4W0UlT9IkheAc/AUAAP//AwCLmRuRQAQA
+          AA==
+      headers:
+        CF-RAY:
+          - 9a20520bddcf1994-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Fri, 21 Nov 2025 12:51:47 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=JMTnQgITQxtSM_GoFM17vMARFF5HIwVn8Vgq4aRyBbc-1763729507-1.0.1.1-tX2b.9mSZAzReq0GCtVN__C2d1T_Lpl4Dp5sqmh20qiROkIo3VCgbzArC6SNlVdLmd.P_F_bP.Fv65Qg0rBOVYOdhNBSjRKPUVKV1MLDxAw; path=/; expires=Fri, 21-Nov-25 13:21:47 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=k2vQPk0weg3erw8s9KVpA4TwM9NnwHQ5PEXwu4NOrTA-1763729507713-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '327'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '349'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199991'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 2ms
+        x-request-id:
+          - req_6cc1e3265cc24dcd85be1d335d4c37f7
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"Calculate 42 divided by 7"}],"model":"gpt-4.1-nano","tool_choice":"auto","tools":[{"type":"function","function":{"name":"calculate","description":"Perform basic mathematical calculations","parameters":{"type":"object","properties":{"expression":{"type":"string","description":"The mathematical expression to evaluate"}},"required":["expression"]}}}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '389'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//jFNRb5swEH7nV1j3HLqQQKPyNm3aqqjrpLy061Ihxz7Am7E922xJo/z3
+          CUiApJ00HpB1n7+777477wNCQHBICbCSelYZGX7Au2WSL759fHr886h3n77e3n25tg9V9MK3S5g0
+          DL35gcyfWFdMV0aiF1p1MLNIPTZZo8X1fDGPpslNC1Sao2xohfFhfBWFiiodzqazJJzGYRQf6aUW
+          DB2k5HtACCH79t8IVRy3kJLp5BSp0DlaIKT9JULAatlEgDonnKfKw2QAmVYeVaNd1VKOAK+1zBiV
+          cijcffvReXCLSpm9lKvPsb+//UXvtzfx03JVvH+YrzabUb0u9c60gvJasd6lEd7H04tihICiFR4L
+          slpSjxdkQoDaoq5Q+UY47NeAW2PROaHVGtI1xLN3izUc4Ix2CN46P4/8sJjXjsrXRlGltKeN3tap
+          5yNy6IcidWGs3rgLKuRCCVdmFqlrex1bHpyEtBKgPpsqGKsr4zOvf2JbNEm6pDBs3gBGJ9BrT+UQ
+          XxzX5jxbxtFT0Q693zNGWYl8YA77Rmsu9AgIRp2/FvNW7q57oYr/ST8AjKHxyDNjkQt23vBwzWLz
+          Lv91rfe4FQwO7W/BMPMCbTMNjjmtZfdYwO2cxyrLhSrQGivaFwO5yXAzn+Y8TuIEgkPwFwAA//8D
+          AP2BwFNABAAA
+      headers:
+        CF-RAY:
+          - 9a2077f27dcb18dc-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Fri, 21 Nov 2025 13:17:40 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=DTP1nJzRBCWPcQUNw3WLDs9nsN5p_HZxp3TpPY4I_K4-1763731060-1.0.1.1-GYqzfN5DKk8hxcvwn6kpmmzGYqwi0LnvVZAqF6HWgXZARXLT4G8VeiVvYtFWuKaR4nEta._KWj0SjmjlndRqLcVlu2noKQeBhvL_Hx_K3w8; path=/; expires=Fri, 21-Nov-25 13:47:40 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=qui2GtQrJfnwa0bWZ.hBFoPUlqewfPi_MO3dpXu6ouo-1763731060164-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '372'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '384'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199991'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 2ms
+        x-request-id:
+          - req_4e1b49344f824a459e6b266bade62e51
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"Calculate 42 divided by 7"}],"model":"gpt-4.1-nano","tool_choice":"auto","tools":[{"type":"function","function":{"name":"calculate","description":"Perform basic mathematical calculations","parameters":{"type":"object","properties":{"expression":{"type":"string","description":"The mathematical expression to evaluate"}},"required":["expression"]}}}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '389'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//jFPLbtswELzrK4g9W6kfkmXoWvSVIm1T91C0DgSaWslM+AJJOQ4M/3sg
+          yZZkxwWqg0Ds7OzOzpL7gBDgOaQE2IZ6Jo0I3+Mf+fxVrv1it5nSH9+fvgi/mC23d9vft0sY1Qy9
+          fkTmT6wbpqUR6LlWLcwsUo911UkynyWLeTKdN4DUOYqaVhofRjeTUFGlw+l4GofjKJxER/pGc4YO
+          UvI3IISQffOvhaocd5CS8egUkegcLRHSLokQsFrUEaDOceep8jDqQaaVR1VrV5UQA8BrLTJGhegb
+          t99+cO7dokJk+OFT/O1j8ev+flctHuWte/6sf94t1aBfW/rFNIKKSrHOpQHexdOLZoSAohKPDVkl
+          qMcLMiFAbVlJVL4WDvsV4M5YdI5rtYJ0BdGUvCPJCg5wRjwE184PA0csFpWj4q1VVCntaa248erh
+          iBy6tQhdGqvX7oIKBVfcbTKL1DXTDk0PTkIaCVCd7RWM1dL4zOsnbJrGcVsU+rvXg5P5EfTaU9HH
+          k8noSrUsR095s/bupjHKNpj3zP7G0SrnegAEg8nfirlWu52eq/J/yvcAY2g85pmxmHN2PnCfZrF+
+          mf9K6zxuBINDu+UMM8/R1tvIsaCVaJ8LuBfnUWYFVyVaY3nzZqAwGa5n4yKP4iiG4BC8AgAA//8D
+          AB/qQ4BCBAAA
+      headers:
+        CF-RAY:
+          - 9a25c6fd394d1bc3-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Sat, 22 Nov 2025 04:45:26 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=BptOOie71tEp5RLYIq8WYe6cbJIfBxMbp42xg_Dg9vU-1763786726-1.0.1.1-uO.N6HIq_FUu.XvOh6V1Du6AUZV7yY60hTMng5iLyE7ggmgJBIKoIEZnsYPshftEp.l1jFMv7HIqAXoqrFyqpEwsZmxTqTb0RngfY5yzaAw; path=/; expires=Sat, 22-Nov-25 05:15:26 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=xbECFg0ChkUOmcKZ1uVs4PwCVgOSHscNHTgkbFw5dWs-1763786726294-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '195'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '209'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199991'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 2ms
+        x-request-id:
+          - req_ddbbb2cbf06d4f5fae888e3f6039d3a0
+      status:
+        code: 200
+        message: OK
+version: 1

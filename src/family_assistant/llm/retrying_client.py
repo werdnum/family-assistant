@@ -22,6 +22,7 @@ from .base import (
     RateLimitError,
     ServiceUnavailableError,
 )
+from .messages import UserMessage
 
 logger = logging.getLogger(__name__)
 
@@ -228,7 +229,6 @@ class RetryingLLMClient:
     def create_attachment_injection(
         self,
         attachment: "ToolAttachment",
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> UserMessage:
         """Create attachment injection - delegates to primary client."""
         return self.primary_client.create_attachment_injection(attachment)

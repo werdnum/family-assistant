@@ -32,6 +32,11 @@ from telegram.ext import (
 )
 
 from family_assistant.indexing.processors.text_processors import TextChunker
+from family_assistant.llm.messages import (
+    ContentPartDict,
+    image_url_content,
+    text_content,
+)
 from family_assistant.storage.message_history import (
     message_history_table,  # For error handling db update
 )
@@ -323,13 +328,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         logger.debug(f"Combined text: '{combined_text[:100]}...'")
 
         formatted_user_text_content = f"{forward_context}{combined_text}".strip()
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        text_content_part: dict[str, Any] = {
-            "type": "text",
-            "text": formatted_user_text_content,
-        }
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        trigger_content_parts: list[dict[str, Any]] = [text_content_part]
+        trigger_content_parts: list[ContentPartDict] = [
+            text_content(formatted_user_text_content)
+        ]
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         trigger_attachments: list[dict[str, Any]] | None = None
 
@@ -349,10 +350,10 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         description=f"Telegram photo from {user_name}",
                     )
 
-                trigger_content_parts.append({
-                    "type": "image_url",
-                    "image_url": {"url": attachment_metadata.content_url},
-                })
+                if attachment_metadata.content_url:
+                    trigger_content_parts.append(
+                        image_url_content(attachment_metadata.content_url)
+                    )
 
                 trigger_attachments = [
                     {
@@ -375,7 +376,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 await context.bot.send_message(
                     chat_id, "Error processing image in batch."
                 )
-                trigger_content_parts = [text_content_part]
+                trigger_content_parts = [text_content(formatted_user_text_content)]
 
         sent_assistant_message: Message | None = None
         processing_error_traceback: str | None = None
@@ -893,22 +894,22 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 )
                 return
 
-        text_part = {"type": "text", "text": user_input_for_profile}
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        trigger_content_parts_for_profile: list[dict[str, Any]] = [text_part]
+        trigger_content_parts_for_profile: list[ContentPartDict] = [
+            text_content(user_input_for_profile)
+        ]
         if photo_bytes:
             try:
                 base64_image = base64.b64encode(photo_bytes).decode("utf-8")
                 mime_type = "image/jpeg"
-                trigger_content_parts_for_profile.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
-                })
+                data_url = f"data:{mime_type};base64,{base64_image}"
+                trigger_content_parts_for_profile.append(image_url_content(data_url))
             except Exception as img_err_direct:
                 logger.error(
                     f"Error encoding photo for slash command direct profile call: {img_err_direct}"
                 )
-                trigger_content_parts_for_profile = [text_part]
+                trigger_content_parts_for_profile = [
+                    text_content(user_input_for_profile)
+                ]
 
         reply_to_interface_id_str = (
             str(update.message.reply_to_message.message_id)

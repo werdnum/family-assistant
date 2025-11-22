@@ -3,7 +3,7 @@
 import json
 import os
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
@@ -17,6 +17,9 @@ from tests.factories.messages import (
 )
 
 from .vcr_helpers import sanitize_response
+
+if TYPE_CHECKING:
+    from family_assistant.llm.messages import LLMMessage
 
 
 def skip_if_google_tool_calling(provider: str) -> None:
@@ -365,7 +368,9 @@ async def test_tool_response_handling(
     tools = [get_weather_tool()]
 
     # First, get a tool call
-    messages = [create_user_message("What's the weather in London, UK?")]
+    messages: list[LLMMessage] = [
+        create_user_message("What's the weather in London, UK?")
+    ]
 
     response1 = await client.generate_response(
         messages=messages, tools=tools, tool_choice="auto"
@@ -386,23 +391,12 @@ async def test_tool_response_handling(
     )
 
     # Continue conversation with tool response
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    assistant_msg: dict[str, Any] = {
-        "role": "assistant",
-        "content": response1.content,
-        "tool_calls": [
-            {
-                "id": tool_call.id,
-                "type": tool_call.type,
-                "function": {
-                    "name": tool_call.function.name,
-                    "arguments": tool_call.function.arguments,
-                },
-            }
-        ],
-    }
-    messages.append(assistant_msg)  # type: ignore[reportArgumentType]
-    messages.append(tool_response)  # type: ignore[reportArgumentType]
+    assistant_msg = create_assistant_message(
+        content=response1.content,
+        tool_calls=response1.tool_calls,
+    )
+    messages.append(assistant_msg)
+    messages.append(tool_response)
 
     # Get final response
     response2 = await client.generate_response(messages=messages, tools=tools)
