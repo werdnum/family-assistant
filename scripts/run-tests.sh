@@ -7,6 +7,82 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Track all background processes for cleanup
+BACKGROUND_PIDS=()
+CLEANUP_RUNNING=0
+
+# Cleanup function - kills all background processes
+cleanup() {
+    # Prevent recursive cleanup calls
+    if [ "$CLEANUP_RUNNING" -eq 1 ]; then
+        return
+    fi
+    CLEANUP_RUNNING=1
+
+    local exit_code=$?
+
+    # If we have background processes, clean them up
+    if [ ${#BACKGROUND_PIDS[@]} -gt 0 ]; then
+        echo ""
+        echo "${YELLOW}⚠️  Interrupted - cleaning up background processes...${NC}" >&2
+
+        # Send SIGTERM to all background processes
+        for pid in "${BACKGROUND_PIDS[@]}"; do
+            if kill -0 "$pid" 2>/dev/null; then
+                kill "$pid" 2>/dev/null || true
+            fi
+        done
+
+        # Wait up to 3 seconds for graceful shutdown
+        local wait_count=0
+        while [ $wait_count -lt 30 ]; do
+            local any_alive=0
+            for pid in "${BACKGROUND_PIDS[@]}"; do
+                if kill -0 "$pid" 2>/dev/null; then
+                    any_alive=1
+                    break
+                fi
+            done
+
+            if [ $any_alive -eq 0 ]; then
+                break
+            fi
+
+            sleep 0.1
+            wait_count=$((wait_count + 1))
+        done
+
+        # Force kill any remaining processes
+        for pid in "${BACKGROUND_PIDS[@]}"; do
+            if kill -0 "$pid" 2>/dev/null; then
+                echo "${YELLOW}  Force killing process $pid${NC}" >&2
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+        done
+
+        echo "${GREEN}✓ Cleanup complete${NC}" >&2
+    fi
+
+    # Exit with appropriate code (130 for SIGINT)
+    if [ $exit_code -eq 0 ] && [ -n "${INTERRUPTED:-}" ]; then
+        exit 130
+    else
+        exit $exit_code
+    fi
+}
+
+# Handle interruption signals
+handle_signal() {
+    INTERRUPTED=1
+    echo ""
+    echo "${YELLOW}⚠️  Received interrupt signal${NC}" >&2
+    cleanup
+}
+
+# Set up signal traps
+trap handle_signal SIGINT SIGTERM
+trap cleanup EXIT
+
 # Usage function
 usage() {
     echo "Usage: $0 [options] [pytest-args]"
@@ -192,12 +268,14 @@ else
     "${VIRTUAL_ENV:-.venv}"/bin/pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch "$PARALLELISM" "${PYTEST_ARGS[@]}" &
 fi
 TEST_PID=$!
+BACKGROUND_PIDS+=("$TEST_PID")
 
 # Start frontend unit tests (always runs)
 echo "${BLUE}  ▸ Starting frontend unit tests...${NC}"
 FRONTEND_TEST_START=$(date +%s)
 (cd frontend && npm run test -- --run) &
 FRONTEND_TEST_PID=$!
+BACKGROUND_PIDS+=("$FRONTEND_TEST_PID")
 
 # Start linting and type checking only if not skipped
 if [ $SKIP_LINT -eq 0 ]; then
@@ -206,18 +284,21 @@ if [ $SKIP_LINT -eq 0 ]; then
     PYRIGHT_START=$(date +%s)
     "${VIRTUAL_ENV:-.venv}"/bin/basedpyright src tests &
     PYRIGHT_PID=$!
+    BACKGROUND_PIDS+=("$PYRIGHT_PID")
 
     # Start pylint
     echo "${BLUE}  ▸ Starting pylint...${NC}"
     PYLINT_START=$(date +%s)
     "${VIRTUAL_ENV:-.venv}"/bin/pylint -j0 src tests &
     PYLINT_PID=$!
+    BACKGROUND_PIDS+=("$PYLINT_PID")
 
     # Start frontend linting
     echo "${BLUE}  ▸ Starting frontend linting...${NC}"
     FRONTEND_START=$(date +%s)
     (cd frontend && npm run check) &
     FRONTEND_PID=$!
+    BACKGROUND_PIDS+=("$FRONTEND_PID")
 fi
 
 # Wait for processes and collect results
