@@ -116,12 +116,28 @@ def llm_request_matcher(r1: Any, r2: Any) -> bool:  # noqa: ANN401 # VCR request
 
 # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
 # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-def sanitize_response(response: dict[str, Any]) -> dict[str, Any]:
+def sanitize_response(response: dict[str, Any]) -> dict[str, Any] | None:
     """
     Remove sensitive data from responses before recording.
 
     This function is used as a before_record_response callback.
+
+    Returns None to skip recording responses with empty bodies (prevents duplicates
+    when VCR intercepts multiple HTTP client libraries like httpx + aiohttp).
     """
+    # Skip recording responses with empty bodies - these are typically duplicates
+    # from VCR intercepting multiple HTTP client libraries (httpx + aiohttp)
+    if (
+        "body" in response
+        and "string" in response["body"]
+        and (
+            isinstance(response["body"]["string"], bytes)
+            and not response["body"]["string"]
+        )
+    ):
+        logger.debug("Skipping empty response body (likely VCR duplicate interception)")
+        return None
+
     # Create a copy to avoid modifying the original
     sanitized = response.copy()
 
