@@ -53,6 +53,7 @@ from family_assistant.storage.vector import init_vector_db  # Corrected import p
 from family_assistant.task_worker import TaskWorker
 from family_assistant.utils.clock import MockClock
 from family_assistant.web.app_creator import app as fastapi_app
+from tests.integration.llm.vcr_helpers import llm_request_matcher
 
 # Configure logging for tests (optional, but can be helpful)
 logging.basicConfig(level=logging.INFO)
@@ -994,6 +995,9 @@ def vcr_config(llm_record_mode: str) -> dict[str, Any]:
 
     Uses unified llm_record_mode to determine VCR's record_mode.
     """
+    if "llm_body" not in vcr.default_vcr.matchers:
+        vcr.default_vcr.register_matcher("llm_body", llm_request_matcher)
+
     # Map unified mode to VCR's mode semantics
     mode_mapping = {
         "replay": "none",  # Only replay existing cassettes
@@ -1015,11 +1019,11 @@ def vcr_config(llm_record_mode: str) -> dict[str, Any]:
         # Use unified mode mapped to VCR semantics
         "record_mode": mode_mapping[llm_record_mode],
         # Match requests on these attributes
-        "match_on": ["method", "scheme", "host", "port", "path", "query", "body"],
+        "match_on": ["method", "scheme", "host", "port", "path", "query", "llm_body"],
         # Store cassettes in organized directory structure
         "cassette_library_dir": "tests/cassettes/llm",
-        # Allow cassettes to be replayed multiple times
-        "allow_playback_repeats": True,
+        # Enforce sequential playback to keep multi-turn interactions aligned
+        "allow_playback_repeats": False,
         # Don't record on exceptions (avoid recording failed requests)
         "record_on_exception": False,
     }
@@ -1030,6 +1034,12 @@ def vcr_cassette_dir(request: pytest.FixtureRequest) -> str:
     """Return the cassette directory for the current test module."""
     test_dir = pathlib.Path(request.node.fspath).parent
     return str(test_dir / "cassettes")
+
+
+def pytest_recording_configure(config: pytest.Config, vcr: vcr.VCR) -> None:
+    """Register custom matchers for pytest-recording VCR instances."""
+    if "llm_body" not in vcr.matchers:
+        vcr.register_matcher("llm_body", llm_request_matcher)
 
 
 # --- VCR Bypass Mechanism ---

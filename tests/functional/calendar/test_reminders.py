@@ -144,11 +144,11 @@ async def test_schedule_and_execute_callback(
         # when invoked by handle_llm_callback.
         last_message = messages[-1]
         if last_message.role == "user":
-            content = last_message.content
-            if isinstance(content, str):
-                is_trigger = "System Callback Trigger:" in content
-                has_context = CALLBACK_CONTEXT in content
-                return is_trigger and has_context
+            # Use helper to extract text from both string and list content
+            content_text = get_last_message_text(messages)
+            is_trigger = "System Callback Trigger:" in content_text
+            has_context = CALLBACK_CONTEXT in content_text
+            return is_trigger and has_context
         return False
 
     callback_final_response_text = (
@@ -435,12 +435,12 @@ async def test_modify_pending_callback(
             return False
         last_message = messages[-1]
         if last_message.role == "user":
-            content = last_message.content
-            if isinstance(content, str):
-                return (
-                    "System Callback Trigger:" in content
-                    and modified_context in content
-                )
+            # Use helper to extract text from both string and list content
+            content_text = get_last_message_text(messages)
+            return (
+                "System Callback Trigger:" in content_text
+                and modified_context in content_text
+            )
         return False
 
     modified_callback_final_response_text = (
@@ -758,16 +758,16 @@ async def test_cancel_pending_callback(
             return False
         last_message = messages[-1]
         if last_message.role == "user":
-            content = last_message.content
-            if isinstance(content, str):
-                # This matcher should ideally NOT be hit if cancellation is successful
-                is_trigger = "System Callback Trigger:" in content
-                has_context = initial_context_for_cancel in content
-                if is_trigger and has_context:
-                    logger.error(
-                        "CANCEL TEST FAILURE: Callback trigger was matched, meaning cancellation likely failed."
-                    )
-                return is_trigger and has_context
+            # Use helper to extract text from both string and list content
+            content_text = get_last_message_text(messages)
+            # This matcher should ideally NOT be hit if cancellation is successful
+            is_trigger = "System Callback Trigger:" in content_text
+            has_context = initial_context_for_cancel in content_text
+            if is_trigger and has_context:
+                logger.error(
+                    "CANCEL TEST FAILURE: Callback trigger was matched, meaning cancellation likely failed."
+                )
+            return is_trigger and has_context
         return False
 
     cancelled_callback_response = MockLLMOutput(
@@ -1044,13 +1044,13 @@ async def test_schedule_reminder_with_follow_up(
             return False
         last_message = messages[-1]
         if last_message.role == "user":
-            content = last_message.content
-            if isinstance(content, str):
-                return (
-                    "System: Reminder triggered" in content
-                    and reminder_message in content
-                    and "attempt 1" not in content.lower()
-                )
+            # Use helper to extract text from both string and list content
+            content_text = get_last_message_text(messages)
+            return (
+                "System: Reminder triggered" in content_text
+                and reminder_message in content_text
+                and "attempt 1" not in content_text.lower()
+            )
         return False
 
     initial_reminder_response = MockLLMOutput(
@@ -1065,12 +1065,12 @@ async def test_schedule_reminder_with_follow_up(
             return False
         last_message = messages[-1]
         if last_message.role == "user":
-            content = last_message.content
-            if isinstance(content, str):
-                return (
-                    "System: Follow-up reminder triggered" in content
-                    and reminder_message in content
-                )
+            # Use helper to extract text from both string and list content
+            content_text = get_last_message_text(messages)
+            return (
+                "System: Follow-up reminder triggered" in content_text
+                and reminder_message in content_text
+            )
         return False
 
     follow_up_reminder_response = MockLLMOutput(
@@ -1388,12 +1388,12 @@ async def test_schedule_recurring_callback(
             return False
         last_message = messages[-1]
         if last_message.role == "user":
-            content = last_message.content
-            if isinstance(content, str):
-                return (
-                    "System Callback Trigger:" in content
-                    and callback_context in content
-                )
+            # Use helper to extract text from both string and list content
+            content_text = get_last_message_text(messages)
+            return (
+                "System Callback Trigger:" in content_text
+                and callback_context in content_text
+            )
         return False
 
     first_callback_response = MockLLMOutput(
@@ -1409,20 +1409,18 @@ async def test_schedule_recurring_callback(
             return False
         last_message = messages[-1]
         if last_message.role == "user":
-            content = last_message.content
-            if isinstance(content, str):
-                # Check if this is a callback trigger AND we've already done one
-                is_trigger = (
-                    "System Callback Trigger:" in content
-                    and callback_context in content
-                )
-                if is_trigger and hasattr(
-                    second_callback_trigger_matcher, "call_count"
-                ):
-                    second_callback_trigger_matcher.call_count += 1
-                else:
-                    second_callback_trigger_matcher.call_count = 1
-                return is_trigger and second_callback_trigger_matcher.call_count > 1
+            # Use helper to extract text from both string and list content
+            content_text = get_last_message_text(messages)
+            # Check if this is a callback trigger AND we've already done one
+            is_trigger = (
+                "System Callback Trigger:" in content_text
+                and callback_context in content_text
+            )
+            if is_trigger and hasattr(second_callback_trigger_matcher, "call_count"):
+                second_callback_trigger_matcher.call_count += 1
+            else:
+                second_callback_trigger_matcher.call_count = 1
+            return is_trigger and second_callback_trigger_matcher.call_count > 1
         return False
 
     second_callback_response = MockLLMOutput(

@@ -881,6 +881,10 @@ async def api_chat_send_message_stream(
         async with get_db_context(
             request.app.state.database_engine
         ) as stream_db_context:
+            # Inject message notifier if available
+            if hasattr(request.app.state, "message_notifier"):
+                stream_db_context.message_notifier = request.app.state.message_notifier
+
             # Create confirmation callback that queues events
             async def web_confirmation_callback(
                 interface_type_cb: str,
@@ -1051,11 +1055,17 @@ async def api_chat_send_message_stream(
                         elif event.type == "tool_call":
                             # Convert tool_call to dict for JSON serialization
                             if event.tool_call:
+                                # Ensure arguments is a JSON string if it isn't already
+                                args = event.tool_call.function.arguments
+                                if not isinstance(args, str):
+                                    args = json.dumps(args)
+
                                 tool_call_dict = {
                                     "id": event.tool_call.id,
+                                    "type": event.tool_call.type,  # Include type
                                     "function": {
                                         "name": event.tool_call.function.name,
-                                        "arguments": event.tool_call.function.arguments,
+                                        "arguments": args,
                                     },
                                 }
                                 yield f"event: tool_call\ndata: {json.dumps({'tool_call': tool_call_dict})}\n\n"
@@ -1290,16 +1300,41 @@ async def live_message_events(
 
     def _create_sse_message(msg: MessageDict) -> str:
         """Create a formatted SSE message string from a message dict with database fields."""
-        # Frontend expects: internal_id, timestamp, new_messages, role, content
+        # Process tool_calls if they are typed objects
+        content_tool_calls = None
+        if msg.get("tool_calls"):
+            content_tool_calls = []
+            for tc in msg["tool_calls"]:
+                if isinstance(tc, ToolCallItem):
+                    # Ensure arguments is a JSON string
+                    args = tc.function.arguments
+                    if not isinstance(args, str):
+                        args = json.dumps(args)
+                    content_tool_calls.append({
+                        "id": tc.id,
+                        "type": tc.type,
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": args,
+                        },
+                    })
+                elif isinstance(tc, dict):
+                    content_tool_calls.append(tc)
+
+        # Frontend expects: internal_id, timestamp, new_messages, role, content, tool_calls
         data = {
             "internal_id": msg["internal_id"],
             "timestamp": msg["timestamp"].isoformat()
             if isinstance(msg["timestamp"], datetime)
             else msg["timestamp"],
+            "conversation_id": msg["conversation_id"],
+            "interface_type": msg["interface_type"],
             "new_messages": True,
             "role": msg["role"],
             "content": msg.get("content", ""),
+            "tool_calls": content_tool_calls or [],
         }
+
         return f"event: message\ndata: {json.dumps(data, default=str)}\n\n"
 
     async def event_generator() -> AsyncGenerator[str]:
@@ -1316,6 +1351,9 @@ async def live_message_events(
 
             # Initialize last_check timestamp BEFORE any queries to avoid race condition
             last_check = after_dt if after_dt else datetime.now(UTC)
+            logger.debug(
+                f"SSE stream started for {conversation_id}. last_check={last_check}"
+            )
 
             # If after timestamp provided, send catch-up messages immediately
             if after_dt:
@@ -1358,7 +1396,9 @@ async def live_message_events(
                     # Check if we got a notification
                     if queue_task in done:
                         # Notification received - query for new messages
+                        logger.debug(f"SSE notification received for {conversation_id}")
                         messages, last_check = await query_new_messages(last_check)
+                        logger.debug(f"SSE found {len(messages)} new messages")
                         for msg in messages:
                             yield _create_sse_message(msg)
                     else:
@@ -1367,6 +1407,8 @@ async def live_message_events(
 
                         # Polling fallback - check for any messages since last check
                         messages, last_check = await query_new_messages(last_check)
+                        if messages:
+                            logger.debug(f"SSE poll found {len(messages)} new messages")
                         for msg in messages:
                             yield _create_sse_message(msg)
 

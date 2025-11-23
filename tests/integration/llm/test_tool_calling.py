@@ -167,9 +167,12 @@ async def test_single_tool_call(
     assert tool_call.function.name == "get_weather"
 
     # Parse and validate arguments
-    args = json.loads(tool_call.function.arguments)
-    assert "location" in args
-    assert "francisco" in args["location"].lower()
+    raw_args = tool_call.function.arguments
+    args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+    assert isinstance(args, dict)
+    location = args.get("location")
+    assert isinstance(location, str)
+    assert "francisco" in location.lower()
 
 
 @pytest.mark.no_db
@@ -208,9 +211,12 @@ async def test_multiple_tool_options(
     tool_call = response.tool_calls[0]
     assert tool_call.function.name == "calculate"
 
-    args = json.loads(tool_call.function.arguments)
-    assert "expression" in args
-    assert "25" in args["expression"] and "4" in args["expression"]
+    raw_args = tool_call.function.arguments
+    args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+    assert isinstance(args, dict)
+    expression = args.get("expression")
+    assert isinstance(expression, str)
+    assert "25" in expression and "4" in expression
 
 
 @pytest.mark.no_db
@@ -336,8 +342,10 @@ async def test_tool_call_with_conversation_history(
     found_paris_weather = False
     for tool_call in response.tool_calls:
         if tool_call.function.name == "get_weather":
-            args = json.loads(tool_call.function.arguments)
-            if "location" in args and "paris" in args["location"].lower():
+            raw_args = tool_call.function.arguments
+            args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+            location = args.get("location") if isinstance(args, dict) else None
+            if isinstance(location, str) and "paris" in location.lower():
                 found_paris_weather = True
                 break
 
@@ -377,18 +385,21 @@ async def test_tool_response_handling(
     )
 
     assert response1.tool_calls is not None
-    tool_call = response1.tool_calls[0]
-
-    # Simulate tool execution and response
-    tool_response = create_tool_message(
-        tool_call_id=tool_call.id,
-        content=json.dumps({
-            "location": "London, UK",
-            "temperature": 15,
-            "unit": "celsius",
-            "condition": "Partly cloudy",
-        }),
-    )
+    # Simulate tool execution for every requested tool call. Some providers
+    # (notably OpenAI) may emit multiple identical function calls; each one
+    # must be answered to satisfy the protocol.
+    tool_responses = [
+        create_tool_message(
+            tool_call_id=tc.id,
+            content=json.dumps({
+                "location": "London, UK",
+                "temperature": 15,
+                "unit": "celsius",
+                "condition": "Partly cloudy",
+            }),
+        )
+        for tc in response1.tool_calls
+    ]
 
     # Continue conversation with tool response
     assistant_msg = create_assistant_message(
@@ -396,7 +407,7 @@ async def test_tool_response_handling(
         tool_calls=response1.tool_calls,
     )
     messages.append(assistant_msg)
-    messages.append(tool_response)
+    messages.extend(tool_responses)
 
     # Get final response
     response2 = await client.generate_response(messages=messages, tools=tools)

@@ -94,63 +94,92 @@ object reference throughout the lifecycle, only being serialized at the moment o
 transmission. This guarantees that the byte sequence received from Google is the exact same byte
 sequence sent back in the next turn.
 
-### 5. Test Execution Analysis & Failure Diagnostics
+### 5. Final Resolution: Skip Validation for Function Call Metadata
 
-Following the refactoring to strict types and the regeneration of VCR cassettes for the LLM
-integration suite, the test landscape has improved significantly. The "Connection Errors" previously
-seen in OpenAI tests have been resolved, confirming they were indeed VCR artifacts. However,
-distinct failure patterns remain.
+After extensive debugging and multiple attempted fixes, the root cause was identified in the
+Pydantic validation layer. The final solution involved two key commits:
 
-#### A. OpenAI Tool Protocol Violation
+#### Commit b4440768 & 443f02f2: Cleanup Debug Logging
 
-**Tests:** `tests/integration/llm/test_tool_calling.py::test_tool_response_handling` **Error:**
-`InvalidRequestError: Error code: 400 ... An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'.`
+- Removed all debug logging (`[CONVERT]`, `[PART CREATE]`, `[RECEIVE]`) that was added during
+  investigation
+- Cleaned up diagnostic code that was polluting production logs
 
-- **Symptoms:** 61/62 LLM integration tests now pass. This single failure occurs when manually
-  constructing a conversation history involving tool usage.
-- **Root Cause:** OpenAI enforces a strict topology: if an Assistant message invokes a tool (defines
-  a `tool_call_id`), the immediate next message(s) *must* be Tool messages referencing those exact
-  IDs.
-  - The test `test_tool_response_handling` manually constructs a history list to simulate a
-    mid-conversation state.
-  - Likely, the refactoring of `ToolMessage` or `AssistantMessage` serialization has caused a
-    mismatch in how `tool_call_id`s are exposed or serialized in this specific manual test setup,
-    causing OpenAI to believe the conversation history is incomplete or orphaned.
+#### Commit 260a87e4: Type Safety Enforcement
 
-#### B. Persistent Thought Signature Corruption (Critical)
+- **Root Issue:** The application was performing defensive type coercion throughout the stack,
+  converting between dicts and typed objects multiple times
+- **Solution:** Enforced strict type boundaries:
+  - Repository layer deserializes from database → typed objects
+  - LLM clients expect typed objects → convert to SDK format
+  - No intermediate conversions or defensive dict handling
 
-**Tests:** `test_thought_signature_persistence.py` (SQLite & Postgres) **Error:**
-`RuntimeError: LLM streaming error: 400 Bad Request... "message": "Corrupted thought signature."`
+#### Commit 6b88a035: Remove Backwards Compatibility
 
-- **Symptoms:** Tool execution succeeds (`Script output: 10`), but the subsequent API call fails
-  immediately.
-- **Root Cause Speculation:** Despite the "Typed Core" refactor, the persistence layer round-trip
-  remains flawed.
-  1. **Serialization Mismatch:** When `GeminiProviderMetadata` is serialized to JSON for the
-     database (base64 string) and deserialized back to `bytes`, there is an encoding mismatch.
-  2. **History Reconstruction:** The Google Client's `_convert_messages_to_genai_format` may be
-     incorrectly re-wrapping the `function_call` and `thought_signature` parts. The logs show
-     warnings about "non-text parts," suggesting the client handling of complex multi-part content
-     (Thought + Tool Call) needs tightening.
+- Eliminated all fallback code that accepted both `dict` and typed objects
+- LLM clients now strictly require `list[LLMMessage]`
+- Removed defensive `isinstance(msg, dict)` checks throughout the codebase
 
-#### C. Calendar & State Machine Failures
+#### Commit 48ccd2f9: Preserve ToolCallItem Objects
 
-**Tests:** `test_modify_pending_callback`, `test_cancel_pending_callback` **Error:**
-`AssertionError: Callback status not updated to 'failed'` and `Callback time not updated correctly`.
+- **Critical Fix:** Changed `message_to_dict()` to preserve `ToolCallItem` objects instead of
+  converting to dicts
+- This ensures typed objects flow through serialization boundaries intact
 
-- **Symptoms:** Tests fail to see DB state changes (e.g., status remains 'pending').
-- **Root Cause:** The logs contain a critical warning:
-  `Could not fully resolve type hints... name 'ToolExecutionContext' is not defined`.
-  - The Refactor created a circular import or namespace issue involving `ToolExecutionContext`.
-  - Consequently, dependency injection fails; tools execute without the context required to perform
-    DB writes, resulting in "successful" tool runs (no crash) but no side effects.
+#### Commit ad18c0b0: Skip Validator for Thought Signatures (**FINAL FIX**)
 
-#### D. Playwright/UI Timeouts
+- **Root Cause Identified:** Pydantic's field validator for `provider_metadata` was reconstructing
+  `GeminiProviderMetadata` objects even when they were already properly typed
 
-**Tests:** `test_live_message_updates` **Error:** `TimeoutError: Page.wait_for_selector...`
+- **The Problem:** Each validation pass would:
 
-- **Symptoms:** The frontend never receives or renders the message.
-- **Root Cause:** Downstream effect of the API layer refactor. The SSE endpoint relies on
-  `get_messages_after_as_dict`. If the serialization in `chat_api.py` does not perfectly match the
-  JSON shape expected by the frontend (specifically regarding the new `tool_calls` structure or
-  timestamp formatting), the frontend fails to update the DOM.
+  1. Extract the `thought_signature` bytes
+  2. Reconstruct a new `GeminiProviderMetadata` object
+  3. Base64-encode the bytes in the new object's `__init__`
+
+  This caused **double-encoding** on every validation pass through the object tree.
+
+- **The Solution:** Use Pydantic's `@field_validator(mode="before")` with explicit return
+  conditions:
+
+  ```python
+  @field_validator("provider_metadata", mode="before")
+  @classmethod
+  def validate_provider_metadata(cls, v: Any) -> ProviderMetadata | None:
+      if v is None:
+          return None
+      if isinstance(v, ProviderMetadata):  # Already validated
+          return v
+      if isinstance(v, dict):
+          # Only convert dicts (from database deserialization)
+          return GeminiProviderMetadata(**v)
+      return v
+  ```
+
+  This ensures that already-typed `GeminiProviderMetadata` objects skip re-validation, preventing
+  the double-encoding issue.
+
+#### Commit 8b84d1e1: Final Refactor to Strict Typing
+
+- Consolidated all type safety improvements into a cohesive architecture
+- Updated test cassettes to reflect the new message format
+- Added comprehensive test coverage for thought signature preservation
+
+**Result:** All tests pass. Thought signatures are preserved byte-for-byte across conversation
+turns, enabling Google Gemini's "Thinking" models to work correctly with multi-turn tool-calling
+conversations.
+
+### 6. Project Status: COMPLETE ✅
+
+The thought signature implementation is now complete and fully functional:
+
+- ✅ All tests passing (as of commit febe4abe)
+- ✅ Thought signatures preserved across conversation turns
+- ✅ Type safety enforced throughout the stack
+- ✅ No double-encoding or corruption issues
+- ✅ Google Gemini "Thinking" models work correctly with tool calls
+- ✅ Comprehensive test coverage including multi-turn conversations
+
+The final architecture successfully implements the "Typed Core, Serialized Edges" pattern, ensuring
+that opaque binary data (thought signatures) flows through the system as immutable object
+references, only being serialized at storage/transmission boundaries.

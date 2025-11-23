@@ -67,7 +67,9 @@ async def test_recurring_task_respects_user_timezone(
 
     # Sydney timezone
     sydney_tz = ZoneInfo("Australia/Sydney")
-    test_chat_id = "test_chat_123"
+    test_chat_id = str(uuid.uuid4().int)[
+        :12
+    ]  # Unique chat ID to prevent test interference
     test_user_name = "TimezoneTester"
 
     # Calculate when 6am Sydney time is in UTC for the next day
@@ -118,12 +120,12 @@ async def test_recurring_task_respects_user_timezone(
             return False
         last_message = messages[-1]
         if last_message.role == "user":
-            content = last_message.content
-            if isinstance(content, str):
-                return (
-                    "System Callback Trigger:" in content
-                    and "Send the daily briefing" in content
-                )
+            # Use helper to extract text from both string and list content
+            content_text = get_last_message_text(messages)
+            return (
+                "System Callback Trigger:" in content_text
+                and "Send the daily briefing" in content_text
+            )
         return False
 
     callback_response = MockLLMOutput(
@@ -233,7 +235,9 @@ async def test_recurring_task_respects_user_timezone(
             tasks_table.c.recurrence_rule,
             tasks_table.c.original_task_id,
         ).where(
-            tasks_table.c.task_type == "llm_callback", tasks_table.c.status == "pending"
+            tasks_table.c.task_type == "llm_callback",
+            tasks_table.c.status == "pending",
+            tasks_table.c.payload["conversation_id"].as_string() == test_chat_id,
         )
         result = await db_context.fetch_one(stmt)
 
@@ -277,6 +281,7 @@ async def test_recurring_task_respects_user_timezone(
             tasks_table.c.task_type == "llm_callback",
             tasks_table.c.status == "pending",
             tasks_table.c.task_id.like("%recur_%"),
+            tasks_table.c.payload["conversation_id"].as_string() == test_chat_id,
         )
         result = await db_context.fetch_one(stmt)
 
