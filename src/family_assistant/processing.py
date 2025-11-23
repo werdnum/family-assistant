@@ -36,11 +36,13 @@ from .llm import LLMInterface, LLMStreamEvent, ToolCallItem
 from .llm.google_types import GeminiProviderMetadata
 from .llm.messages import (
     AssistantMessage,
+    ContentPart,
     ContentPartDict,
     ErrorMessage,
     LLMMessage,
     SystemMessage,
     ToolMessage,
+    UserMessage,
     message_to_json_dict,
     tool_result_to_llm_message,
 )
@@ -804,7 +806,7 @@ class ProcessingService:
         """
         call_id = tool_call_item_obj.id
         function_name = tool_call_item_obj.function.name
-        function_args_str = tool_call_item_obj.function.arguments
+        function_args = tool_call_item_obj.function.arguments
 
         # Validate tool call
         if not call_id or not function_name:
@@ -839,13 +841,16 @@ class ProcessingService:
 
         # Parse arguments
         try:
-            arguments = json.loads(function_args_str)
+            if isinstance(function_args, str):
+                arguments = json.loads(function_args)
+            else:
+                arguments = function_args
         except json.JSONDecodeError:
             logger.error(
-                f"Failed to parse arguments for {function_name}: {function_args_str}"
+                f"Failed to parse arguments for {function_name}: {function_args}"
             )
             error_content = f"Error: Invalid arguments format for {function_name}."
-            error_traceback = f"JSONDecodeError: {function_args_str}"
+            error_traceback = f"JSONDecodeError: {function_args}"
 
             llm_message = ToolMessage(
                 role="tool",
@@ -993,7 +998,12 @@ class ProcessingService:
                     stream_metadata = {"attachments": attachments_data}
 
                 # Create LLM message AFTER storing attachments (if any) so attachment_ids are populated
-                llm_message = tool_result_to_llm_message(result, call_id, function_name)
+                llm_message = tool_result_to_llm_message(
+                    result,
+                    call_id,
+                    function_name,
+                    provider_metadata=tool_call_item_obj.provider_metadata,
+                )
 
                 # Inject attachment IDs into LLM message content so LLM can reference them in subsequent calls
                 if auto_attachment_ids:
@@ -1465,14 +1475,16 @@ class ProcessingService:
 
                 # Strip text content from messages with tool calls UNLESS they have thought signatures
                 # Thought signatures are cryptographically tied to exact conversation context
-                final_content: str | None = None
+                # So if a thought signature is present, we MUST preserve the original text content exactly.
+                final_content: str | None = msg.content
+
                 if msg.tool_calls and msg.content and not has_thought_signature:
-                    # If there are tool calls, don't include the text content to avoid partial responses
+                    # Only strip text if NO thought signature is present, to avoid redundancy/partial response issues
+                    # with other providers. But for Google with signatures, we keep it.
+                    final_content = None
                     logger.debug(
-                        f"Stripped text content from assistant message with tool calls in LLM history. Original content: {msg.content[:100]}..."
+                        f"Stripped text content from assistant message with tool calls (no signature). Original content: {msg.content[:100]}..."
                     )
-                elif msg.content:
-                    final_content = msg.content
 
                 # Create new AssistantMessage with potentially modified content
                 assistant_msg = AssistantMessage(
@@ -1662,14 +1674,40 @@ class ProcessingService:
             )
 
             try:
-                raw_history_messages = await db_context.message_history.get_recent(
-                    interface_type=interface_type,
-                    conversation_id=conversation_id,
-                    limit=history_limit,
-                    max_age=history_max_age,
-                    processing_profile_id=self.service_config.id,  # Filter by profile
-                    subconversation_id=subconversation_id,  # Filter by subconversation
-                )
+                if actual_interface_message_id:
+                    # Need to filter - use typed metadata
+                    messages_with_metadata = (
+                        await db_context.message_history.get_recent_with_typed_metadata(
+                            interface_type=interface_type,
+                            conversation_id=conversation_id,
+                            limit=history_limit,
+                            max_age=history_max_age,
+                            processing_profile_id=self.service_config.id,
+                            subconversation_id=subconversation_id,
+                        )
+                    )
+
+                    # Filter out current trigger message
+                    filtered_with_metadata = [
+                        msg_meta
+                        for msg_meta in messages_with_metadata
+                        if msg_meta.interface_message_id != actual_interface_message_id
+                    ]
+
+                    # Extract typed messages
+                    raw_history_messages = [
+                        msg_meta.message for msg_meta in filtered_with_metadata
+                    ]
+                else:
+                    # No filtering needed - use direct typed messages
+                    raw_history_messages = await db_context.message_history.get_recent(
+                        interface_type=interface_type,
+                        conversation_id=conversation_id,
+                        limit=history_limit,
+                        max_age=history_max_age,
+                        processing_profile_id=self.service_config.id,
+                        subconversation_id=subconversation_id,
+                    )
             except Exception as hist_err:
                 logger.error(
                     f"Failed to get message history for {interface_type}:{conversation_id}: {hist_err}",
@@ -1678,11 +1716,6 @@ class ProcessingService:
                 raw_history_messages = []  # Continue with empty history on error
 
             logger.debug(f"Raw history messages fetched ({len(raw_history_messages)}).")
-
-            # Note: Repository now returns typed LLMMessage objects without database metadata fields
-            # like interface_message_id. Filtering by interface_message_id is no longer possible.
-            # The just-saved user message may be included in history, but this is acceptable
-            # as the LLM can handle receiving its own messages in context.
 
             initial_messages_for_llm = await self._format_history_for_llm(
                 raw_history_messages
@@ -1698,16 +1731,34 @@ class ProcessingService:
                     logger.info(
                         f"Fetching full thread history for root ID {thread_root_id_for_turn} due to reply."
                     )
-                    full_thread_messages_db = (
-                        await db_context.message_history.get_by_thread_id(
+                    if actual_interface_message_id:
+                        full_thread_with_metadata = await db_context.message_history.get_recent_with_typed_metadata(
+                            interface_type=interface_type,
+                            conversation_id=conversation_id,
                             thread_root_id=thread_root_id_for_turn,
+                            processing_profile_id=None,  # Get ALL messages in thread regardless of profile
+                            subconversation_id=subconversation_id,
                         )
-                    )
-                    # Note: Repository now returns typed LLMMessage objects without database metadata fields
-                    # Cannot filter by interface_message_id anymore. Using all thread messages as-is.
-                    initial_messages_for_llm = await self._format_history_for_llm(
-                        full_thread_messages_db
-                    )
+
+                        # Filter out current trigger
+                        filtered_thread = [
+                            msg_meta.message
+                            for msg_meta in full_thread_with_metadata
+                            if msg_meta.interface_message_id
+                            != actual_interface_message_id
+                        ]
+                        initial_messages_for_llm = await self._format_history_for_llm(
+                            filtered_thread
+                        )
+                    else:
+                        full_thread_messages_db = await db_context.message_history.get_by_thread_id(
+                            thread_root_id=thread_root_id_for_turn,
+                            processing_profile_id=None,  # Get ALL messages in thread regardless of profile
+                            subconversation_id=subconversation_id,
+                        )
+                        initial_messages_for_llm = await self._format_history_for_llm(
+                            full_thread_messages_db
+                        )
                     logger.info(
                         f"Using {len(initial_messages_for_llm)} messages from full thread history for LLM context."
                     )
@@ -1851,12 +1902,27 @@ class ProcessingService:
             # Just append them directly to messages_for_llm
             messages_for_llm.extend(attachment_injection_messages)
 
-            # NOTE: We do NOT add the current user trigger message here because it was already
-            # saved to the database at line 1618 and will be included in the history fetched
-            # at lines 1652-1676. Adding it again would create a duplicate.
-            # The comment at line 1669-1672 confirms the just-saved user message is included in history.
-            # We also don't need to convert attachment URLs since the message is already saved and
-            # will be retrieved from history with proper formatting.
+            # Add the current user trigger message to messages_for_llm
+            # We filtered it out from history to avoid duplication issues, but we need to add it
+            # here so the LLM can see the current user request
+            # Extract text content to match the format used when saving to history (line 1617-1633)
+            user_content_for_llm: str | list[ContentPart]
+            if processed_trigger_parts and len(processed_trigger_parts) == 1:
+                # Single part - extract text if it's a text part
+                first_part = processed_trigger_parts[0]
+                if isinstance(first_part, dict) and first_part.get("type") == "text":
+                    user_content_for_llm = str(first_part.get("text", ""))
+                else:
+                    # Non-text single part, keep as list
+                    user_content_for_llm = processed_trigger_parts  # type: ignore[assignment]  # ContentPartDict is structurally compatible with ContentPart at runtime
+            elif processed_trigger_parts:
+                # Multiple parts - keep as list for multimodal content
+                user_content_for_llm = processed_trigger_parts  # type: ignore[assignment]  # ContentPartDict is structurally compatible with ContentPart at runtime
+            else:
+                # No parts - empty string
+                user_content_for_llm = ""
+
+            messages_for_llm.append(UserMessage(content=user_content_for_llm))
 
             # Messages are already typed (list[LLMMessage])
             typed_messages_for_llm = messages_for_llm

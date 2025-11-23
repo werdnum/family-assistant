@@ -150,12 +150,13 @@ class LLMIntelligenceProcessor(ContentProcessor):
                             tool_call.function
                             and tool_call.function.name == self.tool_name
                         ):
-                            arguments_str = (
-                                "{}"  # Initialize for safety in error logging
-                            )
+                            arguments_str: str | dict[str, object] = {}
                             try:
                                 arguments_str = tool_call.function.arguments
-                                extracted_data = json.loads(arguments_str)
+                                if isinstance(arguments_str, str):
+                                    extracted_data = json.loads(arguments_str)
+                                else:
+                                    extracted_data = arguments_str
 
                                 new_item_content = json.dumps(extracted_data, indent=2)
                                 new_item = IndexableContent(
@@ -460,12 +461,13 @@ class LLMPrimaryLinkExtractorProcessor(LLMIntelligenceProcessor):
                             tool_call.function
                             and tool_call.function.name == self.tool_name
                         ):
-                            arguments_str = (
-                                "{}"  # Initialize for safety in error logging
-                            )
+                            arguments_str: str | dict[str, object] = {}
                             try:
                                 arguments_str = tool_call.function.arguments
-                                extracted_data = json.loads(arguments_str)
+                                if isinstance(arguments_str, str):
+                                    extracted_data = json.loads(arguments_str)
+                                else:
+                                    extracted_data = arguments_str
 
                                 primary_url = extracted_data.get("primary_url")
                                 is_primary = extracted_data.get(

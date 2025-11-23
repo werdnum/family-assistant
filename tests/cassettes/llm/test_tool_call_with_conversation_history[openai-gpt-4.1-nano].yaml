@@ -427,4 +427,400 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"I''m planning a trip to Paris, France"},{"role":"assistant","content":"Paris is a wonderful destination! Would you like to know about the weather there?","tool_calls":null},{"role":"user","content":"Yes, what''s the weather like in Paris, France?"}],"model":"gpt-4.1-nano","tool_choice":"auto","tools":[{"type":"function","function":{"name":"get_weather","description":"Get the current weather in a given location","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The temperature unit"}},"required":["location"]}}}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '707'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: "{\n    \"error\": {\n        \"message\": \"Incorrect API key provided: test-ope***-key. You can find your API key at https://platform.openai.com/account/api-keys.\",\n        \"type\": \"invalid_request_error\",\n        \"param\": null,\n        \"code\": \"invalid_api_key\"\n    }\n}\n"
+      headers:
+        CF-RAY:
+          - 9a30152dbc67dccc-FRA
+        Connection:
+          - keep-alive
+        Content-Length:
+          - '265'
+        Content-Type:
+          - application/json; charset=utf-8
+        Date:
+          - Sun, 23 Nov 2025 10:46:26 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=vxHgOd5bVNAaIZjVxKwJNLMc2quhHkMzuIY2OESXVrA-1763894786-1.0.1.1-Nrr4ktS88.LKRveIWgZWMmCt0C0mNl2xSIxxDQN_aRJn24tGeEdePeZOmr4Yy2Bqq95NywCjRpM8NrPfeY7QGHUiw_YKMzXoshw4C_Rhc1E; path=/; expires=Sun, 23-Nov-25 11:16:26 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=vzzHfxerioJOoDuaSp31l_TDFiZv5aFSV299oOHG54g-1763894786338-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        X-Content-Type-Options:
+          - nosniff
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        vary:
+          - Origin
+        x-envoy-upstream-service-time:
+          - '1'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-request-id:
+          - req_2a28aedb9c0d4061814092541a474d98
+      status:
+        code: 401
+        message: Unauthorized
+  - request:
+      body: '{"messages":[{"role":"user","content":"I''m planning a trip to Paris, France"},{"role":"assistant","content":"Paris is a wonderful destination! Would you like to know about the weather there?","tool_calls":null},{"role":"user","content":"Yes, what''s the weather like in Paris, France?"}],"model":"gpt-4.1-nano","tool_choice":"auto","tools":[{"type":"function","function":{"name":"get_weather","description":"Get the current weather in a given location","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The temperature unit"}},"required":["location"]}}}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '707'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//1FRdb5swFH3nV1j3OVT5gDTlrVuXdZqibuuitFkq5JgLcWZsZpusSZT/
+          PgELkLST+joekPHxOffcy/XdO4QAjyAgwFbUsjQT7vu472/u5x8nUbJl8+HmZvfw/eHr8+72dj3v
+          QadgqOUamT2yLphKM4GWK1nBTCO1WKj2LoeD0ZXvD/wSSFWEoqAlmXW9i54rqVRuv9v33a7n9ry/
+          9JXiDA0E5IdDCCH78l0YlRE+Q0C6neNOisbQBCGoDxECWoliB6gx3FgqLXQakClpURbeZS5EC7BK
+          iZBRIZrA1bNvrZtqUSHC3cRb9395l7P+chRf693Np/jzNza9bsWrpLdZaSjOJaur1MLr/eAsGCEg
+          aVpyE7Thb6R2hfqMTghQneQpSltYh/0ChGK0EFxAQBbwhWpuOmSsqWS4gAOc0A+tr0PnTXnffXi3
+          mU2vxPhxevfIJ/x+OOTJzIz/37zr9VOrIzTGuaHiZatQKZUtA5W98uScVQ+ESjKtluaMCjGX3KxC
+          jdSUWbebzjkaKS1AftLXkGmVZja06ieWQXu9UaUKzeVrUO8IWmWpaLGGw84remGElvKy8eu7xihb
+          YdRQmztH84irFuC0cn/p5jXtKn8uk7fINwBjmFmMwkxjxNlpxs0xjcVs+texusqlYTCoN5xhaDnq
+          4n9EGNNcVAMDzNZYTMOYywR1pnk5NSDOQlwOunHk+Z4PzsH5AwAA//8DAGmmwWlEBQAA
+      headers:
+        CF-RAY:
+          - 9a302775882cd233-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Sun, 23 Nov 2025 10:58:55 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=mW69fGAEtVFMdJu5fIJ2z04uMJLYeMcrjjNqQ6JLZRU-1763895535-1.0.1.1-ViUEuflITy2Jlt2BSnbWa8nKC1DhfhQVeUWhOFJiqtLyZ2vs16fJPrQE3sJqWLtn7ESAWV9.TTrOM7s3A8CAai1Nl..V1MV2eRsZ69APLeI; path=/; expires=Sun, 23-Nov-25 11:28:55 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=7xp39XrhDD3devP6iHBjMbbeMZLov8paiP21K5heq7c-1763895535622-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '462'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '476'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199955'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 13ms
+        x-request-id:
+          - req_cecf4e447f034ebcb6bdee9224897dfa
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"I''m planning a trip to Paris, France"},{"role":"assistant","content":"Paris is a wonderful destination! Would you like to know about the weather there?","tool_calls":null},{"role":"user","content":"Yes, what''s the weather like in Paris, France?"}],"model":"gpt-4.1-nano","tool_choice":"auto","tools":[{"type":"function","function":{"name":"get_weather","description":"Get the current weather in a given location","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The temperature unit"}},"required":["location"]}}}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '707'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//1FTLbtswELzrK4g9S4EfsuPoFrQoUjROm6aXog4EmlxJtClSICnHruF/
+          L0TVluykQK7VQaA4nNnZ1XL3ASEgOCQEWEEdKysZfchGXAqNn7fZ/GF3Zx7X5ilfzr/LH5tVDGHD
+          0MsVMndkXTFdVhKd0KqFmUHqsFEdXk/Hs5vr6XjsgVJzlA0tr1wUXw0jRZWORoPRJBrE0fCvOiu0
+          YGghIb8CQgjZ+3djVHHcQkIG4XGnRGtpjpCcDhECRstmB6i1wjqqHIQdyLRyqBrvqpayBzitZcqo
+          lF3g9tn31l21qJQpX35cSVXc5vX09/34Jr8r7er+qbrtxWuld5U3lNWKnarUw0/7yUUwQkDR0nNz
+          dOkLUleguaATAtTkdYnKNdZhvwCpGW0EF5CQBXyjRtiQfDJUMVzAAc7oh97XIXxf3uUXHPz8ut6t
+          t/Prx9GsmD3ol43Z/r95n9bPvY4wmNWWytetQpXSzgfyvfIcXFQPpM4ro5f2ggqZUMIWqUFqfdb9
+          pguORrwFqM/6Giqjy8qlTq/RBx0OZ60qdJevQ+Mj6LSjsseaTsM39FKOjgrf+Ke7xigrkHfU7s7R
+          mgvdA4Je7q/dvKXd5i9U/h75DmAMK4c8rQxywc4z7o4ZbGbTv46dquwNg0WzEQxTJ9A0/4NjRmvZ
+          DgywO+uwTDOhcjSVEX5qQFaluBwPMh5P4gkEh+APAAAA//8DAG6KXNxEBQAA
+      headers:
+        CF-RAY:
+          - 9a305ab0b88d14f9-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Sun, 23 Nov 2025 11:33:53 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=cf03Que1ZS5Qbj92P5Tdhhjqx1XzA8reM.zcOXkc60M-1763897633-1.0.1.1-aqMIZQkkQ1nrKaLW_97MCO048.vE.iYZJO8FUu2m0xL54zM.I34bi387ywv3sIQgsF9GPemt1zghVlztQfXDDAQpM3O0ZuakPLK16dCeC4o; path=/; expires=Sun, 23-Nov-25 12:03:53 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=XQab6FkS._MEitM4qJVmY3bnEmOYTDMXvg3VVNGYezg-1763897633934-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '382'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '396'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199955'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 13ms
+        x-request-id:
+          - req_5bf6145ea46a43e1884f439973122c5d
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"messages":[{"role":"user","content":"I''m planning a trip to Paris, France"},{"role":"assistant","content":"Paris is a wonderful destination! Would you like to know about the weather there?","tool_calls":null},{"role":"user","content":"Yes, what''s the weather like in Paris, France?"}],"model":"gpt-4.1-nano","tool_choice":"auto","tools":[{"type":"function","function":{"name":"get_weather","description":"Get the current weather in a given location","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The temperature unit"}},"required":["location"]}}}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '707'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAA9RUXW+bMBR951dY9xmqkJDPx2XqprVqq6jqpiwVcswF3Brbss26Jsp/n4AFSNpJ
+          fR0PyPj4nHvu5fruPUKAJ7AgwHLqWKFFsEyHdvlkVuarMrcvn7crFt5jstLTT6OrAfgVQ22fkLkj
+          64KpQgt0XMkGZgapw0o1nE5Gs/lsPJzVQKESFBUt0y6ILsJAUqmC4WA4DgZREEZ/6bniDC0syE+P
+          EEL29bsyKhP8DQsy8I87BVpLM4RFe4gQMEpUO0Ct5dZR6cDvQKakQ1l5l6UQPcApJWJGhegCN8++
+          t+6qRYWI82/fwyK8fc0KuRtPv1zf7K6TaG0ue/Ea6VddG0pLydoq9fB2f3EWjBCQtKi5Gbr4BanL
+          0ZzRCQFqsrJA6SrrsN+AUIxWghtYkA3cUcOtTy4NlQw3cIAT+qH3dfA/lPf6Jvqhr5byYW7d/XSY
+          77Z3EzFfP/+/ebfrx15HGExLS8XbVqFSKlcHqnvl0TurHgiVaaO29owKKZfc5rFBauus+03nHY3U
+          FqA86WvQRhXaxU49Yx00DGeNKnSXr0OjI+iUo6LHmkz8d/TiBB3ldeO3d41RlmPSUbs7R8uEqx7g
+          9XJ/6+Y97SZ/LrOPyHcAY6gdJrE2mHB2mnF3zGA1m/51rK1ybRgsml+cYew4mup/JJjSUjQDA+yr
+          dVjEKZcZGm14PTUg1TFuR4M0icbRGLyD9wcAAP//AwDbbR5nRAUAAA==
+      headers:
+        CF-RAY:
+          - 9a30708b6cdc2bc2-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Sun, 23 Nov 2025 11:48:49 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=tV0aACk08p2MxQVyrwwDX4wqeJtUEtA6xsPg0TxPlQs-1763898529-1.0.1.1-0FyxA7F0fkk9bkvt3w.q2svhhM5dYOYI_APELcelv84wUJVQU4.qhsrDkcW5vHVy5iIAo5E2euWWU3u2STovCQpEGJknJv.BgS6d.T.cfcc; path=/; expires=Sun, 23-Nov-25 12:18:49 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=CzRI_6gvmDlCAUTTnhsRdgaKdCSbEDNiZcbY4MsZlUw-1763898529241-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '489'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '504'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199955'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 13ms
+        x-request-id:
+          - req_23e27771fb9949aabfb34af4ed505eb9
+      status:
+        code: 200
+        message: OK
 version: 1

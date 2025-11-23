@@ -39,6 +39,10 @@ def normalize_llm_request_body(body: dict[str, Any]) -> dict[str, Any]:
 
             normalized["messages"].append(norm_msg)
 
+    # Handle Google-style contents array (used by Gemini client)
+    if "contents" in body:
+        normalized["contents"] = body["contents"]
+
     # Handle model parameter
     if "model" in body:
         normalized["model"] = body["model"]

@@ -11,13 +11,15 @@ while adding type safety and runtime validation.
 from __future__ import annotations
 
 import json
-from typing import Any, Literal
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, Required, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-# These imports must be at runtime (not TYPE_CHECKING) because Pydantic needs them
-# for field validation in ToolMessage. The linter suggests TYPE_CHECKING, but that
-# would cause "model not fully defined" errors at runtime.
+if TYPE_CHECKING:
+    from datetime import datetime
+
+from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.tools.types import (  # noqa: TCH001  # Pydantic needs runtime import for field validation
     ToolAttachment,
     ToolResult,
@@ -36,6 +38,26 @@ from .content_parts import (
 from .tool_call import (
     ToolCallItem,  # noqa: TCH001  # Pydantic needs runtime import for field validation
 )
+
+
+class ProviderMetadataDict(TypedDict, total=False):
+    """Serialized provider metadata structure."""
+
+    provider: Required[str]
+    thought_signature: NotRequired[str]
+
+
+class ToolAttachmentMetadata(TypedDict, total=False):
+    """Serialized attachment metadata stored with tool messages."""
+
+    type: Required[str]
+    mime_type: Required[str | None]
+    description: Required[str | None]
+    attachment_id: Required[str | None]
+    url: NotRequired[str | None]
+    content_url: NotRequired[str | None]
+    size: NotRequired[int | None]
+
 
 # Re-export content part types and helpers for backward compatibility
 __all__ = [
@@ -162,6 +184,8 @@ class ToolMessage(BaseModel):
     content: str
     name: str  # Function name
     error_traceback: str | None = None
+    # Provider-specific metadata (e.g., Gemini thought signatures)
+    provider_metadata: GeminiProviderMetadata | ProviderMetadataDict | None = None
 
     # IMPORTANT: Preserve the original ToolResult for better tracking and debugging
     # This field is excluded from serialization and used internally
@@ -174,8 +198,7 @@ class ToolMessage(BaseModel):
     )
 
     # Attachment metadata for database storage (serialized)
-    # ast-grep-ignore: no-dict-any - Database serialization format
-    attachments: list[dict[str, Any]] | None = None
+    attachments: list[ToolAttachmentMetadata] | None = None
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -206,6 +229,37 @@ class ErrorMessage(BaseModel):
 # ===== Union Type =====
 
 LLMMessage = UserMessage | AssistantMessage | ToolMessage | SystemMessage | ErrorMessage
+
+
+# ===== Message with Metadata =====
+
+
+@dataclass
+class MessageWithMetadata:
+    """
+    Container for LLMMessage with database metadata.
+
+    Used when processing needs access to both the typed message content
+    and database-specific fields like internal_id and interface_message_id.
+    """
+
+    message: LLMMessage
+    internal_id: str
+    interface_message_id: str | None
+    timestamp: datetime
+    conversation_id: str
+    interface_type: str
+    user_id: str | None = None
+    turn_id: str | None = None
+    thread_root_id: int | None = None
+
+    def __post_init__(self) -> None:
+        """Validate that message is a proper LLMMessage type."""
+        if not isinstance(
+            self.message,
+            (UserMessage, AssistantMessage, ToolMessage, SystemMessage, ErrorMessage),
+        ):
+            raise TypeError(f"message must be LLMMessage, got {type(self.message)}")
 
 
 # ===== Utility Functions =====
@@ -267,24 +321,37 @@ def message_to_json_dict(msg: LLMMessage) -> dict[str, object]:
         )
 
         provider_metadata = msg.provider_metadata
-        if provider_metadata is not None and hasattr(provider_metadata, "to_dict"):
+        if isinstance(provider_metadata, dict):
+            pass
+        elif isinstance(provider_metadata, GeminiProviderMetadata):
             provider_metadata = provider_metadata.to_dict()
 
-        return {
+        message_dict: dict[str, object | None] = {
             "role": "assistant",
             "content": msg.content,
             "tool_calls": tool_calls,
-            "provider_metadata": provider_metadata,
         }
+        if provider_metadata is not None:
+            message_dict["provider_metadata"] = provider_metadata
+        return message_dict
 
     if isinstance(msg, ToolMessage):
-        return {
+        provider_metadata = msg.provider_metadata
+        if isinstance(provider_metadata, dict):
+            pass
+        elif isinstance(provider_metadata, GeminiProviderMetadata):
+            provider_metadata = provider_metadata.to_dict()
+
+        tool_message_dict: dict[str, object | None] = {
             "role": "tool",
             "tool_call_id": msg.tool_call_id,
             "content": msg.content,
             "name": msg.name,
             "error_traceback": msg.error_traceback,
         }
+        if provider_metadata is not None:
+            tool_message_dict["provider_metadata"] = provider_metadata
+        return tool_message_dict
 
     if isinstance(msg, SystemMessage):
         return {
@@ -353,6 +420,7 @@ def tool_result_to_llm_message(
     result: ToolResult,
     tool_call_id: str,
     function_name: str,
+    provider_metadata: GeminiProviderMetadata | ProviderMetadataDict | None = None,
 ) -> ToolMessage:
     """
     Convert a ToolResult to a ToolMessage for LLM consumption.
@@ -363,27 +431,34 @@ def tool_result_to_llm_message(
         result: The ToolResult to convert
         tool_call_id: The tool call ID
         function_name: The function name
+        provider_metadata: Provider-specific metadata (e.g., Gemini thought signature)
 
     Returns:
         ToolMessage with attachments for provider processing
     """
     # Prepare attachment metadata for database storage
-    attachments_metadata = None
+    attachments_metadata: list[ToolAttachmentMetadata] | None = None
     if result.attachments:
-        attachments_metadata = [
-            {
+        attachments_metadata = []
+        for att in result.attachments:
+            attachments_metadata.append({
                 "type": "tool_result",
                 "mime_type": att.mime_type,
                 "description": att.description,
                 "attachment_id": att.attachment_id,  # Include ID for references
-            }
-            for att in result.attachments
-        ]
+            })
+
+    serialized_provider_metadata: (
+        GeminiProviderMetadata | ProviderMetadataDict | None
+    ) = None
+    if isinstance(provider_metadata, (GeminiProviderMetadata, dict)):
+        serialized_provider_metadata = provider_metadata
 
     return ToolMessage(
         tool_call_id=tool_call_id,
         content=result.get_text(),  # Use fallback mechanism
         name=function_name,
+        provider_metadata=serialized_provider_metadata,
         tool_result=result,  # Preserve original ToolResult for debugging
         _attachments=result.attachments,  # Pass attachments to provider (using alias)
         attachments=attachments_metadata,  # Store metadata in database

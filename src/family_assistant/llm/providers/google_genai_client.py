@@ -55,6 +55,29 @@ from ..base import (
 logger = logging.getLogger(__name__)
 
 
+def _normalize_thought_signature(raw_value: bytes | None) -> bytes | None:
+    """
+    Ensure thought signatures are raw bytes.
+
+    Some SDKs/fixtures may surface base64-encoded signatures; decode them if so,
+    otherwise return the original bytes unchanged.
+    """
+    if not raw_value:
+        return None
+
+    # Try a safe base64 decode round-trip. If the value was base64-encoded text,
+    # the round-trip without padding should match. Otherwise, fall back to the
+    # original bytes to avoid corrupting opaque binary signatures.
+    try:
+        decoded = base64.b64decode(raw_value, validate=True)
+        if base64.b64encode(decoded).rstrip(b"=") == raw_value.rstrip(b"="):
+            return decoded
+    except Exception:  # noqa: BLE001
+        pass
+
+    return raw_value
+
+
 class GoogleGenAIClient(BaseLLMClient):
     """Direct Google Generative AI implementation."""
 
@@ -63,13 +86,13 @@ class GoogleGenAIClient(BaseLLMClient):
         api_key: str,
         model: str,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        model_parameters: dict[str, dict[str, Any]] | None = None,
+        model_parameters: dict[str, dict[str, object]] | None = None,
         api_base: str | None = None,
         enable_url_context: bool = False,
         enable_google_search: bool = False,
         debug_messages: bool | None = None,
         # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
-        debug_config: dict[str, Any] | None = None,
+        debug_config: dict[str, str | None] | None = None,
         **kwargs: Any,  # noqa: ANN401 # Accepts arbitrary Google GenAI API parameters
     ) -> None:
         """
@@ -152,7 +175,7 @@ class GoogleGenAIClient(BaseLLMClient):
         await self.close()
 
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def _get_model_specific_params(self, model: str) -> dict[str, Any]:
+    def _get_model_specific_params(self, model: str) -> dict[str, object]:
         """Get parameters for a specific model based on pattern matching."""
         params = {}
         for pattern, pattern_params in self.model_parameters.items():
@@ -188,7 +211,7 @@ class GoogleGenAIClient(BaseLLMClient):
 
         # Handle multimodal content (images/PDFs) with provider-specific format
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        parts: list[dict[str, Any] | types.Part] = [
+        parts: list[dict[str, object] | types.Part] = [
             {"text": "[System: File from previous tool response]"}
         ]
 
@@ -380,36 +403,60 @@ class GoogleGenAIClient(BaseLLMClient):
 
                         func_name = tc.function.name
                         func_args_str = tc.function.arguments
-                        tc_metadata = tc.provider_metadata
-
-                        # Parse arguments if they're a string
-                        if isinstance(func_args_str, str):
-                            args = json.loads(func_args_str)
-                        else:
-                            args = func_args_str
-
-                        # Check if this tool call has a thought signature in provider_metadata
+                        func_id = tc.id if isinstance(tc.id, str) else None
                         thought_signature_bytes = None
-                        if tc_metadata:
-                            # Provider metadata must be properly typed GeminiProviderMetadata
-                            if not isinstance(tc_metadata, GeminiProviderMetadata):
-                                logger.warning(
-                                    f"Expected GeminiProviderMetadata, got {type(tc_metadata)}. Skipping thought signature."
-                                )
-                            elif tc_metadata.thought_signature:
-                                thought_signature_bytes = (
+                        tc_metadata = tc.provider_metadata
+                        if isinstance(tc_metadata, GeminiProviderMetadata):
+                            if tc_metadata.thought_signature:
+                                thought_signature_bytes = _normalize_thought_signature(
                                     tc_metadata.thought_signature.to_google_format()
                                 )
+                        elif (
+                            isinstance(tc_metadata, dict)
+                            and tc_metadata.get("provider") == "google"
+                            and tc_metadata.get("thought_signature")
+                        ):
+                            try:
+                                thought_signature_bytes = _normalize_thought_signature(
+                                    GeminiProviderMetadata.from_dict(
+                                        dict(tc_metadata)
+                                    ).thought_signature.to_google_format()  # type: ignore[union-attr]
+                                )
+                            except Exception as e:  # noqa: BLE001
+                                logger.debug(
+                                    "Failed to decode thought_signature from provider_metadata: %s",
+                                    e,
+                                )
+
+                        # Convert arguments to dict for SDK while keeping raw signature untouched
+                        args_dict: dict[str, object] | None = None
+                        if isinstance(func_args_str, dict):
+                            args_dict = func_args_str
+                        elif isinstance(func_args_str, str):
+                            try:
+                                parsed_args = json.loads(func_args_str)
+                                if isinstance(parsed_args, dict):
+                                    args_dict = parsed_args
+                            except json.JSONDecodeError:
+                                args_dict = None
 
                         # Create FunctionCall Part with thought_signature if present
                         # Only include thought_signature if we actually have one
                         # (per Google docs: pass it back exactly as received, or omit if not received)
                         if thought_signature_bytes:
+                            # DEBUG LOGGING
+                            sig_len = len(thought_signature_bytes)
+                            sig_preview = thought_signature_bytes[:10]
+                            logger.warning(
+                                f"DEBUG: Sending thought_signature to SDK. Len: {sig_len}, Preview: {sig_preview!r}"
+                            )
+
                             assistant_parts.append(
                                 types.Part(
                                     function_call=types.FunctionCall(
                                         name=func_name,
-                                        args=args,
+                                        args=args_dict,
+                                        id=func_id,
                                     ),
                                     thought_signature=thought_signature_bytes,
                                 )
@@ -419,7 +466,8 @@ class GoogleGenAIClient(BaseLLMClient):
                                 types.Part(
                                     function_call=types.FunctionCall(
                                         name=func_name,
-                                        args=args,
+                                        args=args_dict,
+                                        id=func_id,
                                     )
                                 )
                             )
@@ -432,7 +480,6 @@ class GoogleGenAIClient(BaseLLMClient):
                     continue
 
                 tool_content = msg.content
-
                 # Try to parse the content as JSON
                 try:
                     response_data = (
@@ -448,23 +495,25 @@ class GoogleGenAIClient(BaseLLMClient):
                     response_data = {"result": response_data}
 
                 # Create FunctionResponse using SDK types with snake_case
+                part = types.Part(
+                    function_response=types.FunctionResponse(
+                        id=msg.tool_call_id,
+                        name=msg.name,
+                        response=response_data,
+                    ),
+                )
                 contents.append(
                     types.Content(
                         role="function",
                         parts=[
-                            types.Part(
-                                function_response=types.FunctionResponse(
-                                    name=msg.name,
-                                    response=response_data,
-                                )
-                            )
+                            part,
                         ],
                     )
                 )
 
         return contents
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Provider tool schema mirrors OpenAI format
     def _convert_tools_to_genai_format(self, tools: list[dict[str, Any]]) -> list[Any]:
         """Convert OpenAI-style tools to Gemini format."""
 
@@ -593,6 +642,25 @@ class GoogleGenAIClient(BaseLLMClient):
                     f"=== After _process_tool_messages ({len(processed_typed_messages)} messages) ===\n"
                     f"{_format_messages_for_debug(processed_typed_messages, None, None)}"
                 )
+                debug_lines = ["--- Gemini SDK payload (pre-stream) ---"]
+                for content in contents:
+                    if not isinstance(content, types.Content):
+                        continue
+                    part_descriptions: list[str] = []
+                    for part in getattr(content, "parts", []) or []:
+                        ts = getattr(part, "thought_signature", None)
+                        fc = getattr(part, "function_call", None)
+                        fr = getattr(part, "function_response", None)
+                        ts_len = len(ts) if isinstance(ts, (bytes, bytearray)) else 0
+                        fc_name = fc.name if fc else None
+                        fr_name = fr.name if fr else None
+                        part_descriptions.append(
+                            f"part(ts_len={ts_len}, fc={fc_name}, fr={fr_name})"
+                        )
+                    debug_lines.append(
+                        f"{content.role}: " + ", ".join(part_descriptions)
+                    )
+                logger.info("\n".join(debug_lines))
 
             # Build generation config
             config_params = {
@@ -710,13 +778,22 @@ class GoogleGenAIClient(BaseLLMClient):
                                     thought_signature=thought_sig
                                 )
 
+                            # Preserve the original args structure as provided by the SDK
+                            args_value = (
+                                func_call.args if func_call.args is not None else {}
+                            )
+                            func_call_id = (
+                                func_call.id if isinstance(func_call.id, str) else None
+                            )
+                            call_id = func_call_id or f"call_{uuid.uuid4().hex[:24]}"
+
                             tool_calls.append(
                                 ToolCallItem(
-                                    id=f"call_{uuid.uuid4().hex[:24]}",
+                                    id=call_id,
                                     type="function",
                                     function=ToolCallFunction(
                                         name=func_call.name,
-                                        arguments=json.dumps(func_call.args),
+                                        arguments=args_value,
                                     ),
                                     provider_metadata=provider_metadata,
                                 )
@@ -793,7 +870,7 @@ class GoogleGenAIClient(BaseLLMClient):
         mime_type: str | None,
         max_text_length: int | None,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         """
         Format user message with optional file content.
 
@@ -966,9 +1043,27 @@ class GoogleGenAIClient(BaseLLMClient):
                                             hasattr(part, "thought_signature")
                                             and part.thought_signature
                                         ):
+                                            # DEBUG LOGGING
+                                            sig_len = len(part.thought_signature)
+                                            sig_preview = part.thought_signature[:10]
+                                            logger.warning(
+                                                f"DEBUG: Received thought_signature from SDK. Len: {sig_len}, Preview: {sig_preview!r}"
+                                            )
+
                                             # Wrap in opaque GeminiThoughtSignature - no processing
                                             thought_sig = GeminiThoughtSignature(
                                                 part.thought_signature
+                                            )
+                                            if self.should_debug_messages:
+                                                logger.info(
+                                                    "Captured thought_signature for tool_call %s (len=%d)",
+                                                    tool_call_id,
+                                                    len(part.thought_signature),
+                                                )
+                                        elif self.should_debug_messages:
+                                            logger.info(
+                                                "No thought_signature present for tool_call %s",
+                                                tool_call_id,
                                             )
 
                                         # Store func_call with its signature for later emission
@@ -990,12 +1085,17 @@ class GoogleGenAIClient(BaseLLMClient):
                         thought_signature=thought_sig
                     )
 
+                # Preserve the original args structure from the SDK to avoid any re-encoding
+                args_value = func_call.args if func_call.args is not None else {}
+                func_call_id = func_call.id if isinstance(func_call.id, str) else None
+                call_id = func_call_id or tool_call_id
+
                 tool_call = ToolCallItem(
-                    id=tool_call_id,
+                    id=call_id,
                     type="function",
                     function=ToolCallFunction(
                         name=func_call.name,
-                        arguments=json.dumps(func_call.args),
+                        arguments=args_value,
                     ),
                     provider_metadata=provider_metadata,
                 )

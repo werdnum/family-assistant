@@ -629,4 +629,394 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"messages":[{"role":"system","content":"You are a helpful assistant that always responds in JSON format."},{"role":"user","content":"What is 2+2? Reply with a JSON object with a key ''answer''."}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '219'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: "{\n    \"error\": {\n        \"message\": \"Incorrect API key provided: test-ope***-key. You can find your API key at https://platform.openai.com/account/api-keys.\",\n        \"type\": \"invalid_request_error\",\n        \"param\": null,\n        \"code\": \"invalid_api_key\"\n    }\n}\n"
+      headers:
+        CF-RAY:
+          - 9a3014f07fff33e8-FRA
+        Connection:
+          - keep-alive
+        Content-Length:
+          - '265'
+        Content-Type:
+          - application/json; charset=utf-8
+        Date:
+          - Sun, 23 Nov 2025 10:46:16 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=PoiHb.KZcx1snuSQUobOpcnLe3UhXrXDRb.Ly1gsVHw-1763894776-1.0.1.1-Vf.DVWMoIsS5n0hpeqjtbpQLNF6FA4KJ1ET6NH7EXjz5WZDzqa_QnEZLo8u9WbSzHGXqz5gJrnXLLjiUYfq3HpcqGKTtX8Z5PFNmT3MlQj8; path=/; expires=Sun, 23-Nov-25 11:16:16 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=n6I59IfnIxKCWNYzPAuKmVGOAK2AZbVFf86x_IV3C_k-1763894776550-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        X-Content-Type-Options:
+          - nosniff
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        vary:
+          - Origin
+        x-envoy-upstream-service-time:
+          - '1'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-request-id:
+          - req_4b12974d228e44c3ab5928ef922389ab
+      status:
+        code: 401
+        message: Unauthorized
+  - request:
+      body: '{"messages":[{"role":"system","content":"You are a helpful assistant that always responds in JSON format."},{"role":"user","content":"What is 2+2? Reply with a JSON object with a key ''answer''."}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '219'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAA4xSy27bMBC86yuIPVuB5UhJpWtQpEAvPTQt0joQ1tRKZkORBLlqUxj+94KSY8l9
+          AL3osLMzmhnuIRECVAOVALlHlr3T6V27Kdrnt586vXn/5Xp4KT8+3D8+3n149/D53sIqMuzuG0l+
+          ZV1J2ztNrKyZYOkJmaJqdntz/aYsiqwcgd42pCOtc5zmV1lq0Nh0s94U6TpPs/xE31slKUAlviZC
+          CHEYv9GoaegFKrFevU56CgE7guq8JAR4q+MEMAQVGA3DagalNUxm9H7YGiG2gCb8IL+FSuRbc1zu
+          emqHgNGwGbReAGiMZYyBR5dPJ+R49qVt57zdhd+o0Cqjwr72hMGa6CGwdTCix0SIpzH/cBEJnLe9
+          45rtM42/y7NJDubaZ7A8YWwZ9TwuTpVditUNMSodFvWBRLmnZmbOXePQKLsAkkXkP738TXuKrUz3
+          P/IzICU5pqZ2nholL/POa57iTf5r7VzxaBgC+e9KUs2KfHyGhloc9HQoEH4Gpr5ulenIO6+ma2ld
+          nWF5uysQbyQkx+QXAAAA//8DAAwj+bI8AwAA
+      headers:
+        CF-RAY:
+          - 9a3027158b4d927a-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Sun, 23 Nov 2025 10:58:40 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=EaVcBLo1LU0xa781izcmxSC21TtqFqvozvlbqKjSQC4-1763895520-1.0.1.1-00OoLMrR9yd_dY5CsyKPL6afT8L7VzetsdiAfv7j5WodPNbPJB9b799V4FLKVs2Q7aGonxus6fk6X2AZFmvEr_kgqZLyRWitcfhuppF0CjY; path=/; expires=Sun, 23-Nov-25 11:28:40 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=.yZrXboKE_c6ARYaXGyQ0bHitYeG1VQgyIt1HGnhZFU-1763895520986-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '1047'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '1070'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199966'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 10ms
+        x-request-id:
+          - req_ad7b6601cfc045faae95d846d381cc7d
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"messages":[{"role":"system","content":"You are a helpful assistant that always responds in JSON format."},{"role":"user","content":"What is 2+2? Reply with a JSON object with a key ''answer''."}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '219'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//jFLLbtswELzrK4g9R4HlynKsYwzkGvTUAnEgrMmVTIciCZJqUxj+94KU
+          Y8l9ALnosLMzmhnuKWMMpICaAT9g4L1V+bZdiufjcb/Q28dvq+991W6x/Fo9vbVuWcJdZJj9kXj4
+          YN1z01tFQRo9wtwRBoqqxbr68rBZV8UiAb0RpCKtsyEv74tcozb5crFc5YsyLy7q/GAkJw81e8kY
+          Y+yUvtGoFvQONUtiadKT99gR1NclxsAZFSeA3ksfUAe4m0BudCCdvJ92mrEdoPY/ye2gZuVOn+e7
+          jtrBYzSsB6VmAGptAsbAyeXrBTlffSnTWWf2/g8qtFJLf2gcoTc6evDBWEjoOWPsNeUfbiKBdaa3
+          oQnmjdLvymKUg6n2CdxcsGACqmm8ulR2K9YICiiVn9UHHPmBxMScusZBSDMDslnkv738S3uMLXX3
+          GfkJ4JxsINFYR0Ly27zTmqN4k/9bu1acDIMn90NyaoIkF59BUIuDGg8F/C8fqG9aqTty1snxWlrb
+          FLhZ71eIFYfsnP0GAAD//wMAqwp/ITwDAAA=
+      headers:
+        CF-RAY:
+          - 9a305a1f9c46d7d5-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Sun, 23 Nov 2025 11:33:30 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=a7XM9YFXORign4.CQFhL_UfXHXTrLr.DhkmMDPDY1HQ-1763897610-1.0.1.1-ucwRJQLBC0eg09plHU6g1K8xVbjwwQOashQr1ktmCQfXr.2_qwdfAg4Blhsmt1FZERaiTyDFgxX95mvzOXNI2OF4KGI3N7GTRbSymGw1z5A; path=/; expires=Sun, 23-Nov-25 12:03:30 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=Xy8GBRfMfsFLngeLwPwGBxwtYXMdfSZmp1zeB4jdc3M-1763897610767-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '429'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '442'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199966'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 10ms
+        x-request-id:
+          - req_1a6cfe562b634c67979bf344f6a7a52d
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"messages":[{"role":"system","content":"You are a helpful assistant that always responds in JSON format."},{"role":"user","content":"What is 2+2? Reply with a JSON object with a key ''answer''."}],"model":"gpt-4.1-nano"}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '219'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAAwAAAP//jFLLbtswELzrK4g9W4HkyHGsa3vKIeixRR0Ia3Ils6FIglw1LQz/e0HJ
+          seQ+gF502NkZzQz3lAkBWkEtQB6RZe9N/qFdh/CleGuf7OeDfEL89Pw6rD8+e0Z1D6vEcIdvJPmd
+          dSdd7w2xdnaCZSBkSqrl9uH+cfe4KbYj0DtFJtE6z3l1V+YWrcvXxXqTF1VeVhf60WlJEWrxNRNC
+          iNP4TUatoh9Qi2L1PukpRuwI6uuSEBCcSRPAGHVktAyrGZTOMtnR+2lvhdgD2vhGYQ+1qPb2vNwN
+          1A4Rk2E7GLMA0FrHmAKPLl8uyPnqy7jOB3eIv1Gh1VbHYxMIo7PJQ2TnYUTPmRAvY/7hJhL44HrP
+          DbtXGn9XlZMczLXP4O6CsWM083hzqexWrFHEqE1c1AcS5ZHUzJy7xkFptwCyReQ/vfxNe4qtbfc/
+          8jMgJXkm1fhASsvbvPNaoHST/1q7Vjwahkjhu5bUsKaQnkFRi4OZDgXiz8jUN622HQUf9HQtrW9K
+          3G0PG8QHCdk5+wUAAP//AwCjHR1TPAMAAA==
+      headers:
+        CF-RAY:
+          - 9a307004ba34d399-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Sun, 23 Nov 2025 11:48:28 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=H.TtgsxqTH_i_tGjedhvdz0VE0Ho5xK2gFCqi.o0AMo-1763898508-1.0.1.1-7R1Lp9J3CS9I4G3qmdY.P8r7DI775m8LWq6OBCq9M5nET.9vXnqE.Ii3ql7oAmhIcRPi.Y.7AFzlE4E8WQlRvHU0Vhkmnz8kxaKFBoYVzXE; path=/; expires=Sun, 23-Nov-25 12:18:28 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=SPiXNHh7clYW1lnGo3ZeyvdhyNUO4An3wlykDn7.41U-1763898508135-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '784'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '963'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199966'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 10ms
+        x-request-id:
+          - req_b9fbedb41d4d440aaece391a2d327aae
+      status:
+        code: 200
+        message: OK
 version: 1

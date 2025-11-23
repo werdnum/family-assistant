@@ -3,14 +3,17 @@ Defines common types used by the tool system, like the execution context.
 Moved here to avoid circular imports.
 """
 
+from __future__ import annotations
+
 import base64
 import json
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import date, datetime
-from typing import TYPE_CHECKING, Any, Optional, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+    from datetime import date, datetime
+
     from family_assistant.embeddings import EmbeddingGenerator
     from family_assistant.events.indexing_source import IndexingSource
     from family_assistant.events.sources import EventSource
@@ -19,7 +22,7 @@ if TYPE_CHECKING:
     from family_assistant.processing import ProcessingService
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.context import DatabaseContext
-    from family_assistant.tools import ToolsProvider
+    from family_assistant.tools.infrastructure import ToolsProvider
     from family_assistant.utils.clock import Clock
 
 
@@ -93,25 +96,21 @@ class ToolExecutionContext:
     conversation_id: str  # e.g., Telegram chat ID string, web session UUID
     user_name: str  # Name of the user initiating the request
     turn_id: str | None  # The ID of the current processing turn
-    db_context: "DatabaseContext"
+    db_context: DatabaseContext
     # Infrastructure fields - REQUIRED (no defaults) to catch bugs via type checker
-    processing_service: Optional[
-        "ProcessingService"
-    ]  # NO DEFAULT - must specify explicitly
-    clock: Optional["Clock"]  # NO DEFAULT - must specify explicitly
-    home_assistant_client: Optional[
-        "HomeAssistantClientWrapper"
-    ]  # NO DEFAULT - must specify explicitly
-    event_sources: (
-        dict[str, "EventSource"] | None
+    processing_service: ProcessingService | None  # NO DEFAULT - must specify explicitly
+    clock: Clock | None  # NO DEFAULT - must specify explicitly
+    home_assistant_client: (
+        HomeAssistantClientWrapper | None
     )  # NO DEFAULT - must specify explicitly
-    attachment_registry: Optional[
-        "AttachmentRegistry"
-    ]  # NO DEFAULT - must specify explicitly
+    event_sources: dict[str, EventSource] | None  # NO DEFAULT - must specify explicitly
+    attachment_registry: (
+        AttachmentRegistry | None
+    )  # NO DEFAULT - must specify explicitly
     # Optional fields with defaults (for backward compatibility and convenience)
     user_id: str | None = None  # User identifier
-    chat_interface: Optional["ChatInterface"] = None  # Replaced application
-    chat_interfaces: dict[str, "ChatInterface"] | None = (
+    chat_interface: ChatInterface | None = None  # Replaced application
+    chat_interfaces: dict[str, ChatInterface] | None = (
         None  # Dict of interface_type -> ChatInterface for cross-interface messaging
     )
     timezone_str: str = "UTC"  # Timezone string for localization
@@ -132,7 +131,7 @@ class ToolExecutionContext:
                 # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
                 dict[str, Any],  # tool_args
                 float,  # timeout
-                "ToolExecutionContext",  # context (self-reference)
+                ToolExecutionContext,  # context (self-reference)
             ],
             Awaitable[bool],
         ]
@@ -141,13 +140,9 @@ class ToolExecutionContext:
     update_activity_callback: Callable[[], None] | None = (
         None  # Optional callback to update task worker activity timestamp
     )
-    embedding_generator: Optional["EmbeddingGenerator"] = (
-        None  # Add embedding_generator
-    )
-    indexing_source: Optional["IndexingSource"] = None  # Add indexing_source
-    tools_provider: Optional["ToolsProvider"] = (
-        None  # Add tools_provider for API access
-    )
+    embedding_generator: EmbeddingGenerator | None = None  # Add embedding_generator
+    indexing_source: IndexingSource | None = None  # Add indexing_source
+    tools_provider: ToolsProvider | None = None  # Add tools_provider for API access
 
 
 @dataclass

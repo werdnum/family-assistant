@@ -94,4 +94,459 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"messages":[{"role":"system","content":"You are a helpful assistant that responds in a very concise manner."},{"role":"user","content":"What is the capital of France? Reply in exactly one word."}],"model":"gpt-4.1-nano","stream":true}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '235'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: 'data: {"id":"chatcmpl-Cf1efIgKfGMRuXlh5YBrr05V1CL6X","object":"chat.completion.chunk","created":1763893845,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_1a97b5aa6c","choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":null,"finish_reason":null}],"obfuscation":"2vsvy"} #magic___^_^___line #magic___^_^___line data: {"id":"chatcmpl-Cf1efIgKfGMRuXlh5YBrr05V1CL6X","object":"chat.completion.chunk","created":1763893845,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_1a97b5aa6c","choices":[{"index":0,"delta":{"content":"Paris"},"logprobs":null,"finish_reason":null}],"obfuscation":"mJ"} #magic___^_^___line #magic___^_^___line data: {"id":"chatcmpl-Cf1efIgKfGMRuXlh5YBrr05V1CL6X","object":"chat.completion.chunk","created":1763893845,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_1a97b5aa6c","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}],"obfuscation":"0"} #magic___^_^___line #magic___^_^___line data: [DONE] #magic___^_^___line #magic___^_^___line '
+      headers:
+        CF-RAY:
+          - 9a2ffe326d2abbb5-FRA
+        Connection:
+          - keep-alive
+        Content-Type:
+          - text/event-stream; charset=utf-8
+        Date:
+          - Sun, 23 Nov 2025 10:30:46 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=nuWql8Y36p17mIaqUJWN9UcSvoF.9c5xjcW2ZKU_d2M-1763893846-1.0.1.1-tST.6L2QZcuUCp51xXSdq4EG0UywJBJcesMYQ_7Km_LJnObdlVTEKnu9sq6Sn5WAUsj5Bblx9RAiM3M8GJMsBAB.gfmXHlx0dEpp2_BR6kU; path=/; expires=Sun, 23-Nov-25 11:00:46 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=BGeizXgw86Hor4fExLOekYO8WXMaydin00qFdXP6MLw-1763893846306-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '254'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '543'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199966'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 10ms
+        x-request-id:
+          - req_f047c61ab0344215831b348335abd715
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"messages":[{"role":"system","content":"You are a helpful assistant that responds in a very concise manner."},{"role":"user","content":"What is the capital of France? Reply in exactly one word."}],"model":"gpt-4.1-nano","stream":true}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '235'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: "{\n    \"error\": {\n        \"message\": \"Incorrect API key provided: test-ope***-key. You can find your API key at https://platform.openai.com/account/api-keys.\",\n        \"type\": \"invalid_request_error\",\n        \"param\": null,\n        \"code\": \"invalid_api_key\"\n    }\n}\n"
+      headers:
+        CF-RAY:
+          - 9a3015303d86a63e-FRA
+        Connection:
+          - keep-alive
+        Content-Length:
+          - '265'
+        Content-Type:
+          - application/json; charset=utf-8
+        Date:
+          - Sun, 23 Nov 2025 10:46:26 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=6X_faLH2fBQFXnIOmPDzcB4_Mz7B.CJX8FuaSszhcQ0-1763894786-1.0.1.1-VyzaP1AvcAZppItZX0X_hXjcs8jJtaYiTCo2KGwkrfXJx.pay1NmaUn3wULP6gxXmT4ao2LQIPcyLnPjygvslzwms0gv0n_t5eANADh55gc; path=/; expires=Sun, 23-Nov-25 11:16:26 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=Aa8nF5EJjnx6fEQCXSk2RQv.XtsT6HqmUtA2C4n3gc0-1763894786729-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        X-Content-Type-Options:
+          - nosniff
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        vary:
+          - Origin
+        x-envoy-upstream-service-time:
+          - '1'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-request-id:
+          - req_94e3b8b9f6cf4e2f8186bb0e0b227d58
+      status:
+        code: 401
+        message: Unauthorized
+  - request:
+      body: '{"messages":[{"role":"system","content":"You are a helpful assistant that responds in a very concise manner."},{"role":"user","content":"What is the capital of France? Reply in exactly one word."}],"model":"gpt-4.1-nano","stream":true}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '235'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: 'data: {"id":"chatcmpl-Cf2637kf2GST3kWPj7MLUcF0ddjJp","object":"chat.completion.chunk","created":1763895543,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_1a97b5aa6c","choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":null,"finish_reason":null}],"obfuscation":"icgcS"} #magic___^_^___line #magic___^_^___line data: {"id":"chatcmpl-Cf2637kf2GST3kWPj7MLUcF0ddjJp","object":"chat.completion.chunk","created":1763895543,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_1a97b5aa6c","choices":[{"index":0,"delta":{"content":"Paris"},"logprobs":null,"finish_reason":null}],"obfuscation":"eR"} #magic___^_^___line #magic___^_^___line data: {"id":"chatcmpl-Cf2637kf2GST3kWPj7MLUcF0ddjJp","object":"chat.completion.chunk","created":1763895543,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_1a97b5aa6c","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}],"obfuscation":"r"} #magic___^_^___line #magic___^_^___line data: [DONE] #magic___^_^___line #magic___^_^___line '
+      headers:
+        CF-RAY:
+          - 9a3027a73e33d36d-FRA
+        Connection:
+          - keep-alive
+        Content-Type:
+          - text/event-stream; charset=utf-8
+        Date:
+          - Sun, 23 Nov 2025 10:59:03 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=leMc76Gl2C6gnz8hWJmhdPFeEFs0407E7xo0UasSbGY-1763895543-1.0.1.1-KXOdoZ08LP0WDuaqQW.W6lH8_xx_ILc1P71PoC_UHimQm2.YQhqeHbK2B9Bdvd2c5e60feFEpRbcAPM0YnaR_kk8nAXsfqoeeQofKgA1jBU; path=/; expires=Sun, 23-Nov-25 11:29:03 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=9JdNCkKYkBzJjcaFbEKWqv2ME1QUETXl_Mv3ORxVFdo-1763895543342-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '274'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '286'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199966'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 10ms
+        x-request-id:
+          - req_e3f52e0c1fea49a99d14781f4b870a76
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"messages":[{"role":"system","content":"You are a helpful assistant that responds in a very concise manner."},{"role":"user","content":"What is the capital of France? Reply in exactly one word."}],"model":"gpt-4.1-nano","stream":true}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '235'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: 'data: {"id":"chatcmpl-Cf2dl7VFCmrABIIrU6pIL4kARVF86","object":"chat.completion.chunk","created":1763897633,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_1a97b5aa6c","choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":null,"finish_reason":null}],"obfuscation":"BgVKw"} #magic___^_^___line #magic___^_^___line data: {"id":"chatcmpl-Cf2dl7VFCmrABIIrU6pIL4kARVF86","object":"chat.completion.chunk","created":1763897633,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_1a97b5aa6c","choices":[{"index":0,"delta":{"content":"Paris"},"logprobs":null,"finish_reason":null}],"obfuscation":"CF"} #magic___^_^___line #magic___^_^___line data: {"id":"chatcmpl-Cf2dl7VFCmrABIIrU6pIL4kARVF86","object":"chat.completion.chunk","created":1763897633,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_1a97b5aa6c","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}],"obfuscation":"S"} #magic___^_^___line #magic___^_^___line data: [DONE] #magic___^_^___line #magic___^_^___line '
+      headers:
+        CF-RAY:
+          - 9a305ab2d9fad39e-FRA
+        Connection:
+          - keep-alive
+        Content-Type:
+          - text/event-stream; charset=utf-8
+        Date:
+          - Sun, 23 Nov 2025 11:33:54 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=zrAEd8GZS5xXVcmp6Y5MPdQ9EhZ3AWsxI4Ak50hxT8k-1763897634-1.0.1.1-adkF0tLQp8.ja3ekkSm8CDCfFYhJwLg9b._lKv9De399S0BH2t4XRJeAtZp8mBRFiA1iEf6bqFBgfJuUmWfa445lGpPkeMUbMf5DgXt5gAs; path=/; expires=Sun, 23-Nov-25 12:03:54 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=2.elod0Zhyh4qZltyXz0cPStvvG_dbDOJGRX5KYFUJ4-1763897634156-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '215'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '245'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199966'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 10ms
+        x-request-id:
+          - req_f6f39c9b6e9645f183e7f1206a13adc6
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"messages":[{"role":"system","content":"You are a helpful assistant that responds in a very concise manner."},{"role":"user","content":"What is the capital of France? Reply in exactly one word."}],"model":"gpt-4.1-nano","stream":true}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '235'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.92.3
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.92.3
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.7
+      method: POST
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      body:
+        string: 'data: {"id":"chatcmpl-Cf2s5ubNZnanOFPQVTDl8HIxaLKyE","object":"chat.completion.chunk","created":1763898521,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_1a97b5aa6c","choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":null,"finish_reason":null}],"obfuscation":"QNSZC"} #magic___^_^___line #magic___^_^___line data: {"id":"chatcmpl-Cf2s5ubNZnanOFPQVTDl8HIxaLKyE","object":"chat.completion.chunk","created":1763898521,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_1a97b5aa6c","choices":[{"index":0,"delta":{"content":"Paris"},"logprobs":null,"finish_reason":null}],"obfuscation":"rR"} #magic___^_^___line #magic___^_^___line data: {"id":"chatcmpl-Cf2s5ubNZnanOFPQVTDl8HIxaLKyE","object":"chat.completion.chunk","created":1763898521,"model":"gpt-4.1-nano-2025-04-14","service_tier":"default","system_fingerprint":"fp_1a97b5aa6c","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}],"obfuscation":"v"} #magic___^_^___line #magic___^_^___line data: [DONE] #magic___^_^___line #magic___^_^___line '
+      headers:
+        CF-RAY:
+          - 9a30705bbed4566a-FRA
+        Connection:
+          - keep-alive
+        Content-Type:
+          - text/event-stream; charset=utf-8
+        Date:
+          - Sun, 23 Nov 2025 11:48:41 GMT
+        Server:
+          - cloudflare
+        Set-Cookie:
+          - __cf_bm=XnHZbXiDYWFvv9_0eaujmcQ548LfkDWqbYP7s98qxUM-1763898521-1.0.1.1-VCO5Fzr3K9Xse.HszkeRJh3YsKthcav18iaJdPmuN5UvcjMdcf.s5FMnIFxCemKV.jUM2aRNYgUSQYmshqlCsghaxgUOcsMAHRwzi0WcZ9E; path=/; expires=Sun, 23-Nov-25 12:18:41 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+          - _cfuvid=zrh4tERXM8s7jTv.DevBd5YDvhHllgQZsfTuyyNhWTk-1763898521409-0.0.1.1-604800000; path=/; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '283'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        x-envoy-upstream-service-time:
+          - '308'
+        x-openai-proxy-wasm:
+          - v0.1
+        x-ratelimit-limit-requests:
+          - '500'
+        x-ratelimit-limit-tokens:
+          - '200000'
+        x-ratelimit-remaining-requests:
+          - '499'
+        x-ratelimit-remaining-tokens:
+          - '199966'
+        x-ratelimit-reset-requests:
+          - 120ms
+        x-ratelimit-reset-tokens:
+          - 10ms
+        x-request-id:
+          - req_789effb7eccb4c6e873361d9cbaa416e
+      status:
+        code: 200
+        message: OK
 version: 1

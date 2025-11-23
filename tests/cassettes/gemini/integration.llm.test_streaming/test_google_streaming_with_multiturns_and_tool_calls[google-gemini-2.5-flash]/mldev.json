@@ -26,6 +26,7 @@
                 "parts": [
                   {
                     "functionCall": {
+                      "id": "call_123",
                       "args": {
                         "location": "Paris, France",
                         "unit": "celsius"
@@ -40,6 +41,7 @@
                 "parts": [
                   {
                     "functionResponse": {
+                      "id": "call_123",
                       "name": "get_weather",
                       "response": {
                         "result": "The weather in Paris is 18°C and sunny."
@@ -136,7 +138,7 @@
               ]
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "4z8habaMAvConsEPwoCFyQ0"
+            "responseId": "lvQiabqoAunskdUPnc7FGQ"
           },
           {
             "candidates": [
@@ -165,7 +167,7 @@
               ]
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "4z8habaMAvConsEPwoCFyQ0"
+            "responseId": "lvQiabqoAunskdUPnc7FGQ"
           }
         ],
         "byte_segments": [],
@@ -198,7 +200,7 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "4z8habaMAvConsEPwoCFyQ0",
+            "response_id": "lvQiabqoAunskdUPnc7FGQ",
             "usage_metadata": {
               "candidates_token_count": 4,
               "prompt_token_count": 152,
@@ -240,7 +242,7 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "4z8habaMAvConsEPwoCFyQ0",
+            "response_id": "lvQiabqoAunskdUPnc7FGQ",
             "usage_metadata": {
               "candidates_token_count": 13,
               "prompt_token_count": 152,

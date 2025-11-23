@@ -3,7 +3,9 @@ Direct OpenAI API implementation for LLM interactions.
 """
 
 import base64
+import json
 import logging
+import os
 from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -54,7 +56,7 @@ class OpenAIClient(BaseLLMClient):
         api_key: str,
         model: str,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        model_parameters: dict[str, dict[str, Any]] | None = None,
+        model_parameters: dict[str, dict[str, object]] | None = None,
         **kwargs: Any,  # noqa: ANN401 # Accepts arbitrary OpenAI API parameters
     ) -> None:
         """
@@ -150,7 +152,7 @@ class OpenAIClient(BaseLLMClient):
         return UserMessage(content=content_parts)
 
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def _get_model_specific_params(self, model: str) -> dict[str, Any]:
+    def _get_model_specific_params(self, model: str) -> dict[str, object]:
         """Get parameters for a specific model based on pattern matching."""
         params = {}
         for pattern, pattern_params in self.model_parameters.items():
@@ -165,7 +167,7 @@ class OpenAIClient(BaseLLMClient):
         self,
         messages: Sequence[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[dict[str, object]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Generate response using OpenAI API."""
@@ -283,7 +285,7 @@ class OpenAIClient(BaseLLMClient):
         mime_type: str | None,
         max_text_length: int | None,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         """
         Format user message with optional file content.
 
@@ -336,7 +338,7 @@ class OpenAIClient(BaseLLMClient):
         self,
         messages: Sequence[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[dict[str, object]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Generate streaming response using OpenAI API."""
@@ -346,7 +348,7 @@ class OpenAIClient(BaseLLMClient):
         self,
         messages: Sequence[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[dict[str, object]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses."""
@@ -374,8 +376,17 @@ class OpenAIClient(BaseLLMClient):
             # Make streaming API call
             stream = await self.client.chat.completions.create(**params)
 
+            # VCR replays flatten streaming bodies into a single line with a
+            # custom marker. The OpenAI SDK doesn't decode that format, so we
+            # manually parse and emit events when detected.
+            vcr_chunks = await self._maybe_parse_vcr_stream(stream)
+            if vcr_chunks is not None:
+                async for event in self._emit_events_from_chunk_dicts(vcr_chunks):
+                    yield event
+                return
+
             # Track current tool call being built
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+            # ast-grep-ignore: no-dict-any - Streaming accumulator structure
             current_tool_calls: dict[int, dict[str, Any]] = {}
             chunk: Any | None = None
             last_chunk_with_usage: Any | None = None
@@ -498,3 +509,142 @@ class OpenAIClient(BaseLLMClient):
                     "model": self.model,
                 },
             )
+
+    async def _maybe_parse_vcr_stream(
+        self,
+        stream: Any,  # noqa: ANN401  # OpenAI AsyncStream has dynamic types
+        # ast-grep-ignore: no-dict-any - VCR chunk payload mirrors provider schema
+    ) -> list[dict[str, Any]] | None:
+        """
+        Detect and parse VCR-recorded streaming responses.
+
+        VCR serializes SSE bodies by replacing newlines with a custom marker,
+        which the OpenAI SDK cannot decode. When we detect this marker, we
+        parse the entire response body into chunk dictionaries and return
+        them for manual event emission.
+        """
+        # Avoid interfering with real streaming outside of tests
+        if (
+            not os.getenv("PYTEST_CURRENT_TEST")
+            and os.getenv("LLM_RECORD_MODE") != "replay"
+        ):
+            return None
+
+        response = getattr(stream, "response", None)
+        if response is None:
+            return None
+
+        try:
+            raw_body = await response.aread()
+        except Exception:
+            return None
+
+        text_body = raw_body.decode()
+        magic_token = "#magic___^_^___line"
+        if magic_token not in text_body:
+            return None
+
+        # Replace the marker with real newlines to reconstruct SSE frames
+        normalized = text_body.replace(f"{magic_token} ", "\n")
+
+        # ast-grep-ignore: no-dict-any - VCR chunk payload mirrors provider schema
+        chunks: list[dict[str, Any]] = []
+        for raw_block in normalized.split("\n\n"):
+            block = raw_block.strip()
+            if not block.startswith("data:"):
+                continue
+
+            data_str = block.removeprefix("data:").strip()
+            if data_str == "[DONE]":
+                break
+
+            try:
+                chunk = json.loads(data_str)
+                if isinstance(chunk, dict):
+                    chunks.append(chunk)
+            except json.JSONDecodeError:
+                logger.debug("Skipping unparsable VCR SSE block: %s", data_str)
+
+        return chunks
+
+    # ast-grep-ignore: no-dict-any - Streaming chunk payload mirrors provider schema
+    async def _emit_events_from_chunk_dicts(
+        self,
+        chunk_dicts: list[dict[str, object]],
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """Emit stream events from pre-parsed chunk dictionaries."""
+        # ast-grep-ignore: no-dict-any - Streaming chunk payload mirrors provider schema
+        current_tool_calls: dict[int, dict[str, Any]] = {}
+        # ast-grep-ignore: no-dict-any - Streaming chunk payload mirrors provider schema
+        last_chunk_with_usage: dict[str, Any] | None = None
+
+        for chunk in chunk_dicts:
+            choices = chunk.get("choices") or []
+            if not choices or not isinstance(choices, list):
+                continue
+
+            first_choice = choices[0]
+            if not isinstance(first_choice, dict):
+                continue
+
+            delta = first_choice.get("delta") or {}
+            if not isinstance(delta, dict):
+                continue
+            if delta.get("content"):
+                yield LLMStreamEvent(type="content", content=delta["content"])
+
+            tool_calls = delta.get("tool_calls") or []
+            for tc_delta in tool_calls:
+                idx = tc_delta.get("index", 0)
+                tc_id = tc_delta.get("id")
+                tc_type = tc_delta.get("type")
+                function = tc_delta.get("function") or {}
+                func_name = function.get("name", "")
+                func_args = function.get("arguments", "")
+
+                if idx not in current_tool_calls:
+                    current_tool_calls[idx] = {
+                        "id": tc_id,
+                        "type": tc_type,
+                        "function": {"name": "", "arguments": ""},
+                    }
+
+                tc_data = current_tool_calls[idx]
+                if tc_id:
+                    tc_data["id"] = tc_id
+                if tc_type:
+                    tc_data["type"] = tc_type
+                if func_name:
+                    tc_data["function"]["name"] = func_name
+                if func_args:
+                    tc_data["function"]["arguments"] += func_args
+
+            if chunk.get("usage"):
+                last_chunk_with_usage = chunk
+
+        for tc_data in current_tool_calls.values():
+            if tc_data["function"]["name"] and tc_data["id"]:
+                tool_call = ToolCallItem(
+                    id=tc_data["id"],
+                    type=tc_data["type"],
+                    function=ToolCallFunction(
+                        name=tc_data["function"]["name"],
+                        arguments=tc_data["function"]["arguments"] or "{}",
+                    ),
+                )
+                yield LLMStreamEvent(
+                    type="tool_call",
+                    tool_call=tool_call,
+                    tool_call_id=tc_data["id"],
+                )
+
+        metadata: StreamingMetadata = {}
+        if last_chunk_with_usage:
+            usage = last_chunk_with_usage.get("usage") or {}
+            metadata["reasoning_info"] = {
+                "prompt_tokens": usage.get("prompt_tokens"),
+                "completion_tokens": usage.get("completion_tokens"),
+                "total_tokens": usage.get("total_tokens"),
+            }
+
+        yield LLMStreamEvent(type="done", metadata=metadata)

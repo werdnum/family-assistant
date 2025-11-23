@@ -15,7 +15,7 @@ class ToolCallFunction:
     """Represents the function to be called in a tool call."""
 
     name: str
-    arguments: str  # JSON string of arguments
+    arguments: str | dict[str, object]  # JSON string or structured args
 
 
 @dataclass(frozen=True)

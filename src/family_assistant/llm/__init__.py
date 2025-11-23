@@ -27,6 +27,7 @@ from litellm.exceptions import (
 )
 
 from .factory import LLMClientFactory
+from .google_types import GeminiProviderMetadata
 from .messages import (
     AssistantMessage,
     ErrorMessage,
@@ -268,7 +269,15 @@ def _format_tool_calls_for_debug(tool_calls: Sequence[ToolCallItem] | None) -> s
     if not tool_calls:
         return ""
 
-    formatted_calls = [f"{call.function.name}(id={call.id})" for call in tool_calls]
+    formatted_calls = []
+    for call in tool_calls:
+        ts_len = 0
+        if (
+            isinstance(call.provider_metadata, GeminiProviderMetadata)
+            and call.provider_metadata.thought_signature
+        ):
+            ts_len = len(call.provider_metadata.thought_signature.to_google_format())
+        formatted_calls.append(f"{call.function.name}(id={call.id}, ts_len={ts_len})")
     return " + tool_call(" + ", ".join(formatted_calls) + ")"
 
 
@@ -1237,6 +1246,39 @@ class LiteLLMClient(BaseLLMClient):
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses."""
+
+        def _safe_get_attr(obj: object, name: str) -> object | None:
+            """Get attribute or dict key safely."""
+            if isinstance(obj, dict):
+                return obj.get(name)
+            return getattr(obj, name, None)
+
+        def _extract_text_from_content(content: object) -> str | None:
+            """Extract concatenated text from mixed streaming payloads."""
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                parts: list[str] = []
+                for part in content:
+                    text_val: Any = None
+                    if isinstance(part, dict):
+                        text_val = part.get("text") or part.get("content")
+                    else:
+                        text_val = getattr(part, "text", None)
+                        if not isinstance(text_val, str):
+                            value_attr = getattr(text_val, "value", None)
+                            if isinstance(value_attr, str):
+                                text_val = value_attr
+                        if not isinstance(text_val, str):
+                            content_attr = getattr(part, "content", None)
+                            if isinstance(content_attr, str):
+                                text_val = content_attr
+                    if isinstance(text_val, str):
+                        parts.append(text_val)
+                if parts:
+                    return "".join(parts)
+            return None
+
         try:
             # Process tool attachments with typed messages
             processed_messages = self._process_tool_messages(list(messages))
@@ -1326,7 +1368,7 @@ class LiteLLMClient(BaseLLMClient):
                 )
 
                 # Extract content
-                delta_content = delta.content if hasattr(delta, "content") else None
+                delta_content = _safe_get_attr(delta, "content")
                 if delta_content is None:
                     logger.debug(
                         "Delta content missing; available attributes: %s",
@@ -1337,34 +1379,57 @@ class LiteLLMClient(BaseLLMClient):
                         },
                     )
 
-                if delta_content:
-                    logger.debug("Streaming content chunk: %s", delta_content)
-                    yield LLMStreamEvent(type="content", content=delta_content)
+                text_chunk: str | None = _extract_text_from_content(delta_content)
+
+                # Some SDKs wrap content under delta.message["content"]
+                if not text_chunk:
+                    message_obj = _safe_get_attr(delta, "message")
+                    if message_obj is not None:
+                        msg_content = _safe_get_attr(message_obj, "content")
+                        text_chunk = _extract_text_from_content(msg_content)
+
+                if not text_chunk and delta_content is not None:
+                    # Fallback: coerce non-string content to string if present
+                    text_chunk = str(delta_content)
+
+                if text_chunk:
+                    logger.debug("Streaming content chunk: %s", text_chunk)
+                    yield LLMStreamEvent(type="content", content=text_chunk)
                     content_emitted = True
 
                 # Extract tool calls
+                raw_tool_calls = _safe_get_attr(delta, "tool_calls")
                 tool_calls_delta = (
-                    delta.tool_calls if hasattr(delta, "tool_calls") else None
-                ) or []
+                    raw_tool_calls if isinstance(raw_tool_calls, list) else []
+                )
 
                 for tc_delta in tool_calls_delta:
-                    if not hasattr(tc_delta, "index"):
+                    raw_idx = _safe_get_attr(tc_delta, "index")
+                    if isinstance(raw_idx, int):
+                        idx = raw_idx
+                    else:
                         logger.warning(
                             "Tool call delta missing index attribute, defaulting to 0. "
                             "This may cause issues with multiple tool calls."
                         )
                         idx = 0
-                    else:
-                        idx = tc_delta.index
-                    tc_id = tc_delta.id if hasattr(tc_delta, "id") else None
-                    tc_type = tc_delta.type if hasattr(tc_delta, "type") else "function"
+                    tc_id = _safe_get_attr(tc_delta, "id")
+                    tc_type = _safe_get_attr(tc_delta, "type") or "function"
                     func_name = ""
                     func_args = ""
-                    if hasattr(tc_delta, "function") and tc_delta.function:
-                        if getattr(tc_delta.function, "name", None):
-                            func_name = tc_delta.function.name
-                        if getattr(tc_delta.function, "arguments", None):
-                            func_args = tc_delta.function.arguments
+                    function_delta = _safe_get_attr(tc_delta, "function")
+                    if function_delta:
+                        func_name_attr = _safe_get_attr(function_delta, "name")
+                        func_args_attr = _safe_get_attr(function_delta, "arguments")
+                        if isinstance(func_name_attr, str):
+                            func_name = func_name_attr
+                        if isinstance(func_args_attr, str):
+                            func_args = func_args_attr
+                        elif func_args_attr is not None:
+                            try:
+                                func_args = json.dumps(func_args_attr)
+                            except Exception:  # pragma: no cover - best effort fallback
+                                func_args = str(func_args_attr)
 
                     if idx not in current_tool_calls:
                         current_tool_calls[idx] = {
