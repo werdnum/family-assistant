@@ -527,7 +527,7 @@ async def test_streaming_content_accumulation(
 
 @pytest.mark.no_db
 @pytest.mark.llm_integration
-@pytest.mark.vcr(before_record_response=sanitize_response)
+@pytest.mark.no_vcr  # VCR mocks stream responses poorly for LiteLLM; use real streaming instead
 async def test_litellm_streaming_with_various_models(
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:

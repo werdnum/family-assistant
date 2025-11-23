@@ -26,6 +26,7 @@
                 "parts": [
                   {
                     "functionCall": {
+                      "id": "call_test_123",
                       "args": {
                         "expression": "5 + 3"
                       },
@@ -39,6 +40,7 @@
                 "parts": [
                   {
                     "functionResponse": {
+                      "id": "call_test_123",
                       "name": "calculate",
                       "response": {
                         "result": 8
@@ -115,7 +117,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "The answer"
+                      "text": "The result of "
                     }
                   ],
                   "role": "model"
@@ -125,8 +127,8 @@
             ],
             "usageMetadata": {
               "promptTokenCount": 129,
-              "candidatesTokenCount": 2,
-              "totalTokenCount": 131,
+              "candidatesTokenCount": 3,
+              "totalTokenCount": 132,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
@@ -135,7 +137,7 @@
               ]
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "4z8haaeLHZThnsEPzrbyQA"
+            "responseId": "lvQiabbmHOXYkdUPztX2MQ"
           },
           {
             "candidates": [
@@ -143,7 +145,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": " is 8.\n"
+                      "text": "5 + 3 is 8."
                     }
                   ],
                   "role": "model"
@@ -154,8 +156,8 @@
             ],
             "usageMetadata": {
               "promptTokenCount": 129,
-              "candidatesTokenCount": 6,
-              "totalTokenCount": 135,
+              "candidatesTokenCount": 11,
+              "totalTokenCount": 140,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
@@ -164,7 +166,7 @@
               ]
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "4z8haaeLHZThnsEPzrbyQA"
+            "responseId": "lvQiabbmHOXYkdUPztX2MQ"
           }
         ],
         "byte_segments": [],
@@ -188,7 +190,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "The answer"
+                      "text": "The result of "
                     }
                   ],
                   "role": "model"
@@ -197,9 +199,9 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "4z8haaeLHZThnsEPzrbyQA",
+            "response_id": "lvQiabbmHOXYkdUPztX2MQ",
             "usage_metadata": {
-              "candidates_token_count": 2,
+              "candidates_token_count": 3,
               "prompt_token_count": 129,
               "prompt_tokens_details": [
                 {
@@ -207,7 +209,7 @@
                   "token_count": 129
                 }
               ],
-              "total_token_count": 131
+              "total_token_count": 132
             }
           },
           {
@@ -229,7 +231,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": " is 8.\n"
+                      "text": "5 + 3 is 8."
                     }
                   ],
                   "role": "model"
@@ -239,9 +241,9 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "4z8haaeLHZThnsEPzrbyQA",
+            "response_id": "lvQiabbmHOXYkdUPztX2MQ",
             "usage_metadata": {
-              "candidates_token_count": 6,
+              "candidates_token_count": 11,
               "prompt_token_count": 129,
               "prompt_tokens_details": [
                 {
@@ -249,7 +251,7 @@
                   "token_count": 129
                 }
               ],
-              "total_token_count": 135
+              "total_token_count": 140
             }
           }
         ]

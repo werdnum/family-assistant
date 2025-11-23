@@ -251,4 +251,172 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": ""}], "role": "user"}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Certainly! To help you best, I need a little more information. What are you trying to do, or what kind of information are you looking for?\\n\\nFor example, are you trying to:\\n\\n*   **Ask a question?** (e.g., \\\"What is the capital of France?\\\")\\n*   **Get information on a specific topic?** (e.g., \\\"Tell me about the history of the Roman Empire.\\\")\\n*   **Request a creative output?** (e.g., \\\"Write a poem about a sunset.\\\")\\n*   **Ask for a summary of something?** (e.g., \\\"Summarize this article for me: [link]\\\")\\n*   **Get help with a task?** (e.g., \\\"Help me brainstorm ideas for a birthday party.\\\")\\n*   **Translate something?** (e.g., \\\"Translate 'hello' into Spanish.\\\")\\n\\nPlease tell me what's on your mind!\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 1,\n    \"candidatesTokenCount\": 199,\n    \"totalTokenCount\": 200,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 1\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"_eUiaeDsLr3jnsEPlJujgQ4\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Sun, 23 Nov 2025 10:46:21 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=1449
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": ""}], "role": "user"}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"While the concept of \\\"rewriting history\\\" can be complex and often carries negative connotations, it's also an important aspect of understanding how our narratives about the past are shaped and evolve. Here's a breakdown of what \\\"rewriting history\\\" can mean, both in terms of its problematic and its more constructive interpretations:\\n\\n**Problematic Interpretations (What people often mean when they criticize \\\"rewriting history\\\"):**\\n\\n*   **Distortion and Denial:** This is the most common negative interpretation. It refers to intentionally altering, suppressing, or outright denying historical facts to serve a specific agenda. Examples include:\\n    *   **Holocaust denial:** Denying the systematic genocide of Jews by Nazi Germany.\\n    *   **Climate change denial:** Misrepresenting or ignoring scientific evidence about human-caused climate change.\\n    *   **Political propaganda:** Presenting a biased or false account of events to support a particular political ideology or leader.\\n    *   **Historical revisionism for nationalistic purposes:** Emphasizing national triumphs and downplaying or ignoring atrocities committed by one's own nation.\\n*   **Selective Presentation:** This involves cherry-picking facts and evidence that support a particular viewpoint while ignoring contradictory information. This can create a skewed and incomplete understanding of the past.\\n*   **Imposing Present-Day Values on the Past:** Judging historical figures and events solely by contemporary moral standards can lead to anachronistic and often unfair interpretations. While we can learn from the past, applying modern ethics without understanding the context can be a form of \\\"rewriting.\\\"\\n\\n**Constructive and Evolving Interpretations (How history is naturally re-examined):**\\n\\n*   **Reinterpretation and New Perspectives:** History is not a static, finished story. New evidence, different methodologies, and evolving societal understandings can lead historians to re-examine and reinterpret existing narratives. This is a crucial part of the historical process. Examples include:\\n    *   **Inclusion of marginalized voices:** Previously overlooked groups (women, ethnic minorities, LGBTQ+ individuals, etc.) are now being integrated into historical narratives, offering richer and more accurate accounts of the past.\\n    *   **New archaeological discoveries:** Finding new artifacts can fundamentally change our understanding of ancient civilizations.\\n    *   **Advancements in scientific dating:** More precise dating methods can alter timelines and our understanding of historical sequences.\\n    *   **Post-colonial histories:** Challenging Eurocentric narratives and incorporating perspectives from formerly colonized nations.\\n*   **Correcting Errors and Bias:** As historians gain access to new information or develop more critical analytical tools, they can identify and correct previous errors, omissions, or inherent biases in earlier historical accounts.\\n*   **Debate and Discourse:** The \\\"writing\\\" of history is an ongoing process of debate and discussion among historians. Different interpretations are debated, challenged, and refined over time. This intellectual friction is what drives historical understanding forward.\\n*   **\\\"Making History\\\" in a Figurative Sense:** Sometimes, the phrase \\\"rewriting history\\\" is used metaphorically to describe significant achievements or events that profoundly change the course of the future. For instance, a groundbreaking scientific discovery or a major political upheaval could be described as \\\"rewriting history.\\\"\\n\\n**The Key Distinction:**\\n\\nThe crucial difference lies in **intent and accuracy**.\\n\\n*   **Problematic \\\"rewriting\\\"** aims to deceive, deny, or distort facts for a specific agenda, often by ignoring or fabricating evidence.\\n*   **Constructive re-examination** aims for a more accurate, comprehensive, and nuanced understanding of the past, driven by new evidence, improved methodologies, and critical engagement with existing narratives.\\n\\n**In conclusion, while the term \\\"rewriting history\\\" can be used to describe malicious distortions, it's also a shorthand for the natural, ongoing, and essential process of historical inquiry, reinterpretation, and correction.** It's important to critically assess the context and intent behind any claim of \\\"rewriting history.\\\"\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 1,\n    \"candidatesTokenCount\": 814,\n    \"totalTokenCount\": 815,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 1\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"6ugiaYi8AZ2cvdIPr4D0sQs\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Sun, 23 Nov 2025 10:58:50 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=3467
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": ""}], "role": "user"}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"I am a large language model, trained by Google.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 1,\n    \"candidatesTokenCount\": 11,\n    \"totalTokenCount\": 12,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 1\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"EPEiaY6JMJL-vdIP9pyLuQY\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Sun, 23 Nov 2025 11:33:36 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=397
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": ""}], "role": "user"}], "generationConfig": {}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+        x-goog-api-client:
+          - google-genai-sdk/1.38.0 gl-python/3.13.7
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"In a world increasingly dominated by digital interactions, the importance of genuine human connection cannot be overstated. While technology offers unprecedented convenience and opportunities for communication, it can also inadvertently create a sense of isolation and distance. This is where the value of real-world, face-to-face interaction truly shines.\\n\\nEngaging with others in person allows for a depth of understanding that transcends the limitations of screens and text. It involves observing subtle body language, hearing the nuances of vocal tone, and experiencing the shared energy of a room. These elements contribute to a richer, more empathetic exchange, fostering stronger bonds and a greater sense of belonging.\\n\\nMoreover, the act of physical presence can be a powerful form of validation. When someone dedicates their time and attention to being with you, it sends a clear message of care and respect. This can be particularly crucial in building trust and navigating complex emotions, where non-verbal cues play a significant role.\\n\\nThe benefits extend beyond individual relationships. Communities thrive when their members actively engage with one another. Shared experiences, whether at local events, volunteer activities, or simply casual encounters, build social capital and a collective spirit. This interconnectedness can lead to greater support networks, increased civic participation, and a more vibrant and resilient society.\\n\\nHowever, in our fast-paced lives, finding the time and prioritizing these connections can be a challenge. It requires conscious effort to step away from screens, schedule meetings, and actively seek out opportunities for in-person interaction. It might mean making time for a coffee with a friend, attending a neighborhood gathering, or simply striking up a conversation with a stranger.\\n\\nUltimately, while technology serves as a valuable tool, it should complement, not replace, the fundamental human need for connection. By consciously nurturing our real-world relationships and actively participating in our communities, we can cultivate a more meaningful, supportive, and fulfilling existence for ourselves and those around us. The depth and richness of human connection found in face-to-face interactions remain an irreplaceable cornerstone of a well-lived life.\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 1,\n    \"candidatesTokenCount\": 411,\n    \"totalTokenCount\": 412,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 1\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"lvQiaYTKIaSRvdIP56jlSA\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Sun, 23 Nov 2025 11:48:38 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=4415
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
 version: 1

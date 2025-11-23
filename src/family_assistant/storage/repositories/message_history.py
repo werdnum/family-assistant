@@ -15,6 +15,7 @@ from family_assistant.llm.messages import (
     AssistantMessage,
     ErrorMessage,
     LLMMessage,
+    MessageWithMetadata,
     SystemMessage,
     ToolMessage,
     UserMessage,
@@ -282,7 +283,10 @@ class MessageHistoryRepository(BaseRepository):
         stmt = (
             select(message_history_table)
             .where(*conditions)
-            .order_by(message_history_table.c.timestamp.desc())
+            .order_by(
+                message_history_table.c.timestamp.desc(),
+                message_history_table.c.internal_id.desc(),
+            )
         )
 
         if limit:
@@ -332,7 +336,10 @@ class MessageHistoryRepository(BaseRepository):
                 message_history_table.c.conversation_id == conversation_id,
                 message_history_table.c.timestamp >= cutoff,
             )
-            .order_by(message_history_table.c.timestamp.asc())
+            .order_by(
+                message_history_table.c.timestamp.asc(),
+                message_history_table.c.internal_id.asc(),
+            )
         )
 
         if limit:
@@ -340,6 +347,89 @@ class MessageHistoryRepository(BaseRepository):
 
         rows = await self._db.fetch_all(stmt)
         return [dict(row) for row in rows]
+
+    async def get_recent_with_typed_metadata(
+        self,
+        interface_type: str,
+        conversation_id: str,
+        limit: int | None = None,
+        max_age: timedelta | None = None,
+        processing_profile_id: str | None = None,
+        subconversation_id: str | None = None,
+        thread_root_id: int | None = None,
+    ) -> list[MessageWithMetadata]:
+        """
+        Retrieves recent messages with both typed content and database metadata.
+
+        Use this when you need to filter by metadata fields (interface_message_id, timestamp)
+        while maintaining type safety. For LLM context, use get_recent() instead.
+
+        Args:
+            interface_type: Type of interface
+            conversation_id: Conversation identifier
+            limit: Maximum number of messages to return
+            max_age: Maximum age of messages to return
+            processing_profile_id: Filter by processing profile
+            subconversation_id: Filter by subconversation ID
+            thread_root_id: Filter by thread root ID
+
+        Returns:
+            List of MessageWithMetadata objects in chronological order
+        """
+        cutoff = datetime.now(UTC) - max_age if max_age else None
+
+        query = select(message_history_table).where(
+            message_history_table.c.interface_type == interface_type,
+            message_history_table.c.conversation_id == conversation_id,
+        )
+
+        if cutoff:
+            query = query.where(message_history_table.c.timestamp >= cutoff)
+        if processing_profile_id is not None:
+            query = query.where(
+                message_history_table.c.processing_profile_id == processing_profile_id
+            )
+        if subconversation_id is not None:
+            query = query.where(
+                message_history_table.c.subconversation_id == subconversation_id
+            )
+        if thread_root_id is not None:
+            query = query.where(
+                or_(
+                    message_history_table.c.thread_root_id == thread_root_id,
+                    message_history_table.c.internal_id == thread_root_id,
+                )
+            )
+            self._logger.debug(
+                f"Querying thread history for root {thread_root_id} with profile {processing_profile_id}"
+            )
+
+        query = query.order_by(
+            message_history_table.c.timestamp.desc(),
+            message_history_table.c.internal_id.desc(),
+        )
+        if limit:
+            query = query.limit(limit)
+
+        rows = await self._db.fetch_all(query)
+        self._logger.debug(f"Fetched {len(rows)} rows for thread history query")
+        rows = list(reversed(rows))  # Chronological order
+
+        # Convert rows to MessageWithMetadata objects
+        return [
+            MessageWithMetadata(
+                message=self._process_message_row(row),  # Returns typed LLMMessage
+                internal_id=str(row["internal_id"]),
+                interface_message_id=row["interface_message_id"],
+                timestamp=row["timestamp"],
+                conversation_id=row["conversation_id"],
+                interface_type=row["interface_type"],
+                user_id=row["user_id"],
+                turn_id=row["turn_id"],
+                thread_root_id=row["thread_root_id"],
+            )
+            for row in rows
+        ]
 
     async def get_by_interface_id(
         self,
@@ -476,7 +566,10 @@ class MessageHistoryRepository(BaseRepository):
         stmt = (
             select(message_history_table)
             .where(*conditions)
-            .order_by(message_history_table.c.timestamp.asc())
+            .order_by(
+                message_history_table.c.timestamp.asc(),
+                message_history_table.c.internal_id.asc(),
+            )
         )
 
         rows = await self._db.fetch_all(stmt)
@@ -656,7 +749,10 @@ class MessageHistoryRepository(BaseRepository):
         stmt = (
             select(message_history_table)
             .where(*conditions)
-            .order_by(message_history_table.c.timestamp.asc())
+            .order_by(
+                message_history_table.c.timestamp.asc(),
+                message_history_table.c.internal_id.asc(),
+            )
             .limit(limit)
         )
 
@@ -696,7 +792,10 @@ class MessageHistoryRepository(BaseRepository):
         stmt = (
             select(message_history_table)
             .where(*conditions)
-            .order_by(message_history_table.c.timestamp.asc())
+            .order_by(
+                message_history_table.c.timestamp.asc(),
+                message_history_table.c.internal_id.asc(),
+            )
             .limit(limit)
         )
 
