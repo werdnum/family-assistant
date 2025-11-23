@@ -118,7 +118,7 @@ default_profile_settings:
     retry_config:
       primary:
         provider: "google"
-        model: "gemini-2.5-pro"
+        model: "gemini-3-pro-preview"
       fallback:
         provider: "openai"
         model: "gpt-5"
