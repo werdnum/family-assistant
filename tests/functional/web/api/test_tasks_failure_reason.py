@@ -4,7 +4,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import insert
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.tasks import tasks_table
 
 
@@ -28,7 +28,11 @@ async def test_tasks_list_returns_error_message(
         retry_count=3,
         max_retries=3,
     )
-    await api_db_context.execute_with_retry(stmt)
+
+    # Use a separate context to insert and commit so the API can see the data
+    # (API uses a different connection/transaction)
+    async with get_db_context(engine=api_db_context.engine) as db:
+        await db.execute_with_retry(stmt)
 
     # 2. Call the tasks API list endpoint
     response = await api_test_client.get("/api/tasks/")
