@@ -42,3 +42,8 @@ gha-creds-*.json
 .review_cache
 frontend/dev-dist
 .claude/settings.local.json
+
+# UV
+.venv
+.cache
+.python-versions
