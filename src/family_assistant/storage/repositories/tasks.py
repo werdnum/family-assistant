@@ -195,7 +195,9 @@ class TasksRepository(BaseRepository):
         )
 
         # Task timeout: tasks stuck in processing state for longer than this will be reclaimed
-        task_timeout_minutes = 5
+        # Must be significantly larger than TASK_HANDLER_TIMEOUT (300s/5m) to prevent
+        # race conditions where a running worker is treated as stalled.
+        task_timeout_minutes = 15
         stale_task_cutoff = current_time - timedelta(minutes=task_timeout_minutes)
 
         if self._db.engine.dialect.name == "postgresql":
