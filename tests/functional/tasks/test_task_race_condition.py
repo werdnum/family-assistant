@@ -3,6 +3,7 @@ Tests for race conditions in task processing.
 """
 
 import asyncio
+import contextlib
 import logging
 from typing import Any
 from unittest.mock import MagicMock
@@ -117,10 +118,8 @@ async def test_stale_task_pickup_prevented_by_timeout_buffer(
     except TimeoutError:
         logger.error("Worker A did not pick up task in time")
         shutdown_event.set()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task_a
-        except asyncio.CancelledError:
-            pass
         raise
 
     logger.info("Worker A has locked the task and is waiting.")
