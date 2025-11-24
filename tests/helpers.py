@@ -4,6 +4,7 @@ Utility functions for testing.
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa  # Import sqlalchemy
@@ -260,4 +261,42 @@ async def wait_for_tasks_to_complete(
     )
 
 
-__all__ = ["wait_for_tasks_to_complete"]
+async def wait_for_condition(
+    condition: Callable[[], bool | Awaitable[bool]],
+    timeout_seconds: float = 5.0,
+    poll_interval_seconds: float = 0.1,
+    error_message: str = "Condition not met within timeout",
+) -> None:
+    """
+    Waits for a condition to become true.
+
+    Args:
+        condition: A callable that returns True when the condition is met.
+                   Can be async.
+        timeout_seconds: Maximum time to wait.
+        poll_interval_seconds: Time to sleep between checks.
+        error_message: Message to include in TimeoutError.
+
+    Raises:
+        asyncio.TimeoutError: If timeout is reached.
+    """
+    start_time = datetime.now(UTC)
+    end_time = start_time + timedelta(seconds=timeout_seconds)
+
+    while datetime.now(UTC) < end_time:
+        try:
+            result = condition()
+            if asyncio.iscoroutine(result):
+                result = await result
+
+            if result:
+                return
+        except Exception as e:
+            logger.warning(f"Condition check raised exception: {e}")
+
+        await asyncio.sleep(poll_interval_seconds)
+
+    raise TimeoutError(f"{error_message} (waited {timeout_seconds}s)")
+
+
+__all__ = ["wait_for_tasks_to_complete", "wait_for_condition"]
