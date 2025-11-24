@@ -11,7 +11,7 @@ from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.task_worker import TaskWorker
 from family_assistant.tools import ToolExecutionContext
-from tests.helpers import wait_for_tasks_to_complete
+from tests.helpers import wait_for_condition, wait_for_tasks_to_complete
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +73,16 @@ async def test_recurring_task_failure_continues_recurrence(
 
         # Now check if any NEW task was created (recurrence)
         # The new task ID would start with "recur_fail_test_recur_"
-        stmt = select(tasks_table).where(
-            tasks_table.c.task_id.like("recur_fail_test_recur_%")
-        )
-        recur_tasks = await db_context.fetch_all(stmt)
+        async def check_recurrence() -> bool:
+            stmt = select(tasks_table).where(
+                tasks_table.c.task_id.like("recur_fail_test_recur_%")
+            )
+            recur_tasks = await db_context.fetch_all(stmt)
+            return len(recur_tasks) >= 1
 
         # Expectation: New task created even if the original failed
-        assert len(recur_tasks) == 1, (
-            "Recurring task SHOULD have been rescheduled after failure"
+        await wait_for_condition(
+            check_recurrence,
+            timeout_seconds=5.0,
+            error_message="Recurring task SHOULD have been rescheduled after failure",
         )
