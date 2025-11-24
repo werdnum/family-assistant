@@ -31,7 +31,7 @@ if mountpoint -q /home/claude 2>/dev/null || [ -n "$(findmnt -n -o SOURCE --targ
 fi
 
 # Install npm tools if they don't exist (e.g., when home is mounted)
-if [ "$HOME_IS_MOUNTED" = "true" ] && ( [ ! -f "/home/claude/.npm-global/bin/claude" ] || [ ! -f "/home/claude/.npm-global/bin/happy" ] ); then
+if [ "$HOME_IS_MOUNTED" = "true" ] && ( ! which claude >/dev/null 2>&1 || ! which happy >/dev/null 2>&1 ); then
     echo "Installing npm tools in mounted home directory..."
     
     # Ensure npm global directory exists
