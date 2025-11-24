@@ -50,7 +50,12 @@ async def list_tasks(
         sort_order=sort,
         limit=limit,
     )
-    return TaskListResponse(tasks=[TaskModel(**task) for task in tasks])  # type: ignore[arg-type]
+    task_models = []
+    for task in tasks:
+        # basedpyright complains about 'error' key vs 'error_message' field even with alias
+        # so we use type: ignore to bypass the unpacking check
+        task_models.append(TaskModel(**task))  # type: ignore[reportCallIssue]
+    return TaskListResponse(tasks=task_models)
 
 
 @tasks_api_router.post(
