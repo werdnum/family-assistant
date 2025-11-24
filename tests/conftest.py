@@ -30,7 +30,10 @@ import vcr
 try:
     import pgserver  # pyright: ignore[reportMissingImports]
 except ImportError:
-    pgserver = None  # type: ignore[assignment]
+    try:
+        import pixeltable_pgserver as pgserver  # type: ignore[no-redef]
+    except ImportError:
+        pgserver = None  # type: ignore[assignment]
 from caldav.lib import error as caldav_error  # Import the error module
 from passlib.hash import bcrypt
 from sqlalchemy import text
