@@ -443,7 +443,7 @@ dynamically adjusting available tools and supervision requirements based on inpu
    - Example: "What's the weather like?" - can call external APIs but not read user's calendar
 
 4. **Engineer Profile [AB]**: A specialized read-only profile for debugging the application.
-   - Can read sensitive data (source code, logs, database)
+   - Can read sensitive data (source code, logs, database) using a refined toolset (`list_source_files`, `read_file_chunk`, `search_in_file`).
    - Cannot change state or communicate externally, except to create a GitHub issue.
    - Activated via the `/engineer` command.
    - Example: "/engineer I'm not receiving my daily briefs." - The agent can then investigate the source code and database to diagnose the problem and file a bug report.

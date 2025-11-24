@@ -1,4 +1,5 @@
 import os
+
 import requests
 
 
@@ -24,9 +25,7 @@ def create_github_issue(title: str, body: str) -> str:
     GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
     GITHUB_REPOSITORY = os.environ.get("GITHUB_REPOSITORY")
     if not GITHUB_TOKEN or not GITHUB_REPOSITORY:
-        return (
-            "Error: GITHUB_TOKEN and GITHUB_REPOSITORY environment variables must be set."
-        )
+        return "Error: GITHUB_TOKEN and GITHUB_REPOSITORY environment variables must be set."
 
     url = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/issues"
     headers = {

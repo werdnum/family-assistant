@@ -149,9 +149,11 @@ from family_assistant.tools.services import (
     SERVICE_TOOLS_DEFINITION,
     delegate_to_service_tool,
 )
-from family_assistant.tools.source_code import (
-    SOURCE_CODE_TOOLS_DEFINITION,
-    read_source_code,
+from family_assistant.tools.source_reader import (
+    SOURCE_READER_TOOLS_DEFINITION,
+    list_source_files,
+    read_file_chunk,
+    search_in_file,
 )
 from family_assistant.tools.tasks import (
     TASK_TOOLS_DEFINITION,
@@ -423,7 +425,9 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "read_task_result": read_task_result_tool,
     "list_worker_tasks": list_worker_tasks_tool,
     # Engineer profile tools
-    "read_source_code": read_source_code,
+    "list_source_files": list_source_files,
+    "read_file_chunk": read_file_chunk,
+    "search_in_file": search_in_file,
     "create_github_issue": create_github_issue,
     "database_readonly_query": database_readonly_query,
 }
@@ -453,7 +457,7 @@ TOOLS_DEFINITION: list[ToolDefinition] = (
     + COMPUTER_USE_TOOLS_DEFINITION
     + WORKSPACE_TOOLS_DEFINITION
     + WORKER_TOOLS_DEFINITION
-    + SOURCE_CODE_TOOLS_DEFINITION
+    + SOURCE_READER_TOOLS_DEFINITION
     + GITHUB_TOOLS_DEFINITION
     + DATABASE_TOOLS_DEFINITION
 )

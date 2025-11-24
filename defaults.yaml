@@ -911,7 +911,9 @@ service_profiles:
       delegation_security_level: "blocked"
     tools_config:
       enable_local_tools:
-        - "read_source_code"
+        - "list_source_files"
+        - "read_file_chunk"
+        - "search_in_file"
         - "create_github_issue"
         - "database_readonly_query"
         - "list_notes"

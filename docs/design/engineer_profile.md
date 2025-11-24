@@ -18,8 +18,12 @@ The primary security concern with an "engineer" profile is the potential for pro
 
 The following tools are proposed for the engineer profile:
 
-*   **`read_source_code`**: This tool will provide read-only access to the application's source code.
+*   **`list_source_files`**: This tool will list files and directories recursively within the project.
+    *   **Security Considerations**: The tool must be restricted to listing files within the project's directory. It should not be able to access files outside of the project's root.
+*   **`read_file_chunk`**: This tool will read a specific range of lines from a file.
     *   **Security Considerations**: The tool must be restricted to reading files within the project's directory. It should not be able to access files outside of the project's root.
+*   **`search_in_file`**: This tool will search for a specific string within a file and return the line number and content.
+    *   **Security Considerations**: The tool must be restricted to searching files within the project's directory. It should not be able to access files outside of the project's root.
 *   **`create_github_issue`**: This tool will allow the agent to create a GitHub issue in the project's private repository.
     *   **Security Considerations**: The GitHub API token will be stored securely and will be scoped to only allow issue creation. The tool will not have access to read or modify any other repository data.
 *   **`database_readonly_query`**: This tool will provide read-only access to the application's database.

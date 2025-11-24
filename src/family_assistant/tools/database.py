@@ -1,5 +1,7 @@
 import json
 
+from sqlalchemy import text
+
 from family_assistant.storage.context import DatabaseContext
 
 
@@ -22,19 +24,31 @@ async def database_readonly_query(query: str) -> str:
 
     # Basic security check to prevent modification queries
     disallowed_keywords = [
-        "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE",
-        "GRANT", "REVOKE", "COMMIT", "ROLLBACK", "SAVEPOINT"
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "DROP",
+        "CREATE",
+        "ALTER",
+        "TRUNCATE",
+        "GRANT",
+        "REVOKE",
+        "COMMIT",
+        "ROLLBACK",
+        "SAVEPOINT",
     ]
     if any(keyword in normalized_query for keyword in disallowed_keywords):
-        return f"Error: Query contains disallowed keywords."
+        return "Error: Query contains disallowed keywords."
 
     try:
         async with DatabaseContext() as db:
-            results = await db.fetch_all(query)
+            results = await db.fetch_all(text(query))
             # Convert results to a list of dicts for JSON serialization
             return json.dumps([dict(row) for row in results], indent=2, default=str)
     except Exception as e:
-        return json.dumps({"error": f"An error occurred while executing the query: {e}"}, indent=2)
+        return json.dumps(
+            {"error": f"An error occurred while executing the query: {e}"}, indent=2
+        )
 
 
 DATABASE_TOOLS_DEFINITION = [
