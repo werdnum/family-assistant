@@ -42,6 +42,7 @@ if [ "$HOME_IS_MOUNTED" = "true" ] && [ ! -f "/home/claude/.npm-global/bin/claud
     npm install -g @anthropic-ai/claude-code
     npm install -g @google/gemini-cli@nightly
     npm install -g playwright
+    npm install -g happy-coder
     
     # Install Playwright browsers
     if [ -n "$PLAYWRIGHT_BROWSERS_PATH" ]; then

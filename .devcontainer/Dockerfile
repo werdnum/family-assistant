@@ -114,12 +114,9 @@ RUN --mount=type=cache,target=/home/claude/.npm,sharing=locked,uid=1001,gid=1001
 RUN --mount=type=cache,target=/home/claude/.cache/uv,sharing=locked,uid=1001,gid=1001 \
     uv tool install --with llm-gemini --with llm-openrouter --with llm-fragments-github llm
 
-# Build claudecodeui
+# Install happy-coder
 RUN --mount=type=cache,target=/home/claude/.npm,sharing=locked,uid=1001,gid=1001 \
-    git clone --depth 1 --branch v1.8.10 https://github.com/siteboon/claudecodeui.git /opt/claude-code-webui && \
-    cd /opt/claude-code-webui && \
-    npm install && \
-    npm run build
+    npm install -g happy-coder
 
 # Application-specific setup
 USER root
@@ -139,4 +136,4 @@ RUN chmod +x /usr/local/bin/setup-workspace.sh \
 # Final user and entrypoint
 USER claude
 ENTRYPOINT ["/usr/local/bin/setup-workspace.sh"]
-CMD ["claude"]
+CMD ["happy", "daemon", "start-sync"]
