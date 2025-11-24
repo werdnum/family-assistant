@@ -242,6 +242,15 @@ async def handle_llm_callback(
     max_follow_ups = reminder_config.get("max_follow_ups", 2)
     current_attempt = reminder_config.get("current_attempt", 1)
 
+    # Switch to specialized reminder profile if available
+    if is_reminder and processing_service and processing_service.processing_services_registry:
+        reminder_service = processing_service.processing_services_registry.get(
+            "reminder"
+        )
+        if reminder_service:
+            logger.info("Switching to 'reminder' profile for reminder task execution.")
+            processing_service = reminder_service
+
     # Validate payload content
     if not callback_context:
         logger.error(

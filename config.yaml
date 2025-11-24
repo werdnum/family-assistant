@@ -210,6 +210,19 @@ service_profiles:
     # This profile implicitly uses all settings from 'default_profile_settings'
     # as no specific 'processing_config' or 'tools_config' is defined here,
     # thus inheriting the tools_config that excludes the browser.
+  - id: "reminder"
+    description: "Assistant profile for handling system reminders. Its sole purpose is to formulate the reminder message to be sent to the user."
+    processing_config:
+      provider: "litellm"
+      # Inherit default model
+      prompts:
+        system_prompt: "You are a reminder delivery system. Your ONLY job is to write the text of the reminder message that will be sent to the user.\n\nInstructions:\n1. Read the reminder context provided.\n2. Write a clear, friendly reminder message addressed to {user_name}.\n3. Do NOT use any tools. Do NOT say 'I will send this'. Just write the message content.\n4. If the reminder context contains a task, simply state the task.\n\nExample:\nContext: 'Pick up milk'\nResponse: 'Hi {user_name}, this is your reminder to pick up milk.'\n\nCurrent time: {current_time}"
+      delegation_security_level: "blocked"
+    tools_config:
+      enable_local_tools: [] # No tools needed for just sending a message
+      enable_mcp_server_ids: []
+      confirm_tools: []
+    slash_commands: []
   - id: "browser_profile"
     description: "Assistant profile with web browsing capabilities for complex browser interactions like filling forms or navigating JavaScript-heavy sites. For simple web scraping, consider using the ingest_document_from_url tool or direct MCP browser tools."
     processing_config:
