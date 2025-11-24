@@ -60,7 +60,10 @@ COMMUNICATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
         "function": {
             "name": "send_message_to_user",
             "description": (
-                "Sends a textual message to another known user. You MUST use their Chat ID as the target, which is provided in the 'Known users' section of the system prompt. "
+                "Sends a textual message to another known user. Use this tool ONLY when explicitly requested to message a specific person (e.g., 'Tell Alice...'). "
+                "Do NOT use this tool for reminders or notifications unless specifically asked to notify another person. "
+                "For normal reminders, simply write the text in your response and it will be delivered to the current user automatically. "
+                "You MUST use the recipient's Chat ID as the target, which is provided in the 'Known users' section of the system prompt. "
                 "Optionally, you can include attachments with the message.\n\n"
                 "Returns: A string indicating the result. "
                 "On success, returns 'Message sent successfully to user with Chat ID [chat_id].'. "
