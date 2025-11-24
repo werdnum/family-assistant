@@ -29,6 +29,7 @@ from family_assistant.storage.base import metadata  # Keep metadata
 
 # Remove get_engine import
 from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
+from family_assistant.storage.types import TaskDict
 
 logger = logging.getLogger(__name__)
 # Remove engine = get_engine()
@@ -218,8 +219,7 @@ async def dequeue_task(
     worker_id: str,
     task_types: list[str],  # Added context
     current_time: datetime,  # Added current_time parameter
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-) -> dict[str, Any] | None:
+) -> TaskDict | None:
     """Atomically dequeues the next available task."""
 
     logger.debug(
@@ -280,7 +280,7 @@ async def dequeue_task(
             if update_result.rowcount == 1:
                 # No need to call db_context.commit() here, context manager handles it
                 logger.info(f"Worker {worker_id} dequeued task {task_row.task_id}")
-                return task_row._asdict()  # Return the original row data as a dict
+                return task_row._asdict()  # type: ignore[return-value]
             else:
                 # This means the row was locked or status changed between select and update
                 logger.warning(
@@ -476,15 +476,14 @@ async def manually_retry_task(
 async def get_all_tasks(
     db_context: DatabaseContext,
     limit: int = 100,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-) -> list[dict[str, Any]]:
+) -> list[TaskDict]:
     """Retrieves tasks, ordered by creation descending."""
     try:
         stmt = (
             select(tasks_table).order_by(tasks_table.c.created_at.desc()).limit(limit)
         )
         rows = await db_context.fetch_all(stmt)
-        return rows  # fetch_all already returns list of dict-like mappings
+        return rows  # type: ignore[return-value]
     except SQLAlchemyError as e:
         logger.error(f"Database error in get_all_tasks: {e}", exc_info=True)
         raise

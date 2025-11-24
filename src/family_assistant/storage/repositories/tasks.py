@@ -13,6 +13,7 @@ from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.types import TaskDict
 
 logger = logging.getLogger(__name__)
 
@@ -176,8 +177,7 @@ class TasksRepository(BaseRepository):
         worker_id: str,
         task_types: list[str],
         current_time: datetime,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any] | None:
+    ) -> TaskDict | None:
         """
         Atomically dequeues the next available task for a worker.
 
@@ -247,7 +247,7 @@ class TasksRepository(BaseRepository):
                 logger.debug(
                     f"DEQUEUE LOCKED: Worker {worker_id} marked task {row['task_id']} as processing"
                 )
-                return dict(row)
+                return dict(row)  # type: ignore[return-value]
             else:
                 logger.debug(
                     f"DEQUEUE EMPTY (PostgreSQL): Worker {worker_id} found no available tasks"
@@ -322,7 +322,7 @@ class TasksRepository(BaseRepository):
                 )
                 task_row = await self._db.fetch_one(fetch_stmt)
                 if task_row:
-                    return dict(task_row)
+                    return dict(task_row)  # type: ignore[return-value]
 
             return None
 
@@ -411,8 +411,7 @@ class TasksRepository(BaseRepository):
         date_to: datetime | None = None,
         sort_order: str = "asc",
         limit: int = 100,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> list[dict[str, Any]]:
+    ) -> list[TaskDict]:
         """
         Retrieves tasks from the queue with optional filtering.
 
@@ -457,14 +456,14 @@ class TasksRepository(BaseRepository):
         stmt = stmt.limit(limit)
 
         rows = await self._db.fetch_all(stmt)
-        return [dict(row) for row in rows]
+        return [dict(row) for row in rows]  # type: ignore[return-value]
 
     async def get_tasks_for_listener(
         self,
         listener_id: int,
         limit: int = 20,
         offset: int = 0,
-    ) -> tuple[list[dict], int]:
+    ) -> tuple[list[TaskDict], int]:
         """Get script execution tasks for a specific listener."""
         try:
             # Build query for script execution tasks that match the listener
@@ -488,9 +487,9 @@ class TasksRepository(BaseRepository):
             stmt = stmt.limit(limit).offset(offset)
 
             rows = await self._db.fetch_all(stmt)
-            tasks = [dict(row) for row in rows]
+            tasks = [dict(row) for row in rows]  # type: ignore[var-annotated]
 
-            return tasks, total_count
+            return tasks, total_count  # type: ignore[return-value]
 
         except SQLAlchemyError as e:
             self._logger.error(
