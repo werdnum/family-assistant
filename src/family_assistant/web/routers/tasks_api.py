@@ -22,6 +22,9 @@ class TaskModel(BaseModel):
     max_retries: int
     recurrence_rule: str | None = None
     error_message: str | None = Field(default=None, validation_alias="error")
+    locked_by: str | None = None
+    locked_at: datetime | None = None
+    original_task_id: str | None = None
 
 
 class TaskListResponse(BaseModel):
@@ -47,7 +50,7 @@ async def list_tasks(
         sort_order=sort,
         limit=limit,
     )
-    return TaskListResponse(tasks=[TaskModel(**task) for task in tasks])
+    return TaskListResponse(tasks=[TaskModel(**task) for task in tasks])  # type: ignore[arg-type]
 
 
 @tasks_api_router.post(

@@ -36,6 +36,7 @@ from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import get_task_event
+from family_assistant.storage.types import TaskDict
 from family_assistant.tools import ToolExecutionContext
 from family_assistant.utils.clock import Clock, SystemClock
 
@@ -553,8 +554,7 @@ class TaskWorker:
     async def _handle_recurrence(
         self,
         db_context: DatabaseContext,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        task: dict[str, Any],
+        task: TaskDict,
     ) -> None:
         """Handles scheduling the next instance of a recurring task."""
         recurrence_rule_str = task.get("recurrence_rule")
@@ -564,7 +564,7 @@ class TaskWorker:
         task_id = task["task_id"]
         task_type = task["task_type"]
         payload = task["payload"]
-        original_task_id = task.get("original_task_id", task_id)
+        original_task_id = task.get("original_task_id") or task_id
         task_max_retries = task.get("max_retries", 3)
 
         logger.info(
@@ -658,8 +658,7 @@ class TaskWorker:
     async def _process_task(
         self,
         db_context: DatabaseContext,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        task: dict[str, Any],
+        task: TaskDict,
         wake_up_event: asyncio.Event,
     ) -> None:
         """Handles the execution, completion marking, and recurrence logic for a dequeued task."""
@@ -683,10 +682,9 @@ class TaskWorker:
         try:
             # --- Create Execution Context ---
             # Extract interface identifiers from payload
-            payload_dict = (
-                task.get("payload", {}) if isinstance(task.get("payload"), dict) else {}
-            )
             # Need to define these *before* using them in logging etc.
+            # payload_dict is guaranteed to be a dict
+            payload_dict = task["payload"] or {}
             raw_interface_type: str | None = payload_dict.get("interface_type")
             raw_conversation_id: str | None = payload_dict.get("conversation_id")
 
@@ -791,20 +789,16 @@ class TaskWorker:
             await self._handle_task_failure(db_context, task, handler_exc)
 
     async def _handle_task_failure(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         db_context: DatabaseContext,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        task: dict[str, Any],
+        task: TaskDict,
         handler_exc: Exception,
     ) -> None:
         """Handles logging, retries, and marking tasks as failed."""
         current_retry = task.get("retry_count", 0)
         max_retries = task.get("max_retries", 3)  # Use DB default if missing somehow
         # Define interface/conversation ID for logging if available in payload
-        payload_dict = (
-            task.get("payload", {}) if isinstance(task.get("payload"), dict) else {}
-        )
+        payload_dict = task["payload"] or {}
         interface_info = (  # Create helper string for logging
             f" ({payload_dict.get('interface_type', 'unknown_if')}:"
             f"{payload_dict.get('conversation_id', 'unknown_cid')})"
