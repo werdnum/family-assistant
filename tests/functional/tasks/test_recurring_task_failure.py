@@ -33,6 +33,7 @@ async def test_recurring_task_failure_continues_recurrence(
     # Handler that always raises exception
     async def failing_handler(
         exec_context: ToolExecutionContext,
+        # ast-grep-ignore: no-dict-any - Testing arbitrary payload
         payload: dict[str, Any],
     ) -> None:
         raise ValueError("Task intentionally failed")
@@ -48,9 +49,6 @@ async def test_recurring_task_failure_continues_recurrence(
             max_retries_override=0,  # Fail immediately
             recurrence_rule="FREQ=MINUTELY;INTERVAL=1",  # Should run every minute
         )
-
-    # Small delay to ensure task is committed
-    await asyncio.sleep(0.1)
 
     # Wake up worker to process task
     new_task_event.set()
