@@ -550,6 +550,111 @@ class TaskWorker:
         """Return the current task handlers dictionary for this worker."""
         return self.task_handlers
 
+    async def _handle_recurrence(
+        self,
+        db_context: DatabaseContext,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        task: dict[str, Any],
+    ) -> None:
+        """Handles scheduling the next instance of a recurring task."""
+        recurrence_rule_str = task.get("recurrence_rule")
+        if not recurrence_rule_str:
+            return
+
+        task_id = task["task_id"]
+        task_type = task["task_type"]
+        payload = task["payload"]
+        original_task_id = task.get("original_task_id", task_id)
+        task_max_retries = task.get("max_retries", 3)
+
+        logger.info(
+            f"RECURRENCE PROCESSING: Task {task_id} has recurrence rule: {recurrence_rule_str}. Scheduling next instance."
+        )
+        try:
+            # Use the *scheduled_at* time of the completed task as the base for the next occurrence
+            last_scheduled_at = task.get("scheduled_at")
+            if not last_scheduled_at:
+                # If somehow scheduled_at is missing, use created_at as fallback
+                last_scheduled_at = task.get("created_at", datetime.now(UTC))
+                logger.warning(
+                    f"RECURRENCE WARNING: Task {task_id} missing scheduled_at, using created_at ({last_scheduled_at}) for recurrence base."
+                )
+            # Ensure the base time is timezone-aware for rrule
+            if last_scheduled_at.tzinfo is None:
+                last_scheduled_at = last_scheduled_at.replace(tzinfo=UTC)
+                logger.warning(
+                    f"RECURRENCE WARNING: Made recurrence base time timezone-aware (UTC): {last_scheduled_at}"
+                )
+
+            # Convert UTC time to user's timezone before calculating recurrence
+            # This ensures BYHOUR and other time-based rules work in the user's timezone
+            user_tz = zoneinfo.ZoneInfo(self.timezone_str)
+            last_scheduled_in_user_tz = last_scheduled_at.astimezone(user_tz)
+            logger.debug(
+                f"RECURRENCE DEBUG: Converting scheduled time from {last_scheduled_at} UTC to {last_scheduled_in_user_tz} {self.timezone_str} for recurrence calculation"
+            )
+
+            # Get current time in user timezone to avoid scheduling in the past
+            current_time_in_user_tz = self.clock.now().astimezone(user_tz)
+
+            # Calculate the next occurrence *after* the current time (not last scheduled time)
+            # This prevents "catch up" behavior when the task runner restarts after downtime
+            # Use the last scheduled time as dtstart so BYHOUR is interpreted correctly
+            rule = rrule.rrulestr(
+                recurrence_rule_str,
+                dtstart=last_scheduled_in_user_tz,
+            )
+            next_scheduled_dt = rule.after(current_time_in_user_tz)
+
+            # Convert the result back to UTC for storage
+            if next_scheduled_dt:
+                next_scheduled_dt = next_scheduled_dt.astimezone(UTC)
+                logger.debug(
+                    f"RECURRENCE DEBUG: Next occurrence calculated as {next_scheduled_dt} UTC"
+                )
+
+            if next_scheduled_dt:
+                # For system tasks, reuse the original task ID to enable upsert behavior
+                # For other tasks, generate a new unique task ID
+                if original_task_id.startswith("system_"):
+                    next_task_id = original_task_id
+                    logger.info(
+                        f"RECURRENCE SYSTEM: Calculated next occurrence for system task {original_task_id} at {next_scheduled_dt}. Reusing task ID for upsert."
+                    )
+                else:
+                    # Format: <original_task_id>_recur_<next_iso_timestamp>
+                    next_task_id = (
+                        f"{original_task_id}_recur_{next_scheduled_dt.isoformat()}"
+                    )
+                    logger.info(
+                        f"RECURRENCE NEW: Calculated next occurrence for {original_task_id} at {next_scheduled_dt}. New task ID: {next_task_id}"
+                    )
+
+                # Enqueue the next task instance
+                await db_context.tasks.enqueue(
+                    task_id=next_task_id,
+                    task_type=task_type,
+                    payload=payload,
+                    scheduled_at=next_scheduled_dt,
+                    max_retries_override=task_max_retries,
+                    recurrence_rule=recurrence_rule_str,
+                    original_task_id=original_task_id,
+                )
+                logger.info(
+                    f"RECURRENCE SUCCESS: Successfully enqueued next recurring task instance {next_task_id} for original {original_task_id}."
+                )
+            else:
+                logger.info(
+                    f"RECURRENCE END: No further occurrences found for recurring task {original_task_id} based on rule '{recurrence_rule_str}'."
+                )
+
+        except Exception as recur_err:
+            logger.error(
+                f"RECURRENCE ERROR: Failed to calculate or enqueue next instance for recurring task {task_id} (Original: {original_task_id}): {recur_err}",
+                exc_info=True,
+            )
+            # Don't mark the original task as failed, just log the recurrence error.
+
     async def _process_task(
         self,
         db_context: DatabaseContext,
@@ -664,15 +769,11 @@ class TaskWorker:
                 # Re-raise to trigger retry logic in _handle_task_failure
                 raise
 
-            # Task details for logging and recurrence
+            # Task details for logging
             task_id = task["task_id"]
-            task_type = task["task_type"]
-            payload = task["payload"]  # Keep payload for recurrence
-            recurrence_rule_str = task.get("recurrence_rule")
             original_task_id = task.get(
                 "original_task_id", task_id
             )  # Use task_id if original is missing (first run)
-            task_max_retries = task.get("max_retries", 3)
 
             # Mark task as done
             await db_context.tasks.update_status(
@@ -684,92 +785,7 @@ class TaskWorker:
             )
 
             # --- Handle Recurrence ---
-            if recurrence_rule_str:
-                logger.info(
-                    f"RECURRENCE PROCESSING: Task {task_id} has recurrence rule: {recurrence_rule_str}. Scheduling next instance."
-                )
-                try:
-                    # Use the *scheduled_at* time of the completed task as the base for the next occurrence
-                    last_scheduled_at = task.get("scheduled_at")
-                    if not last_scheduled_at:
-                        # If somehow scheduled_at is missing, use created_at as fallback
-                        last_scheduled_at = task.get("created_at", datetime.now(UTC))
-                        logger.warning(
-                            f"RECURRENCE WARNING: Task {task_id} missing scheduled_at, using created_at ({last_scheduled_at}) for recurrence base."
-                        )
-                    # Ensure the base time is timezone-aware for rrule
-                    if last_scheduled_at.tzinfo is None:
-                        last_scheduled_at = last_scheduled_at.replace(tzinfo=UTC)
-                        logger.warning(
-                            f"RECURRENCE WARNING: Made recurrence base time timezone-aware (UTC): {last_scheduled_at}"
-                        )
-
-                    # Convert UTC time to user's timezone before calculating recurrence
-                    # This ensures BYHOUR and other time-based rules work in the user's timezone
-                    user_tz = zoneinfo.ZoneInfo(self.timezone_str)
-                    last_scheduled_in_user_tz = last_scheduled_at.astimezone(user_tz)
-                    logger.debug(
-                        f"RECURRENCE DEBUG: Converting scheduled time from {last_scheduled_at} UTC to {last_scheduled_in_user_tz} {self.timezone_str} for recurrence calculation"
-                    )
-
-                    # Get current time in user timezone to avoid scheduling in the past
-                    current_time_in_user_tz = self.clock.now().astimezone(user_tz)
-
-                    # Calculate the next occurrence *after* the current time (not last scheduled time)
-                    # This prevents "catch up" behavior when the task runner restarts after downtime
-                    # Use the last scheduled time as dtstart so BYHOUR is interpreted correctly
-                    rule = rrule.rrulestr(
-                        recurrence_rule_str,
-                        dtstart=last_scheduled_in_user_tz,
-                    )
-                    next_scheduled_dt = rule.after(current_time_in_user_tz)
-
-                    # Convert the result back to UTC for storage
-                    if next_scheduled_dt:
-                        next_scheduled_dt = next_scheduled_dt.astimezone(UTC)
-                        logger.debug(
-                            f"RECURRENCE DEBUG: Next occurrence calculated as {next_scheduled_dt} UTC"
-                        )
-
-                    if next_scheduled_dt:
-                        # For system tasks, reuse the original task ID to enable upsert behavior
-                        # For other tasks, generate a new unique task ID
-                        if original_task_id.startswith("system_"):
-                            next_task_id = original_task_id
-                            logger.info(
-                                f"RECURRENCE SYSTEM: Calculated next occurrence for system task {original_task_id} at {next_scheduled_dt}. Reusing task ID for upsert."
-                            )
-                        else:
-                            # Format: <original_task_id>_recur_<next_iso_timestamp>
-                            next_task_id = f"{original_task_id}_recur_{next_scheduled_dt.isoformat()}"
-                            logger.info(
-                                f"RECURRENCE NEW: Calculated next occurrence for {original_task_id} at {next_scheduled_dt}. New task ID: {next_task_id}"
-                            )
-
-                        # Enqueue the next task instance
-                        await db_context.tasks.enqueue(
-                            task_id=next_task_id,
-                            task_type=task_type,
-                            payload=payload,
-                            scheduled_at=next_scheduled_dt,
-                            max_retries_override=task_max_retries,
-                            recurrence_rule=recurrence_rule_str,
-                            original_task_id=original_task_id,
-                        )
-                        logger.info(
-                            f"RECURRENCE SUCCESS: Successfully enqueued next recurring task instance {next_task_id} for original {original_task_id}."
-                        )
-                    else:
-                        logger.info(
-                            f"RECURRENCE END: No further occurrences found for recurring task {original_task_id} based on rule '{recurrence_rule_str}'."
-                        )
-
-                except Exception as recur_err:
-                    logger.error(
-                        f"RECURRENCE ERROR: Failed to calculate or enqueue next instance for recurring task {task_id} (Original: {original_task_id}): {recur_err}",
-                        exc_info=True,
-                    )
-                    # Don't mark the original task as failed, just log the recurrence error.
+            await self._handle_recurrence(db_context, task)
 
         except Exception as handler_exc:
             await self._handle_task_failure(db_context, task, handler_exc)
@@ -836,6 +852,8 @@ class TaskWorker:
                 status="failed",
                 error=error_str,
             )
+            # Handle recurrence even if task failed (after max retries)
+            await self._handle_recurrence(db_context, task)
 
     async def _wait_for_next_poll(self, wake_up_event: asyncio.Event) -> None:
         """Waits for the polling interval or a wake-up event."""
