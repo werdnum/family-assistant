@@ -28,6 +28,7 @@ async def test_recurring_task_failure_continues_recurrence(
         chat_interface=MagicMock(),
         handler_timeout=1.0,
     )
+    assert worker.engine is not None
 
     # Handler that always raises exception
     async def failing_handler(
