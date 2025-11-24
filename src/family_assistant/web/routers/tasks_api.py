@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.web.dependencies import get_db
@@ -21,7 +21,7 @@ class TaskModel(BaseModel):
     retry_count: int
     max_retries: int
     recurrence_rule: str | None = None
-    error_message: str | None = None
+    error_message: str | None = Field(default=None, validation_alias="error")
 
 
 class TaskListResponse(BaseModel):
