@@ -6,7 +6,8 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
-
+NC='\033[0m' # No Color
+GREEN='\033[0;32m'
 # Track all background processes for cleanup
 BACKGROUND_PIDS=()
 CLEANUP_RUNNING=0
@@ -39,8 +40,13 @@ cleanup() {
             local any_alive=0
             for pid in "${BACKGROUND_PIDS[@]}"; do
                 if kill -0 "$pid" 2>/dev/null; then
-                    any_alive=1
-                    break
+                    # Check if process is a zombie
+                    local state
+                    state=$(ps -o state= -p "$pid" 2>/dev/null || true)
+                    if [ "$state" != "Z" ] && [ -n "$state" ]; then
+                        any_alive=1
+                        break
+                    fi
                 fi
             done
 
