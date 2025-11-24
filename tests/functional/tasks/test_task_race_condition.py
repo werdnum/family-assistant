@@ -5,9 +5,9 @@ Tests for race conditions in task processing.
 import asyncio
 import contextlib
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
-from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -18,6 +18,7 @@ from family_assistant.tools import ToolExecutionContext
 from family_assistant.utils.clock import MockClock
 
 logger = logging.getLogger(__name__)
+
 
 @pytest.mark.asyncio
 async def test_stale_task_pickup_prevented_by_timeout_buffer(
@@ -40,8 +41,10 @@ async def test_stale_task_pickup_prevented_by_timeout_buffer(
     # Events for coordination
     shutdown_event = asyncio.Event()
 
-    worker_a_event = asyncio.Event() # To signal worker A to proceed
-    worker_a_waiting = asyncio.Event() # To signal test that worker A is waiting inside handler
+    worker_a_event = asyncio.Event()  # To signal worker A to proceed
+    worker_a_waiting = (
+        asyncio.Event()
+    )  # To signal test that worker A is waiting inside handler
 
     # Shared counter to verify execution
     execution_count = 0
@@ -56,7 +59,7 @@ async def test_stale_task_pickup_prevented_by_timeout_buffer(
         shutdown_event_instance=shutdown_event,
         engine=db_engine,
         clock=clock_a,
-        handler_timeout=600, # Long timeout so it doesn't self-cancel during test
+        handler_timeout=600,  # Long timeout so it doesn't self-cancel during test
     )
     worker_a.worker_id = "worker_a"
 
@@ -84,6 +87,7 @@ async def test_stale_task_pickup_prevented_by_timeout_buffer(
     # Handler for Worker A
     async def handler_a(
         exec_context: ToolExecutionContext,
+        # ast-grep-ignore: no-dict-any - Test payload
         payload: dict[str, Any],
     ) -> None:
         nonlocal execution_count
@@ -97,6 +101,7 @@ async def test_stale_task_pickup_prevented_by_timeout_buffer(
     # Handler for Worker B
     async def handler_b(
         exec_context: ToolExecutionContext,
+        # ast-grep-ignore: no-dict-any - Test payload
         payload: dict[str, Any],
     ) -> None:
         nonlocal execution_count
@@ -135,10 +140,13 @@ async def test_stale_task_pickup_prevented_by_timeout_buffer(
     task_b = asyncio.create_task(worker_b.run(wake_event_b))
 
     # Wait a bit to ensure B had time to check
+    # ast-grep-ignore: no-asyncio-sleep-in-tests - Simulating wait for race condition check
     await asyncio.sleep(1.0)
 
     # execution_count should be 0 (A is waiting, B shouldn't have run)
-    assert execution_count == 0, "Worker B executed the task prematurely! Stale task race condition detected."
+    assert execution_count == 0, (
+        "Worker B executed the task prematurely! Stale task race condition detected."
+    )
     logger.info("Worker B did not execute the task (correct behavior).")
 
     # 4. Now signal Worker A to finish
@@ -149,6 +157,7 @@ async def test_stale_task_pickup_prevented_by_timeout_buffer(
     for _ in range(50):
         if execution_count >= 1:
             break
+        # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling
         await asyncio.sleep(0.1)
 
     logger.info(f"Final execution count: {execution_count}")
