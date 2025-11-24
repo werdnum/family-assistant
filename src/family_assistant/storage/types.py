@@ -57,3 +57,23 @@ class RecentEventDict(TypedDict):
     triggered_listener_ids: list[int] | None
     timestamp: datetime
     created_at: datetime
+
+
+class TaskDict(TypedDict):
+    """Type definition for task records returned from repository."""
+
+    id: int
+    task_id: str
+    task_type: str
+    # ast-grep-ignore: no-dict-any - Payload is unstructured JSON
+    payload: dict[str, Any] | None
+    scheduled_at: datetime | None
+    created_at: datetime
+    status: str
+    locked_by: str | None
+    locked_at: datetime | None
+    error: str | None
+    retry_count: int
+    max_retries: int
+    recurrence_rule: str | None
+    original_task_id: str | None

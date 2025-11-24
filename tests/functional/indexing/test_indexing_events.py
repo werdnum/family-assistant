@@ -241,6 +241,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                     indexing_source=indexing_source,
                 )
 
+                assert task["payload"] is not None
                 await handle_embed_and_store_batch(task_context, task["payload"])
                 await db_ctx.tasks.update_status(task["task_id"], "done")
                 tasks_processed += 1
@@ -363,6 +364,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
             indexing_source=indexing_source,
         )
 
+        assert first_task["payload"] is not None
         await handle_embed_and_store_batch(exec_context, first_task["payload"])
         await db_ctx.tasks.update_status(first_task["task_id"], "done")
 
@@ -485,6 +487,7 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
             await event_processor.start()
 
             # Process embedding task - should emit event
+            assert task["payload"] is not None
             await handle_embed_and_store_batch(exec_context, task["payload"])
 
             # Wait for all events to be processed before polling
@@ -592,6 +595,7 @@ async def test_document_ready_event_includes_rich_metadata(
             )
 
             # Process task - should emit event with rich metadata
+            assert task["payload"] is not None
             await handle_embed_and_store_batch(exec_context, task["payload"])
             await db_ctx.tasks.update_status(task["task_id"], "done")
 
@@ -711,6 +715,7 @@ async def test_document_ready_event_handles_none_metadata(
             )
 
             # Process task - should emit event even with None metadata
+            assert task["payload"] is not None
             await handle_embed_and_store_batch(exec_context, task["payload"])
             await db_ctx.tasks.update_status(task["task_id"], "done")
 
