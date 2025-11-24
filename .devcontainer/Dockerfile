@@ -86,8 +86,11 @@ RUN --mount=type=cache,target=/home/claude/.npm,sharing=locked,uid=1001,gid=1001
 
 # System-level Playwright setup
 USER root
-RUN npx --yes playwright@1.55.0 install-deps chromium && \
-    npx --yes playwright@1.55.0 install chromium
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    npx --yes playwright@1.55.0 install-deps chromium && \
+    npx --yes playwright@1.55.0 install chromium && \
+    rm -rf /root/.npm
 
 # Python venv with shared Playwright browsers
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
