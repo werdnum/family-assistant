@@ -326,20 +326,29 @@ class GeminiImageBackend:
 
     async def generate_image(self, prompt: str, style: str = "auto") -> bytes:
         """Generate image using Gemini API."""
-        # Build full prompt with style guidance
+        # Build full prompt with style guidance based on Gemini 3 Pro best practices
         full_prompt = prompt
         if style == "photorealistic":
-            full_prompt = f"Create a photorealistic image of {prompt}"
-        elif style == "artistic":
+            # Use a more descriptive prompt structure for photorealism
             full_prompt = (
-                f"Create an artistic image of {prompt} in a painted or stylized manner"
+                f"Generate a high-quality, photorealistic image. "
+                f"Scene description: {prompt}. "
+                f"Ensure realistic lighting, textures, and fine details. "
+                f"Captured with a professional camera."
+            )
+        elif style == "artistic":
+            # Encourage creative style and composition
+            full_prompt = (
+                f"Generate a stylized, artistic illustration. "
+                f"Description: {prompt}. "
+                f"Focus on creative style, composition, and visual flair."
             )
 
         self.logger.debug(f"Calling Gemini API with prompt: {full_prompt}")
 
         # Call Gemini image generation
         response = await self.client.aio.models.generate_content(
-            model="gemini-2.5-flash-image-preview", contents=full_prompt
+            model="gemini-3-pro-image-preview", contents=full_prompt
         )
 
         # Log response structure for debugging
