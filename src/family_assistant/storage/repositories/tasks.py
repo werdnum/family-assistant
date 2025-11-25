@@ -4,7 +4,7 @@ import asyncio
 import logging
 from asyncio import Event
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import and_, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -245,7 +245,7 @@ class TasksRepository(BaseRepository):
                 logger.debug(
                     f"DEQUEUE LOCKED: Worker {worker_id} marked task {row['task_id']} as processing"
                 )
-                return dict(row)  # type: ignore[return-value]
+                return cast("TaskDict", dict(row))
             else:
                 logger.debug(
                     f"DEQUEUE EMPTY (PostgreSQL): Worker {worker_id} found no available tasks"
@@ -320,7 +320,7 @@ class TasksRepository(BaseRepository):
                 )
                 task_row = await self._db.fetch_one(fetch_stmt)
                 if task_row:
-                    return dict(task_row)  # type: ignore[return-value]
+                    return cast("TaskDict", dict(task_row))
 
             return None
 
@@ -454,7 +454,7 @@ class TasksRepository(BaseRepository):
         stmt = stmt.limit(limit)
 
         rows = await self._db.fetch_all(stmt)
-        return [dict(row) for row in rows]  # type: ignore[return-value]
+        return [cast("TaskDict", dict(row)) for row in rows]
 
     async def get_tasks_for_listener(
         self,
@@ -485,9 +485,9 @@ class TasksRepository(BaseRepository):
             stmt = stmt.limit(limit).offset(offset)
 
             rows = await self._db.fetch_all(stmt)
-            tasks = [dict(row) for row in rows]  # type: ignore[var-annotated]
+            tasks = [cast("TaskDict", dict(row)) for row in rows]
 
-            return tasks, total_count  # type: ignore[return-value]
+            return tasks, total_count
 
         except SQLAlchemyError as e:
             self._logger.error(
