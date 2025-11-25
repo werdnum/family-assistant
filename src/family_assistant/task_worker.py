@@ -556,7 +556,7 @@ class TaskWorker:
         task_type = task["task_type"]
         payload = task["payload"]
         original_task_id = task.get("original_task_id") or task_id
-        task_max_retries = task.get("max_retries", 3)
+        task_max_retries = task["max_retries"]
 
         logger.info(
             f"RECURRENCE PROCESSING: Task {task_id} has recurrence rule: {recurrence_rule_str}. Scheduling next instance."
@@ -599,13 +599,11 @@ class TaskWorker:
 
             # Convert the result back to UTC for storage
             if next_scheduled_dt:
+            if next_scheduled_dt:
                 next_scheduled_dt = next_scheduled_dt.astimezone(UTC)
                 logger.debug(
                     f"RECURRENCE DEBUG: Next occurrence calculated as {next_scheduled_dt} UTC"
                 )
-
-            if next_scheduled_dt:
-                # For system tasks, reuse the original task ID to enable upsert behavior
                 # For other tasks, generate a new unique task ID
                 if original_task_id.startswith("system_"):
                     next_task_id = original_task_id
