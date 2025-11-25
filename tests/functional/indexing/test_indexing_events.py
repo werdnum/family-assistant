@@ -38,7 +38,7 @@ async def poll_for_document_ready_event(
     timeout_seconds: float = 2.0,
     poll_interval: float = 0.1,
     engine: AsyncEngine | None = None,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Event data is unstructured JSON
 ) -> dict[str, Any]:
     """Poll for DOCUMENT_READY event to appear in recent_events table.
 
@@ -101,7 +101,7 @@ class MockDocument:
     content: str | None = None
     source_uri: str | None = None
     created_at: datetime | None = None
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Mock document metadata is unstructured
     metadata: dict[str, Any] | None = None
     id: int | None = None  # Add id property for Document protocol
     file_path: str | None = None  # Add file_path for Document protocol
@@ -339,7 +339,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
         event_emitted = False
         original_emit = indexing_source.emit_event
 
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Mocking event handler signature
         async def track_emit(event_data: dict[str, Any]) -> asyncio.Future[None]:
             nonlocal event_emitted
             if event_data.get("event_type") == IndexingEventType.DOCUMENT_READY.value:
