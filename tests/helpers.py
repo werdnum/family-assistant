@@ -152,7 +152,10 @@ async def wait_for_tasks_to_complete(
                             # For recurring tasks, only include those scheduled to run soon
                             sa.and_(
                                 tasks_table.c.recurrence_rule.is_not(None),
-                                tasks_table.c.scheduled_at <= time_with_fudge,
+                                sa.or_(
+                                    tasks_table.c.scheduled_at <= time_with_fudge,
+                                    tasks_table.c.scheduled_at.is_(None),
+                                ),
                             ),
                         ),
                     )
@@ -224,7 +227,10 @@ async def wait_for_tasks_to_complete(
                             # For recurring tasks, only include those scheduled to run soon
                             sa.and_(
                                 tasks_table.c.recurrence_rule.is_not(None),
-                                tasks_table.c.scheduled_at <= time_with_fudge,
+                                sa.or_(
+                                    tasks_table.c.scheduled_at <= time_with_fudge,
+                                    tasks_table.c.scheduled_at.is_(None),
+                                ),
                             ),
                         ),
                     )
