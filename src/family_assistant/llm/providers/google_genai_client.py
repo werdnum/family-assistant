@@ -670,6 +670,11 @@ class GoogleGenAIClient(BaseLLMClient):
 
             # Map common parameters
             generation_config = types.GenerateContentConfig()
+            # Set media resolution to HIGH for all requests (affects images, PDFs, videos)
+            generation_config.media_resolution = (
+                types.MediaResolution.MEDIA_RESOLUTION_HIGH
+            )
+
             if "temperature" in config_params:
                 generation_config.temperature = config_params["temperature"]
             if "max_tokens" in config_params:
@@ -723,6 +728,8 @@ class GoogleGenAIClient(BaseLLMClient):
 
             # Extract tool calls and thought signatures from response
             tool_calls = None
+            thought_summaries = []  # Initialize early to avoid UnboundLocalError
+
             if hasattr(response, "candidates") and response.candidates:
                 candidate = response.candidates[0]
                 if (
@@ -732,7 +739,6 @@ class GoogleGenAIClient(BaseLLMClient):
                     and candidate.content.parts
                 ):
                     found_tool_calls = []
-                    thought_summaries = []
 
                     for part_index, part in enumerate(candidate.content.parts):
                         # Extract thought summary if present (readable for debugging/introspection)
@@ -956,6 +962,11 @@ class GoogleGenAIClient(BaseLLMClient):
 
             # Map common parameters
             generation_config = types.GenerateContentConfig()
+            # Set media resolution to HIGH for all requests (affects images, PDFs, videos)
+            generation_config.media_resolution = (
+                types.MediaResolution.MEDIA_RESOLUTION_HIGH
+            )
+
             if "temperature" in config_params:
                 generation_config.temperature = config_params["temperature"]
             if "max_tokens" in config_params:
