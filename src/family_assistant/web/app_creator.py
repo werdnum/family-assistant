@@ -34,6 +34,7 @@ from family_assistant.web.routers.api_token_management import (
 )
 from family_assistant.web.routers.client_config import router as client_config_router
 from family_assistant.web.routers.context_viewer import context_viewer_router
+from family_assistant.web.routers.gemini_live_api import gemini_live_router
 
 # documents_ui, vector_search, and errors routers removed - replaced with React
 from family_assistant.web.routers.health import health_router
@@ -280,6 +281,9 @@ def create_app() -> FastAPI:
 
     # General API endpoints (like /api/tools/execute, /api/documents/upload)
     new_app.include_router(api_router, prefix="/api", tags=["General API"])
+
+    # Gemini Live API endpoints for voice mode
+    new_app.include_router(gemini_live_router, prefix="/api", tags=["Gemini Live API"])
 
     # API Token Management endpoints (like /api/me/tokens)
     # This is nested under /api as well, so the full path would be /api/me/tokens
