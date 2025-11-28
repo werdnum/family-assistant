@@ -93,7 +93,9 @@
                 ]
               }
             ],
-            "generationConfig": {}
+            "generationConfig": {
+              "mediaResolution": "MEDIA_RESOLUTION_HIGH"
+            }
           }
         ]
       },
@@ -137,7 +139,7 @@
               ]
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "lvQiabbmHOXYkdUPztX2MQ"
+            "responseId": "SBkpabPNB_K2xN8PmNySQQ"
           },
           {
             "candidates": [
@@ -166,7 +168,7 @@
               ]
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "lvQiabbmHOXYkdUPztX2MQ"
+            "responseId": "SBkpabPNB_K2xN8PmNySQQ"
           }
         ],
         "byte_segments": [],
@@ -199,7 +201,7 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "lvQiabbmHOXYkdUPztX2MQ",
+            "response_id": "SBkpabPNB_K2xN8PmNySQQ",
             "usage_metadata": {
               "candidates_token_count": 3,
               "prompt_token_count": 129,
@@ -241,7 +243,7 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "lvQiabbmHOXYkdUPztX2MQ",
+            "response_id": "SBkpabPNB_K2xN8PmNySQQ",
             "usage_metadata": {
               "candidates_token_count": 11,
               "prompt_token_count": 129,
