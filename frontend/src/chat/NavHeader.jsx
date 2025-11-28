@@ -25,6 +25,9 @@ const NavHeader = ({ currentPage = 'chat' }) => {
         <a href="/chat" className={currentPage === 'chat' ? 'current-page' : ''}>
           Chat
         </a>
+        <a href="/voice" className={currentPage === 'voice' ? 'current-page' : ''}>
+          Voice
+        </a>
         <a href="/history">History</a>
         <span className="nav-separator">|</span>
 
