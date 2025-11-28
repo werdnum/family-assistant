@@ -9,7 +9,7 @@
  * - Tool call routing to backend
  */
 
-import { GoogleGenAI, Modality, type Session } from '@google/genai';
+import { GoogleGenAI, Modality, type LiveServerMessage, type Session } from '@google/genai';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { arrayBufferToBase64, base64ToArrayBuffer, generateTranscriptId } from './audioUtils';
 import type {
@@ -28,24 +28,40 @@ import { useAudioPlayback } from './useAudioPlayback';
 const GEMINI_API_HOST = 'generativelanguage.googleapis.com';
 
 /**
+ * Callbacks for handling messages from Gemini Live session.
+ * Used by both real SDK and test mocks.
+ */
+export interface GeminiLiveCallbacks {
+  onMessage: (message: LiveServerMessage) => void;
+  onError: (error: Error) => void;
+  onClose: () => void;
+}
+
+/**
  * Test seam: allows injecting a mock session factory for integration tests.
  * When set, this factory is called instead of using the real GoogleGenAI SDK.
  *
- * The factory receives the token data and should return a mock Session object that:
- * - Is async iterable (yields LiveServerMessage objects)
- * - Has sendToolResponse(), sendRealtimeInput(), close() methods
+ * The factory receives the token data and callbacks, and should return a mock Session object.
+ * The mock should call the callbacks to simulate Gemini messages.
  *
  * @example
  * // In Playwright test:
  * await page.addInitScript(() => {
- *   window.__TEST_GEMINI_SESSION_FACTORY__ = async (tokenData) => {
- *     // Return mock session
+ *   window.__TEST_GEMINI_SESSION_FACTORY__ = async (tokenData, callbacks) => {
+ *     // Simulate a tool call after 500ms
+ *     setTimeout(() => {
+ *       callbacks.onMessage({ toolCall: { functionCalls: [...] } });
+ *     }, 500);
+ *     return mockSession;
  *   };
  * });
  */
 declare global {
   interface Window {
-    __TEST_GEMINI_SESSION_FACTORY__?: (tokenData: EphemeralTokenResponse) => Promise<Session>;
+    __TEST_GEMINI_SESSION_FACTORY__?: (
+      tokenData: EphemeralTokenResponse,
+      callbacks: GeminiLiveCallbacks
+    ) => Promise<Session>;
   }
 }
 
@@ -229,82 +245,91 @@ export function useGeminiLive(): GeminiLiveState {
   stopPlaybackRef.current = audioPlayback.stopPlayback;
 
   /**
-   * Process messages from the Gemini session.
+   * Handle incoming messages from the Gemini session (callback-based API).
    */
-  const processSessionMessages = useCallback(async () => {
-    if (!sessionRef.current) {
-      return;
-    }
+  const handleSessionMessage = useCallback(
+    (message: LiveServerMessage) => {
+      // Handle different message types
+      if (message.serverContent) {
+        const content = message.serverContent;
 
-    try {
-      for await (const message of sessionRef.current) {
-        // Handle different message types
-        if (message.serverContent) {
-          const content = message.serverContent;
-
-          // Handle model turn (assistant speaking)
-          if (content.modelTurn?.parts) {
-            for (const part of content.modelTurn.parts) {
-              if (part.inlineData?.data) {
-                handleAudioResponse(part.inlineData.data);
-              }
-              if (part.text) {
-                handleTranscription(part.text, 'assistant', false);
-              }
+        // Handle model turn (assistant speaking)
+        if (content.modelTurn?.parts) {
+          for (const part of content.modelTurn.parts) {
+            if (part.inlineData?.data) {
+              handleAudioResponse(part.inlineData.data);
+            }
+            if (part.text) {
+              handleTranscription(part.text, 'assistant', false);
             }
           }
+        }
 
-          // Handle turn completion
-          if (content.turnComplete) {
-            setActivityState('listening');
-            if (currentTranscriptRef.current?.role === 'assistant') {
-              handleTranscription(currentTranscriptRef.current.text, 'assistant', true);
-            }
-          }
-
-          // Handle interruption
-          if (content.interrupted) {
-            audioPlayback.stopPlayback();
-            setActivityState('listening');
-          }
-
-          // Handle input transcription
-          if (content.inputTranscription?.text) {
-            handleTranscription(content.inputTranscription.text, 'user', true);
-          }
-
-          // Handle output transcription
-          if (content.outputTranscription?.text) {
-            handleTranscription(content.outputTranscription.text, 'assistant', true);
+        // Handle turn completion
+        if (content.turnComplete) {
+          setActivityState('listening');
+          if (currentTranscriptRef.current?.role === 'assistant') {
+            handleTranscription(currentTranscriptRef.current.text, 'assistant', true);
           }
         }
 
-        // Handle tool calls
-        if (message.toolCall?.functionCalls) {
-          const toolCalls: GeminiToolCall[] = message.toolCall.functionCalls.map((fc) => ({
-            id: fc.id || generateTranscriptId(),
-            name: fc.name || '',
-            args: (fc.args as Record<string, unknown>) || {},
-          }));
-          await handleToolCalls(toolCalls);
+        // Handle interruption
+        if (content.interrupted) {
+          audioPlayback.stopPlayback();
+          setActivityState('listening');
         }
 
-        // Handle go away (session ending)
-        if (message.goAway) {
-          console.warn('Received GoAway from Gemini, session ending');
-          // Could implement reconnection here
+        // Handle input transcription
+        if (content.inputTranscription?.text) {
+          handleTranscription(content.inputTranscription.text, 'user', true);
+        }
+
+        // Handle output transcription
+        if (content.outputTranscription?.text) {
+          handleTranscription(content.outputTranscription.text, 'assistant', true);
         }
       }
-    } catch (err) {
-      if (err instanceof Error && err.message.includes('closed')) {
-        // Session was closed, this is expected on disconnect
-        return;
+
+      // Handle tool calls
+      if (message.toolCall?.functionCalls) {
+        const toolCalls: GeminiToolCall[] = message.toolCall.functionCalls.map((fc) => ({
+          id: fc.id || generateTranscriptId(),
+          name: fc.name || '',
+          args: (fc.args as Record<string, unknown>) || {},
+        }));
+        // Handle tool calls asynchronously
+        handleToolCalls(toolCalls).catch((err) => {
+          console.error('Error handling tool calls:', err);
+        });
       }
-      console.error('Error processing session messages:', err);
-      setError(err instanceof Error ? err.message : 'Error processing messages');
-      setConnectionState('error');
+
+      // Handle go away (session ending)
+      if (message.goAway) {
+        console.warn('Received GoAway from Gemini, session ending');
+        // Could implement reconnection here
+      }
+    },
+    [handleAudioResponse, handleTranscription, handleToolCalls, audioPlayback]
+  );
+
+  /**
+   * Handle session errors (callback-based API).
+   */
+  const handleSessionError = useCallback((err: Error) => {
+    console.error('Gemini session error:', err);
+    setError(err.message);
+    setConnectionState('error');
+  }, []);
+
+  /**
+   * Handle session close (callback-based API).
+   */
+  const handleSessionClose = useCallback(() => {
+    // Session was closed, could be normal disconnect or unexpected close
+    if (connectionState === 'connected') {
+      console.warn('Gemini session closed unexpectedly');
     }
-  }, [handleAudioResponse, handleTranscription, handleToolCalls, audioPlayback]);
+  }, [connectionState]);
 
   /**
    * Connect to Gemini Live API.
@@ -336,11 +361,18 @@ export function useGeminiLive(): GeminiLiveState {
 
         const tokenData: EphemeralTokenResponse = await tokenResponse.json();
 
+        // Create callbacks object for the session
+        const callbacks: GeminiLiveCallbacks = {
+          onMessage: handleSessionMessage,
+          onError: handleSessionError,
+          onClose: handleSessionClose,
+        };
+
         let session: Session;
 
         // Check for test seam - allows injecting mock session for integration tests
         if (typeof window !== 'undefined' && window.__TEST_GEMINI_SESSION_FACTORY__) {
-          session = await window.__TEST_GEMINI_SESSION_FACTORY__(tokenData);
+          session = await window.__TEST_GEMINI_SESSION_FACTORY__(tokenData, callbacks);
         } else {
           // Create Gemini client with ephemeral token
           const client = new GoogleGenAI({
@@ -352,9 +384,15 @@ export function useGeminiLive(): GeminiLiveState {
           });
           clientRef.current = client;
 
-          // Create live session
+          // Create live session with callback-based message handling
           session = await client.live.connect({
             model: tokenData.model,
+            callbacks: {
+              onmessage: handleSessionMessage,
+              onerror: (e: ErrorEvent) =>
+                handleSessionError(new Error(e.message || 'WebSocket error')),
+              onclose: handleSessionClose,
+            },
             config: {
               responseModalities: [Modality.AUDIO],
               systemInstruction: {
@@ -372,9 +410,6 @@ export function useGeminiLive(): GeminiLiveState {
           });
         }
         sessionRef.current = session;
-
-        // Start processing messages
-        processSessionMessages();
 
         // Start audio capture
         await audioCapture.startCapture();
@@ -402,7 +437,7 @@ export function useGeminiLive(): GeminiLiveState {
         setConnectionState('error');
       }
     },
-    [connectionState, audioCapture, processSessionMessages]
+    [connectionState, audioCapture, handleSessionMessage, handleSessionError, handleSessionClose]
   );
 
   /**
