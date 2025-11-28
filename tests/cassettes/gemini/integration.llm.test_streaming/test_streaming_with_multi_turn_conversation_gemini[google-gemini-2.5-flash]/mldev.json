@@ -39,7 +39,9 @@
                 "role": "user"
               }
             ],
-            "generationConfig": {}
+            "generationConfig": {
+              "mediaResolution": "MEDIA_RESOLUTION_HIGH"
+            }
           }
         ]
       },
@@ -75,17 +77,17 @@
             "usageMetadata": {
               "promptTokenCount": 30,
               "candidatesTokenCount": 6,
-              "totalTokenCount": 60,
+              "totalTokenCount": 61,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
                   "tokenCount": 30
                 }
               ],
-              "thoughtsTokenCount": 24
+              "thoughtsTokenCount": 25
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "lPQiadyCN-G0kdUPoqT10Q0"
+            "responseId": "_RgpaZO7D-36vdIPwZmg2Aw"
           }
         ],
         "byte_segments": [],
@@ -119,7 +121,7 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "lPQiadyCN-G0kdUPoqT10Q0",
+            "response_id": "_RgpaZO7D-36vdIPwZmg2Aw",
             "usage_metadata": {
               "candidates_token_count": 6,
               "prompt_token_count": 30,
@@ -129,8 +131,8 @@
                   "token_count": 30
                 }
               ],
-              "thoughts_token_count": 24,
-              "total_token_count": 60
+              "thoughts_token_count": 25,
+              "total_token_count": 61
             }
           }
         ]
