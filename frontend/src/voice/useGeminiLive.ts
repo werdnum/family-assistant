@@ -28,6 +28,28 @@ import { useAudioPlayback } from './useAudioPlayback';
 const GEMINI_API_HOST = 'generativelanguage.googleapis.com';
 
 /**
+ * Test seam: allows injecting a mock session factory for integration tests.
+ * When set, this factory is called instead of using the real GoogleGenAI SDK.
+ *
+ * The factory receives the token data and should return a mock Session object that:
+ * - Is async iterable (yields LiveServerMessage objects)
+ * - Has sendToolResponse(), sendRealtimeInput(), close() methods
+ *
+ * @example
+ * // In Playwright test:
+ * await page.addInitScript(() => {
+ *   window.__TEST_GEMINI_SESSION_FACTORY__ = async (tokenData) => {
+ *     // Return mock session
+ *   };
+ * });
+ */
+declare global {
+  interface Window {
+    __TEST_GEMINI_SESSION_FACTORY__?: (tokenData: EphemeralTokenResponse) => Promise<Session>;
+  }
+}
+
+/**
  * Hook for managing Gemini Live API connection and voice interaction.
  *
  * @returns Gemini Live state and control functions
@@ -50,6 +72,10 @@ export function useGeminiLive(): GeminiLiveState {
 
   // Audio hooks
   const audioPlayback = useAudioPlayback();
+
+  // Store stop functions in refs to avoid dependency issues with disconnect
+  const stopCaptureRef = useRef<() => void>(() => {});
+  const stopPlaybackRef = useRef<() => void>(() => {});
 
   /**
    * Handle incoming audio data from Gemini.
@@ -198,6 +224,10 @@ export function useGeminiLive(): GeminiLiveState {
     onError: (err) => setError(err),
   });
 
+  // Keep refs up to date for stable disconnect function
+  stopCaptureRef.current = audioCapture.stopCapture;
+  stopPlaybackRef.current = audioPlayback.stopPlayback;
+
   /**
    * Process messages from the Gemini session.
    */
@@ -306,34 +336,41 @@ export function useGeminiLive(): GeminiLiveState {
 
         const tokenData: EphemeralTokenResponse = await tokenResponse.json();
 
-        // Create Gemini client with ephemeral token
-        const client = new GoogleGenAI({
-          apiKey: tokenData.token,
-          httpOptions: {
-            apiVersion: 'v1alpha',
-            baseUrl: `https://${GEMINI_API_HOST}`,
-          },
-        });
-        clientRef.current = client;
+        let session: Session;
 
-        // Create live session
-        const session = await client.live.connect({
-          model: tokenData.model,
-          config: {
-            responseModalities: [Modality.AUDIO],
-            systemInstruction: {
-              parts: [{ text: tokenData.system_instruction }],
+        // Check for test seam - allows injecting mock session for integration tests
+        if (typeof window !== 'undefined' && window.__TEST_GEMINI_SESSION_FACTORY__) {
+          session = await window.__TEST_GEMINI_SESSION_FACTORY__(tokenData);
+        } else {
+          // Create Gemini client with ephemeral token
+          const client = new GoogleGenAI({
+            apiKey: tokenData.token,
+            httpOptions: {
+              apiVersion: 'v1alpha',
+              baseUrl: `https://${GEMINI_API_HOST}`,
             },
-            tools: tokenData.tools,
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: {
-                  voiceName: 'Puck',
+          });
+          clientRef.current = client;
+
+          // Create live session
+          session = await client.live.connect({
+            model: tokenData.model,
+            config: {
+              responseModalities: [Modality.AUDIO],
+              systemInstruction: {
+                parts: [{ text: tokenData.system_instruction }],
+              },
+              tools: tokenData.tools,
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: {
+                    voiceName: 'Puck',
+                  },
                 },
               },
             },
-          },
-        });
+          });
+        }
         sessionRef.current = session;
 
         // Start processing messages
@@ -370,6 +407,7 @@ export function useGeminiLive(): GeminiLiveState {
 
   /**
    * Disconnect from Gemini Live API.
+   * Uses refs for audio stop functions to avoid dependency on objects that change on state updates.
    */
   const disconnect = useCallback(() => {
     // Stop session timer
@@ -378,11 +416,11 @@ export function useGeminiLive(): GeminiLiveState {
       sessionTimerRef.current = null;
     }
 
-    // Stop audio capture
-    audioCapture.stopCapture();
+    // Stop audio capture (using ref for stable reference)
+    stopCaptureRef.current();
 
-    // Stop audio playback
-    audioPlayback.stopPlayback();
+    // Stop audio playback (using ref for stable reference)
+    stopPlaybackRef.current();
 
     // Close session
     if (sessionRef.current) {
@@ -401,7 +439,7 @@ export function useGeminiLive(): GeminiLiveState {
     setActivityState('idle');
     setSessionStartTime(null);
     setSessionDuration(0);
-  }, [audioCapture, audioPlayback]);
+  }, []); // No dependencies - uses refs for stable behavior
 
   // Cleanup on unmount
   useEffect(() => {
