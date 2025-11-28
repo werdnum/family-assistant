@@ -1,10 +1,10 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { HttpResponse, http } from 'msw';
 import { vi } from 'vitest';
-import { http, HttpResponse } from 'msw';
+import { resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
-import { resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 
 describe('ToolWithConfirmation', () => {
   beforeEach(() => {

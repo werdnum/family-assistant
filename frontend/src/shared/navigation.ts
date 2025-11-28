@@ -1,16 +1,16 @@
 import {
-  FileText,
-  Search,
-  MessageCircle,
-  History,
-  Calendar,
-  Zap,
-  Cog,
-  HelpCircle,
-  FolderOpen,
-  Upload,
-  Settings,
   AlertTriangle,
+  Calendar,
+  Cog,
+  FileText,
+  FolderOpen,
+  HelpCircle,
+  History,
+  MessageCircle,
+  Search,
+  Settings,
+  Upload,
+  Zap,
 } from 'lucide-react';
 
 export interface NavigationItem {

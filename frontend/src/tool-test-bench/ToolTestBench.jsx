@@ -1,5 +1,5 @@
 import React from 'react';
-import { toolUIsByName, ToolFallback } from '../chat/ToolUI';
+import { ToolFallback, toolUIsByName } from '../chat/ToolUI';
 
 // Sample data for testing different tool states
 const sampleToolCalls = [

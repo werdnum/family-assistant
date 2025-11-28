@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
-import { Routes, Route, useNavigate } from 'react-router-dom';
-import AutomationsList from './components/AutomationsList';
+import { Route, Routes, useNavigate } from 'react-router-dom';
 import AutomationDetail from './components/AutomationDetail';
+import AutomationsList from './components/AutomationsList';
 import CreateEventAutomation from './components/CreateEventAutomation';
 import CreateScheduleAutomation from './components/CreateScheduleAutomation';
 

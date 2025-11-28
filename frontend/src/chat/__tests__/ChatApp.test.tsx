@@ -1,9 +1,9 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { vi } from 'vitest';
+import { mockLocalStorage, resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 import { renderChatApp } from '../../test/utils/renderChatApp';
 import { waitForMessageSent } from '../../test/utils/waitHelpers';
-import { mockLocalStorage, resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 
 // Mock window.history for navigation
 Object.defineProperty(window, 'history', {

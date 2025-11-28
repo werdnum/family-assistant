@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
+import remarkGfm from 'remark-gfm';
 
 // Secure markdown renderer for chat messages
 export const MarkdownText = ({ text }) => {

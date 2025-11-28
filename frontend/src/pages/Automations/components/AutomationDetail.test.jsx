@@ -1,9 +1,9 @@
-import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
+import React from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { describe, it, expect } from 'vitest';
-import AutomationDetail from './AutomationDetail';
+import { describe, expect, it } from 'vitest';
 import { server } from '../../../test/mocks/server';
+import AutomationDetail from './AutomationDetail';
 
 beforeAll(() => server.listen());
 afterEach(() => server.resetHandlers());

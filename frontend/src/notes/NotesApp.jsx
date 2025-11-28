@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
-import { Routes, Route, useNavigate } from 'react-router-dom';
-import NotesListWithDataTable from './components/NotesListWithDataTable';
+import { Route, Routes, useNavigate } from 'react-router-dom';
 import NotesForm from './components/NotesForm';
+import NotesListWithDataTable from './components/NotesListWithDataTable';
 
 const NotesApp = () => {
   const navigate = useNavigate();

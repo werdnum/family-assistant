@@ -40,7 +40,7 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
       typeof pendingConfirmation?.timeout_seconds === 'number' &&
       pendingConfirmation.created_at
     ) {
-      const createdAt = new Date(pendingConfirmation.created_at);
+      const createdAt = new Date((pendingConfirmation.created_at as string | number) || Date.now());
       const expiresAt = new Date(createdAt.getTime() + pendingConfirmation.timeout_seconds * 1000);
 
       // Calculate initial time remaining immediately
@@ -101,7 +101,11 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
         <div className="tool-confirmation-container mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
           <div className="prose prose-sm max-w-none mb-4">
             <strong>Confirmation Required:</strong>
-            <div dangerouslySetInnerHTML={{ __html: pendingConfirmation.confirmation_prompt }} />
+            <div
+              dangerouslySetInnerHTML={{
+                __html: pendingConfirmation.confirmation_prompt as string,
+              }}
+            />
           </div>
           <div className="flex gap-2 items-center">
             <Button

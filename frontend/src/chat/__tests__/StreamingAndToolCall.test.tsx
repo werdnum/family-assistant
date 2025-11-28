@@ -1,10 +1,10 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { HttpResponse, http } from 'msw';
 import { vi } from 'vitest';
-import { http, HttpResponse } from 'msw';
+import { resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
-import { resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 
 describe('Streaming with Tool Calls', () => {
   beforeEach(() => {
@@ -14,7 +14,6 @@ describe('Streaming with Tool Calls', () => {
 
   it(
     'correctly renders a message with both text and a tool call',
-    { timeout: 10000 },
     async () => {
       // This is the crucial part: we mock the SSE stream to send a single
       // event that contains both content and a tool call.

@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
-import { Routes, Route } from 'react-router-dom';
-import ErrorsList from './components/ErrorsList';
+import { Route, Routes } from 'react-router-dom';
 import ErrorDetail from './components/ErrorDetail';
+import ErrorsList from './components/ErrorsList';
 import './errors.css';
 
 const ErrorsApp = () => {

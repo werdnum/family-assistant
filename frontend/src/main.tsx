@@ -11,6 +11,7 @@ import './custom.css';
 // console.log('Family Assistant frontend loaded');
 
 // Export any utilities that might be needed globally
+// @ts-expect-error - partial assignment, full interface set in chat/index.jsx
 window.FamilyAssistant = {
   version: '0.1.0',
   loaded: true,

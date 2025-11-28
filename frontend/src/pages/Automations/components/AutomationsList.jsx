@@ -1,10 +1,10 @@
+import { ArrowRight, Bot, CalendarClock, Filter, Loader2, ScrollText, Zap } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { ArrowRight, Bot, CalendarClock, Filter, Loader2, ScrollText, Zap } from 'lucide-react';
 import styles from './AutomationsList.module.css';
 
 const CREATION_OPTIONS = [

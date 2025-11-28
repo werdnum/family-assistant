@@ -2,13 +2,13 @@
  * @vitest-environment jsdom
  */
 
+import { HttpResponse, http } from 'msw';
 import { vi } from 'vitest';
-import { http, HttpResponse } from 'msw';
 import { server } from '../../test/setup.js';
 import {
-  FileAttachmentAdapter,
   CompositeAttachmentAdapter,
   defaultAttachmentAdapter,
+  FileAttachmentAdapter,
 } from '../attachmentAdapter';
 
 // Mock crypto.randomUUID

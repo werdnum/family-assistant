@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import { Separator } from '@/components/ui/separator';
 import {
   Sheet,
   SheetContent,
@@ -8,10 +9,9 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet';
-import { Separator } from '@/components/ui/separator';
+import { cn } from '@/lib/utils';
 import { getNavigationItems } from './navigation';
 import { ThemeToggle } from './ThemeToggle';
-import { cn } from '@/lib/utils';
 
 interface NavigationSheetProps {
   children: React.ReactNode; // The trigger element

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 /**
  * Hook for handling streaming responses from the chat API

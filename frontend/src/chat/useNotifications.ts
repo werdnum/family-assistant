@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface NotificationOptions {
   enabled: boolean;
@@ -245,6 +245,7 @@ export function useNotifications({
           icon: '/favicon.ico',
           tag: notifConvId, // Group by conversation
           requireInteraction: false,
+          // @ts-expect-error timestamp is not in NotificationOptions type but is supported by browsers
           timestamp: new Date(timestamp).getTime(),
         });
 

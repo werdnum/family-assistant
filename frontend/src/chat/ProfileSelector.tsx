@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { Bot, Globe, Search, Settings } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Badge } from '@/components/ui/badge';
 import {
   Select,
   SelectContent,
@@ -6,8 +8,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Badge } from '@/components/ui/badge';
-import { Bot, Globe, Search, Settings } from 'lucide-react';
 
 export interface ServiceProfile {
   id: string;

@@ -1,7 +1,7 @@
 import React from 'react';
-import { toolUIsByName, ToolFallback } from './ToolUI';
-import { ToolWithConfirmation } from './ToolWithConfirmation';
 import { Attachment, isAttachment } from '../types/attachments';
+import { ToolFallback, toolUIsByName } from './ToolUI';
+import { ToolWithConfirmation } from './ToolWithConfirmation';
 
 /**
  * Dynamic tool UI component that automatically wraps tools with confirmation UI
@@ -52,7 +52,8 @@ export const DynamicToolUI: React.FC<AssistantUIToolProps> = (props) => {
   const attachments = extractAttachments(artifact?.attachments || directAttachments);
 
   // Get the specific tool UI component or fallback
-  const ToolComponent = toolUIsByName[toolName] || ToolFallback;
+  const ToolComponent =
+    (toolUIsByName as Record<string, React.ComponentType<unknown>>)[toolName] || ToolFallback;
 
   // Always wrap with ToolWithConfirmation which will conditionally show confirmation UI
   return (
@@ -62,7 +63,8 @@ export const DynamicToolUI: React.FC<AssistantUIToolProps> = (props) => {
       args={args}
       result={result}
       status={status}
-      attachments={attachments}
+      attachments={attachments as unknown as Array<Record<string, unknown>>}
+      // @ts-expect-error - ToolComponent type mismatch with dynamic lookup
       ToolComponent={ToolComponent}
     />
   );
