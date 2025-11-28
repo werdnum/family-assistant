@@ -17,6 +17,7 @@ const DocumentationApp = lazy(() => import('../pages/Documentation/Documentation
 const TokenManagement = lazy(() => import('../pages/Settings/TokenManagement'));
 const DocumentsPage = lazy(() => import('../pages/Documents/DocumentsPage'));
 const VectorSearchPage = lazy(() => import('../pages/VectorSearch/VectorSearchPage'));
+const VoicePage = lazy(() => import('../voice/VoicePage'));
 
 // Loading component for Suspense fallback
 const LoadingSpinner = () => (
@@ -106,6 +107,16 @@ const AppRouter = () => {
 
         {/* Vector Search routes */}
         <Route path="/vector-search/*" element={withLayout(<VectorSearchPage />)} />
+
+        {/* Voice mode - no Layout wrapper as VoicePage has its own complete UI */}
+        <Route
+          path="/voice"
+          element={
+            <Suspense fallback={<LoadingSpinner />}>
+              <VoicePage />
+            </Suspense>
+          }
+        />
 
         {/* Default redirect to chat */}
         <Route path="/" element={<Navigate to="/chat" replace />} />

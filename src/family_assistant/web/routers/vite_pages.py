@@ -236,3 +236,9 @@ async def documents_ui(request: Request) -> Response:
 async def vector_search_ui(request: Request) -> Response:
     """Serve the React vector search interface via router."""
     return _serve_vite_html_file(request, "router.html")
+
+
+@vite_pages_router.get("/voice", name="voice_ui")
+async def voice_ui(request: Request) -> Response:
+    """Serve the React voice mode interface via router."""
+    return _serve_vite_html_file(request, "router.html")
