@@ -94,7 +94,9 @@
                 ]
               }
             ],
-            "generationConfig": {}
+            "generationConfig": {
+              "mediaResolution": "MEDIA_RESOLUTION_HIGH"
+            }
           }
         ]
       },
@@ -138,7 +140,7 @@
               ]
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "lvQiabqoAunskdUPnc7FGQ"
+            "responseId": "rBgpabSuAp2rnsEPsojooQg"
           },
           {
             "candidates": [
@@ -167,7 +169,7 @@
               ]
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "lvQiabqoAunskdUPnc7FGQ"
+            "responseId": "rBgpabSuAp2rnsEPsojooQg"
           }
         ],
         "byte_segments": [],
@@ -200,7 +202,7 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "lvQiabqoAunskdUPnc7FGQ",
+            "response_id": "rBgpabSuAp2rnsEPsojooQg",
             "usage_metadata": {
               "candidates_token_count": 4,
               "prompt_token_count": 152,
@@ -242,7 +244,7 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "lvQiabqoAunskdUPnc7FGQ",
+            "response_id": "rBgpabSuAp2rnsEPsojooQg",
             "usage_metadata": {
               "candidates_token_count": 13,
               "prompt_token_count": 152,
