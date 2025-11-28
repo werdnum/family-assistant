@@ -1,4 +1,4 @@
-import { http, HttpResponse } from 'msw';
+import { HttpResponse, http } from 'msw';
 
 export const handlers = [
   // Mock profiles endpoint
@@ -398,7 +398,7 @@ export const handlers = [
     const automation = automations.find((a) => a.id === id && a.type === type);
 
     if (automation) {
-      const updatedAutomation = { ...automation, ...body };
+      const updatedAutomation = { ...automation, ...(body as Record<string, unknown>) };
       return HttpResponse.json(updatedAutomation);
     }
 

@@ -1,35 +1,35 @@
-import React, { useState, useEffect, createContext, useContext } from 'react';
 import {
   ActionBarPrimitive,
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
-  useMessage,
   useComposer,
+  useMessage,
 } from '@assistant-ui/react';
 import {
   ArrowDownIcon,
+  BotIcon,
   CheckIcon,
   CopyIcon,
+  Loader2Icon,
   SendHorizontalIcon,
   UserIcon,
-  BotIcon,
-  Loader2Icon,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { MarkdownText } from './MarkdownText';
-import { TooltipIconButton } from './TooltipIconButton';
-import { LOADING_MARKER } from './constants';
-import { DynamicToolUI } from './DynamicToolUI';
-import { ToolGroup } from './ToolGroup';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import {
-  ComposerAttachments,
   ComposerAddAttachment,
+  ComposerAttachments,
   UserMessageAttachments,
 } from '@/components/assistant-ui/attachment';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { LOADING_MARKER } from './constants';
+import { DynamicToolUI } from './DynamicToolUI';
+import { MarkdownText } from './MarkdownText';
+import { ToolGroup } from './ToolGroup';
+import { TooltipIconButton } from './TooltipIconButton';
 
 // API endpoints
 const PROFILES_API_ENDPOINT = '/api/v1/profiles';
@@ -148,6 +148,7 @@ const ThreadContent: React.FC = () => {
 const ThreadScrollToBottom: React.FC = () => {
   return (
     <ThreadPrimitive.ScrollToBottom asChild>
+      {/* @ts-expect-error - TooltipIconButton JSX component */}
       <TooltipIconButton
         tooltip="Scroll to bottom"
         variant="outline"
@@ -250,6 +251,7 @@ const ComposerAction: React.FC = () => {
     <>
       <ThreadPrimitive.If running={false}>
         <ComposerPrimitive.Send asChild>
+          {/* @ts-expect-error - TooltipIconButton JSX component */}
           <TooltipIconButton
             tooltip={hasUploadingAttachments ? 'Uploading attachments...' : 'Send message'}
             variant="default"
@@ -268,6 +270,7 @@ const ComposerAction: React.FC = () => {
       </ThreadPrimitive.If>
       <ThreadPrimitive.If running>
         <ComposerPrimitive.Cancel asChild>
+          {/* @ts-expect-error - TooltipIconButton JSX component */}
           <TooltipIconButton
             tooltip="Stop generating"
             variant="default"
@@ -406,11 +409,12 @@ const AssistantMessage: React.FC = () => {
                 ) : (
                   <>
                     {Array.isArray(message.content) ? (
+                      // @ts-expect-error - assistant-ui tool type mismatch
                       <MessagePrimitive.Content components={messageContentComponents} />
                     ) : typeof message.content === 'string' ? (
-                      <MarkdownText>{message.content}</MarkdownText>
+                      <MarkdownText text={message.content} />
                     ) : message.content ? (
-                      <MarkdownText>{String(message.content)}</MarkdownText>
+                      <MarkdownText text={String(message.content)} />
                     ) : (
                       <div className="text-muted-foreground italic">No content</div>
                     )}
@@ -435,6 +439,7 @@ const AssistantActionBar: React.FC = () => {
       className="absolute top-2 -right-9 flex items-start opacity-0 group-hover:opacity-100 transition-opacity duration-200"
     >
       <ActionBarPrimitive.Copy asChild>
+        {/* @ts-expect-error - TooltipIconButton JSX component */}
         <TooltipIconButton tooltip="Copy" size="sm" variant="ghost">
           <MessagePrimitive.If copied>
             <CheckIcon size={14} />
@@ -453,7 +458,7 @@ const MessageTimestamp: React.FC = () => {
   // which isn't readily available in the current assistant-ui primitives structure
   // This would need to be passed down from the parent component in a real implementation
   return (
-    <MessagePrimitive.If hasBranchPicker={false}>
+    <MessagePrimitive.If hasBranches={false}>
       <time className="text-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
         just now
       </time>

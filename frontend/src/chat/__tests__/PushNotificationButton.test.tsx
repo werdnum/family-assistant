@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { HttpResponse, http } from 'msw';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { server } from '../../test/setup.js';
-import { http, HttpResponse } from 'msw';
 import { PushNotificationButton } from '../PushNotificationButton';
 
 // Mock PushSubscription and ServiceWorkerRegistration
@@ -54,10 +54,9 @@ describe('PushNotificationButton', () => {
     // Create global Notification mock if it doesn't exist
     requestPermissionMock = vi.fn(() => Promise.resolve('granted'));
 
-    const mockNotification: Partial<typeof Notification> =
-      function () {} as unknown as Notification;
-    (mockNotification as Record<string, unknown>).requestPermission = requestPermissionMock;
-    (mockNotification as Record<string, unknown>).permission = 'default';
+    const mockNotification = function () {} as unknown as Record<string, unknown>;
+    mockNotification.requestPermission = requestPermissionMock;
+    mockNotification.permission = 'default';
 
     // Set Notification on globalThis
     Object.defineProperty(globalThis, 'Notification', {
@@ -207,7 +206,7 @@ describe('PushNotificationButton', () => {
 
     it('should skip permission request if already granted', async () => {
       const user = userEvent.setup();
-      (globalThis.Notification as Record<string, unknown>).permission = 'granted';
+      (globalThis.Notification as unknown as Record<string, unknown>).permission = 'granted';
       mockRegistration.pushManager.getSubscription = vi.fn(() => Promise.resolve(null));
 
       render(<PushNotificationButton />);
@@ -236,7 +235,7 @@ describe('PushNotificationButton', () => {
     it('should show error when permission is denied', async () => {
       const user = userEvent.setup();
       requestPermissionMock = vi.fn(() => Promise.resolve('denied'));
-      (globalThis.Notification as Record<string, unknown>).requestPermission =
+      (globalThis.Notification as unknown as Record<string, unknown>).requestPermission =
         requestPermissionMock;
       mockRegistration.pushManager.getSubscription = vi.fn(() => Promise.resolve(null));
 
@@ -263,7 +262,7 @@ describe('PushNotificationButton', () => {
 
     it('should handle subscription API errors gracefully', async () => {
       const user = userEvent.setup();
-      (globalThis.Notification as Record<string, unknown>).permission = 'granted';
+      (globalThis.Notification as unknown as Record<string, unknown>).permission = 'granted';
 
       const subscribeError = new Error('Failed to subscribe');
       mockRegistration.pushManager.subscribe = vi.fn(() => Promise.reject(subscribeError));
@@ -289,7 +288,7 @@ describe('PushNotificationButton', () => {
 
     it('should update status badge to Active after successful subscription', async () => {
       const user = userEvent.setup();
-      (globalThis.Notification as Record<string, unknown>).permission = 'granted';
+      (globalThis.Notification as unknown as Record<string, unknown>).permission = 'granted';
       mockRegistration.pushManager.getSubscription = vi.fn(() => Promise.resolve(null));
 
       render(<PushNotificationButton />);
@@ -390,7 +389,7 @@ describe('PushNotificationButton', () => {
   describe('loading and error states', () => {
     it('should show loading state while subscribing', async () => {
       const user = userEvent.setup();
-      (globalThis.Notification as Record<string, unknown>).permission = 'granted';
+      (globalThis.Notification as unknown as Record<string, unknown>).permission = 'granted';
 
       // Make subscribe take a while
       let resolveSubscribe: () => void;
@@ -428,7 +427,7 @@ describe('PushNotificationButton', () => {
 
     it('should show error when backend subscription fails', async () => {
       const user = userEvent.setup();
-      (globalThis.Notification as Record<string, unknown>).permission = 'granted';
+      (globalThis.Notification as unknown as Record<string, unknown>).permission = 'granted';
 
       // Mock backend error
       server.use(
@@ -462,7 +461,7 @@ describe('PushNotificationButton', () => {
 
     it('should disable toggle when permission is denied', async () => {
       const user = userEvent.setup();
-      (globalThis.Notification as Record<string, unknown>).permission = 'denied';
+      (globalThis.Notification as unknown as Record<string, unknown>).permission = 'denied';
       mockRegistration.pushManager.getSubscription = vi.fn(() => Promise.resolve(null));
 
       render(<PushNotificationButton />);

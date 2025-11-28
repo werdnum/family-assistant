@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { HttpResponse, http } from 'msw';
+import { describe, expect, it } from 'vitest';
 import { server } from '../../test/setup.js';
-import { http, HttpResponse } from 'msw';
 import { getClientConfig, subscribeToPush, unsubscribeFromPush } from '../pushClient';
 
 describe('pushClient', () => {

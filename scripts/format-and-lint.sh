@@ -198,7 +198,22 @@ if [ ${#JS_TS_FILES[@]} -gt 0 ]; then
             timer_end
         fi
     fi
-    
+
+    # TypeScript type checking
+    if [ $HAS_ERRORS -eq 0 ]; then
+        echo -n "${BLUE}  ▸ Running TypeScript type checking...${NC}"
+        timer_start
+        if ! npm run typecheck --prefix frontend 2>&1; then
+            timer_end
+            echo ""
+            echo "${RED}❌ TypeScript type checking failed${NC}"
+            HAS_ERRORS=1
+        else
+            echo -n "${GREEN} ✓${NC}"
+            timer_end
+        fi
+    fi
+
     echo ""
 fi
 

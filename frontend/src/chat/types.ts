@@ -48,6 +48,9 @@ export interface MessageContent {
   argsText?: string;
   result?: string | Record<string, unknown>;
   attachments?: Array<Record<string, unknown>>;
+  artifact?: {
+    attachments?: Array<Record<string, unknown>>;
+  };
 }
 
 export interface BackendAttachment extends Record<string, unknown> {

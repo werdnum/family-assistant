@@ -1,9 +1,9 @@
-import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import React from 'react';
-import { toolUIsByName, ToolFallback } from '../ToolUI';
+import { describe, expect, it } from 'vitest';
 import { toolTestCases } from '../../test/toolTestData';
 import { getAttachmentKey } from '../../types/attachments';
+import { ToolFallback, toolUIsByName } from '../ToolUI';
 
 // Helper component that mimics how tools are rendered in the app
 const ToolUI = ({ toolCall, toolResponse }) => {

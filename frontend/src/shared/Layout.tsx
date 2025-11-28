@@ -1,36 +1,35 @@
-import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
 import {
-  Menu,
-  FileText,
-  Search,
-  MessageCircle,
-  History,
+  AlertTriangle,
   Calendar,
   Cog,
-  HelpCircle,
+  FileText,
   FolderOpen,
-  Upload,
+  HelpCircle,
+  History,
+  Menu,
+  MessageCircle,
+  Search,
   Settings,
+  Upload,
   Zap,
-  AlertTriangle,
 } from 'lucide-react';
-
+import React from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 import {
   NavigationMenu,
   NavigationMenuContent,
+  NavigationMenuIndicator,
   NavigationMenuItem,
   NavigationMenuLink,
   NavigationMenuList,
   NavigationMenuTrigger,
-  NavigationMenuIndicator,
   navigationMenuTriggerStyle,
 } from '@/components/ui/navigation-menu';
+import { Separator } from '@/components/ui/separator';
+import { cn } from '@/lib/utils';
 import NavigationSheet from './NavigationSheet';
 import { ThemeToggle } from './ThemeToggle';
-import { Separator } from '@/components/ui/separator';
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
 
 interface LayoutProps {
   children: React.ReactNode;

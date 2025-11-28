@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
-import { Routes, Route, useNavigate } from 'react-router-dom';
-import EventsList from './components/EventsList';
+import { Route, Routes, useNavigate } from 'react-router-dom';
 import EventDetail from './components/EventDetail';
+import EventsList from './components/EventsList';
 
 const EventsApp = () => {
   const navigate = useNavigate();

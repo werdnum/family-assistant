@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { Button } from '@/components/ui/button';
-import styles from './MessageDisplay.module.css';
-import { getAttachmentKey } from '../../../types/attachments';
 import ToolDisplay from '@/components/tools/ToolDisplay';
+import { Button } from '@/components/ui/button';
+import { getAttachmentKey } from '../../../types/attachments';
 import { parseToolArguments } from '../../../utils/toolUtils';
+import styles from './MessageDisplay.module.css';
 
 const MessageDisplay = ({ message }) => {
   const [expandedToolCalls, setExpandedToolCalls] = useState(new Set());

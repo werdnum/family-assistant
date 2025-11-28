@@ -1,8 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import React from 'react';
-import { DynamicToolUI } from '../DynamicToolUI';
+import { describe, expect, it, vi } from 'vitest';
 import { getAttachmentKey } from '../../types/attachments';
+import { DynamicToolUI } from '../DynamicToolUI';
 
 // Mock the ToolWithConfirmation component since we're testing DynamicToolUI logic
 vi.mock('../ToolWithConfirmation', () => ({
