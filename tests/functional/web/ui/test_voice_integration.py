@@ -160,55 +160,25 @@ async def test_voice_start_fetches_token(web_test_fixture: WebTestFixture) -> No
     )
 
 
-# JavaScript code to inject a mock Gemini session factory
+# JavaScript code to inject a mock Gemini session factory (callback-based API)
 MOCK_SESSION_FACTORY_SCRIPT = """
-window.__TEST_GEMINI_SESSION_FACTORY__ = async (tokenData) => {
+window.__TEST_GEMINI_SESSION_FACTORY__ = async (tokenData, callbacks) => {
     // Store for test verification
     window.__TEST_TOOL_RESPONSES__ = [];
     window.__TEST_REALTIME_INPUTS__ = [];
     window.__TEST_SESSION_CLOSED__ = false;
+    window.__TEST_CALLBACKS__ = callbacks;
 
-    // Create an async generator that yields messages
-    const messageQueue = [];
-    let resolveNext = null;
-
-    // Function to push messages to the queue (called from test)
+    // Function to push messages (uses callbacks instead of async iteration)
     window.__TEST_PUSH_MESSAGE__ = (message) => {
-        messageQueue.push(message);
-        if (resolveNext) {
-            resolveNext();
-            resolveNext = null;
+        console.log('[MockSession] Pushing message via callback:', JSON.stringify(message));
+        if (callbacks && callbacks.onMessage) {
+            callbacks.onMessage(message);
         }
     };
 
-    // Create the async iterator
-    const asyncIterator = {
-        [Symbol.asyncIterator]() {
-            return {
-                async next() {
-                    // Wait for a message if queue is empty
-                    while (messageQueue.length === 0 && !window.__TEST_SESSION_CLOSED__) {
-                        await new Promise(resolve => {
-                            resolveNext = resolve;
-                            // Also resolve after timeout to allow checking closed state
-                            setTimeout(resolve, 100);
-                        });
-                    }
-
-                    if (messageQueue.length > 0) {
-                        return { value: messageQueue.shift(), done: false };
-                    }
-
-                    return { done: true };
-                }
-            };
-        }
-    };
-
-    // Create mock session object
+    // Create mock session object (callback-based, no async iteration)
     const mockSession = {
-        ...asyncIterator,
-
         sendToolResponse(response) {
             console.log('[MockSession] sendToolResponse:', JSON.stringify(response));
             window.__TEST_TOOL_RESPONSES__.push(response);
@@ -224,8 +194,8 @@ window.__TEST_GEMINI_SESSION_FACTORY__ = async (tokenData) => {
         close() {
             console.log('[MockSession] close');
             window.__TEST_SESSION_CLOSED__ = true;
-            if (resolveNext) {
-                resolveNext();
+            if (callbacks && callbacks.onClose) {
+                callbacks.onClose();
             }
         }
     };
