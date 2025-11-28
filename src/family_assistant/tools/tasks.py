@@ -402,6 +402,7 @@ async def schedule_reminder_tool(
     # Get interface_type, conversation_id, and db_context from the execution context object
     interface_type = exec_context.interface_type
     conversation_id = exec_context.conversation_id
+    user_name = exec_context.user_name  # Extract user_name from context
     db_context = exec_context.db_context
     clock = (
         exec_context.clock or SystemClock()
@@ -444,6 +445,7 @@ async def schedule_reminder_tool(
         payload = {
             "interface_type": interface_type,
             "conversation_id": conversation_id,
+            "user_name": user_name,  # Save user_name in payload
             "callback_context": message,
             "scheduling_timestamp": scheduling_time.isoformat(),
             "reminder_config": {
@@ -509,6 +511,7 @@ async def schedule_recurring_task_tool(
     db_context = exec_context.db_context
     interface_type = exec_context.interface_type
     conversation_id = exec_context.conversation_id
+    user_name = exec_context.user_name  # Extract user_name from context
     clock = exec_context.clock or SystemClock()
 
     try:
@@ -560,6 +563,7 @@ async def schedule_recurring_task_tool(
         payload = {
             "interface_type": interface_type,
             "conversation_id": conversation_id,
+            "user_name": user_name,  # Save user_name in payload
             "callback_context": callback_context,
             "scheduling_timestamp": scheduling_time.isoformat(),
         }
@@ -604,6 +608,7 @@ async def schedule_future_callback_tool(
     # Get interface_type, conversation_id, and db_context from the execution context object
     interface_type = exec_context.interface_type
     conversation_id = exec_context.conversation_id
+    user_name = exec_context.user_name  # Extract user_name from context
     db_context = exec_context.db_context
     clock = (
         exec_context.clock or SystemClock()
@@ -632,6 +637,7 @@ async def schedule_future_callback_tool(
         payload = {
             "interface_type": interface_type,  # Store interface type
             "conversation_id": conversation_id,  # Store conversation ID
+            "user_name": user_name,  # Save user_name in payload
             "callback_context": context,
             "scheduling_timestamp": scheduling_time.isoformat(),  # Add scheduling timestamp
         }
@@ -961,6 +967,7 @@ async def schedule_action_tool(
             action_config=action_config,
             conversation_id=exec_context.conversation_id,
             interface_type=exec_context.interface_type,
+            user_name=exec_context.user_name,  # Pass user_name
             context={"scheduled_via": "schedule_action tool"},
             scheduled_at=scheduled_dt,
         )
@@ -1037,6 +1044,7 @@ async def schedule_recurring_action_tool(
             action_config=action_config,
             conversation_id=exec_context.conversation_id,
             interface_type=exec_context.interface_type,
+            user_name=exec_context.user_name,  # Pass user_name
             context={
                 "scheduled_via": "schedule_recurring_action tool",
                 "task_name": task_name,
