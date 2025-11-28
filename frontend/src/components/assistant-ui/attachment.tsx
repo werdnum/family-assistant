@@ -1,7 +1,5 @@
 'use client';
 
-import { PropsWithChildren, useEffect, useState, type FC } from 'react';
-import { CircleXIcon, FileIcon, PaperclipIcon, ClockIcon } from 'lucide-react';
 import {
   AttachmentPrimitive,
   ComposerPrimitive,
@@ -9,18 +7,20 @@ import {
   useAttachment,
   useComposerRuntime,
 } from '@assistant-ui/react';
+import { DialogContent as DialogPrimitiveContent } from '@radix-ui/react-dialog';
+import { CircleXIcon, ClockIcon, FileIcon, PaperclipIcon } from 'lucide-react';
+import { type FC, PropsWithChildren, useEffect, useState } from 'react';
 import { useShallow } from 'zustand/shallow';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { TooltipIconButton } from '@/components/assistant-ui/tooltip-icon-button';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
   Dialog,
-  DialogTitle,
-  DialogTrigger,
   DialogOverlay,
   DialogPortal,
+  DialogTitle,
+  DialogTrigger,
 } from '@/components/ui/dialog';
-import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
-import { TooltipIconButton } from '@/components/assistant-ui/tooltip-icon-button';
-import { DialogContent as DialogPrimitiveContent } from '@radix-ui/react-dialog';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 const useFileSrc = (file: File | undefined) => {
   const [src, setSrc] = useState<string | undefined>(undefined);
@@ -147,8 +147,9 @@ const AttachmentUI: FC = () => {
   });
 
   // Check if attachment has an error status
+  // @ts-expect-error - status.type may include 'error' at runtime
   const hasError = status?.type === 'error';
-  const errorMessage = status?.error;
+  const errorMessage = (status as { error?: string })?.error;
 
   // Check if attachment is currently uploading
   const isLoading = status?.type === 'running' && !hasError;

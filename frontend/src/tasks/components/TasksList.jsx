@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AlertCircle } from 'lucide-react';
-import TasksFilter from './TasksFilter';
+import React, { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 import TaskCard from './TaskCard';
+import TasksFilter from './TasksFilter';
 import styles from './TasksList.module.css';
 
 const TasksList = ({ onLoadingChange }) => {

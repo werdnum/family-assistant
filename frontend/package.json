@@ -12,6 +12,7 @@
     "format": "biome format --write .",
     "format:check": "biome format .",
     "check": "biome format . && eslint .",
+    "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage"

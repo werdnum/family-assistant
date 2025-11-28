@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { Route, Routes } from 'react-router-dom';
 import VectorSearch from './VectorSearch';
 
 const VectorSearchPage = () => {

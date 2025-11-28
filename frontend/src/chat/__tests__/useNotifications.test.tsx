@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useNotifications } from '../useNotifications';
 
 describe('useNotifications', () => {
@@ -20,11 +20,10 @@ describe('useNotifications', () => {
       .fn()
       .mockResolvedValue('granted' as NotificationPermission);
 
-    // @ts-expect-error - Mocking global
     global.Notification = mockNotification;
 
     // Mock BroadcastChannel
-    // @ts-expect-error - Mocking global
+    // @ts-expect-error - simplified mock for testing
     global.BroadcastChannel = vi.fn(() => ({
       addEventListener: vi.fn(),
       postMessage: vi.fn(),
@@ -34,7 +33,6 @@ describe('useNotifications', () => {
 
   afterEach(() => {
     // Restore original Notification API
-    // @ts-expect-error - Restoring global
     global.Notification = originalNotification;
   });
 

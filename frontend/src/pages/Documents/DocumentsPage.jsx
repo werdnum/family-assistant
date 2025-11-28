@@ -1,8 +1,8 @@
 import React, { useEffect } from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { Route, Routes } from 'react-router-dom';
+import DocumentDetail from './DocumentDetail';
 import DocumentsListWithDataTable from './DocumentsListWithDataTable';
 import DocumentUpload from './DocumentUpload';
-import DocumentDetail from './DocumentDetail';
 
 const DocumentsPage = () => {
   // Set page title and signal app is ready

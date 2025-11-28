@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import MessageDisplay from './MessageDisplay';
 import styles from './ConversationView.module.css';
+import MessageDisplay from './MessageDisplay';
 
 const ConversationView = ({ onBackToList }) => {
   const { conversationId } = useParams();

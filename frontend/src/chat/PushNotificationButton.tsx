@@ -1,7 +1,13 @@
-import React, { useState, useEffect, useCallback } from 'react';
 import { Bell, BellOff, Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  getClientConfig,
+  type PushSubscriptionJSON,
+  subscribeToPush,
+  unsubscribeFromPush,
+} from '@/api/pushClient';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,14 +15,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import {
-  getClientConfig,
-  subscribeToPush,
-  unsubscribeFromPush,
-  type PushSubscriptionJSON,
-} from '@/api/pushClient';
+import { Switch } from '@/components/ui/switch';
 
 interface PushNotificationButtonProps {
   className?: string;
@@ -127,7 +127,7 @@ export const PushNotificationButton: React.FC<PushNotificationButtonProps> = ({ 
           // Subscribe to push notifications
           const subscription = await registration.pushManager.subscribe({
             userVisibleOnly: true,
-            applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+            applicationServerKey: urlBase64ToUint8Array(vapidPublicKey) as unknown as ArrayBuffer,
           });
 
           // Send subscription to backend

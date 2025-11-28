@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import ChatApp from './ChatApp';
 import { ThemeProvider } from '../shared/ThemeProvider';
+import ChatApp from './ChatApp';
 
 // Import Tailwind CSS and custom styles
 import '../styles/globals.css';

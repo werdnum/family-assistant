@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import EventFilters from './EventFilters';
 import EventCard from './EventCard';
-import EventsPagination from './EventsPagination';
+import EventFilters from './EventFilters';
 import styles from './EventsList.module.css';
+import EventsPagination from './EventsPagination';
 
 const EventsList = () => {
   const [searchParams, setSearchParams] = useSearchParams();

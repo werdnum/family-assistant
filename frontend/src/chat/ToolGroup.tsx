@@ -1,12 +1,12 @@
-import React, { useState, useMemo } from 'react';
-import { ChevronDownIcon } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useAssistantState } from '@assistant-ui/react';
+import { ChevronDownIcon } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { cn } from '@/lib/utils';
 import {
-  getToolIconInfo,
-  generateToolGroupSummary,
   categoryInfo,
+  generateToolGroupSummary,
+  getToolIconInfo,
   type ToolCategory,
 } from './toolIconMapping';
 

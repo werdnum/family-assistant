@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { CheckCircleIcon, ClockIcon, AlertCircleIcon, FileIcon } from 'lucide-react';
+import { AlertCircleIcon, CheckCircleIcon, ClockIcon, FileIcon } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
 
 interface AttachToResponseToolProps {
   toolName: string;
   args?: Record<string, unknown>;
   result?: string | Record<string, unknown>;
-  status: { type: string };
+  status: { type: string; reason?: string };
   attachments?: Array<Record<string, unknown>>;
 }
 

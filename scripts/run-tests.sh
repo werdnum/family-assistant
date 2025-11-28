@@ -305,6 +305,13 @@ if [ $SKIP_LINT -eq 0 ]; then
     (cd frontend && exec npm run check) &
     FRONTEND_PID=$!
     BACKGROUND_PIDS+=("$FRONTEND_PID")
+
+    # Start frontend TypeScript type checking
+    echo "${BLUE}  ▸ Starting frontend TypeScript type checking...${NC}"
+    FRONTEND_TS_START=$(date +%s)
+    (cd frontend && exec npm run typecheck) &
+    FRONTEND_TS_PID=$!
+    BACKGROUND_PIDS+=("$FRONTEND_TS_PID")
 fi
 
 # Wait for processes and collect results
@@ -312,6 +319,7 @@ PYRIGHT_EXIT=0
 TEST_EXIT=0
 PYLINT_EXIT=0
 FRONTEND_EXIT=0
+FRONTEND_TS_EXIT=0
 FRONTEND_TEST_EXIT=0
 
 # Wait for pytest (always running)
@@ -375,6 +383,18 @@ if [ $SKIP_LINT -eq 0 ]; then
         ELAPSED=$((END_TIME - FRONTEND_START))
         echo "${RED}  ❌ Frontend linting failed (${ELAPSED}s)${NC}"
     fi
+
+    # Wait for frontend TypeScript type checking
+    if wait "$FRONTEND_TS_PID"; then
+        END_TIME=$(date +%s)
+        ELAPSED=$((END_TIME - FRONTEND_TS_START))
+        echo "${GREEN}  ✓ Frontend TypeScript type checking complete (${ELAPSED}s)${NC}"
+    else
+        FRONTEND_TS_EXIT=$?
+        END_TIME=$(date +%s)
+        ELAPSED=$((END_TIME - FRONTEND_TS_START))
+        echo "${RED}  ❌ Frontend TypeScript type checking failed (${ELAPSED}s)${NC}"
+    fi
 fi
 
 # Calculate total time
@@ -386,7 +406,7 @@ echo "${BLUE}━━━━━━━━━━━━━━━━━━━━━━�
 echo "${BLUE}Total time: ${TOTAL_TIME}s${NC}"
 
 # Exit with appropriate code
-if [ $PYRIGHT_EXIT -ne 0 ] || [ $TEST_EXIT -ne 0 ] || [ $PYLINT_EXIT -ne 0 ] || [ $FRONTEND_EXIT -ne 0 ] || [ $FRONTEND_TEST_EXIT -ne 0 ]; then
+if [ $PYRIGHT_EXIT -ne 0 ] || [ $TEST_EXIT -ne 0 ] || [ $PYLINT_EXIT -ne 0 ] || [ $FRONTEND_EXIT -ne 0 ] || [ $FRONTEND_TS_EXIT -ne 0 ] || [ $FRONTEND_TEST_EXIT -ne 0 ]; then
     echo "${RED}Some checks failed!${NC}"
     if [ -f .report.json ]; then
         echo ""

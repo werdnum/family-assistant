@@ -1,32 +1,32 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
+import { Menu } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { Menu } from 'lucide-react';
-import { Thread } from './Thread';
-import ConversationSidebar from './ConversationSidebar';
-import { useStreamingResponse } from './useStreamingResponse';
-import { useLiveMessageUpdates } from './useLiveMessageUpdates';
-import { LOADING_MARKER } from './constants';
+import NavigationSheet from '../shared/NavigationSheet';
+import { parseToolArguments } from '../utils/toolUtils';
 import { generateUUID } from '../utils/uuid';
 import { defaultAttachmentAdapter } from './attachmentAdapter';
+import ConversationSidebar from './ConversationSidebar';
+import { LOADING_MARKER } from './constants';
+import { NotificationSettings } from './NotificationSettings';
+import ProfileSelector from './ProfileSelector';
+import { PushNotificationButton } from './PushNotificationButton';
+import { Thread } from './Thread';
+import { ToolConfirmationProvider } from './ToolConfirmationContext';
 import {
-  ChatAppProps,
-  Message,
-  MessageContent,
-  Conversation,
   BackendAttachment,
   BackendConversationMessage,
+  ChatAppProps,
+  Conversation,
   ConversationMessagesResponse,
+  Message,
+  MessageContent,
 } from './types';
-import NavigationSheet from '../shared/NavigationSheet';
-import { ToolConfirmationProvider } from './ToolConfirmationContext';
-import ProfileSelector from './ProfileSelector';
+import { useLiveMessageUpdates } from './useLiveMessageUpdates';
 import { useNotifications } from './useNotifications';
-import { NotificationSettings } from './NotificationSettings';
-import { PushNotificationButton } from './PushNotificationButton';
-import { parseToolArguments } from '../utils/toolUtils';
+import { useStreamingResponse } from './useStreamingResponse';
 
 const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) => {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -118,7 +118,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   );
 
   const handleConfirmation = useCallback(
-    async (toolCallId: string, requestId: string, approved: boolean) => {
+    async (_toolCallId: string, requestId: string, approved: boolean) => {
       try {
         const response = await fetch('/api/v1/chat/confirm_tool', {
           method: 'POST',
@@ -220,7 +220,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               return {
                 ...msg,
                 content: [{ type: 'text', text: content }, ...existingToolCalls],
-                status: 'done' as const,
+                status: { type: 'complete' as const },
                 isLoading: false, // Ensure loading state is cleared
               };
             }
@@ -287,26 +287,30 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             // Create new tool parts with new object references
             const toolParts: MessageContent[] = toolCalls.map((tc) => {
               const args = parseToolArguments(tc.arguments);
-              return {
-                type: 'tool-call',
+              const result: MessageContent = {
+                type: 'tool-call' as const,
                 toolCallId: tc.id as string,
                 toolName: tc.name as string,
-                args: args,
+                args: args as Record<string, unknown> | undefined,
                 argsText:
                   typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments),
-                // Ensure result and attachments are new objects if present
-                ...(tc.result && { result: tc.result as string }),
-                ...(tc.attachments && {
-                  attachments: Array.isArray(tc.attachments) ? [...tc.attachments] : tc.attachments,
-                }),
               };
+              // Add result if present
+              if (tc.result !== undefined) {
+                result.result = tc.result as string;
+              }
+              // Add attachments if present
+              if (tc.attachments !== undefined && Array.isArray(tc.attachments)) {
+                result.attachments = [...tc.attachments];
+              }
+              return result;
             });
 
             return {
               ...msg,
               content: [...existingTextContent, ...toolParts],
               isLoading: false,
-              status: { type: 'running' },
+              status: { type: 'running' as const },
             };
           }
           return msg;
@@ -325,7 +329,17 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     onToolCall: handleStreamingToolCall,
     onToolConfirmationRequest: handleConfirmationRequest,
     onToolConfirmationResult: handleConfirmationResult,
-  });
+  }) as {
+    sendStreamingMessage: (params: {
+      prompt: string;
+      conversationId: string;
+      profileId: string;
+      interfaceType: string;
+      attachments?: Array<{ id: string; type: string; name: string; content: string }>;
+    }) => Promise<void>;
+    cancelStream: () => void;
+    isStreaming: boolean;
+  };
 
   // Load messages for a conversation
   const loadConversationMessages = useCallback(async (convId: string) => {
@@ -386,7 +400,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               } else if (Array.isArray(msg.content)) {
                 for (const part of msg.content) {
                   if (part.type === 'text') {
-                    content.push({ type: 'text', text: part.text });
+                    content.push({ type: 'text', text: part.text as string });
                   }
                   // Skip image_url content types
                 }
@@ -408,7 +422,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
                   type: 'tool-call',
                   toolCallId: toolCall.id,
                   toolName: toolName,
-                  args: args,
+                  args: args as Record<string, unknown>,
                   argsText: argsText,
                   result: toolResponse ?? undefined,
                 });
@@ -761,7 +775,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       const userMessage: Message = {
         id: `msg_${Date.now()}`,
         role: 'user',
-        content: message.content,
+        content: message.content.map((c) => ({ type: 'text' as const, text: c.text })),
         createdAt: new Date(),
         attachments: processedAttachments,
       };
@@ -805,6 +819,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
     // Ensure each content item has the right structure
     if (Array.isArray(converted.content)) {
+      // @ts-expect-error - assistant-ui type mismatch with content item filtering
       converted.content = converted.content.filter((item) => item && typeof item === 'object');
       if (converted.content.length === 0) {
         converted.content = [{ type: 'text', text: '' }];
@@ -817,9 +832,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const runtime = useExternalStoreRuntime({
     messages,
     isRunning: isLoading || isStreaming,
+    // @ts-expect-error - assistant-ui type mismatch with onNew handler signature
     onNew: handleNew,
+    // @ts-expect-error - assistant-ui type mismatch with convertMessage return type
     convertMessage,
     adapters: {
+      // @ts-expect-error - assistant-ui type mismatch with attachment adapter
       attachments: defaultAttachmentAdapter,
     },
   });

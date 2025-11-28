@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { MarkdownText } from '../chat/MarkdownText';
 import styles from './ContextPage.module.css';
 

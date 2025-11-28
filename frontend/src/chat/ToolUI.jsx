@@ -1,9 +1,9 @@
+import { AlertCircleIcon, CheckCircleIcon, ClockIcon, DownloadIcon } from 'lucide-react';
 import React, { lazy, Suspense } from 'react';
-import { CheckCircleIcon, ClockIcon, AlertCircleIcon, DownloadIcon } from 'lucide-react';
+import ToolParameterViewer from '@/components/tools/ToolParameterViewer';
 import { Button } from '@/components/ui/button';
 import { getAttachmentKey } from '../types/attachments';
 import { AttachToResponseTool } from './AttachToResponseTool';
-import ToolParameterViewer from '@/components/tools/ToolParameterViewer';
 
 // Lazy load syntax highlighter to reduce initial bundle size
 const LazyPrism = lazy(() =>
