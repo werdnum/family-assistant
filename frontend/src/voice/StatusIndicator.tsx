@@ -100,7 +100,7 @@ export function StatusIndicator({ connectionState, activityState }: StatusIndica
         )}
 
         {/* Main orb */}
-        <div className={orbClasses}>
+        <div className={`${orbClasses} relative`}>
           {/* Inner highlight */}
           <div className="absolute top-2 left-2 w-6 h-6 rounded-full bg-white opacity-30" />
         </div>
