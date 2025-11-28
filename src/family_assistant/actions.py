@@ -28,6 +28,7 @@ async def execute_action(
     action_config: dict[str, Any],
     conversation_id: str,
     interface_type: str = "telegram",
+    user_name: str | None = None,  # Added user_name
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     context: dict[str, Any] | None = None,
     scheduled_at: datetime | None = None,
@@ -42,6 +43,7 @@ async def execute_action(
         action_config: Configuration for the action
         conversation_id: Conversation to execute in
         interface_type: Interface type (telegram, web, etc)
+        user_name: Optional user name context for the action
         context: Additional context (e.g., event data, trigger info)
         scheduled_at: When to execute the action (None for immediate)
         recurrence_rule: RRULE for recurring tasks (None for one-time)
@@ -62,16 +64,20 @@ async def execute_action(
 
         task_id = f"action_{int(time.time() * 1000)}"
 
+        payload = {
+            "interface_type": interface_type,
+            "conversation_id": conversation_id,
+            "callback_context": callback_context,
+            "scheduling_timestamp": datetime.now(UTC).isoformat(),
+        }
+        if user_name:
+            payload["user_name"] = user_name
+
         await enqueue_task(
             db_context=db_ctx,
             task_id=task_id,
             task_type="llm_callback",
-            payload={
-                "interface_type": interface_type,
-                "conversation_id": conversation_id,
-                "callback_context": callback_context,
-                "scheduling_timestamp": datetime.now(UTC).isoformat(),
-            },
+            payload=payload,
             scheduled_at=scheduled_at,
             recurrence_rule=recurrence_rule,
         )
@@ -79,16 +85,20 @@ async def execute_action(
     elif action_type == ActionType.SCRIPT:
         task_id = f"script_{int(time.time() * 1000)}"
 
+        payload = {
+            "script_code": action_config.get("script_code", ""),
+            "config": action_config,
+            "conversation_id": conversation_id,
+            **context,
+        }
+        if user_name:
+            payload["user_name"] = user_name
+
         await enqueue_task(
             db_context=db_ctx,
             task_id=task_id,
             task_type="script_execution",
-            payload={
-                "script_code": action_config.get("script_code", ""),
-                "config": action_config,
-                "conversation_id": conversation_id,
-                **context,
-            },
+            payload=payload,
             scheduled_at=scheduled_at,
             recurrence_rule=recurrence_rule,
         )

@@ -125,6 +125,7 @@ async def _schedule_reminder_follow_up(
     payload = {
         "interface_type": exec_context.interface_type,
         "conversation_id": exec_context.conversation_id,
+        "user_name": exec_context.user_name,  # Preserve user_name for follow-up
         "callback_context": original_context,
         "scheduling_timestamp": current_scheduling_timestamp,
         "reminder_config": {
@@ -350,7 +351,7 @@ async def handle_llm_callback(
             # turn_id is generated within handle_chat_interaction
             trigger_content_parts=[{"type": "text", "text": trigger_text}],
             trigger_interface_message_id=None,  # System trigger
-            user_name="System",  # Callback initiated by system
+            user_name=exec_context.user_name,  # Use preserved user name from context
             replied_to_interface_id=None,  # Not a reply
             request_confirmation_callback=None,  # No confirmation for system callbacks
             trigger_attachments=trigger_attachments,  # Pass attachments from script wake_llm
@@ -717,11 +718,14 @@ class TaskWorker:
                     else "unknown_conversation"
                 )
 
+            # Extract user_name from payload if available, else default
+            user_name = payload_dict.get("user_name", "TaskWorkerUser")
+
             exec_context = ToolExecutionContext(
                 # Pass new identifiers
                 interface_type=final_interface_type,
                 conversation_id=final_conversation_id,
-                user_name="TaskWorkerUser",  # Added
+                user_name=user_name,  # Use user_name from payload or default
                 turn_id=str(
                     uuid.uuid4()
                 ),  # Generate a new turn_id for this task execution
@@ -1165,6 +1169,7 @@ async def _process_script_wake_llm(
     payload = {
         "interface_type": exec_context.interface_type,
         "conversation_id": exec_context.conversation_id,
+        "user_name": exec_context.user_name,  # Preserve user_name
         "callback_context": wake_message,
         "scheduling_timestamp": scheduling_timestamp,
         "metadata": combined_context,
