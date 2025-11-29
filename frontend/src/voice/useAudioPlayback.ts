@@ -12,7 +12,6 @@ import { createAudioBufferFromPCM } from './audioUtils';
 
 interface QueuedAudio {
   buffer: AudioBuffer;
-  source?: AudioBufferSourceNode;
 }
 
 /**
@@ -25,6 +24,7 @@ export function useAudioPlayback(): AudioPlaybackState {
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioQueueRef = useRef<QueuedAudio[]>([]);
+  const activeSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const nextStartTimeRef = useRef<number>(0);
   const isProcessingRef = useRef(false);
 
@@ -75,21 +75,23 @@ export function useAudioPlayback(): AudioPlaybackState {
       source.buffer = item.buffer;
       source.connect(audioContext.destination);
 
+      // Track active source for stopping later
+      activeSourcesRef.current.add(source);
+
       // Schedule playback
       source.start(nextStartTimeRef.current);
 
       // Update next start time for gapless playback
       nextStartTimeRef.current += item.buffer.duration;
 
-      // Track playing state
+      // Track playing state and cleanup
       source.onended = () => {
-        // Check if this was the last audio in the queue
-        if (audioQueueRef.current.length === 0) {
+        activeSourcesRef.current.delete(source);
+        // Check if all audio finished
+        if (audioQueueRef.current.length === 0 && activeSourcesRef.current.size === 0) {
           setIsPlaying(false);
         }
       };
-
-      item.source = source;
     }
 
     setIsPlaying(true);
@@ -135,16 +137,15 @@ export function useAudioPlayback(): AudioPlaybackState {
    * Stop all playback and clear the queue.
    */
   const stopPlayback = useCallback(() => {
-    // Stop all scheduled sources
-    audioQueueRef.current.forEach((item) => {
-      if (item.source) {
-        try {
-          item.source.stop();
-        } catch {
-          // Ignore errors if already stopped
-        }
+    // Stop all active sources (currently playing or scheduled)
+    activeSourcesRef.current.forEach((source) => {
+      try {
+        source.stop();
+      } catch {
+        // Ignore errors if already stopped
       }
     });
+    activeSourcesRef.current.clear();
 
     // Clear the queue
     audioQueueRef.current = [];
