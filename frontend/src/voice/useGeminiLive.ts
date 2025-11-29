@@ -423,6 +423,9 @@ export function useGeminiLive(): GeminiLiveState {
                   },
                 },
               },
+              // Enable transcription for UI display
+              inputAudioTranscription: {},
+              outputAudioTranscription: {},
             },
           });
         }
