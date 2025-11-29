@@ -8,6 +8,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash \
     && cargo binstall -y shpool
 
+# Build stage for gh-token
+FROM golang:1.24 AS gh-token-builder
+RUN go install github.com/Link-/gh-token@latest
+
 FROM ubuntu:24.04 AS base
 
 # Prevent interactive prompts during package installation
@@ -21,6 +25,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         ripgrep fd-find micro unzip build-essential \
         python3 python3-pip python3-venv \
         ffmpeg libturbojpeg0-dev \
+    && mkdir -p -m 755 /etc/apt/keyrings \
+    && wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
+    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update && apt-get install -y gh \
     && ln -s /usr/bin/fdfind /usr/bin/fd
 
 # PostgreSQL repository and client
@@ -43,6 +52,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 # Binary tools
 COPY --from=shpool-builder /usr/local/cargo/bin/shpool /usr/local/bin/shpool
+COPY --from=gh-token-builder /go/bin/gh-token /usr/local/bin/gh-token
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 RUN ARCH=$(dpkg --print-architecture) && \
@@ -127,10 +137,12 @@ RUN mkdir -p /opt/claude-settings
 COPY .devcontainer/settings.local.json /opt/claude-settings/
 COPY .devcontainer/oneshot-config /opt/oneshot-config/
 COPY .devcontainer/setup-workspace.sh /usr/local/bin/
+COPY .devcontainer/setup-git-auth.sh /usr/local/bin/
 COPY .devcontainer/claude-wrapper.sh /usr/local/bin/claude-wrapper
 COPY .devcontainer/throttle_backspaces.py /usr/local/bin/
 COPY .devcontainer/merge-settings.py /usr/local/bin/
 RUN chmod +x /usr/local/bin/setup-workspace.sh \
+               /usr/local/bin/setup-git-auth.sh \
                /usr/local/bin/claude-wrapper \
                /usr/local/bin/throttle_backspaces.py \
                /usr/local/bin/merge-settings.py && \
