@@ -377,8 +377,10 @@ export function useGeminiLive(): GeminiLiveState {
         // Create a promise that resolves when WebSocket is actually open
         // This is necessary because live.connect() returns before the WebSocket is ready
         let resolveOpen: () => void;
-        const openPromise = new Promise<void>((resolve) => {
+        let rejectOpen: (error: Error) => void;
+        const openPromise = new Promise<void>((resolve, reject) => {
           resolveOpen = resolve;
+          rejectOpen = reject;
         });
 
         // Check for test seam - allows injecting mock session for integration tests
@@ -402,13 +404,19 @@ export function useGeminiLive(): GeminiLiveState {
             model: tokenData.model,
             callbacks: {
               onopen: () => {
-                console.log('[Gemini] WebSocket connection opened');
                 resolveOpen!();
               },
               onmessage: handleSessionMessage,
-              onerror: (e: ErrorEvent) =>
-                handleSessionError(new Error(e.message || 'WebSocket error')),
-              onclose: handleSessionClose,
+              onerror: (e: ErrorEvent) => {
+                const error = new Error(e.message || 'WebSocket error');
+                rejectOpen!(error);
+                handleSessionError(error);
+              },
+              onclose: (e: CloseEvent) => {
+                // Reject openPromise if connection closes before opening
+                rejectOpen!(new Error(e.reason || 'Connection closed before opening'));
+                handleSessionClose();
+              },
             },
             config: {
               responseModalities: [Modality.AUDIO],
