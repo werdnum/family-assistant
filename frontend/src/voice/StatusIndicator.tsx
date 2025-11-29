@@ -10,6 +10,8 @@ import type { VoiceActivityState, VoiceConnectionState } from './types';
 interface StatusIndicatorProps {
   connectionState: VoiceConnectionState;
   activityState: VoiceActivityState;
+  /** Detailed status message during connection (e.g., "Fetching token...", "Connecting to Gemini...") */
+  connectingStatus?: string;
 }
 
 /**
@@ -17,13 +19,14 @@ interface StatusIndicatorProps {
  */
 function getStatusLabel(
   connectionState: VoiceConnectionState,
-  activityState: VoiceActivityState
+  activityState: VoiceActivityState,
+  connectingStatus?: string
 ): string {
   switch (connectionState) {
     case 'disconnected':
       return 'Ready to connect';
     case 'connecting':
-      return 'Connecting...';
+      return connectingStatus || 'Connecting...';
     case 'error':
       return 'Connection error';
     case 'connected':
@@ -77,8 +80,12 @@ function getOrbClasses(
 /**
  * Status indicator component showing a visual orb with state label.
  */
-export function StatusIndicator({ connectionState, activityState }: StatusIndicatorProps) {
-  const statusLabel = getStatusLabel(connectionState, activityState);
+export function StatusIndicator({
+  connectionState,
+  activityState,
+  connectingStatus,
+}: StatusIndicatorProps) {
+  const statusLabel = getStatusLabel(connectionState, activityState, connectingStatus);
   const orbClasses = getOrbClasses(connectionState, activityState);
 
   return (

@@ -2,6 +2,8 @@
  * Voice mode TypeScript types for Gemini Live API integration.
  */
 
+import type { Tool } from '@google/genai';
+
 /**
  * Connection states for the voice session.
  */
@@ -22,6 +24,8 @@ export interface VoiceSessionState {
   sessionStartTime: number | null;
   /** Session duration in seconds */
   sessionDuration: number;
+  /** Detailed status message during connection (e.g., "Fetching token...", "Connecting to Gemini...") */
+  connectingStatus?: string;
 }
 
 /**
@@ -59,44 +63,14 @@ export interface GeminiToolResponse {
 
 /**
  * Ephemeral token response from backend.
+ * Uses SDK's Tool type directly to ensure type compatibility.
  */
 export interface EphemeralTokenResponse {
   token: string;
   expires_at: string;
-  tools: GeminiToolDeclaration[];
+  tools: Tool[];
   system_instruction: string;
   model: string;
-}
-
-/**
- * Gemini tool declaration format.
- */
-export interface GeminiToolDeclaration {
-  functionDeclarations: GeminiFunctionDeclaration[];
-}
-
-/**
- * Gemini function declaration.
- */
-export interface GeminiFunctionDeclaration {
-  name: string;
-  description: string;
-  parameters?: {
-    type: string;
-    properties?: Record<string, GeminiParameterSchema>;
-    required?: string[];
-  };
-}
-
-/**
- * Gemini parameter schema.
- */
-export interface GeminiParameterSchema {
-  type: string;
-  description?: string;
-  properties?: Record<string, GeminiParameterSchema>;
-  items?: GeminiParameterSchema;
-  enum?: string[];
 }
 
 /**
