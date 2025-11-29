@@ -154,6 +154,7 @@ export function VoicePage() {
           <StatusIndicator
             connectionState={sessionState.connection}
             activityState={sessionState.activity}
+            connectingStatus={sessionState.connectingStatus}
           />
         </div>
 

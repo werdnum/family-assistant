@@ -78,6 +78,7 @@ export function useGeminiLive(): GeminiLiveState {
   const [sessionStartTime, setSessionStartTime] = useState<number | null>(null);
   const [sessionDuration, setSessionDuration] = useState(0);
   const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
+  const [connectingStatus, setConnectingStatus] = useState<string | undefined>(undefined);
 
   // Refs for mutable state
   const sessionRef = useRef<Session | null>(null);
@@ -342,6 +343,7 @@ export function useGeminiLive(): GeminiLiveState {
 
       try {
         setConnectionState('connecting');
+        setConnectingStatus('Fetching token...');
         setError(null);
         setTranscripts([]);
 
@@ -361,6 +363,8 @@ export function useGeminiLive(): GeminiLiveState {
 
         const tokenData: EphemeralTokenResponse = await tokenResponse.json();
 
+        setConnectingStatus('Connecting to Gemini...');
+
         // Create callbacks object for the session
         const callbacks: GeminiLiveCallbacks = {
           onMessage: handleSessionMessage,
@@ -370,9 +374,18 @@ export function useGeminiLive(): GeminiLiveState {
 
         let session: Session;
 
+        // Create a promise that resolves when WebSocket is actually open
+        // This is necessary because live.connect() returns before the WebSocket is ready
+        let resolveOpen: () => void;
+        const openPromise = new Promise<void>((resolve) => {
+          resolveOpen = resolve;
+        });
+
         // Check for test seam - allows injecting mock session for integration tests
         if (typeof window !== 'undefined' && window.__TEST_GEMINI_SESSION_FACTORY__) {
           session = await window.__TEST_GEMINI_SESSION_FACTORY__(tokenData, callbacks);
+          // For tests, resolve immediately since there's no real WebSocket
+          resolveOpen!();
         } else {
           // Create Gemini client with ephemeral token
           const client = new GoogleGenAI({
@@ -388,6 +401,10 @@ export function useGeminiLive(): GeminiLiveState {
           session = await client.live.connect({
             model: tokenData.model,
             callbacks: {
+              onopen: () => {
+                console.log('[Gemini] WebSocket connection opened');
+                resolveOpen!();
+              },
               onmessage: handleSessionMessage,
               onerror: (e: ErrorEvent) =>
                 handleSessionError(new Error(e.message || 'WebSocket error')),
@@ -411,13 +428,20 @@ export function useGeminiLive(): GeminiLiveState {
         }
         sessionRef.current = session;
 
-        // Start audio capture
+        // Wait for WebSocket to actually be open before starting audio capture
+        // This prevents "WebSocket is already in CLOSING or CLOSED state" errors
+        setConnectingStatus('Waiting for connection...');
+        await openPromise;
+
+        // Start audio capture now that connection is ready
+        setConnectingStatus('Starting microphone...');
         await audioCapture.startCapture();
 
         // Set up session state
         setConnectionState('connected');
         setActivityState('listening');
         setSessionStartTime(Date.now());
+        setConnectingStatus(undefined); // Clear connecting status
         reconnectAttemptsRef.current = 0;
 
         // Start session timer
@@ -435,6 +459,7 @@ export function useGeminiLive(): GeminiLiveState {
         console.error('Error connecting to Gemini:', err);
         setError(err instanceof Error ? err.message : 'Failed to connect');
         setConnectionState('error');
+        setConnectingStatus(undefined); // Clear connecting status on error
       }
     },
     [connectionState, audioCapture, handleSessionMessage, handleSessionError, handleSessionClose]
@@ -490,6 +515,7 @@ export function useGeminiLive(): GeminiLiveState {
     error,
     sessionStartTime,
     sessionDuration,
+    connectingStatus,
   };
 
   return {

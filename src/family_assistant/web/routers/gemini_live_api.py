@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 gemini_live_router = APIRouter(prefix="/gemini", tags=["Gemini Live API"])
 
 # Gemini Live API model for voice
-GEMINI_LIVE_MODEL = "gemini-2.5-flash-preview-native-audio-dialog"
+# See: https://ai.google.dev/gemini-api/docs/models
+GEMINI_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-09-2025"
 
 
 # Type aliases for dynamic JSON schema structures.
