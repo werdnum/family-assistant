@@ -176,6 +176,17 @@ export function VoicePage() {
         <div className="text-center text-sm text-gray-500 dark:text-gray-400 space-y-1">
           <p>Voice sessions are limited to {SESSION_CONFIG.MAX_DURATION_MINUTES} minutes.</p>
           <p>Transcripts are not saved after ending the call.</p>
+          <p className="flex items-center justify-center gap-1.5">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 3a9 9 0 00-9 9v4a2 2 0 002 2h1a2 2 0 002-2v-3a2 2 0 00-2-2H5a7 7 0 0114 0h-1a2 2 0 00-2 2v3a2 2 0 002 2h1a2 2 0 002-2v-4a9 9 0 00-9-9z"
+              />
+            </svg>
+            For best results, use headphones
+          </p>
         </div>
       </main>
     </div>

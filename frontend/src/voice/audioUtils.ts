@@ -83,13 +83,29 @@ export function createAudioWorkletProcessor(): string {
         this.buffer = [];
         this.targetSampleRate = ${AUDIO_CONFIG.INPUT_SAMPLE_RATE};
         this.chunkSize = ${AUDIO_CONFIG.CHUNK_SIZE};
+        // Ducking gain: 1.0 = normal, 0.1 = ducked (while AI is speaking)
+        // Uses 10% (not mute) to allow barge-in and avoid iOS "double mute" bug
+        this.duckingGain = 1.0;
+
+        // Listen for ducking control messages from main thread
+        this.port.onmessage = (event) => {
+          if (event.data.type === 'setDucking') {
+            this.duckingGain = event.data.gain;
+          }
+        };
       }
 
       process(inputs) {
         const input = inputs[0];
         if (!input || !input[0]) return true;
 
-        const samples = input[0];
+        // Copy samples and apply ducking BEFORE resampling
+        // This suppresses echo from AI playback while preserving user's loud voice for barge-in
+        const rawSamples = input[0];
+        const samples = new Float32Array(rawSamples.length);
+        for (let i = 0; i < rawSamples.length; i++) {
+          samples[i] = rawSamples[i] * this.duckingGain;
+        }
 
         // Resample if necessary (browser might not be at 16kHz)
         const ratio = sampleRate / this.targetSampleRate;

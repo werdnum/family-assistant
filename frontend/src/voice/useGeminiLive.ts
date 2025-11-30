@@ -85,13 +85,15 @@ export function useGeminiLive(): GeminiLiveState {
   const clientRef = useRef<GoogleGenAI | null>(null);
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const currentTranscriptRef = useRef<TranscriptEntry | null>(null);
+  const duckingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Audio hooks
   const audioPlayback = useAudioPlayback();
 
-  // Store stop functions in refs to avoid dependency issues with disconnect
+  // Store audio control functions in refs to avoid dependency issues with disconnect
   const stopCaptureRef = useRef<() => void>(() => {});
   const stopPlaybackRef = useRef<() => void>(() => {});
+  const setDuckingRef = useRef<(isDucked: boolean) => void>(() => {});
 
   /**
    * Handle incoming audio data from Gemini.
@@ -248,6 +250,7 @@ export function useGeminiLive(): GeminiLiveState {
   // Keep refs up to date for stable disconnect function
   stopCaptureRef.current = audioCapture.stopCapture;
   stopPlaybackRef.current = audioPlayback.stopPlayback;
+  setDuckingRef.current = audioCapture.setDucking;
 
   /**
    * Handle incoming messages from the Gemini session (callback-based API).
@@ -285,12 +288,14 @@ export function useGeminiLive(): GeminiLiveState {
         }
 
         // Handle input transcription
-        if (content.inputTranscription?.text) {
+        // Only add to transcript when finished=true, otherwise it's a partial chunk
+        if (content.inputTranscription?.text && content.inputTranscription.finished) {
           handleTranscription(content.inputTranscription.text, 'user', true);
         }
 
         // Handle output transcription
-        if (content.outputTranscription?.text) {
+        // Only add to transcript when finished=true, otherwise it's a partial chunk
+        if (content.outputTranscription?.text && content.outputTranscription.finished) {
           handleTranscription(content.outputTranscription.text, 'assistant', true);
         }
       }
@@ -521,6 +526,33 @@ export function useGeminiLive(): GeminiLiveState {
       disconnect();
     };
   }, [disconnect]);
+
+  // Toggle mic ducking based on activity state to suppress echo while AI is speaking
+  // Uses 200ms delay after AI stops to let room echo die down
+  useEffect(() => {
+    if (activityState === 'speaking') {
+      // AI is speaking - duck mic immediately
+      if (duckingTimeoutRef.current) {
+        clearTimeout(duckingTimeoutRef.current);
+        duckingTimeoutRef.current = null;
+      }
+      setDuckingRef.current(true);
+    } else if (activityState === 'listening') {
+      // AI stopped speaking - wait 200ms for room echo to die down before restoring mic
+      duckingTimeoutRef.current = setTimeout(() => {
+        setDuckingRef.current(false);
+        duckingTimeoutRef.current = null;
+      }, 200);
+    }
+
+    // Cleanup timeout on unmount or state change
+    return () => {
+      if (duckingTimeoutRef.current) {
+        clearTimeout(duckingTimeoutRef.current);
+        duckingTimeoutRef.current = null;
+      }
+    };
+  }, [activityState]);
 
   // Build session state object
   const sessionState: VoiceSessionState = {
