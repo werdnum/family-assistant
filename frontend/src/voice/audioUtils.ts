@@ -68,43 +68,6 @@ export function int16ToFloat32(int16Array: Int16Array): Float32Array {
 }
 
 /**
- * Resample audio data to a different sample rate.
- *
- * Uses linear interpolation for simplicity. For production use,
- * consider using a more sophisticated resampling algorithm.
- *
- * @param samples - Input audio samples
- * @param fromSampleRate - Original sample rate
- * @param toSampleRate - Target sample rate
- * @returns Resampled audio samples
- */
-export function resampleAudio(
-  samples: Float32Array,
-  fromSampleRate: number,
-  toSampleRate: number
-): Float32Array {
-  if (fromSampleRate === toSampleRate) {
-    return samples;
-  }
-
-  const ratio = fromSampleRate / toSampleRate;
-  const outputLength = Math.ceil(samples.length / ratio);
-  const output = new Float32Array(outputLength);
-
-  for (let i = 0; i < outputLength; i++) {
-    const srcIndex = i * ratio;
-    const srcIndexFloor = Math.floor(srcIndex);
-    const srcIndexCeil = Math.min(srcIndexFloor + 1, samples.length - 1);
-    const fraction = srcIndex - srcIndexFloor;
-
-    // Linear interpolation
-    output[i] = samples[srcIndexFloor] * (1 - fraction) + samples[srcIndexCeil] * fraction;
-  }
-
-  return output;
-}
-
-/**
  * Create an AudioWorklet processor script as a blob URL.
  *
  * This creates a worklet that captures audio from the microphone,

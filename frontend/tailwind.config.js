@@ -80,12 +80,24 @@ export default {
           from: { height: 'var(--radix-collapsible-content-height)' },
           to: { height: '0' },
         },
+        'ping-slow': {
+          '75%, 100%': {
+            transform: 'scale(2)',
+            opacity: '0',
+          },
+        },
+        'sound-wave': {
+          '0%, 100%': { height: '0.5rem' },
+          '50%': { height: '1.25rem' },
+        },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
         'accordion-up': 'accordion-up 0.2s ease-out',
         'collapsible-down': 'collapsible-down 0.2s ease-out',
         'collapsible-up': 'collapsible-up 0.2s ease-out',
+        'ping-slow': 'ping-slow 2s cubic-bezier(0, 0, 0.2, 1) infinite',
+        'sound-wave': 'sound-wave 1s ease-in-out infinite',
       },
     },
   },
