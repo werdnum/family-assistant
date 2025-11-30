@@ -86,6 +86,8 @@ export function createAudioWorkletProcessor(): string {
         // Ducking gain: 1.0 = normal, 0.1 = ducked (while AI is speaking)
         // Uses 10% (not mute) to allow barge-in and avoid iOS "double mute" bug
         this.duckingGain = 1.0;
+        // Pre-allocated working buffer to avoid GC pressure on audio thread
+        this.workBuffer = null;
 
         // Listen for ducking control messages from main thread
         this.port.onmessage = (event) => {
@@ -102,7 +104,11 @@ export function createAudioWorkletProcessor(): string {
         // Copy samples and apply ducking BEFORE resampling
         // This suppresses echo from AI playback while preserving user's loud voice for barge-in
         const rawSamples = input[0];
-        const samples = new Float32Array(rawSamples.length);
+        // Reuse working buffer to avoid GC pressure on audio thread
+        if (!this.workBuffer || this.workBuffer.length !== rawSamples.length) {
+          this.workBuffer = new Float32Array(rawSamples.length);
+        }
+        const samples = this.workBuffer;
         for (let i = 0; i < rawSamples.length; i++) {
           samples[i] = rawSamples[i] * this.duckingGain;
         }
