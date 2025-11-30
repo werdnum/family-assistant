@@ -44,21 +44,34 @@ export function useAudioCapture({
       setError(null);
 
       // Request microphone access
+      // NOTE: Do NOT force sampleRate - iOS AEC breaks when forced to 16kHz
+      // Let the browser capture at native rate (44.1k/48k), AudioWorklet resamples to 16kHz
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          sampleRate: AUDIO_CONFIG.INPUT_SAMPLE_RATE,
-          channelCount: AUDIO_CONFIG.CHANNELS,
+          // REMOVED: sampleRate - breaks iOS AEC
+          channelCount: AUDIO_CONFIG.CHANNELS, // Mono - prevents iOS "Music Mode" which disables AEC
+          // Standard AEC/noise processing
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
+          // Chrome/Chromium-specific aggressive AEC constraints (ignored on iOS WebKit)
+          // These are non-standard WebRTC constraints supported by Chrome but not in TypeScript's
+          // MediaTrackConstraints interface. They enable more aggressive echo cancellation.
+          // See: https://developer.chrome.com/docs/web-platform/webrtc/constraints
+          ...({
+            googEchoCancellation: true,
+            googExperimentalEchoCancellation: true,
+            googAutoGainControl: true,
+            googNoiseSuppression: true,
+            googHighpassFilter: true,
+          } as MediaTrackConstraints),
         },
       });
       mediaStreamRef.current = stream;
 
-      // Create audio context
-      const audioContext = new AudioContext({
-        sampleRate: AUDIO_CONFIG.INPUT_SAMPLE_RATE,
-      });
+      // Create audio context - let browser use native sample rate for best AEC
+      // AudioWorklet handles resampling to 16kHz
+      const audioContext = new AudioContext();
       audioContextRef.current = audioContext;
 
       // Create and register the AudioWorklet processor
@@ -132,10 +145,22 @@ export function useAudioCapture({
     setIsCapturing(false);
   }, []);
 
+  /**
+   * Set ducking level to suppress echo while AI is speaking.
+   * Uses 10% volume (not mute) to allow barge-in and avoid iOS "double mute" bug.
+   */
+  const setDucking = useCallback((isDucked: boolean) => {
+    workletNodeRef.current?.port.postMessage({
+      type: 'setDucking',
+      gain: isDucked ? 0.1 : 1.0, // 10% when ducking, 100% otherwise
+    });
+  }, []);
+
   return {
     isCapturing,
     error,
     startCapture,
     stopCapture,
+    setDucking,
   };
 }

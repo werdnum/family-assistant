@@ -81,6 +81,8 @@ export interface AudioCaptureState {
   error: string | null;
   startCapture: () => Promise<void>;
   stopCapture: () => void;
+  /** Set ducking level (true = 10% volume to suppress echo while AI speaks) */
+  setDucking: (isDucked: boolean) => void;
 }
 
 /**
