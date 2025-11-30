@@ -69,7 +69,11 @@ if [ "$(id -u)" = "0" ]; then
 fi
 
 # Set up GitHub App authentication
-/usr/local/bin/setup-git-auth.sh
+if [ "$RUNNING_AS_ROOT" = "true" ]; then
+    runuser -u claude -- /usr/local/bin/setup-git-auth.sh
+else
+    /usr/local/bin/setup-git-auth.sh
+fi
 
 (flock -x 200
 
