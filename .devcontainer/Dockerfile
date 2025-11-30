@@ -138,11 +138,13 @@ COPY .devcontainer/settings.local.json /opt/claude-settings/
 COPY .devcontainer/oneshot-config /opt/oneshot-config/
 COPY .devcontainer/setup-workspace.sh /usr/local/bin/
 COPY .devcontainer/setup-git-auth.sh /usr/local/bin/
+COPY .devcontainer/gh-wrapper /usr/local/bin/gh
 COPY .devcontainer/claude-wrapper.sh /usr/local/bin/claude-wrapper
 COPY .devcontainer/throttle_backspaces.py /usr/local/bin/
 COPY .devcontainer/merge-settings.py /usr/local/bin/
 RUN chmod +x /usr/local/bin/setup-workspace.sh \
                /usr/local/bin/setup-git-auth.sh \
+               /usr/local/bin/gh \
                /usr/local/bin/claude-wrapper \
                /usr/local/bin/throttle_backspaces.py \
                /usr/local/bin/merge-settings.py && \

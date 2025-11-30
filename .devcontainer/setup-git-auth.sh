@@ -18,16 +18,6 @@ if [ -n "$GITHUB_APP_PRIVATE_KEY" ] && [ -n "$GITHUB_APP_ID" ] && [ -n "$GITHUB_
     }; f"
 
     echo "Git credential helper configured."
-
-    # Create gh wrapper
-    cat > /home/claude/.local/bin/gh <<EOF
-#!/bin/bash
-export GH_TOKEN=\$(gh-token generate -k "\$GITHUB_APP_PRIVATE_KEY" -i "\$GITHUB_APP_ID" -n "\$GITHUB_APP_INSTALLATION_ID")
-exec /usr/bin/gh "\$@"
-EOF
-    chmod +x /home/claude/.local/bin/gh
-
-    echo "gh CLI wrapper configured at /home/claude/.local/bin/gh"
 else
     echo "GitHub App authentication skipped (missing environment variables)."
 fi
