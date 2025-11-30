@@ -1,0 +1,11 @@
+#!/bin/bash
+# Wrapper for gh CLI to inject GitHub App authentication if available
+
+if [ -n "$GITHUB_APP_PRIVATE_KEY" ] && [ -n "$GITHUB_APP_ID" ] && [ -n "$GITHUB_APP_INSTALLATION_ID" ]; then
+    TOKEN=$(gh-token generate -k "$GITHUB_APP_PRIVATE_KEY" -i "$GITHUB_APP_ID" -n "$GITHUB_APP_INSTALLATION_ID")
+    if [ $? -eq 0 ] && [ -n "$TOKEN" ]; then
+        export GH_TOKEN="$TOKEN"
+    fi
+fi
+
+exec /usr/bin/gh "$@"
