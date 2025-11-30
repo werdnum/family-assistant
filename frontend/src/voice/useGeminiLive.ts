@@ -84,8 +84,15 @@ export function useGeminiLive(): GeminiLiveState {
   const sessionRef = useRef<Session | null>(null);
   const clientRef = useRef<GoogleGenAI | null>(null);
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const currentTranscriptRef = useRef<TranscriptEntry | null>(null);
   const duckingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track last transcription for accumulation (speaker, timestamp, entry ID)
+  const lastTranscriptRef = useRef<{
+    role: 'user' | 'assistant';
+    timestamp: number;
+    entryId: string;
+  } | null>(null);
+  // Gap threshold in ms - start new entry if gap exceeds this
+  const TRANSCRIPTION_GAP_MS = 2000;
 
   // Audio hooks
   const audioPlayback = useAudioPlayback();
@@ -109,41 +116,48 @@ export function useGeminiLive(): GeminiLiveState {
 
   /**
    * Handle transcription updates from Gemini.
+   * Accumulates text for the same speaker, creates new entry on speaker change or time gap.
    */
-  const handleTranscription = useCallback(
-    (text: string, role: 'user' | 'assistant', isFinal: boolean) => {
-      if (!text.trim()) {
-        return;
-      }
+  const handleTranscription = useCallback((text: string, role: 'user' | 'assistant') => {
+    if (!text) {
+      return;
+    }
 
-      if (isFinal) {
-        // Create or finalize transcript entry
-        const newEntry: TranscriptEntry = {
-          id: generateTranscriptId(),
-          role,
-          text: text.trim(),
-          timestamp: new Date(),
-          isFinal: true,
-        };
-        setTranscripts((prev) => [...prev, newEntry]);
-        currentTranscriptRef.current = null;
-      } else {
-        // Update interim transcript
-        if (currentTranscriptRef.current?.role === role) {
-          currentTranscriptRef.current.text = text.trim();
-        } else {
-          currentTranscriptRef.current = {
-            id: generateTranscriptId(),
-            role,
-            text: text.trim(),
-            timestamp: new Date(),
-            isFinal: false,
+    const now = Date.now();
+    const last = lastTranscriptRef.current;
+
+    // Check if we should append to existing entry or create new one
+    const shouldAppend =
+      last !== null && last.role === role && now - last.timestamp < TRANSCRIPTION_GAP_MS;
+
+    if (shouldAppend && last) {
+      // Append to existing entry
+      setTranscripts((prev) => {
+        const updated = [...prev];
+        const lastIndex = updated.findIndex((t) => t.id === last.entryId);
+        if (lastIndex >= 0) {
+          updated[lastIndex] = {
+            ...updated[lastIndex],
+            text: updated[lastIndex].text + text,
           };
         }
-      }
-    },
-    []
-  );
+        return updated;
+      });
+      lastTranscriptRef.current = { role, timestamp: now, entryId: last.entryId };
+    } else {
+      // Create new entry
+      const newId = generateTranscriptId();
+      const newEntry: TranscriptEntry = {
+        id: newId,
+        role,
+        text: text,
+        timestamp: new Date(),
+        isFinal: true,
+      };
+      setTranscripts((prev) => [...prev, newEntry]);
+      lastTranscriptRef.current = { role, timestamp: now, entryId: newId };
+    }
+  }, []);
 
   /**
    * Execute a tool call via the backend.
@@ -268,7 +282,7 @@ export function useGeminiLive(): GeminiLiveState {
               handleAudioResponse(part.inlineData.data);
             }
             if (part.text) {
-              handleTranscription(part.text, 'assistant', false);
+              handleTranscription(part.text, 'assistant');
             }
           }
         }
@@ -276,9 +290,6 @@ export function useGeminiLive(): GeminiLiveState {
         // Handle turn completion
         if (content.turnComplete) {
           setActivityState('listening');
-          if (currentTranscriptRef.current?.role === 'assistant') {
-            handleTranscription(currentTranscriptRef.current.text, 'assistant', true);
-          }
         }
 
         // Handle interruption
@@ -287,16 +298,14 @@ export function useGeminiLive(): GeminiLiveState {
           setActivityState('listening');
         }
 
-        // Handle input transcription
-        // Only add to transcript when finished=true, otherwise it's a partial chunk
-        if (content.inputTranscription?.text && content.inputTranscription.finished) {
-          handleTranscription(content.inputTranscription.text, 'user', true);
+        // Handle input transcription (user speech) - append in real-time
+        if (content.inputTranscription?.text) {
+          handleTranscription(content.inputTranscription.text, 'user');
         }
 
-        // Handle output transcription
-        // Only add to transcript when finished=true, otherwise it's a partial chunk
-        if (content.outputTranscription?.text && content.outputTranscription.finished) {
-          handleTranscription(content.outputTranscription.text, 'assistant', true);
+        // Handle output transcription (assistant speech) - append in real-time
+        if (content.outputTranscription?.text) {
+          handleTranscription(content.outputTranscription.text, 'assistant');
         }
       }
 
@@ -355,6 +364,7 @@ export function useGeminiLive(): GeminiLiveState {
         setConnectingStatus('Fetching token...');
         setError(null);
         setTranscripts([]);
+        lastTranscriptRef.current = null;
 
         // Fetch ephemeral token from backend
         const tokenResponse = await fetch('/api/gemini/ephemeral-token', {
