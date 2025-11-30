@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useRef } from 'react';
+import { ToolFallback } from '../chat/ToolUI';
 import type { TranscriptEntry } from './types';
 
 interface TranscriptPanelProps {
@@ -27,6 +28,23 @@ function formatTimestamp(date: Date): string {
  * Single transcript entry component.
  */
 function TranscriptItem({ entry }: { entry: TranscriptEntry }) {
+  // Tool entries use the existing ToolFallback component
+  if (entry.role === 'tool') {
+    return (
+      <div className="py-2">
+        <ToolFallback
+          toolName={entry.toolName || entry.text}
+          args={entry.toolArgs || {}}
+          result={entry.toolResult}
+          status={{
+            type: entry.toolStatus === 'error' ? 'incomplete' : entry.toolStatus || 'running',
+            reason: entry.toolStatus === 'error' ? 'error' : undefined,
+          }}
+        />
+      </div>
+    );
+  }
+
   const isUser = entry.role === 'user';
 
   return (
