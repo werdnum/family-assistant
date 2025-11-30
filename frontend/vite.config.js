@@ -140,21 +140,10 @@ export default defineConfig(({ mode }) => ({
         manualChunks: (id) => {
           // Let Rollup create chunks for node_modules when needed
           if (id.includes('node_modules')) {
-            // DON'T manually chunk React - let it be included in the entry bundle
-            // This ensures React is always available when the app starts
-            if (
-              id.includes('react') ||
-              id.includes('react-dom') ||
-              id.includes('react-router') ||
-              id.includes('scheduler') ||
-              id.includes('@restart/hooks') || // React hooks utilities
-              id.includes('use-') // Common React hook libraries
-            ) {
-              // Return undefined to include in entry chunk
-              return undefined;
+            // Chat-specific UI components
+            if (id.includes('@assistant-ui')) {
+              return 'assistant-ui';
             }
-
-            // Only split out truly optional/page-specific dependencies:
 
             // Markdown libraries (only needed for markdown rendering)
             if (
@@ -163,26 +152,59 @@ export default defineConfig(({ mode }) => ({
               id.includes('rehype') ||
               id.includes('unified') ||
               id.includes('micromark') ||
-              id.includes('mdast')
+              id.includes('mdast') ||
+              id.includes('vfile') ||
+              id.includes('unist')
             ) {
               return 'markdown';
             }
 
-            // JSON editor - DON'T split it out, let it be bundled where it's used
-            // This avoids CommonJS/ESM issues with vanilla-jsoneditor
-            if (id.includes('json-editor') || id.includes('vanilla-jsoneditor')) {
-              // Return undefined to keep it with the importing module
-              return undefined;
+            // Syntax Highlighter
+            if (id.includes('react-syntax-highlighter')) {
+              return 'syntax-highlighter';
             }
 
-            // Icon libraries - keep them with importing modules
-            if (id.includes('lucide-react')) {
-              return undefined;
+            // UI Libraries
+            if (
+              id.includes('@radix-ui') ||
+              id.includes('lucide-react') ||
+              id.includes('class-variance-authority') ||
+              id.includes('clsx') ||
+              id.includes('tailwind-merge')
+            ) {
+              return 'ui-vendor';
             }
 
-            // Chat-specific UI components
-            if (id.includes('@assistant-ui')) {
-              return 'assistant-ui';
+            // JSON editor - Modern (vanilla-jsoneditor)
+            if (
+              id.includes('vanilla-jsoneditor') ||
+              id.includes('svelte') ||
+              id.includes('@codemirror') ||
+              id.includes('vanilla-picker') ||
+              id.includes('jsonrepair') ||
+              id.includes('immutable-json-patch') ||
+              id.includes('jmespath') ||
+              id.includes('jsonpath-plus')
+            ) {
+              return 'vanilla-jsoneditor';
+            }
+
+            // JSON editor - Classic (@json-editor/json-editor)
+            if (id.includes('@json-editor') || id.includes('json-editor/')) {
+              return 'json-editor-classic';
+            }
+
+            // React Core
+            if (
+              id.includes('/react/') ||
+              id.includes('react-dom') ||
+              id.includes('react-router') ||
+              id.includes('scheduler') ||
+              id.includes('prop-types') ||
+              id.includes('@restart/hooks') ||
+              id.includes('use-')
+            ) {
+              return 'react-vendor';
             }
 
             // Let other dependencies stay with the importing chunk
