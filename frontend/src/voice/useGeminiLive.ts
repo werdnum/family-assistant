@@ -83,7 +83,6 @@ export function useGeminiLive(): GeminiLiveState {
   // Refs for mutable state
   const sessionRef = useRef<Session | null>(null);
   const clientRef = useRef<GoogleGenAI | null>(null);
-  const reconnectAttemptsRef = useRef(0);
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const currentTranscriptRef = useRef<TranscriptEntry | null>(null);
 
@@ -197,6 +196,11 @@ export function useGeminiLive(): GeminiLiveState {
       setActivityState('processing');
 
       const responses = await Promise.all(toolCalls.map(executeToolCall));
+
+      // Check if session was closed while awaiting tool calls
+      if (!sessionRef.current) {
+        return;
+      }
 
       // Send tool responses back to Gemini
       try {
@@ -453,7 +457,6 @@ export function useGeminiLive(): GeminiLiveState {
         setActivityState('listening');
         setSessionStartTime(Date.now());
         setConnectingStatus(undefined); // Clear connecting status
-        reconnectAttemptsRef.current = 0;
 
         // Start session timer
         sessionTimerRef.current = setInterval(() => {
