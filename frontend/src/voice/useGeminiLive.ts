@@ -202,6 +202,7 @@ export function useGeminiLive(): GeminiLiveState {
 
   /**
    * Handle tool calls from Gemini.
+   * Creates transcript entries for each tool call to show in the UI.
    */
   const handleToolCalls = useCallback(
     async (toolCalls: GeminiToolCall[]) => {
@@ -211,7 +212,40 @@ export function useGeminiLive(): GeminiLiveState {
 
       setActivityState('processing');
 
+      // Create transcript entries for each tool call with 'running' status (batched)
+      const toolEntryIds: Record<string, string> = {};
+      const newToolEntries: TranscriptEntry[] = toolCalls.map((toolCall) => {
+        const entryId = generateTranscriptId();
+        toolEntryIds[toolCall.id] = entryId;
+        return {
+          id: entryId,
+          role: 'tool' as const,
+          text: toolCall.name,
+          timestamp: new Date(),
+          isFinal: true,
+          toolName: toolCall.name,
+          toolArgs: toolCall.args,
+          toolStatus: 'running' as const,
+        };
+      });
+      setTranscripts((prev) => [...prev, ...newToolEntries]);
+
       const responses = await Promise.all(toolCalls.map(executeToolCall));
+
+      // Update all transcript entries with results in a single state update
+      setTranscripts((prev) =>
+        prev.map((entry) => {
+          const response = responses.find((r) => toolEntryIds[r.id] === entry.id);
+          if (response) {
+            return {
+              ...entry,
+              toolStatus: response.response.error ? 'error' : 'complete',
+              toolResult: response.response.error || response.response.result,
+            };
+          }
+          return entry;
+        })
+      );
 
       // Check if session was closed while awaiting tool calls
       if (!sessionRef.current) {

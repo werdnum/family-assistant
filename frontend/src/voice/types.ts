@@ -33,11 +33,16 @@ export interface VoiceSessionState {
  */
 export interface TranscriptEntry {
   id: string;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'tool';
   text: string;
   timestamp: Date;
   /** Whether this is a final or interim transcript */
   isFinal: boolean;
+  /** Tool-specific fields (only present when role === 'tool') */
+  toolName?: string;
+  toolArgs?: Record<string, unknown>;
+  toolStatus?: 'running' | 'complete' | 'error';
+  toolResult?: unknown;
 }
 
 /**
