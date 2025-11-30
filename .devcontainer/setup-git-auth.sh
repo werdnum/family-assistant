@@ -10,9 +10,9 @@ if [ -n "$GITHUB_APP_PRIVATE_KEY" ] && [ -n "$GITHUB_APP_ID" ] && [ -n "$GITHUB_
 
     # Configure git credential helper
     # We use a shell function in the config to execute gh-token
-    # We hardcode the values from current environment
+    # We refer to the environment variables so they can be changed without re-running setup
     git config --global credential.helper "!f() { \
-        TOKEN=\$(gh-token generate -k \"$GITHUB_APP_PRIVATE_KEY\" -i \"$GITHUB_APP_ID\" -n \"$GITHUB_APP_INSTALLATION_ID\"); \
+        TOKEN=\$(gh-token generate -k \"\$GITHUB_APP_PRIVATE_KEY\" -i \"\$GITHUB_APP_ID\" -n \"\$GITHUB_APP_INSTALLATION_ID\"); \
         echo \"username=x-access-token\"; \
         echo \"password=\$TOKEN\"; \
     }; f"
@@ -22,7 +22,7 @@ if [ -n "$GITHUB_APP_PRIVATE_KEY" ] && [ -n "$GITHUB_APP_ID" ] && [ -n "$GITHUB_
     # Create gh wrapper
     cat > /home/claude/.local/bin/gh <<EOF
 #!/bin/bash
-export GH_TOKEN=\$(gh-token generate -k "$GITHUB_APP_PRIVATE_KEY" -i "$GITHUB_APP_ID" -n "$GITHUB_APP_INSTALLATION_ID")
+export GH_TOKEN=\$(gh-token generate -k "\$GITHUB_APP_PRIVATE_KEY" -i "\$GITHUB_APP_ID" -n "\$GITHUB_APP_INSTALLATION_ID")
 exec /usr/bin/gh "\$@"
 EOF
     chmod +x /home/claude/.local/bin/gh
