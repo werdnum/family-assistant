@@ -1238,14 +1238,17 @@ class LiteLLMClient(BaseLLMClient):
         """Generate streaming response using LiteLLM."""
         return self._generate_response_stream(messages, tools, tool_choice)
 
-    async def _generate_response_stream(
+    async def _attempt_streaming_completion(
         self,
+        model_id: str,
         messages: Sequence[LLMMessage],
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        tools: list[dict[str, Any]] | None = None,
-        tool_choice: str | None = "auto",
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | None,
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        specific_model_params: dict[str, dict[str, Any]],
     ) -> AsyncIterator[LLMStreamEvent]:
-        """Internal async generator for streaming responses."""
+        """Internal async generator for streaming responses (single attempt)."""
 
         def _safe_get_attr(obj: object, name: str) -> object | None:
             """Get attribute or dict key safely."""
@@ -1279,250 +1282,426 @@ class LiteLLMClient(BaseLLMClient):
                     return "".join(parts)
             return None
 
-        try:
-            # Process tool attachments with typed messages
-            processed_messages = self._process_tool_messages(list(messages))
+        # Process tool attachments with typed messages
+        processed_messages = self._process_tool_messages(list(messages))
 
-            # Convert to dicts only at SDK boundary
-            message_dicts = [message_to_json_dict(msg) for msg in processed_messages]
+        # Convert to dicts only at SDK boundary
+        message_dicts = [message_to_json_dict(msg) for msg in processed_messages]
 
-            # Use primary model for streaming
-            completion_params = self.default_kwargs.copy()
+        # Use primary model for streaming
+        completion_params = self.default_kwargs.copy()
 
-            # Apply model-specific parameters
-            for pattern, params in self.model_parameters.items():
-                matched = False
-                if pattern.endswith("-"):
-                    if self.model.startswith(pattern[:-1]):
-                        matched = True
-                elif self.model == pattern:
+        # Apply model-specific parameters
+        for pattern, params in specific_model_params.items():
+            matched = False
+            if pattern.endswith("-"):
+                if model_id.startswith(pattern[:-1]):
                     matched = True
+            elif model_id == pattern:
+                matched = True
 
-                if matched:
-                    logger.debug(
-                        f"Applying streaming parameters for model '{self.model}' using pattern '{pattern}': {params}"
-                    )
-                    params_to_merge = params.copy()
-                    if "reasoning" in params_to_merge:
-                        params_to_merge.pop("reasoning")  # Not supported in streaming
-                    completion_params.update(params_to_merge)
-                    break
-
-            # Prepare streaming parameters
-            stream_params = {
-                "model": self.model,
-                "messages": message_dicts,
-                "stream": True,  # Enable streaming
-                **completion_params,
-            }
-
-            # Add tools if provided
-            if tools:
-                sanitized_tools = _sanitize_tools_for_litellm(tools)
-                stream_params["tools"] = sanitized_tools
-                stream_params["tool_choice"] = tool_choice
-
-            if DEBUG_LLM_MESSAGES_ENABLED:
-                logger.info(
-                    f"LLM Streaming Request to {self.model}:\n"
-                    f"{_format_serialized_messages_for_debug(message_dicts, tools, tool_choice)}"
+            if matched:
+                logger.debug(
+                    f"Applying streaming parameters for model '{model_id}' using pattern '{pattern}': {params}"
                 )
+                params_to_merge = params.copy()
+                if "reasoning" in params_to_merge:
+                    params_to_merge.pop("reasoning")  # Not supported in streaming
+                completion_params.update(params_to_merge)
+                break
 
-            logger.debug(
-                f"Starting streaming response from LiteLLM model {self.model} "
-                f"with {len(message_dicts)} messages. Tools: {bool(tools)}"
+        # Prepare streaming parameters
+        stream_params = {
+            "model": model_id,
+            "messages": message_dicts,
+            "stream": True,  # Enable streaming
+            **completion_params,
+        }
+
+        # Add tools if provided
+        if tools:
+            sanitized_tools = _sanitize_tools_for_litellm(tools)
+            stream_params["tools"] = sanitized_tools
+            stream_params["tool_choice"] = tool_choice
+
+        if DEBUG_LLM_MESSAGES_ENABLED:
+            logger.info(
+                f"LLM Streaming Request to {model_id}:\n"
+                f"{_format_serialized_messages_for_debug(message_dicts, tools, tool_choice)}"
             )
 
-            # Make streaming API call
-            stream = await acompletion(**stream_params)
+        logger.debug(
+            f"Starting streaming response from LiteLLM model {model_id} "
+            f"with {len(message_dicts)} messages. Tools: {bool(tools)}"
+        )
 
-            # Track current tool calls being built
-            # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-            current_tool_calls: dict[int, dict[str, Any]] = {}
-            chunk: Any | None = None
-            last_chunk_with_usage: Any | None = None
-            content_emitted = False
+        # Make streaming API call
+        stream = await acompletion(**stream_params)
 
-            async for chunk in stream:  # type: ignore[misc]
-                if not chunk or not chunk.choices:
-                    continue
+        # Track current tool calls being built
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        current_tool_calls: dict[int, dict[str, Any]] = {}
+        chunk: Any | None = None
+        last_chunk_with_usage: Any | None = None
+        content_emitted = False
 
-                try:
-                    logger.debug(
-                        "Raw streaming chunk choice dump: %s",
-                        chunk.choices[0].model_dump()
-                        if hasattr(chunk.choices[0], "model_dump")
-                        else chunk.choices[0],
-                    )
-                except Exception:
-                    logger.debug("Could not dump streaming chunk choice", exc_info=True)
+        async for chunk in stream:  # type: ignore[misc]
+            if not chunk or not chunk.choices:
+                continue
 
-                delta = chunk.choices[0].delta
-                if not delta:
-                    continue
-
-                last_chunk_with_usage = chunk
-
+            try:
                 logger.debug(
-                    "Streaming delta payload: %s (type=%s)", delta, type(delta)
+                    "Raw streaming chunk choice dump: %s",
+                    chunk.choices[0].model_dump()
+                    if hasattr(chunk.choices[0], "model_dump")
+                    else chunk.choices[0],
+                )
+            except Exception:
+                logger.debug("Could not dump streaming chunk choice", exc_info=True)
+
+            delta = chunk.choices[0].delta
+            if not delta:
+                continue
+
+            last_chunk_with_usage = chunk
+
+            logger.debug("Streaming delta payload: %s (type=%s)", delta, type(delta))
+
+            # Extract content
+            delta_content = _safe_get_attr(delta, "content")
+            if delta_content is None:
+                logger.debug(
+                    "Delta content missing; available attributes: %s",
+                    {
+                        attr: getattr(delta, attr)
+                        for attr in dir(delta)
+                        if not attr.startswith("_")
+                    },
                 )
 
-                # Extract content
-                delta_content = _safe_get_attr(delta, "content")
-                if delta_content is None:
-                    logger.debug(
-                        "Delta content missing; available attributes: %s",
-                        {
-                            attr: getattr(delta, attr)
-                            for attr in dir(delta)
-                            if not attr.startswith("_")
-                        },
+            text_chunk: str | None = _extract_text_from_content(delta_content)
+
+            # Some SDKs wrap content under delta.message["content"]
+            if not text_chunk:
+                message_obj = _safe_get_attr(delta, "message")
+                if message_obj is not None:
+                    msg_content = _safe_get_attr(message_obj, "content")
+                    text_chunk = _extract_text_from_content(msg_content)
+
+            if not text_chunk and delta_content is not None:
+                # Fallback: coerce non-string content to string if present
+                text_chunk = str(delta_content)
+
+            if text_chunk:
+                logger.debug("Streaming content chunk: %s", text_chunk)
+                yield LLMStreamEvent(type="content", content=text_chunk)
+                content_emitted = True
+
+            # Extract tool calls
+            raw_tool_calls = _safe_get_attr(delta, "tool_calls")
+            tool_calls_delta = (
+                raw_tool_calls if isinstance(raw_tool_calls, list) else []
+            )
+
+            for tc_delta in tool_calls_delta:
+                raw_idx = _safe_get_attr(tc_delta, "index")
+                if isinstance(raw_idx, int):
+                    idx = raw_idx
+                else:
+                    logger.warning(
+                        "Tool call delta missing index attribute, defaulting to 0. "
+                        "This may cause issues with multiple tool calls."
                     )
+                    idx = 0
+                tc_id = _safe_get_attr(tc_delta, "id")
+                tc_type = _safe_get_attr(tc_delta, "type") or "function"
+                func_name = ""
+                func_args = ""
+                function_delta = _safe_get_attr(tc_delta, "function")
+                if function_delta:
+                    func_name_attr = _safe_get_attr(function_delta, "name")
+                    func_args_attr = _safe_get_attr(function_delta, "arguments")
+                    if isinstance(func_name_attr, str):
+                        func_name = func_name_attr
+                    if isinstance(func_args_attr, str):
+                        func_args = func_args_attr
+                    elif func_args_attr is not None:
+                        try:
+                            func_args = json.dumps(func_args_attr)
+                        except Exception:  # pragma: no cover - best effort fallback
+                            func_args = str(func_args_attr)
 
-                text_chunk: str | None = _extract_text_from_content(delta_content)
+                if idx not in current_tool_calls:
+                    current_tool_calls[idx] = {
+                        "id": tc_id,
+                        "type": tc_type,
+                        "function": {"name": "", "arguments": ""},
+                    }
 
-                # Some SDKs wrap content under delta.message["content"]
-                if not text_chunk:
-                    message_obj = _safe_get_attr(delta, "message")
-                    if message_obj is not None:
-                        msg_content = _safe_get_attr(message_obj, "content")
-                        text_chunk = _extract_text_from_content(msg_content)
+                tc_data = current_tool_calls[idx]
+                if tc_id:
+                    tc_data["id"] = tc_id
+                if tc_type:
+                    tc_data["type"] = tc_type
+                if func_name:
+                    tc_data["function"]["name"] = func_name
+                if func_args:
+                    tc_data["function"]["arguments"] += func_args
 
-                if not text_chunk and delta_content is not None:
-                    # Fallback: coerce non-string content to string if present
-                    text_chunk = str(delta_content)
-
-                if text_chunk:
-                    logger.debug("Streaming content chunk: %s", text_chunk)
-                    yield LLMStreamEvent(type="content", content=text_chunk)
-                    content_emitted = True
-
-                # Extract tool calls
-                raw_tool_calls = _safe_get_attr(delta, "tool_calls")
-                tool_calls_delta = (
-                    raw_tool_calls if isinstance(raw_tool_calls, list) else []
+        # Emit any remaining tool calls
+        for tc_data in current_tool_calls.values():
+            if tc_data["id"] and tc_data["function"]["name"]:
+                tool_call = ToolCallItem(
+                    id=tc_data["id"],
+                    type=tc_data["type"],
+                    function=ToolCallFunction(
+                        name=tc_data["function"]["name"],
+                        arguments=tc_data["function"]["arguments"] or "{}",
+                    ),
+                )
+                yield LLMStreamEvent(
+                    type="tool_call",
+                    tool_call=tool_call,
+                    tool_call_id=tc_data["id"],
                 )
 
-                for tc_delta in tool_calls_delta:
-                    raw_idx = _safe_get_attr(tc_delta, "index")
-                    if isinstance(raw_idx, int):
-                        idx = raw_idx
-                    else:
-                        logger.warning(
-                            "Tool call delta missing index attribute, defaulting to 0. "
-                            "This may cause issues with multiple tool calls."
+        # If we never emitted content (e.g., provider returned only a terminal chunk),
+        # fall back to a non-streaming completion to preserve expected behaviour.
+        if not content_emitted:
+            try:
+                fallback_output = await self._attempt_completion(
+                    model_id=model_id,
+                    messages=list(messages),
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    specific_model_params=specific_model_params,
+                )
+                if fallback_output.content:
+                    yield LLMStreamEvent(
+                        type="content", content=fallback_output.content
+                    )
+                    content_emitted = True
+                if fallback_output.tool_calls:
+                    for tc in fallback_output.tool_calls:
+                        yield LLMStreamEvent(
+                            type="tool_call",
+                            tool_call=tc,
+                            tool_call_id=tc.id,
                         )
-                        idx = 0
-                    tc_id = _safe_get_attr(tc_delta, "id")
-                    tc_type = _safe_get_attr(tc_delta, "type") or "function"
-                    func_name = ""
-                    func_args = ""
-                    function_delta = _safe_get_attr(tc_delta, "function")
-                    if function_delta:
-                        func_name_attr = _safe_get_attr(function_delta, "name")
-                        func_args_attr = _safe_get_attr(function_delta, "arguments")
-                        if isinstance(func_name_attr, str):
-                            func_name = func_name_attr
-                        if isinstance(func_args_attr, str):
-                            func_args = func_args_attr
-                        elif func_args_attr is not None:
-                            try:
-                                func_args = json.dumps(func_args_attr)
-                            except Exception:  # pragma: no cover - best effort fallback
-                                func_args = str(func_args_attr)
+                if fallback_output.reasoning_info:
+                    yield LLMStreamEvent(
+                        type="done",
+                        metadata={"reasoning_info": fallback_output.reasoning_info},
+                    )
+                    return
+            except Exception as exc:  # pragma: no cover - best effort fallback
+                logger.debug("Fallback non-streaming completion failed: %s", exc)
 
-                    if idx not in current_tool_calls:
-                        current_tool_calls[idx] = {
-                            "id": tc_id,
-                            "type": tc_type,
-                            "function": {"name": "", "arguments": ""},
-                        }
+        # Extract usage info if available
+        metadata: StreamingMetadata = {}
+        if (
+            last_chunk_with_usage
+            and hasattr(last_chunk_with_usage, "usage")
+            and last_chunk_with_usage.usage
+        ):
+            try:
+                metadata["reasoning_info"] = last_chunk_with_usage.usage.model_dump(
+                    mode="json"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Could not serialize streaming usage data: {e}", exc_info=False
+                )
 
-                    tc_data = current_tool_calls[idx]
-                    if tc_id:
-                        tc_data["id"] = tc_id
-                    if tc_type:
-                        tc_data["type"] = tc_type
-                    if func_name:
-                        tc_data["function"]["name"] = func_name
-                    if func_args:
-                        tc_data["function"]["arguments"] += func_args
+        # Signal completion
+        yield LLMStreamEvent(type="done", metadata=metadata)
 
-            # Emit any remaining tool calls
-            for tc_data in current_tool_calls.values():
-                if tc_data["id"] and tc_data["function"]["name"]:
-                    tool_call = ToolCallItem(
-                        id=tc_data["id"],
-                        type=tc_data["type"],
-                        function=ToolCallFunction(
-                            name=tc_data["function"]["name"],
-                            arguments=tc_data["function"]["arguments"] or "{}",
-                        ),
+    async def _generate_response_stream(
+        self,
+        messages: Sequence[LLMMessage],
+        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """Internal async generator for streaming responses with retry/fallback logic."""
+
+        retriable_errors = (
+            APIConnectionError,
+            Timeout,
+            RateLimitError,
+            ServiceUnavailableError,
+            BadRequestError,
+        )
+        last_exception: Exception | None = None
+        has_yielded_content = False
+
+        # Attempt 1: Primary model
+        try:
+            logger.info(f"Attempt 1: Primary model ({self.model}) (Streaming)")
+            async for event in self._attempt_streaming_completion(
+                model_id=self.model,
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                specific_model_params=self.model_parameters,
+            ):
+                if event.type in {"content", "tool_call", "done"}:
+                    has_yielded_content = True
+                yield event
+            return
+        except retriable_errors as e:
+            if has_yielded_content:
+                logger.error(
+                    f"Attempt 1 (Primary model {self.model}) failed mid-stream with retriable error: {e}. Cannot retry as content already yielded."
+                )
+                yield LLMStreamEvent(
+                    type="error",
+                    error=str(e),
+                    metadata={"error_id": str(e.__class__.__name__)},
+                )
+                return
+            logger.warning(
+                f"Attempt 1 (Primary model {self.model}) failed with retriable error: {e}. Retrying primary model."
+            )
+            last_exception = e
+        except APIError as e:  # Non-retriable APIError (but not BadRequestError)
+            if has_yielded_content:
+                logger.error(
+                    f"Attempt 1 (Primary model {self.model}) failed mid-stream with APIError: {e}. Cannot fallback."
+                )
+                yield LLMStreamEvent(
+                    type="error",
+                    error=str(e),
+                    metadata={"error_id": str(e.__class__.__name__)},
+                )
+                return
+            logger.warning(
+                f"Attempt 1 (Primary model {self.model}) failed with APIError: {e}. Proceeding to fallback."
+            )
+            last_exception = e
+        except Exception as e:
+            if has_yielded_content:
+                logger.error(
+                    f"Attempt 1 (Primary model {self.model}) failed mid-stream with unexpected error: {e}. Cannot fallback."
+                )
+                yield LLMStreamEvent(
+                    type="error",
+                    error=str(e),
+                    metadata={"error_id": str(e.__class__.__name__)},
+                )
+                return
+            logger.error(
+                f"Attempt 1 (Primary model {self.model}) failed with unexpected error: {e}",
+                exc_info=True,
+            )
+            last_exception = e
+
+        # Attempt 2: Retry Primary model (if Attempt 1 was a retriable error)
+        if isinstance(last_exception, retriable_errors):
+            try:
+                logger.info(
+                    f"Attempt 2: Retrying primary model ({self.model}) (Streaming)"
+                )
+                async for event in self._attempt_streaming_completion(
+                    model_id=self.model,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    specific_model_params=self.model_parameters,
+                ):
+                    if event.type in {"content", "tool_call", "done"}:
+                        has_yielded_content = True
+                    yield event
+                return
+            except retriable_errors as e:
+                if has_yielded_content:
+                    logger.error(
+                        "Attempt 2 (Retry Primary) failed mid-stream. Cannot fallback."
                     )
                     yield LLMStreamEvent(
-                        type="tool_call",
-                        tool_call=tool_call,
-                        tool_call_id=tc_data["id"],
+                        type="error",
+                        error=str(e),
+                        metadata={"error_id": str(e.__class__.__name__)},
                     )
-
-            # If we never emitted content (e.g., provider returned only a terminal chunk),
-            # fall back to a non-streaming completion to preserve expected behaviour.
-            if not content_emitted:
-                try:
-                    fallback_output = await self._attempt_completion(
-                        model_id=self.model,
-                        messages=list(messages),
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        specific_model_params=self.model_parameters,
+                    return
+                logger.warning(
+                    f"Attempt 2 (Retry Primary model {self.model}) failed with retriable error: {e}. Proceeding to fallback."
+                )
+                last_exception = e
+            except APIError as e:
+                if has_yielded_content:
+                    logger.error(
+                        "Attempt 2 (Retry Primary) failed mid-stream. Cannot fallback."
                     )
-                    if fallback_output.content:
-                        yield LLMStreamEvent(
-                            type="content", content=fallback_output.content
-                        )
-                        content_emitted = True
-                    if fallback_output.tool_calls:
-                        for tc in fallback_output.tool_calls:
-                            yield LLMStreamEvent(
-                                type="tool_call",
-                                tool_call=tc,
-                                tool_call_id=tc.id,
-                            )
-                    if fallback_output.reasoning_info:
-                        yield LLMStreamEvent(
-                            type="done",
-                            metadata={"reasoning_info": fallback_output.reasoning_info},
-                        )
-                        return
-                except Exception as exc:  # pragma: no cover - best effort fallback
-                    logger.debug("Fallback non-streaming completion failed: %s", exc)
-
-            # Extract usage info if available
-            metadata: StreamingMetadata = {}
-            if (
-                last_chunk_with_usage
-                and hasattr(last_chunk_with_usage, "usage")
-                and last_chunk_with_usage.usage
-            ):
-                try:
-                    metadata["reasoning_info"] = last_chunk_with_usage.usage.model_dump(
-                        mode="json"
+                    yield LLMStreamEvent(
+                        type="error",
+                        error=str(e),
+                        metadata={"error_id": str(e.__class__.__name__)},
                     )
-                except Exception as e:
-                    logger.warning(
-                        f"Could not serialize streaming usage data: {e}", exc_info=False
+                    return
+                logger.warning(
+                    f"Attempt 2 (Retry Primary model {self.model}) failed with APIError: {e}. Proceeding to fallback."
+                )
+                last_exception = e
+            except Exception as e:
+                if has_yielded_content:
+                    logger.error(
+                        "Attempt 2 (Retry Primary) failed mid-stream. Cannot fallback."
                     )
+                    yield LLMStreamEvent(
+                        type="error",
+                        error=str(e),
+                        metadata={"error_id": str(e.__class__.__name__)},
+                    )
+                    return
+                logger.error(
+                    f"Attempt 2 (Retry Primary model {self.model}) failed with unexpected error: {e}",
+                    exc_info=True,
+                )
+                last_exception = e
 
-            # Signal completion
-            yield LLMStreamEvent(type="done", metadata=metadata)
+        # Attempt 3: Fallback model
+        actual_fallback_model_id = self.fallback_model_id or "openai/o4-mini"
+        if actual_fallback_model_id == self.model:
+            logger.warning(
+                f"Fallback model '{actual_fallback_model_id}' is the same as the primary model '{self.model}'. Skipping fallback."
+            )
+            if last_exception:
+                yield LLMStreamEvent(
+                    type="error",
+                    error=str(last_exception),
+                    metadata={"error_id": str(last_exception.__class__.__name__)},
+                )
+            return
 
-        except Exception as e:
-            error_message = str(e)
-            logger.error(f"LiteLLM streaming error: {e}", exc_info=True)
+        if last_exception:
+            logger.info(
+                f"Attempt 3: Fallback model ({actual_fallback_model_id}) (Streaming)"
+            )
+            try:
+                async for event in self._attempt_streaming_completion(
+                    model_id=actual_fallback_model_id,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    specific_model_params=self.fallback_model_parameters,
+                ):
+                    # No need to track content yielded here, as we are the last attempt
+                    yield event
+                return
+            except Exception as e:
+                logger.error(
+                    f"Attempt 3 (Fallback model {actual_fallback_model_id}) also failed: {e}",
+                    exc_info=True,
+                )
+                last_exception = e
+
+        # If all attempts failed
+        if last_exception:
             yield LLMStreamEvent(
                 type="error",
-                error=error_message,
-                metadata={"error_id": str(e.__class__.__name__)},
+                error=str(last_exception),
+                metadata={"error_id": str(last_exception.__class__.__name__)},
             )
 
 
