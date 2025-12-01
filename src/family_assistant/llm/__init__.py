@@ -1235,7 +1235,7 @@ class LiteLLMClient(BaseLLMClient):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
-        """Generate streaming response using LiteLLM."""
+        """Generate streaming response using LiteLLM, with one retry on primary model and fallback."""
         return self._generate_response_stream(messages, tools, tool_choice)
 
     async def _attempt_streaming_completion(
@@ -1288,7 +1288,7 @@ class LiteLLMClient(BaseLLMClient):
         # Convert to dicts only at SDK boundary
         message_dicts = [message_to_json_dict(msg) for msg in processed_messages]
 
-        # Use primary model for streaming
+        # Use default kwargs as base
         completion_params = self.default_kwargs.copy()
 
         # Apply model-specific parameters
