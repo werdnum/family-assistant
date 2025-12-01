@@ -140,6 +140,59 @@ HOMEASSISTANT_API_KEY=...
 GOOGLE_MAPS_API_KEY=...
 ```
 
+### GitHub App Authentication
+
+The development container supports authenticating with GitHub using a GitHub App, which provides higher rate limits and finer-grained permissions than Personal Access Tokens (PATs).
+
+You can configure GitHub App authentication by setting environment variables in your `.env` file (located in the project root or `.devcontainer/`).
+
+#### Option 1: Using Environment Variables for Key Content
+
+If you have the private key content available as a string, you can set it directly:
+
+```bash
+GITHUB_APP_ID=123456
+GITHUB_APP_INSTALLATION_ID=78901234
+GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----
+...your key content...
+-----END RSA PRIVATE KEY-----"
+```
+
+*Note: Handling multiline environment variables in `.env` files can be tricky.*
+
+#### Option 2: Using a Private Key File (Recommended)
+
+You can point to a private key file on your host machine. This is more secure and easier to manage than putting the key content in `.env`.
+
+1.  Place your GitHub App private key file somewhere on your host machine (e.g., `~/.ssh/github-app.pem` or inside the project directory).
+2.  Set the `GITHUB_APP_PRIVATE_KEY_PATH` in your `.env` file to the path of this file.
+3.  Set the App ID and Installation ID.
+
+```bash
+# ID of the GitHub App
+GITHUB_APP_ID=123456
+
+# Installation ID for your account/organization
+GITHUB_APP_INSTALLATION_ID=78901234
+
+# Path to the private key file on your host
+# Relative paths are relative to the docker-compose.yml file (i.e., .devcontainer/)
+# Absolute paths are recommended for clarity
+GITHUB_APP_PRIVATE_KEY_PATH=/home/user/.ssh/github-app.pem
+```
+
+The container setup will automatically mount this file to `/run/secrets/github_app_private_key` inside the container and configure `git` to use it for authentication.
+
+### Verification
+
+To verify that authentication is working, you can check the git credential helper configuration inside the container:
+
+```bash
+git config --global credential.helper
+```
+
+It should show a function that calls `gh-token`.
+
 ## Implementation Status
 
 See [docs/design/claude-dev-container.md](../docs/design/claude-dev-container.md) for the full
