@@ -146,23 +146,9 @@ The development container supports authenticating with GitHub using a GitHub App
 
 You can configure GitHub App authentication by setting environment variables in your `.env` file (located in the project root or `.devcontainer/`).
 
-#### Option 1: Using Environment Variables for Key Content
+### Configuration
 
-If you have the private key content available as a string, you can set it directly:
-
-```bash
-GITHUB_APP_ID=123456
-GITHUB_APP_INSTALLATION_ID=78901234
-GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----
-...your key content...
------END RSA PRIVATE KEY-----"
-```
-
-*Note: Handling multiline environment variables in `.env` files can be tricky.*
-
-#### Option 2: Using a Private Key File (Recommended)
-
-You can point to a private key file on your host machine. This is more secure and easier to manage than putting the key content in `.env`.
+To enable GitHub App authentication:
 
 1.  Place your GitHub App private key file somewhere on your host machine (e.g., `~/.ssh/github-app.pem` or inside the project directory).
 2.  Set the `GITHUB_APP_PRIVATE_KEY_PATH` in your `.env` file to the path of this file.
