@@ -55,7 +55,6 @@ services:
       # GitHub App Credentials
       - GITHUB_APP_ID=${GITHUB_APP_ID:-}
       - GITHUB_APP_INSTALLATION_ID=${GITHUB_APP_INSTALLATION_ID:-}
-      - GITHUB_APP_PRIVATE_KEY=${GITHUB_APP_PRIVATE_KEY:-}
       - GITHUB_APP_PRIVATE_KEY_FILE=/run/secrets/github_app_private_key
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -68,8 +67,8 @@ services:
     volumes:
       # Mount workspace - you can change this to your desired host directory
       - ${WORKSPACE_DIR:-./workspace}:/workspace
-      # Mount GitHub App private key if provided
-      - ${GITHUB_APP_PRIVATE_KEY_PATH:-README.md}:/run/secrets/github_app_private_key:ro
+      # Mount GitHub App private key if provided (defaults to dummy file to avoid mount errors)
+      - ${GITHUB_APP_PRIVATE_KEY_PATH:-dummy-key}:/run/secrets/github_app_private_key:ro
       - dev-logs:/var/log/family-assistant
     networks:
       - devnet
@@ -114,7 +113,6 @@ services:
       # GitHub App Credentials
       - GITHUB_APP_ID=${GITHUB_APP_ID:-}
       - GITHUB_APP_INSTALLATION_ID=${GITHUB_APP_INSTALLATION_ID:-}
-      - GITHUB_APP_PRIVATE_KEY=${GITHUB_APP_PRIVATE_KEY:-}
       - GITHUB_APP_PRIVATE_KEY_FILE=/run/secrets/github_app_private_key
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -123,8 +121,8 @@ services:
     volumes:
       # Mount workspace - same as backend container
       - ${WORKSPACE_DIR:-./workspace}:/workspace
-      # Mount GitHub App private key if provided
-      - ${GITHUB_APP_PRIVATE_KEY_PATH:-README.md}:/run/secrets/github_app_private_key:ro
+      # Mount GitHub App private key if provided (defaults to dummy file to avoid mount errors)
+      - ${GITHUB_APP_PRIVATE_KEY_PATH:-dummy-key}:/run/secrets/github_app_private_key:ro
       # Mount Claude home directory - you can change this to your desired host directory
       - ${CLAUDE_HOME_DIR:-./claude-home}:/home/claude
       # Mount logs as read-only
@@ -148,13 +146,13 @@ services:
       # GitHub App Credentials
       - GITHUB_APP_ID=${GITHUB_APP_ID:-}
       - GITHUB_APP_INSTALLATION_ID=${GITHUB_APP_INSTALLATION_ID:-}
-      - GITHUB_APP_PRIVATE_KEY=${GITHUB_APP_PRIVATE_KEY:-}
       - GITHUB_APP_PRIVATE_KEY_FILE=/run/secrets/github_app_private_key
       - UV_CACHE_DIR=/workspace/.cache/uv
       - UV_PYTHON_INSTALL_DIR=/workspace/.python-versions
     volumes:
       - ${WORKSPACE_DIR:-./workspace}:/workspace
-      - ${GITHUB_APP_PRIVATE_KEY_PATH:-README.md}:/run/secrets/github_app_private_key:ro
+      # Mount GitHub App private key if provided (defaults to dummy file to avoid mount errors)
+      - ${GITHUB_APP_PRIVATE_KEY_PATH:-dummy-key}:/run/secrets/github_app_private_key:ro
       - ${CLAUDE_HOME_DIR:-./claude-home}:/home/claude
       - postgres-data:/var/lib/postgresql/data
     networks:
