@@ -40,6 +40,7 @@ function TranscriptItem({ entry }: { entry: TranscriptEntry }) {
             type: entry.toolStatus === 'error' ? 'incomplete' : entry.toolStatus || 'running',
             reason: entry.toolStatus === 'error' ? 'error' : undefined,
           }}
+          attachments={[]}
         />
       </div>
     );
