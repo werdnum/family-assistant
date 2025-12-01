@@ -252,7 +252,7 @@ jobs:
               mkdir -p test-results && \
               npm test --prefix frontend -- --run --reporter=json --reporter=verbose --outputFile=test-results/frontend-report.json'
       - name: Upload frontend test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: frontend-test-results-${{ github.run_id }}
@@ -305,7 +305,7 @@ jobs:
               .venv/bin/pytest -q --timeout=300 --db sqlite -m "not postgres and not playwright" \
                 --json-report --json-report-file=test-results/backend-sqlite-report.json'
       - name: Upload backend test results (SQLite)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: backend-test-artifacts-sqlite-${{ github.run_id }}
@@ -371,7 +371,7 @@ jobs:
               .venv/bin/pytest --postgres -q --timeout=300 -m "not playwright" \
                 --json-report --json-report-file=test-results/backend-postgres-report.json'
       - name: Upload backend test results (PostgreSQL)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: backend-test-artifacts-postgres-${{ github.run_id }}
@@ -429,7 +429,7 @@ jobs:
                 --json-report --json-report-file=test-results/playwright-sqlite-report.json \
                 --output=test-results'
       - name: Upload Playwright test artifacts (SQLite)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: playwright-artifacts-sqlite-${{ github.run_id }}
@@ -512,7 +512,7 @@ jobs:
                 --json-report --json-report-file=test-results/playwright-postgres-report.json \
                 --output=test-results'
       - name: Upload Playwright test artifacts (PostgreSQL)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: playwright-artifacts-postgres-${{ github.run_id }}
@@ -568,7 +568,7 @@ jobs:
               .venv/bin/pytest -q --timeout=300 -m "gemini_live" \
                 --json-report --json-report-file=test-results/gemini-live-report.json'
       - name: Upload Gemini live test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: gemini-live-test-results-${{ github.run_id }}
