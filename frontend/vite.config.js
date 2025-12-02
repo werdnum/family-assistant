@@ -136,16 +136,48 @@ export default defineConfig(({ mode }) => ({
         'tool-test-bench': path.resolve(__dirname, 'tool-test-bench.html'),
       },
       output: {
-        // Manual chunks configuration to avoid loading page-specific deps globally
+        // Manual chunks configuration to optimize loading of page-specific deps
         manualChunks: (id) => {
-          // Let Rollup create chunks for node_modules when needed
           if (id.includes('node_modules')) {
-            // Chat-specific UI components
+            // CRITICAL: React and core UI libraries MUST stay in the entry bundle.
+            // Moving React to a separate chunk causes race conditions where the app
+            // tries to render before React is loaded, breaking all page initialization.
+            if (
+              id.includes('/react/') ||
+              id.includes('react-dom') ||
+              id.includes('react-router') ||
+              id.includes('scheduler') ||
+              id.includes('prop-types') ||
+              id.includes('@restart/hooks') ||
+              id.includes('use-')
+            ) {
+              return undefined; // Keep in entry bundle
+            }
+
+            // Core UI libraries - used on almost every page, keep in entry
+            if (
+              id.includes('@radix-ui') ||
+              id.includes('lucide-react') ||
+              id.includes('class-variance-authority') ||
+              id.includes('clsx') ||
+              id.includes('tailwind-merge')
+            ) {
+              return undefined; // Keep in entry bundle
+            }
+
+            // === Page-specific dependencies - safe to split ===
+
+            // Chat-specific UI components (~96KB, only needed on chat page)
             if (id.includes('@assistant-ui')) {
               return 'assistant-ui';
             }
 
-            // Markdown libraries (only needed for markdown rendering)
+            // Syntax highlighter - very large (~1.7MB), only for code blocks
+            if (id.includes('react-syntax-highlighter')) {
+              return 'syntax-highlighter';
+            }
+
+            // Markdown processing (~162KB, only for rendering markdown content)
             if (
               id.includes('react-markdown') ||
               id.includes('remark') ||
@@ -159,23 +191,8 @@ export default defineConfig(({ mode }) => ({
               return 'markdown';
             }
 
-            // Syntax Highlighter
-            if (id.includes('react-syntax-highlighter')) {
-              return 'syntax-highlighter';
-            }
-
-            // UI Libraries
-            if (
-              id.includes('@radix-ui') ||
-              id.includes('lucide-react') ||
-              id.includes('class-variance-authority') ||
-              id.includes('clsx') ||
-              id.includes('tailwind-merge')
-            ) {
-              return 'ui-vendor';
-            }
-
-            // JSON editor - Modern (vanilla-jsoneditor)
+            // JSON editor - Modern vanilla-jsoneditor (~1.1MB, Tools page only)
+            // Note: Requires optimizeDeps.include for proper ESM pre-bundling
             if (
               id.includes('vanilla-jsoneditor') ||
               id.includes('svelte') ||
@@ -189,22 +206,9 @@ export default defineConfig(({ mode }) => ({
               return 'vanilla-jsoneditor';
             }
 
-            // JSON editor - Classic (@json-editor/json-editor)
+            // JSON editor - Classic @json-editor (~536KB, different tool UI)
             if (id.includes('@json-editor') || id.includes('json-editor/')) {
               return 'json-editor-classic';
-            }
-
-            // React Core
-            if (
-              id.includes('/react/') ||
-              id.includes('react-dom') ||
-              id.includes('react-router') ||
-              id.includes('scheduler') ||
-              id.includes('prop-types') ||
-              id.includes('@restart/hooks') ||
-              id.includes('use-')
-            ) {
-              return 'react-vendor';
             }
 
             // Let other dependencies stay with the importing chunk
