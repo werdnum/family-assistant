@@ -8,7 +8,12 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import pytest_asyncio
 
-from family_assistant.llm import LLMInterface, LLMOutput, ToolCallFunction, ToolCallItem
+from family_assistant.llm import (
+    LLMInterface,
+    LLMOutput,
+    ToolCallFunction,
+    ToolCallItem,
+)
 from family_assistant.llm.factory import LLMClientFactory
 from tests.factories.messages import (
     create_assistant_message,
@@ -464,3 +469,78 @@ async def test_tool_call_id_format(
     # OpenAI typically uses "call_" prefix
     # Google uses different format
     # Just verify it's a non-empty string
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=sanitize_response)
+@pytest.mark.parametrize(
+    "provider,model",
+    [
+        # Use a model that is strict about thought signatures
+        ("google", "gemini-3-pro-preview"),
+    ],
+)
+async def test_gemini_multiturn_without_thought_signature(
+    provider: str,
+    model: str,
+    llm_client_with_tools: Callable[[str, str], Awaitable[LLMInterface]],
+) -> None:
+    """Test multi-turn tool calling when assistant message has no thought_signature.
+
+    This tests the workaround for Gemini's thought_signature validation requirement.
+    When sending a multi-turn conversation where the assistant previously made a
+    tool call, but we don't have the original thought_signature (e.g., tool call
+    was created programmatically or from a different provider), we need to use
+    a dummy signature to satisfy Gemini's validation.
+
+    See: https://ai.google.dev/gemini-api/docs/thought-signatures (FAQ section)
+    The docs specify using "skip_thought_signature_validator" as a workaround.
+    """
+    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
+        pytest.skip(f"Skipping {provider} test in CI without API key")
+
+    client = await llm_client_with_tools(provider, model)
+
+    tools = [calculate_tool()]
+
+    # Simulate a multi-turn conversation where:
+    # 1. User asks a question
+    # 2. Assistant made a tool call (but we don't have thought_signature)
+    # 3. Tool returned a result
+    # 4. Now we want the assistant to respond
+    #
+    # This is the exact pattern that triggers the thought_signature validation
+    # error if we don't provide the workaround.
+    messages: list[LLMMessage] = [
+        create_user_message("What is 25 * 4?"),
+        create_assistant_message(
+            content=None,
+            tool_calls=[
+                ToolCallItem(
+                    id="call_test_123",
+                    type="function",
+                    function=ToolCallFunction(
+                        name="calculate",
+                        arguments='{"expression": "25 * 4"}',
+                    ),
+                    # NOTE: No provider_metadata with thought_signature!
+                    # This simulates a tool call created without the original signature.
+                    provider_metadata=None,
+                )
+            ],
+        ),
+        create_tool_message(
+            tool_call_id="call_test_123",
+            content="100",
+        ),
+    ]
+
+    # This should NOT fail with thought_signature validation error
+    # The client should use the dummy "skip_thought_signature_validator" workaround
+    response = await client.generate_response(messages=messages, tools=tools)
+
+    assert isinstance(response, LLMOutput)
+    assert response.content is not None
+    # Should mention the result in some form
+    assert "100" in response.content or "hundred" in response.content.lower()

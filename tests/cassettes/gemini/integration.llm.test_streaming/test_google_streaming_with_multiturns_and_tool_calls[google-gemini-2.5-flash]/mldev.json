@@ -25,6 +25,7 @@
               {
                 "parts": [
                   {
+                    "thoughtSignature": "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=",
                     "functionCall": {
                       "id": "call_123",
                       "args": {
@@ -140,7 +141,7 @@
               ]
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "rBgpabSuAp2rnsEPsojooQg"
+            "responseId": "3eguaY7vOr-exN8Pyeic4Aw"
           },
           {
             "candidates": [
@@ -148,7 +149,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": " is 18°C and sunny. \n"
+                      "text": " is 18°C and sunny."
                     }
                   ],
                   "role": "model"
@@ -169,7 +170,7 @@
               ]
             },
             "modelVersion": "gemini-2.5-flash",
-            "responseId": "rBgpabSuAp2rnsEPsojooQg"
+            "responseId": "3eguaY7vOr-exN8Pyeic4Aw"
           }
         ],
         "byte_segments": [],
@@ -202,7 +203,7 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "rBgpabSuAp2rnsEPsojooQg",
+            "response_id": "3eguaY7vOr-exN8Pyeic4Aw",
             "usage_metadata": {
               "candidates_token_count": 4,
               "prompt_token_count": 152,
@@ -234,7 +235,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": " is 18°C and sunny. \n"
+                      "text": " is 18°C and sunny."
                     }
                   ],
                   "role": "model"
@@ -244,7 +245,7 @@
               }
             ],
             "model_version": "gemini-2.5-flash",
-            "response_id": "rBgpabSuAp2rnsEPsojooQg",
+            "response_id": "3eguaY7vOr-exN8Pyeic4Aw",
             "usage_metadata": {
               "candidates_token_count": 13,
               "prompt_token_count": 152,
