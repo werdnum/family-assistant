@@ -225,11 +225,11 @@ class TestThoughtSignatureConversion:
         assert part.function_call is not None
         assert part.function_call.name == "get_weather"
 
-        # Should either not have thought_signature attribute, or it should be None
-        if hasattr(part, "thought_signature"):
-            assert part.thought_signature is None, (
-                "Should not have thought signature when none provided"
-            )
+        # Should have the dummy thought signature as a workaround
+        assert hasattr(part, "thought_signature")
+        assert part.thought_signature == b"skip_thought_signature_validator", (
+            "Should have dummy thought signature when none provided"
+        )
 
     @pytest.mark.skip(
         reason="Text-only thought signatures not currently supported. "

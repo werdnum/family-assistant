@@ -462,13 +462,18 @@ class GoogleGenAIClient(BaseLLMClient):
                                 )
                             )
                         else:
+                            # Workaround for Gemini API: if no thought signature is present for a
+                            # function call, we must provide a dummy signature to avoid validation
+                            # errors.
+                            # See: https://ai.google.dev/gemini-api/docs/thought-signatures (FAQ section)
                             assistant_parts.append(
                                 types.Part(
                                     function_call=types.FunctionCall(
                                         name=func_name,
                                         args=args_dict,
                                         id=func_id,
-                                    )
+                                    ),
+                                    thought_signature=b"skip_thought_signature_validator",
                                 )
                             )
 
