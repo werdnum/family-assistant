@@ -1902,6 +1902,11 @@ class ProcessingService:
             # Just append them directly to messages_for_llm
             messages_for_llm.extend(attachment_injection_messages)
 
+            # Convert attachment URLs to data URIs before sending to LLM
+            processed_trigger_parts = await self._convert_attachment_urls_to_data_uris(
+                processed_trigger_parts
+            )
+
             # Add the current user trigger message to messages_for_llm
             # We filtered it out from history to avoid duplication issues, but we need to add it
             # here so the LLM can see the current user request

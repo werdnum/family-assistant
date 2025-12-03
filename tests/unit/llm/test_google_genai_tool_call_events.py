@@ -18,7 +18,7 @@ async def test_tool_call_events_are_emitted() -> None:
 
     client = GoogleGenAIClient(
         api_key=api_key,
-        model="gemini-2.0-flash-thinking-exp",
+        model="gemini-2.5-flash",
     )
 
     messages = [
