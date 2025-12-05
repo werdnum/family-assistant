@@ -60,6 +60,7 @@ class AsteriskLiveHandler:
         self.gemini_session: Any | None = None
         self.receive_task: asyncio.Task[None] | None = None
         self.client: Any | None = None
+        self.format: str | None = None
 
     async def run(self) -> None:
         """Main loop for the handler."""
@@ -76,14 +77,26 @@ class AsteriskLiveHandler:
                 api_key=self.api_key, http_options={"api_version": "v1alpha"}
             )
 
-            # Wait for MEDIA_START or first message to determine configuration
-            # Asterisk sends MEDIA_START immediately after connection
+            # Wait for initial configuration (MEDIA_START) from Asterisk
+            # This ensures we know the sample rate before establishing the Gemini session
+            while not self.format:
+                message = await self.websocket.receive()
 
-            # Start a loop to read messages from Asterisk
-            # We need to handle both Text (Control) and Binary (Media) frames.
+                if message["type"] == "websocket.disconnect":
+                    logger.info("Asterisk disconnected before configuration")
+                    return
+
+                if "text" in message:
+                    await self._handle_control_message(message["text"])
+
+                # Ignore media messages until configured (or log warning)
+                elif "bytes" in message:
+                    logger.warning("Received media before configuration, ignoring")
+
+            logger.info(f"Configuration received. Format: {self.format}")
 
             config = LiveConnectConfig(
-                response_modalities=cast(list[Any], ["AUDIO"]),
+                response_modalities=cast("list[Any]", ["AUDIO"]),
                 speech_config=SpeechConfig(
                     voice_config=VoiceConfig(
                         prebuilt_voice_config=PrebuiltVoiceConfig(
@@ -201,8 +214,6 @@ class AsteriskLiveHandler:
             audio_to_send = self._resample_audio(audio_data, self.sample_rate, 24000)
 
         # Send to Gemini
-        # "audio/pcm; rate=16000"
-
         mime_rate = 16000 if self.sample_rate == 8000 else self.sample_rate
         if mime_rate not in {16000, 24000}:
             mime_rate = 24000  # Fallback
@@ -252,9 +263,7 @@ class AsteriskLiveHandler:
 
                             while len(self.audio_buffer) >= self.optimal_frame_size:
                                 chunk = self.audio_buffer[: self.optimal_frame_size]
-                                self.audio_buffer = self.audio_buffer[
-                                    self.optimal_frame_size :
-                                ]
+                                del self.audio_buffer[: self.optimal_frame_size]
                                 await self.websocket.send_bytes(bytes(chunk))
 
         except asyncio.CancelledError:
