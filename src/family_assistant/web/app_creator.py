@@ -32,6 +32,7 @@ from family_assistant.web.routers.api_documentation import (
 from family_assistant.web.routers.api_token_management import (
     router as api_token_management_router,
 )
+from family_assistant.web.routers.asterisk_live_api import asterisk_live_router
 from family_assistant.web.routers.client_config import router as client_config_router
 from family_assistant.web.routers.context_viewer import context_viewer_router
 from family_assistant.web.routers.gemini_live_api import gemini_live_router
@@ -284,6 +285,11 @@ def create_app() -> FastAPI:
 
     # Gemini Live API endpoints for voice mode
     new_app.include_router(gemini_live_router, prefix="/api", tags=["Gemini Live API"])
+
+    # Asterisk Live API endpoints
+    new_app.include_router(
+        asterisk_live_router, prefix="/api", tags=["Asterisk Live API"]
+    )
 
     # API Token Management endpoints (like /api/me/tokens)
     # This is nested under /api as well, so the full path would be /api/me/tokens
