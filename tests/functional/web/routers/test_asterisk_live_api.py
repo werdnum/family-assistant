@@ -4,7 +4,7 @@ import contextlib
 import json
 import os
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,12 +12,11 @@ from fastapi.testclient import TestClient
 
 # Mock google.genai before importing the app/router to avoid ImportError handling
 with patch.dict("sys.modules", {"google.genai": MagicMock()}):
-    # Import the module under test to access imported names like Blob
     from family_assistant.web.app_creator import app
 
 
 @pytest.fixture
-def mock_genai() -> AsyncIterator[tuple[MagicMock, MagicMock]]:
+def mock_genai() -> Generator[tuple[MagicMock, MagicMock]]:
     """Mock the Google GenAI client."""
     with patch(
         "family_assistant.web.routers.asterisk_live_api.genai"
@@ -70,6 +69,9 @@ def test_asterisk_connection_flow(
             "MEDIA_START connection_id:test-conn format:slin16 optimal_frame_size:320"
         )
 
+        # Allow async loop to process message and connect
+        time.sleep(0.5)
+
         # Check that Gemini client was initialized
         # This confirms that we processed the config before connecting
         assert client_mock.aio.live.connect.called
@@ -113,6 +115,9 @@ def test_asterisk_json_protocol(
             "optimal_frame_size": 320,
         }
         websocket.send_text(json.dumps(start_event))
+
+        # Allow async loop to process message and connect
+        time.sleep(0.5)
 
         assert client_mock.aio.live.connect.called
 
