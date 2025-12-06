@@ -3,12 +3,13 @@
 import contextlib
 import json
 import os
-import time
 from collections.abc import AsyncIterator, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+
+from tests.helpers import wait_for_condition
 
 # Mock google.genai before importing the app/router to avoid ImportError handling
 with patch.dict("sys.modules", {"google.genai": MagicMock()}):
@@ -51,7 +52,8 @@ def mock_genai() -> Generator[tuple[MagicMock, MagicMock]]:
 
 
 @pytest.mark.no_db
-def test_asterisk_connection_flow(
+@pytest.mark.asyncio
+async def test_asterisk_connection_flow(
     mock_genai: tuple[MagicMock, MagicMock],
 ) -> None:
     """Test the basic flow of connecting from Asterisk."""
@@ -70,7 +72,7 @@ def test_asterisk_connection_flow(
         )
 
         # Allow async loop to process message and connect
-        time.sleep(0.5)
+        await wait_for_condition(lambda: client_mock.aio.live.connect.called)
 
         # Check that Gemini client was initialized
         # This confirms that we processed the config before connecting
@@ -81,7 +83,7 @@ def test_asterisk_connection_flow(
         websocket.send_bytes(audio_chunk)
 
         # Give time for async processing
-        time.sleep(0.5)
+        await wait_for_condition(lambda: session_mock.send.called)
 
         # Check that audio was forwarded to Gemini
         assert session_mock.send.called
@@ -96,7 +98,8 @@ def test_asterisk_connection_flow(
 
 
 @pytest.mark.no_db
-def test_asterisk_json_protocol(
+@pytest.mark.asyncio
+async def test_asterisk_json_protocol(
     mock_genai: tuple[MagicMock, MagicMock],
 ) -> None:
     """Test using JSON protocol for Asterisk control messages."""
@@ -116,16 +119,14 @@ def test_asterisk_json_protocol(
         }
         websocket.send_text(json.dumps(start_event))
 
-        # Allow async loop to process message and connect
-        time.sleep(0.5)
-
+        await wait_for_condition(lambda: client_mock.aio.live.connect.called)
         assert client_mock.aio.live.connect.called
 
         # Send Audio
         websocket.send_bytes(b"\x00" * 320)
 
         # Give time for async processing
-        time.sleep(0.5)
+        await wait_for_condition(lambda: session_mock.send.called)
 
         # Verify send called
         assert session_mock.send.called
