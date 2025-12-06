@@ -14,7 +14,12 @@ class LiveAudioSession(Protocol):
     """Protocol for a live audio session."""
 
     # ast-grep-ignore: no-dict-any - Protocol definition needs flexibility
-    async def send(self, input: Any, end_of_turn: bool = False) -> None:  # noqa: ANN401
+    async def send(
+        self,
+        *,
+        input: Any,
+        end_of_turn: bool | None = False,  # noqa: ANN401
+    ) -> None:
         """Send data to the session."""
         ...
 
