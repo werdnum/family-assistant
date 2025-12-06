@@ -2,66 +2,59 @@
 
 import contextlib
 import json
-import os
 from collections.abc import AsyncIterator, Generator
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
+from family_assistant.web.app_creator import app
+from family_assistant.web.dependencies import get_live_audio_client
+from family_assistant.web.voice_client import LiveAudioClient, LiveAudioSession
 from tests.helpers import wait_for_condition
-
-# Mock google.genai before importing the app/router to avoid ImportError handling
-with patch.dict("sys.modules", {"google.genai": MagicMock()}):
-    from family_assistant.web.app_creator import app
 
 
 @pytest.fixture
-def mock_genai() -> Generator[tuple[MagicMock, MagicMock]]:
-    """Mock the Google GenAI client."""
-    with patch(
-        "family_assistant.web.routers.asterisk_live_api.genai"
-    ) as mock_genai_module:
-        # Create the client mock
-        client_mock = MagicMock()
-        mock_genai_module.Client.return_value = client_mock
+def mock_live_audio_client() -> Generator[tuple[MagicMock, MagicMock]]:
+    """Mock the LiveAudioClient."""
+    # Create the client mock
+    client_mock = MagicMock(spec=LiveAudioClient)
 
-        # Create the session mock
-        # We use MagicMock for session because receive() is not awaitable (it returns an iterator)
-        # but send() is awaitable.
-        session_mock = MagicMock()
-        session_mock.send = AsyncMock()
+    # Create the session mock
+    session_mock = MagicMock(spec=LiveAudioSession)
+    session_mock.send = AsyncMock()
 
-        # Mock receive to return an empty iterator or control it
-        # We need an async iterator for receive()
-        async def async_iter() -> AsyncIterator[None]:
-            # Yield nothing effectively waiting forever or finishing immediately
-            if False:
-                yield None
+    async def async_iter() -> AsyncIterator[None]:
+        if False:
+            yield None
 
-        session_mock.receive.return_value = async_iter()
+    session_mock.receive.return_value = async_iter()
 
-        # Mock the context manager for connect
-        connect_context = AsyncMock()
-        connect_context.__aenter__.return_value = session_mock
-        connect_context.__aexit__.return_value = None
+    # Mock connect context manager
+    connect_context = AsyncMock()
+    connect_context.__aenter__.return_value = session_mock
+    connect_context.__aexit__.return_value = None
 
-        client_mock.aio.live.connect.return_value = connect_context
+    client_mock.connect.return_value = connect_context
 
-        yield client_mock, session_mock
+    # Override dependency
+    app.dependency_overrides[get_live_audio_client] = lambda: client_mock
+
+    yield client_mock, session_mock
+
+    # Cleanup
+    app.dependency_overrides = {}
 
 
 @pytest.mark.no_db
 @pytest.mark.asyncio
 async def test_asterisk_connection_flow(
-    mock_genai: tuple[MagicMock, MagicMock],
+    mock_live_audio_client: tuple[MagicMock, MagicMock],
 ) -> None:
     """Test the basic flow of connecting from Asterisk."""
-    client_mock, session_mock = mock_genai
+    client_mock, session_mock = mock_live_audio_client
 
-    # Set API Key
     with (
-        patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}),
         TestClient(app) as client,
         client.websocket_connect("/api/asterisk/live") as websocket,
     ):
@@ -72,11 +65,11 @@ async def test_asterisk_connection_flow(
         )
 
         # Allow async loop to process message and connect
-        await wait_for_condition(lambda: client_mock.aio.live.connect.called)
+        await wait_for_condition(lambda: client_mock.connect.called)
 
         # Check that Gemini client was initialized
         # This confirms that we processed the config before connecting
-        assert client_mock.aio.live.connect.called
+        assert client_mock.connect.called
 
         # 2. Send Audio (Asterisk -> Server)
         audio_chunk = b"\x00" * 320
@@ -100,13 +93,12 @@ async def test_asterisk_connection_flow(
 @pytest.mark.no_db
 @pytest.mark.asyncio
 async def test_asterisk_json_protocol(
-    mock_genai: tuple[MagicMock, MagicMock],
+    mock_live_audio_client: tuple[MagicMock, MagicMock],
 ) -> None:
     """Test using JSON protocol for Asterisk control messages."""
-    client_mock, session_mock = mock_genai
+    client_mock, session_mock = mock_live_audio_client
 
     with (
-        patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}),
         TestClient(app) as client,
         client.websocket_connect("/api/asterisk/live") as websocket,
     ):
@@ -119,8 +111,8 @@ async def test_asterisk_json_protocol(
         }
         websocket.send_text(json.dumps(start_event))
 
-        await wait_for_condition(lambda: client_mock.aio.live.connect.called)
-        assert client_mock.aio.live.connect.called
+        await wait_for_condition(lambda: client_mock.connect.called)
+        assert client_mock.connect.called
 
         # Send Audio
         websocket.send_bytes(b"\x00" * 320)
