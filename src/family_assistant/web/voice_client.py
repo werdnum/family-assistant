@@ -17,8 +17,8 @@ class LiveAudioSession(Protocol):
     async def send(
         self,
         *,
-        input: Any,
-        end_of_turn: bool | None = False,  # noqa: ANN401
+        input: Any,  # noqa: ANN401
+        end_of_turn: bool | None = False,
     ) -> None:
         """Send data to the session."""
         ...
