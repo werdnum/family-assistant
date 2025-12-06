@@ -11,26 +11,26 @@ import asyncio
 import contextlib
 import json
 import logging
-import os
 import uuid
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
 import numpy as np
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
+
+from family_assistant.web.dependencies import get_live_audio_client
+from family_assistant.web.voice_client import LiveAudioClient
 
 logger = logging.getLogger(__name__)
 
 asterisk_live_router = APIRouter(tags=["Asterisk Live API"])
 
-# Gemini Constants
-GEMINI_MODEL = "gemini-2.5-flash-native-audio-preview-09-2025"
+# Gemini Audio Constants
 GEMINI_SAMPLE_RATE = 24000  # Gemini Live API output is 24kHz
 GEMINI_CHANNELS = 1
 
-# Check for dependencies
+# Check for dependencies (types only needed for config construction)
 try:
-    from google import genai
     from google.genai.types import (
         Blob,
         Content,
@@ -41,42 +41,42 @@ try:
         VoiceConfig,
     )
 
-    GOOGLE_GENAI_AVAILABLE = True
+    GOOGLE_GENAI_TYPES_AVAILABLE = True
 except ImportError:
-    GOOGLE_GENAI_AVAILABLE = False
-    logger.warning("google-genai package not found. Asterisk Live API will not work.")
+    GOOGLE_GENAI_TYPES_AVAILABLE = False
+    logger.warning(
+        "google-genai types not found. Asterisk Live API will not work fully."
+    )
 
 
 class AsteriskLiveHandler:
     """Handles the WebSocket connection from Asterisk and bridges it to Gemini Live."""
 
-    def __init__(self, websocket: WebSocket, api_key: str) -> None:
+    def __init__(self, websocket: WebSocket, client: LiveAudioClient) -> None:
         self.websocket = websocket
-        self.api_key = api_key
+        self.client = client
         self.connection_id = str(uuid.uuid4())
         self.sample_rate = 8000  # Default to 8kHz (slin)
         self.optimal_frame_size = 320  # Default for 8kHz 20ms
         self.audio_buffer = bytearray()
         self.gemini_session: Any | None = None
         self.receive_task: asyncio.Task[None] | None = None
-        self.client: Any | None = None
         self.format: str | None = None
+        # Caching for resampling
+        self.resample_map: tuple[np.ndarray, np.ndarray] | None = None
+        self.resample_config: tuple[int, int, int] | None = None
 
     async def run(self) -> None:
         """Main loop for the handler."""
         await self.websocket.accept()
         logger.info(f"Accepted Asterisk WebSocket connection {self.connection_id}")
 
-        if not GOOGLE_GENAI_AVAILABLE:
-            logger.error("google-genai not available")
+        if not GOOGLE_GENAI_TYPES_AVAILABLE:
+            logger.error("google-genai types not available")
             await self.websocket.close(code=1011)
             return
 
         try:
-            self.client = genai.Client(
-                api_key=self.api_key, http_options={"api_version": "v1alpha"}
-            )
-
             # Wait for initial configuration (MEDIA_START) from Asterisk
             # This ensures we know the sample rate before establishing the Gemini session
             while not self.format:
@@ -106,9 +106,8 @@ class AsteriskLiveHandler:
                 ),
             )
 
-            async with self.client.aio.live.connect(
-                model=GEMINI_MODEL, config=config
-            ) as session:
+            # Use the injected client to connect
+            async with self.client.connect(config=config) as session:
                 self.gemini_session = session
                 logger.info("Connected to Gemini Live")
 
@@ -151,7 +150,6 @@ class AsteriskLiveHandler:
             data = json.loads(text)
         except json.JSONDecodeError:
             # Handle plain text format
-            # Example: MEDIA_START connection_id:xyz ...
             parts = text.split()
             if not parts:
                 return
@@ -191,6 +189,10 @@ class AsteriskLiveHandler:
                 f"Configured: format={self.format}, rate={self.sample_rate}, frame_size={self.optimal_frame_size}"
             )
 
+            # Invalidate resample cache when configuration changes
+            self.resample_map = None
+            self.resample_config = None
+
         elif event_type == "HANGUP":
             await self.websocket.close()
 
@@ -200,10 +202,6 @@ class AsteriskLiveHandler:
             return
 
         # Resample if needed (Asterisk -> Gemini)
-        # Gemini supports 16kHz and 24kHz input.
-        # If 8kHz, we should upsample to 16kHz or 24kHz.
-        # If 16kHz or 24kHz, send as is.
-
         audio_to_send = audio_data
 
         if self.sample_rate == 8000:
@@ -272,22 +270,32 @@ class AsteriskLiveHandler:
             logger.error(f"Error receiving from Gemini: {e}", exc_info=True)
 
     def _resample_audio(self, audio_data: bytes, src_rate: int, dst_rate: int) -> bytes:
-        """Resample PCM audio using numpy linear interpolation."""
+        """Resample PCM audio using numpy linear interpolation with caching."""
         if src_rate == dst_rate or not audio_data:
             return audio_data
 
         try:
             # Convert bytes to numpy array (int16)
             audio_np = np.frombuffer(audio_data, dtype=np.int16)
+            input_len = len(audio_np)
 
-            if len(audio_np) == 0:
+            if input_len == 0:
                 return b""
 
-            # Create time points and calculate new length based on rates
-            new_length = int(len(audio_np) * dst_rate / src_rate)
+            # Check cache for interpolation arrays
+            current_config = (src_rate, dst_rate, input_len)
+            if self.resample_config == current_config and self.resample_map:
+                x_old, x_new = self.resample_map
+            else:
+                # Create time points and calculate new length based on rates
+                new_length = int(input_len * dst_rate / src_rate)
 
-            x_old = np.arange(len(audio_np))
-            x_new = np.linspace(0, len(audio_np) - 1, new_length)
+                x_old = np.arange(input_len)
+                x_new = np.linspace(0, input_len - 1, new_length)
+
+                # Cache the arrays
+                self.resample_map = (x_old, x_new)
+                self.resample_config = current_config
 
             # Interpolate
             new_audio_np = np.interp(x_new, x_old, audio_np).astype(np.int16)
@@ -299,16 +307,13 @@ class AsteriskLiveHandler:
 
 
 @asterisk_live_router.websocket("/asterisk/live")
-async def asterisk_live_endpoint(websocket: WebSocket) -> None:
+async def asterisk_live_endpoint(
+    websocket: WebSocket,
+    client: Annotated[LiveAudioClient, Depends(get_live_audio_client)],
+) -> None:
     """
     WebSocket endpoint for Asterisk Live Audio.
     Connect to this using Dial(WebSocket/host/path/asterisk/live).
     """
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        logger.error("GEMINI_API_KEY not set")
-        await websocket.close(code=1008, reason="API Key missing")
-        return
-
-    handler = AsteriskLiveHandler(websocket, api_key)
+    handler = AsteriskLiveHandler(websocket, client)
     await handler.run()

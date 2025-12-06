@@ -1,4 +1,5 @@
 import logging
+import os
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 
@@ -8,6 +9,7 @@ from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import ToolsProvider
+from family_assistant.web.voice_client import GoogleGeminiLiveClient, LiveAudioClient
 
 if TYPE_CHECKING:
     from family_assistant.processing import ProcessingService  # Import for type hinting
@@ -253,3 +255,23 @@ async def get_web_chat_interface(request: Request) -> "WebChatInterface":
             detail="WebChatInterface not configured or available.",
         )
     return web_chat_interface
+
+
+async def get_live_audio_client(request: Request) -> LiveAudioClient:
+    """Dependency to get a configured LiveAudioClient."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        logger.error("GEMINI_API_KEY not found in environment.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Voice mode not configured (missing API key).",
+        )
+
+    # Get configuration from app state
+    config = getattr(request.app.state, "config", {})
+    # Use nested get to safely retrieve model
+    voice_config = config.get("voice_mode", {})
+    # Default model if not specified
+    model = voice_config.get("model", "gemini-2.5-flash-native-audio-preview-09-2025")
+
+    return GoogleGeminiLiveClient(api_key=api_key, model=model)
