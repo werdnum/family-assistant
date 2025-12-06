@@ -12,6 +12,7 @@ import contextlib
 import json
 import logging
 import uuid
+from fractions import Fraction
 from typing import Annotated, Any, cast
 
 import numpy as np
@@ -270,6 +271,42 @@ class AsteriskLiveHandler:
             logger.error(f"Error receiving from Gemini: {e}", exc_info=True)
 
     def _resample_audio(self, audio_data: bytes, src_rate: int, dst_rate: int) -> bytes:
+        """Resample PCM audio using scipy.signal.resample_poly."""
+        if src_rate == dst_rate or not audio_data:
+            return audio_data
+
+        try:
+            import scipy.signal  # noqa: PLC0415
+
+            # Convert bytes to numpy array (int16)
+            audio_np = np.frombuffer(audio_data, dtype=np.int16)
+            if len(audio_np) == 0:
+                return b""
+
+            # Calculate resampling ratio
+            ratio = Fraction(dst_rate, src_rate)
+            up, down = ratio.numerator, ratio.denominator
+
+            # Perform resampling
+            # resample_poly applies an FIR filter.
+            resampled_float = scipy.signal.resample_poly(audio_np, up, down)
+
+            # Cast back to int16
+            return resampled_float.astype(np.int16).tobytes()
+
+        except ImportError:
+            logger.warning(
+                "scipy not found, falling back to linear interpolation for resampling"
+            )
+            return self._resample_audio_linear(audio_data, src_rate, dst_rate)
+        except Exception as e:
+            logger.error(f"Resampling error: {e}")
+            # Try fallback
+            return self._resample_audio_linear(audio_data, src_rate, dst_rate)
+
+    def _resample_audio_linear(
+        self, audio_data: bytes, src_rate: int, dst_rate: int
+    ) -> bytes:
         """Resample PCM audio using numpy linear interpolation with caching."""
         if src_rate == dst_rate or not audio_data:
             return audio_data
@@ -302,7 +339,7 @@ class AsteriskLiveHandler:
 
             return new_audio_np.tobytes()
         except Exception as e:
-            logger.error(f"Resampling error: {e}")
+            logger.error(f"Linear resampling error: {e}")
             return audio_data
 
 
