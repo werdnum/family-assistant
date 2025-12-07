@@ -230,12 +230,8 @@ async def _initialize_vector_storage(engine: AsyncEngine) -> None:
             # Use DatabaseContext which handles its own retry logic for execution
             async with DatabaseContext(engine=engine) as vector_init_context:
                 # Assuming init_vector_db performs necessary table checks/creations
-                # TODO: migrate init_vector_db to repository pattern
-                from family_assistant.storage.vector import (  # noqa: PLC0415
-                    init_vector_db,
-                )
-
-                await init_vector_db(db_context=vector_init_context)
+                # migrated init_vector_db to repository pattern
+                await vector_init_context.vector.init_db()
             logger.info("Vector DB components initialized successfully.")
         except Exception as vec_e:
             logger.error(
