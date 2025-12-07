@@ -1,6 +1,6 @@
 import asyncio
 import logging
-import os  # Added for path manipulation
+import os
 import random
 import traceback
 from typing import Any
@@ -9,13 +9,13 @@ from alembic.config import Config as AlembicConfig
 from sqlalchemy import (
     inspect,
     text,
-)  # Import inspect, text and table creation components
-from sqlalchemy.engine import Connection  # Added Connection
+)
+from sqlalchemy.engine import Connection
 from sqlalchemy.exc import (
     DBAPIError,
     OperationalError,
     SQLAlchemyError,
-)  # Keep OperationalError
+)
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from alembic import command as alembic_command
@@ -229,8 +229,6 @@ async def _initialize_vector_storage(engine: AsyncEngine) -> None:
         try:
             # Use DatabaseContext which handles its own retry logic for execution
             async with DatabaseContext(engine=engine) as vector_init_context:
-                # Assuming init_vector_db performs necessary table checks/creations
-                # migrated init_vector_db to repository pattern
                 await vector_init_context.vector.init_db()
             logger.info("Vector DB components initialized successfully.")
         except Exception as vec_e:
