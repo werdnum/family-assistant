@@ -270,6 +270,10 @@ class AsteriskLiveHandler:
                 f"Configured: format={self.format}, rate={self.sample_rate}, frame_size={self.optimal_frame_size}"
             )
 
+            # Reset resamplers to prevent stale configuration on re-configuration
+            self.asterisk_to_gemini_resampler = None
+            self.gemini_to_asterisk_resampler = None
+
             # Initialize resamplers based on the sample rate
             # Asterisk -> Gemini: resample to 16kHz for 8kHz input, otherwise use native rate
             if self.sample_rate == 8000:
