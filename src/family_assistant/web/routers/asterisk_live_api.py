@@ -12,7 +12,6 @@ import contextlib
 import json
 import logging
 import uuid
-from fractions import Fraction
 from typing import Annotated, Any, cast
 
 import numpy as np
@@ -50,6 +49,87 @@ except ImportError:
     )
 
 
+class StatefulResampler:
+    """
+    Stateful audio resampler that maintains continuity across chunks.
+    Uses libsoxr for high-quality, low-latency resampling suitable for real-time audio.
+    """
+
+    def __init__(self, src_rate: int, dst_rate: int) -> None:
+        self.src_rate = src_rate
+        self.dst_rate = dst_rate
+        self.resampler: Any | None = None
+
+        # Try to initialize soxr resampler
+        try:
+            import soxr  # noqa: PLC0415
+
+            # Create a resampler instance that maintains state
+            # quality='VHQ' provides Very High Quality suitable for telephony
+            # For even lower latency, could use 'HQ' (High Quality)
+            self.resampler = soxr.ResampleStream(
+                src_rate, dst_rate, num_channels=1, dtype="int16", quality="VHQ"
+            )
+            logger.info(
+                f"Initialized soxr resampler: {src_rate}Hz -> {dst_rate}Hz (VHQ)"
+            )
+        except ImportError:
+            logger.warning(
+                "soxr not available, will fall back to linear interpolation (lower quality)"
+            )
+        except Exception as e:
+            logger.error(f"Failed to initialize soxr resampler: {e}", exc_info=True)
+
+    def resample(self, audio_data: bytes) -> bytes:
+        """Resample audio data maintaining filter state across calls."""
+        if self.src_rate == self.dst_rate or not audio_data:
+            return audio_data
+
+        if self.resampler:
+            try:
+                # Convert bytes to numpy array
+                audio_np = np.frombuffer(audio_data, dtype=np.int16)
+                if len(audio_np) == 0:
+                    return b""
+
+                # Resample using stateful resampler
+                # The resampler maintains internal state for continuity
+                resampled = self.resampler.resample_chunk(audio_np)
+
+                return resampled.astype(np.int16).tobytes()
+            except Exception as e:
+                logger.error(f"soxr resampling error: {e}", exc_info=True)
+                # Fall through to linear interpolation
+
+        # Fallback to linear interpolation
+        return self._resample_linear(audio_data)
+
+    def _resample_linear(self, audio_data: bytes) -> bytes:
+        """Fallback linear interpolation resampling (lower quality)."""
+        if not audio_data:
+            return audio_data
+
+        try:
+            audio_np = np.frombuffer(audio_data, dtype=np.int16)
+            input_len = len(audio_np)
+
+            if input_len == 0:
+                return b""
+
+            # Calculate new length based on rates
+            new_length = int(input_len * self.dst_rate / self.src_rate)
+
+            # Linear interpolation
+            x_old = np.arange(input_len)
+            x_new = np.linspace(0, input_len - 1, new_length)
+            new_audio_np = np.interp(x_new, x_old, audio_np).astype(np.int16)
+
+            return new_audio_np.tobytes()
+        except Exception as e:
+            logger.error(f"Linear resampling error: {e}", exc_info=True)
+            return audio_data
+
+
 class AsteriskLiveHandler:
     """Handles the WebSocket connection from Asterisk and bridges it to Gemini Live."""
 
@@ -63,9 +143,9 @@ class AsteriskLiveHandler:
         self.gemini_session: Any | None = None
         self.receive_task: asyncio.Task[None] | None = None
         self.format: str | None = None
-        # Caching for resampling
-        self.resample_map: tuple[np.ndarray, np.ndarray] | None = None
-        self.resample_config: tuple[int, int, int] | None = None
+        # Stateful resamplers for bidirectional audio
+        self.asterisk_to_gemini_resampler: StatefulResampler | None = None
+        self.gemini_to_asterisk_resampler: StatefulResampler | None = None
 
     async def run(self) -> None:
         """Main loop for the handler."""
@@ -190,9 +270,21 @@ class AsteriskLiveHandler:
                 f"Configured: format={self.format}, rate={self.sample_rate}, frame_size={self.optimal_frame_size}"
             )
 
-            # Invalidate resample cache when configuration changes
-            self.resample_map = None
-            self.resample_config = None
+            # Initialize resamplers based on the sample rate
+            # Asterisk -> Gemini: resample to 16kHz for 8kHz input, otherwise use native rate
+            if self.sample_rate == 8000:
+                self.asterisk_to_gemini_resampler = StatefulResampler(8000, 16000)
+            elif self.sample_rate not in {16000, 24000}:
+                # For other rates, resample to 24kHz
+                self.asterisk_to_gemini_resampler = StatefulResampler(
+                    self.sample_rate, 24000
+                )
+
+            # Gemini -> Asterisk: resample from 24kHz to target rate if needed
+            if self.sample_rate != GEMINI_SAMPLE_RATE:
+                self.gemini_to_asterisk_resampler = StatefulResampler(
+                    GEMINI_SAMPLE_RATE, self.sample_rate
+                )
 
         elif event_type == "HANGUP":
             await self.websocket.close()
@@ -204,16 +296,13 @@ class AsteriskLiveHandler:
 
         # Resample if needed (Asterisk -> Gemini)
         audio_to_send = audio_data
+        mime_rate = self.sample_rate
 
-        if self.sample_rate == 8000:
-            # Upsample to 16kHz for better compatibility
-            audio_to_send = self._resample_audio(audio_data, 8000, 16000)
-        elif self.sample_rate not in {16000, 24000}:
-            # Try to resample to 24kHz as generic fallback
-            audio_to_send = self._resample_audio(audio_data, self.sample_rate, 24000)
+        if self.asterisk_to_gemini_resampler:
+            audio_to_send = self.asterisk_to_gemini_resampler.resample(audio_data)
+            mime_rate = self.asterisk_to_gemini_resampler.dst_rate
 
-        # Send to Gemini
-        mime_rate = 16000 if self.sample_rate == 8000 else self.sample_rate
+        # Ensure mime_rate is valid for Gemini
         if mime_rate not in {16000, 24000}:
             mime_rate = 24000  # Fallback
 
@@ -252,9 +341,11 @@ class AsteriskLiveHandler:
 
                             # Resample if needed (Gemini -> Asterisk)
                             target_audio = audio_data
-                            if self.sample_rate != GEMINI_SAMPLE_RATE:
-                                target_audio = self._resample_audio(
-                                    audio_data, GEMINI_SAMPLE_RATE, self.sample_rate
+                            if self.gemini_to_asterisk_resampler:
+                                target_audio = (
+                                    self.gemini_to_asterisk_resampler.resample(
+                                        audio_data
+                                    )
                                 )
 
                             # Buffer and send
@@ -269,78 +360,6 @@ class AsteriskLiveHandler:
             pass
         except Exception as e:
             logger.error(f"Error receiving from Gemini: {e}", exc_info=True)
-
-    def _resample_audio(self, audio_data: bytes, src_rate: int, dst_rate: int) -> bytes:
-        """Resample PCM audio using scipy.signal.resample_poly."""
-        if src_rate == dst_rate or not audio_data:
-            return audio_data
-
-        try:
-            import scipy.signal  # noqa: PLC0415
-
-            # Convert bytes to numpy array (int16)
-            audio_np = np.frombuffer(audio_data, dtype=np.int16)
-            if len(audio_np) == 0:
-                return b""
-
-            # Calculate resampling ratio
-            ratio = Fraction(dst_rate, src_rate)
-            up, down = ratio.numerator, ratio.denominator
-
-            # Perform resampling
-            # resample_poly applies an FIR filter.
-            resampled_float = scipy.signal.resample_poly(audio_np, up, down)
-
-            # Cast back to int16
-            return resampled_float.astype(np.int16).tobytes()
-
-        except ImportError:
-            logger.warning(
-                "scipy not found, falling back to linear interpolation for resampling"
-            )
-            return self._resample_audio_linear(audio_data, src_rate, dst_rate)
-        except Exception as e:
-            logger.error(f"Resampling error: {e}")
-            # Try fallback
-            return self._resample_audio_linear(audio_data, src_rate, dst_rate)
-
-    def _resample_audio_linear(
-        self, audio_data: bytes, src_rate: int, dst_rate: int
-    ) -> bytes:
-        """Resample PCM audio using numpy linear interpolation with caching."""
-        if src_rate == dst_rate or not audio_data:
-            return audio_data
-
-        try:
-            # Convert bytes to numpy array (int16)
-            audio_np = np.frombuffer(audio_data, dtype=np.int16)
-            input_len = len(audio_np)
-
-            if input_len == 0:
-                return b""
-
-            # Check cache for interpolation arrays
-            current_config = (src_rate, dst_rate, input_len)
-            if self.resample_config == current_config and self.resample_map:
-                x_old, x_new = self.resample_map
-            else:
-                # Create time points and calculate new length based on rates
-                new_length = int(input_len * dst_rate / src_rate)
-
-                x_old = np.arange(input_len)
-                x_new = np.linspace(0, input_len - 1, new_length)
-
-                # Cache the arrays
-                self.resample_map = (x_old, x_new)
-                self.resample_config = current_config
-
-            # Interpolate
-            new_audio_np = np.interp(x_new, x_old, audio_np).astype(np.int16)
-
-            return new_audio_np.tobytes()
-        except Exception as e:
-            logger.error(f"Linear resampling error: {e}")
-            return audio_data
 
 
 @asterisk_live_router.websocket("/asterisk/live")
