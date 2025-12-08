@@ -11,10 +11,12 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
+import secrets
 import uuid
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
 from family_assistant.web.audio_utils import StatefulResampler
@@ -49,13 +51,35 @@ except ImportError:
     )
 
 
+def get_asterisk_auth_config() -> tuple[str | None, set[str]]:
+    """
+    Get Asterisk authentication config from environment variables.
+
+    Returns:
+        Tuple of (secret_token, allowed_extensions).
+        If secret_token is None, authentication is disabled.
+        If allowed_extensions is empty, all extensions are allowed.
+    """
+    token = os.environ.get("ASTERISK_SECRET_TOKEN")
+    allowed_str = os.environ.get("ASTERISK_ALLOWED_EXTENSIONS", "")
+    allowed = {e.strip() for e in allowed_str.split(",") if e.strip()}
+    return token, allowed
+
+
 class AsteriskLiveHandler:
     """Handles the WebSocket connection from Asterisk and bridges it to Gemini Live."""
 
-    def __init__(self, websocket: WebSocket, client: LiveAudioClient) -> None:
+    def __init__(
+        self,
+        websocket: WebSocket,
+        client: LiveAudioClient,
+        extension: str | None = None,
+        conversation_id: str | None = None,
+    ) -> None:
         self.websocket = websocket
         self.client = client
-        self.connection_id = str(uuid.uuid4())
+        self.extension = extension  # User identity (like Telegram chat_id)
+        self.conversation_id = conversation_id or str(uuid.uuid4())  # For history
         self.sample_rate = 8000  # Default to 8kHz (slin)
         self.optimal_frame_size = 320  # Default for 8kHz 20ms
         self.audio_buffer = bytearray()
@@ -69,7 +93,9 @@ class AsteriskLiveHandler:
     async def run(self) -> None:
         """Main loop for the handler."""
         await self.websocket.accept()
-        logger.info(f"Accepted Asterisk WebSocket connection {self.connection_id}")
+        logger.info(
+            f"Asterisk WebSocket accepted: conversation={self.conversation_id}, extension={self.extension}"
+        )
 
         if not GOOGLE_GENAI_TYPES_AVAILABLE:
             logger.error("google-genai types not available")
@@ -289,10 +315,50 @@ class AsteriskLiveHandler:
 async def asterisk_live_endpoint(
     websocket: WebSocket,
     client: Annotated[LiveAudioClient, Depends(get_live_audio_client)],
+    token: Annotated[str | None, Query()] = None,
+    extension: Annotated[str | None, Query()] = None,
+    channel_id: Annotated[str | None, Query()] = None,
 ) -> None:
     """
     WebSocket endpoint for Asterisk Live Audio.
-    Connect to this using Dial(WebSocket/host/path/asterisk/live).
+
+    Authentication:
+        - Set ASTERISK_SECRET_TOKEN env var to require token authentication
+        - Pass token as query parameter: ?token=<secret>
+        - Set ASTERISK_ALLOWED_EXTENSIONS to restrict by extension (comma-separated)
+
+    Query Parameters:
+        - token: Authentication token (required if ASTERISK_SECRET_TOKEN is set)
+        - extension: Caller's extension number (user identity)
+        - channel_id: Asterisk channel ID (used as conversation ID for history)
+
+    Example Asterisk Dialplan:
+        Dial(WebSocket/host:8000/api/asterisk/live?token=${TOKEN}&extension=${CALLERID(num)}&channel_id=${CHANNEL})
     """
-    handler = AsteriskLiveHandler(websocket, client)
+    secret_token, allowed_extensions = get_asterisk_auth_config()
+
+    # Layer 1: Server authentication
+    if secret_token and (not token or not secrets.compare_digest(token, secret_token)):
+        logger.warning("Asterisk connection rejected: invalid or missing token")
+        await websocket.close(code=1008, reason="Invalid token")
+        return
+
+    # Layer 2: Extension authorization (if allow-list configured)
+    if allowed_extensions and extension not in allowed_extensions:
+        logger.warning(
+            f"Asterisk connection rejected: extension '{extension}' not in allowed list"
+        )
+        await websocket.close(code=1008, reason="Extension not authorized")
+        return
+
+    # Use channel_id as conversation_id for history, fall back to UUID
+    conversation_id = channel_id or str(uuid.uuid4())
+
+    logger.info(
+        f"Asterisk connection authorized: extension={extension}, channel={conversation_id}"
+    )
+
+    handler = AsteriskLiveHandler(
+        websocket, client, extension=extension, conversation_id=conversation_id
+    )
     await handler.run()
