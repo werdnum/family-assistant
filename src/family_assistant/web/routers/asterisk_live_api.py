@@ -70,7 +70,7 @@ class StatefulResampler:
             self.resampler = soxr.ResampleStream(
                 src_rate, dst_rate, num_channels=1, dtype="int16", quality="VHQ"
             )
-            logger.info(
+            logger.debug(
                 f"Initialized soxr resampler: {src_rate}Hz -> {dst_rate}Hz (VHQ)"
             )
         except ImportError:
@@ -119,9 +119,10 @@ class StatefulResampler:
             # Calculate new length based on rates
             new_length = int(input_len * self.dst_rate / self.src_rate)
 
-            # Linear interpolation
+            # Calculate sample positions based on sample rate ratio to preserve pitch
+            # For each output sample i, input position = i * src_rate / dst_rate
             x_old = np.arange(input_len)
-            x_new = np.linspace(0, input_len - 1, new_length)
+            x_new = np.arange(new_length) * self.src_rate / self.dst_rate
             new_audio_np = np.interp(x_new, x_old, audio_np).astype(np.int16)
 
             return new_audio_np.tobytes()
