@@ -14,10 +14,10 @@ import logging
 import uuid
 from typing import Annotated, Any, cast
 
-import numpy as np
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
+from family_assistant.web.audio_utils import StatefulResampler
 from family_assistant.web.dependencies import get_live_audio_client
 from family_assistant.web.voice_client import LiveAudioClient
 
@@ -47,88 +47,6 @@ except ImportError:
     logger.warning(
         "google-genai types not found. Asterisk Live API will not work fully."
     )
-
-
-class StatefulResampler:
-    """
-    Stateful audio resampler that maintains continuity across chunks.
-    Uses libsoxr for high-quality, low-latency resampling suitable for real-time audio.
-    """
-
-    def __init__(self, src_rate: int, dst_rate: int) -> None:
-        self.src_rate = src_rate
-        self.dst_rate = dst_rate
-        self.resampler: Any | None = None
-
-        # Try to initialize soxr resampler
-        try:
-            import soxr  # noqa: PLC0415
-
-            # Create a resampler instance that maintains state
-            # quality='VHQ' provides Very High Quality suitable for telephony
-            # For even lower latency, could use 'HQ' (High Quality)
-            self.resampler = soxr.ResampleStream(
-                src_rate, dst_rate, num_channels=1, dtype="int16", quality="VHQ"
-            )
-            logger.debug(
-                f"Initialized soxr resampler: {src_rate}Hz -> {dst_rate}Hz (VHQ)"
-            )
-        except ImportError:
-            logger.warning(
-                "soxr not available, will fall back to linear interpolation (lower quality)"
-            )
-        except Exception as e:
-            logger.error(f"Failed to initialize soxr resampler: {e}", exc_info=True)
-
-    def resample(self, audio_data: bytes) -> bytes:
-        """Resample audio data maintaining filter state across calls."""
-        if self.src_rate == self.dst_rate or not audio_data:
-            return audio_data
-
-        if self.resampler:
-            try:
-                # Convert bytes to numpy array
-                audio_np = np.frombuffer(audio_data, dtype=np.int16)
-                if len(audio_np) == 0:
-                    return b""
-
-                # Resample using stateful resampler
-                # The resampler maintains internal state for continuity
-                resampled = self.resampler.resample_chunk(audio_np)
-
-                return resampled.astype(np.int16).tobytes()
-            except Exception as e:
-                logger.error(f"soxr resampling error: {e}", exc_info=True)
-                # Fall through to linear interpolation
-
-        # Fallback to linear interpolation
-        return self._resample_linear(audio_data)
-
-    def _resample_linear(self, audio_data: bytes) -> bytes:
-        """Fallback linear interpolation resampling (lower quality)."""
-        if not audio_data:
-            return audio_data
-
-        try:
-            audio_np = np.frombuffer(audio_data, dtype=np.int16)
-            input_len = len(audio_np)
-
-            if input_len == 0:
-                return b""
-
-            # Calculate new length based on rates
-            new_length = int(input_len * self.dst_rate / self.src_rate)
-
-            # Calculate sample positions based on sample rate ratio to preserve pitch
-            # For each output sample i, input position = i * src_rate / dst_rate
-            x_old = np.arange(input_len)
-            x_new = np.arange(new_length) * self.src_rate / self.dst_rate
-            new_audio_np = np.interp(x_new, x_old, audio_np).astype(np.int16)
-
-            return new_audio_np.tobytes()
-        except Exception as e:
-            logger.error(f"Linear resampling error: {e}", exc_info=True)
-            return audio_data
 
 
 class AsteriskLiveHandler:
