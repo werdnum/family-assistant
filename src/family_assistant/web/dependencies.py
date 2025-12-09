@@ -9,6 +9,7 @@ from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import ToolsProvider
+from family_assistant.web.models import GeminiLiveConfig
 from family_assistant.web.voice_client import GoogleGeminiLiveClient, LiveAudioClient
 
 if TYPE_CHECKING:
@@ -271,11 +272,7 @@ async def get_live_audio_client(websocket: WebSocket) -> LiveAudioClient:
             detail="Voice mode not configured (missing API key).",
         )
 
-    # Get configuration from app state
-    config = getattr(websocket.app.state, "config", {})
-    # Use nested get to safely retrieve model
-    voice_config = config.get("voice_mode", {})
-    # Default model if not specified
-    model = voice_config.get("model", "gemini-2.5-flash-native-audio-preview-09-2025")
+    # Get configuration from app state using centralized method
+    gemini_live_config = GeminiLiveConfig.from_app_state(websocket.app.state)
 
-    return GoogleGeminiLiveClient(api_key=api_key, model=model)
+    return GoogleGeminiLiveClient(api_key=api_key, model=gemini_live_config.model)
