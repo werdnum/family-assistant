@@ -15,7 +15,9 @@ from tests.helpers import wait_for_condition
 
 
 @pytest.fixture
-def mock_gemini_client() -> Generator[tuple[MagicMock, MagicMock]]:
+def mock_gemini_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[tuple[MagicMock, MagicMock]]:
     """Mock the google.genai.Client at the API boundary.
 
     This fixture mocks the Google GenAI Client class, allowing us to test
@@ -50,17 +52,10 @@ def mock_gemini_client() -> Generator[tuple[MagicMock, MagicMock]]:
     mock_client_instance.aio.live.connect.return_value = mock_connect_cm
 
     # Set GEMINI_API_KEY so the dependency doesn't fail
-    original_api_key = os.environ.get("GEMINI_API_KEY")
-    os.environ["GEMINI_API_KEY"] = "test-api-key-for-testing"
+    monkeypatch.setenv("GEMINI_API_KEY", "test-api-key-for-testing")
 
     with patch("google.genai.Client", return_value=mock_client_instance) as mock_client:
         yield mock_client, mock_session
-
-    # Restore original API key
-    if original_api_key is None:
-        os.environ.pop("GEMINI_API_KEY", None)
-    else:
-        os.environ["GEMINI_API_KEY"] = original_api_key
 
 
 @pytest.fixture
