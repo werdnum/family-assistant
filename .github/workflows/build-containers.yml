@@ -117,6 +117,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and conditionally push main application image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -135,9 +136,48 @@ jobs:
           cache-to: |
             type=gha,mode=max
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:buildcache,mode=max
-      - name: Trigger Concourse Deployment
+
+      - name: Generate GitHub App token
         if: needs.prepare.outputs.should-push == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.IMAGE_UPDATER_APP_ID }}
+          private-key: ${{ secrets.IMAGE_UPDATER_PRIVATE_KEY }}
+          owner: werdnum
+          repositories: kube-config
+
+      - name: Update kube-config
+        if: needs.prepare.outputs.should-push == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          curl --fail-with-body -X POST \
-            "https://concourse-webhooks.bishop-dorian.ts.net/api/v1/teams/main/pipelines/family-assistant/resources/family-assistant-image/check/webhook?webhook_token=${{ secrets.CONCOURSE_WEBHOOK_TOKEN }}"
+          set -e
+
+          NEW_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}@${IMAGE_DIGEST}"
+          DEPLOYMENT_PATH="kubernetes/manifests/workloads/family-assistant/Deployment-family-assistant.yaml"
+
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/werdnum/kube-config.git" kube-config
+          cd kube-config
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+          yq eval -i "(.spec.template.spec.containers[] | select(.name == \"family-assistant\") | .image) = \"${NEW_IMAGE}\"" \
+            "${DEPLOYMENT_PATH}"
+
+          if git diff --quiet; then
+            echo "No changes to commit"
+          else
+            git add "${DEPLOYMENT_PATH}"
+            git commit -m "chore(family-assistant): update image to ${IMAGE_DIGEST:0:12}
+
+          Source: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+            git push
+            echo "Updated kube-config with new image"
+          fi
 
