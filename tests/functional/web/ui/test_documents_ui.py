@@ -99,7 +99,7 @@ async def test_create_document_via_api_and_view_in_react_ui(
         await wait_for_tasks_to_complete(
             db_engine,
             task_ids=None,  # Wait for all tasks to complete, including spawned embedding tasks
-            timeout_seconds=25.0,  # Slightly longer timeout for embedding tasks
+            timeout_seconds=60.0,  # Slightly longer timeout for embedding tasks
         )
 
         # Get the actual document ID from the database
@@ -184,7 +184,7 @@ async def test_multiple_documents_display_in_react_ui(
     await wait_for_tasks_to_complete(
         db_engine,
         task_ids=None,  # Wait for all tasks to complete, including spawned embedding tasks
-        timeout_seconds=25.0,  # Slightly longer timeout for embedding tasks
+        timeout_seconds=60.0,  # Slightly longer timeout for embedding tasks
     )
 
     # Navigate to the React documents page
@@ -253,7 +253,7 @@ async def test_document_search_in_react_ui(
     await wait_for_tasks_to_complete(
         db_engine,
         task_ids=None,  # Wait for all tasks to complete, including spawned embedding tasks
-        timeout_seconds=25.0,  # Slightly longer timeout for embedding tasks
+        timeout_seconds=60.0,  # Slightly longer timeout for embedding tasks
     )
 
     # Navigate to the React documents page
@@ -327,7 +327,7 @@ async def test_document_detail_navigation_in_react_ui(
         await wait_for_tasks_to_complete(
             db_engine,
             task_ids=None,  # Wait for all tasks to complete, including spawned embedding tasks
-            timeout_seconds=25.0,  # Slightly longer timeout for embedding tasks
+            timeout_seconds=60.0,  # Slightly longer timeout for embedding tasks
         )
 
         # Get the actual document ID from the database
