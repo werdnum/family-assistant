@@ -44,6 +44,60 @@ llm_parameters:
   # "anthropic/claude-3-":
   #   temperature: 0.75
   #   top_k: 50
+
+# Gemini Live Voice API Configuration
+# See: https://ai.google.dev/gemini-api/docs/live
+gemini_live_config:
+  # Model to use for Gemini Live voice sessions
+  model: "gemini-2.5-flash-native-audio-preview-09-2025"
+
+  # Voice configuration
+  voice:
+    # Prebuilt voice name (e.g., "Puck", "Kore", "Charon", "Fenrir", "Aoede")
+    name: "Puck"
+
+  # Session limits
+  session:
+    # Maximum duration in minutes before auto-disconnect
+    max_duration_minutes: 15
+
+  # Transcription settings
+  transcription:
+    # Enable input (user) transcription
+    input_enabled: true
+    # Enable output (assistant) transcription
+    output_enabled: true
+
+  # Voice Activity Detection (VAD) configuration
+  # Controls automatic speech detection and turn-taking
+  vad:
+    # Whether automatic activity detection is enabled
+    # Set to false to use manual/push-to-talk mode
+    automatic: true
+    # Sensitivity for detecting speech start: "DISABLED", "LOW", "DEFAULT", "HIGH"
+    start_of_speech_sensitivity: "DEFAULT"
+    # Sensitivity for detecting speech end: "DISABLED", "LOW", "DEFAULT", "HIGH"
+    end_of_speech_sensitivity: "DEFAULT"
+    # Buffer in ms before speech detection (null for default)
+    prefix_padding_ms: null
+    # Pause duration in ms to consider speech ended (null for default)
+    silence_duration_ms: null
+
+  # Advanced features (require v1alpha API)
+  # Affective dialog allows the model to adapt response style to user's tone
+  affective_dialog:
+    enabled: false
+
+  # Proactivity allows the model to proactively decline irrelevant responses
+  proactivity:
+    enabled: false
+    proactive_audio: false
+
+  # Thinking configuration for reasoning
+  thinking:
+    # Include thought summaries in responses (for debugging)
+    include_thoughts: false
+
 # Configuration for the document indexing pipeline
 indexing_pipeline_config:
   # Optional global configurations for the pipeline itself, if IndexingPipeline supports them
