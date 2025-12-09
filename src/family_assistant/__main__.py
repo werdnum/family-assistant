@@ -190,6 +190,37 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
             "vapid_contact_email": None,  # Admin contact email for VAPID 'sub' claim
         },
         "llm_parameters": {},  # Global LLM parameters
+        # Gemini Live Voice API configuration
+        "gemini_live_config": {
+            "model": "gemini-2.5-flash-native-audio-preview-09-2025",
+            "voice": {
+                "name": "Puck",
+            },
+            "session": {
+                "max_duration_minutes": 15,
+            },
+            "transcription": {
+                "input_enabled": True,
+                "output_enabled": True,
+            },
+            "vad": {
+                "automatic": True,
+                "start_of_speech_sensitivity": "DEFAULT",
+                "end_of_speech_sensitivity": "DEFAULT",
+                "prefix_padding_ms": None,
+                "silence_duration_ms": None,
+            },
+            "affective_dialog": {
+                "enabled": False,
+            },
+            "proactivity": {
+                "enabled": False,
+                "proactive_audio": False,
+            },
+            "thinking": {
+                "include_thoughts": False,
+            },
+        },
         "mcp_config": {"mcpServers": {}},  # Global MCP server definitions
         "default_service_profile_id": "default_assistant",  # Default profile ID
         "service_profiles": [],  # List of service profile configurations

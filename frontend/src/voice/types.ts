@@ -67,6 +67,75 @@ export interface GeminiToolResponse {
 }
 
 /**
+ * Gemini Live voice configuration from backend.
+ */
+export interface GeminiLiveVoiceConfig {
+  name: string;
+}
+
+/**
+ * Gemini Live session configuration from backend.
+ */
+export interface GeminiLiveSessionConfig {
+  max_duration_minutes: number;
+}
+
+/**
+ * Gemini Live transcription configuration from backend.
+ */
+export interface GeminiLiveTranscriptionConfig {
+  input_enabled: boolean;
+  output_enabled: boolean;
+}
+
+/**
+ * Gemini Live VAD configuration from backend.
+ */
+export interface GeminiLiveVADConfig {
+  automatic: boolean;
+  start_of_speech_sensitivity: string;
+  end_of_speech_sensitivity: string;
+  prefix_padding_ms: number | null;
+  silence_duration_ms: number | null;
+}
+
+/**
+ * Gemini Live affective dialog configuration from backend.
+ */
+export interface GeminiLiveAffectiveDialogConfig {
+  enabled: boolean;
+}
+
+/**
+ * Gemini Live proactivity configuration from backend.
+ */
+export interface GeminiLiveProactivityConfig {
+  enabled: boolean;
+  proactive_audio: boolean;
+}
+
+/**
+ * Gemini Live thinking configuration from backend.
+ */
+export interface GeminiLiveThinkingConfig {
+  include_thoughts: boolean;
+}
+
+/**
+ * Full Gemini Live configuration from backend.
+ */
+export interface GeminiLiveConfig {
+  model: string;
+  voice: GeminiLiveVoiceConfig;
+  session: GeminiLiveSessionConfig;
+  transcription: GeminiLiveTranscriptionConfig;
+  vad: GeminiLiveVADConfig;
+  affective_dialog: GeminiLiveAffectiveDialogConfig;
+  proactivity: GeminiLiveProactivityConfig;
+  thinking: GeminiLiveThinkingConfig;
+}
+
+/**
  * Ephemeral token response from backend.
  * Uses SDK's Tool type directly to ensure type compatibility.
  */
@@ -76,6 +145,7 @@ export interface EphemeralTokenResponse {
   tools: Tool[];
   system_instruction: string;
   model: string;
+  config: GeminiLiveConfig;
 }
 
 /**

@@ -20,13 +20,21 @@ from typing import Annotated, Any, cast
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from starlette.applications import Starlette
 from starlette.websockets import WebSocketState
 
 from family_assistant.web.audio_utils import StatefulResampler
 from family_assistant.web.dependencies import get_live_audio_client
+from family_assistant.web.models import GeminiLiveConfig
 from family_assistant.web.voice_client import LiveAudioClient
 
 logger = logging.getLogger(__name__)
+
+
+def get_gemini_live_config_from_app(app: Starlette) -> GeminiLiveConfig:
+    """Get the Gemini Live configuration from app state."""
+    return GeminiLiveConfig.from_app_state(app.state)
+
 
 asterisk_live_router = APIRouter(tags=["Asterisk Live API"])
 
@@ -75,6 +83,7 @@ class AsteriskLiveHandler:
         self,
         websocket: WebSocket,
         client: LiveAudioClient,
+        gemini_live_config: GeminiLiveConfig,
         extension: str | None = None,
         conversation_id: str | None = None,
         system_instruction: str | None = None,
@@ -82,6 +91,7 @@ class AsteriskLiveHandler:
     ) -> None:
         self.websocket = websocket
         self.client = client
+        self.gemini_live_config = gemini_live_config
         self.extension = extension  # User identity (like Telegram chat_id)
         self.conversation_id = conversation_id or str(uuid.uuid4())  # For history
         self.system_instruction = system_instruction
@@ -132,7 +142,7 @@ class AsteriskLiveHandler:
                 speech_config=SpeechConfig(
                     voice_config=VoiceConfig(
                         prebuilt_voice_config=PrebuiltVoiceConfig(
-                            voice_name="Puck"  # Default voice
+                            voice_name=self.gemini_live_config.voice.name
                         )
                     )
                 ),
@@ -407,6 +417,9 @@ async def asterisk_live_endpoint(
         f"Asterisk connection authorized: extension={extension}, channel={conversation_id}"
     )
 
+    # Get Gemini Live configuration from app state
+    gemini_live_config = get_gemini_live_config_from_app(websocket.app)
+
     # Get configuration from telephone profile if available
     system_instruction = None
     tools = None
@@ -466,6 +479,7 @@ async def asterisk_live_endpoint(
     handler = AsteriskLiveHandler(
         websocket,
         client,
+        gemini_live_config=gemini_live_config,
         extension=extension,
         conversation_id=conversation_id,
         system_instruction=system_instruction,

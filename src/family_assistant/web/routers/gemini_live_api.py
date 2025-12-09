@@ -4,6 +4,7 @@ Gemini Live API router for voice mode integration.
 This router provides endpoints for:
 - Generating ephemeral tokens for client-side Gemini Live API access
 - Returning filtered tool definitions and system context
+- Providing configurable voice parameters (voice, VAD, transcription, etc.)
 """
 
 import datetime
@@ -17,14 +18,16 @@ from pydantic import BaseModel
 from family_assistant.processing import ProcessingService
 from family_assistant.web.auth import get_user_from_request
 from family_assistant.web.dependencies import get_processing_service
+from family_assistant.web.models import GeminiLiveConfig
 
 logger = logging.getLogger(__name__)
 
 gemini_live_router = APIRouter(prefix="/gemini", tags=["Gemini Live API"])
 
-# Gemini Live API model for voice
-# See: https://ai.google.dev/gemini-api/docs/models
-GEMINI_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-09-2025"
+
+def get_gemini_live_config(request: Request) -> GeminiLiveConfig:
+    """Get the Gemini Live configuration from app state."""
+    return GeminiLiveConfig.from_app_state(request.app.state)
 
 
 # Type aliases for dynamic JSON schema structures.
@@ -45,6 +48,7 @@ class EphemeralTokenResponse(BaseModel):
     tools: list[GeminiToolDeclaration]
     system_instruction: str
     model: str
+    config: GeminiLiveConfig
 
 
 class EphemeralTokenRequest(BaseModel):
@@ -266,6 +270,9 @@ async def create_ephemeral_token(
     # Get formatted system prompt with context
     system_instruction = await _get_formatted_system_prompt(request, target_service)
 
+    # Get Gemini Live configuration from app state
+    gemini_live_config = get_gemini_live_config(request)
+
     # Create ephemeral token via Google GenAI SDK
     try:
         from google import (  # noqa: PLC0415 - Import here to handle missing dependency gracefully
@@ -292,7 +299,8 @@ async def create_ephemeral_token(
             expires_at=expires_at,
             tools=gemini_tools,
             system_instruction=system_instruction,
-            model=GEMINI_LIVE_MODEL,
+            model=gemini_live_config.model,
+            config=gemini_live_config,
         )
 
     except ImportError as e:
@@ -316,23 +324,27 @@ class GeminiLiveStatus(BaseModel):
     model: str
     features: dict[str, bool]
     limits: dict[str, int]
+    config: GeminiLiveConfig
 
 
 @gemini_live_router.get("/status")
-async def get_gemini_live_status() -> GeminiLiveStatus:
+async def get_gemini_live_status(request: Request) -> GeminiLiveStatus:
     """Check if Gemini Live API is available and configured."""
     api_key = os.environ.get("GEMINI_API_KEY")
+    gemini_live_config = get_gemini_live_config(request)
     return GeminiLiveStatus(
         available=bool(api_key),
-        model=GEMINI_LIVE_MODEL,
+        model=gemini_live_config.model,
         features={
             "voice_input": True,
             "voice_output": True,
             "function_calling": True,
-            "transcription": True,
+            "transcription": gemini_live_config.transcription.input_enabled
+            or gemini_live_config.transcription.output_enabled,
         },
         limits={
-            "session_duration_minutes": 15,
+            "session_duration_minutes": gemini_live_config.session.max_duration_minutes,
             "token_validity_minutes": 30,
         },
+        config=gemini_live_config,
     )

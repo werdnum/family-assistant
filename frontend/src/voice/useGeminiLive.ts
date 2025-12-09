@@ -85,6 +85,8 @@ export function useGeminiLive(): GeminiLiveState {
   const clientRef = useRef<GoogleGenAI | null>(null);
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const duckingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Store max duration from backend config (in minutes)
+  const maxDurationMinutesRef = useRef<number>(SESSION_CONFIG.MAX_DURATION_MINUTES);
   // Track last transcription for accumulation (speaker, timestamp, entry ID)
   const lastTranscriptRef = useRef<{
     role: 'user' | 'assistant';
@@ -480,13 +482,16 @@ export function useGeminiLive(): GeminiLiveState {
               speechConfig: {
                 voiceConfig: {
                   prebuiltVoiceConfig: {
-                    voiceName: 'Puck',
+                    voiceName: tokenData.config.voice.name,
                   },
                 },
               },
-              // Enable transcription for UI display
+              // Enable transcription for UI display (always on for frontend)
               inputAudioTranscription: {},
               outputAudioTranscription: {},
+              // Note: VAD and other advanced config options (tokenData.config.vad, etc.)
+              // are available but require RealtimeInputConfig which needs additional setup.
+              // The current implementation uses SDK defaults for VAD behavior.
             },
           });
         }
@@ -507,12 +512,15 @@ export function useGeminiLive(): GeminiLiveState {
         setSessionStartTime(Date.now());
         setConnectingStatus(undefined); // Clear connecting status
 
+        // Store max duration from backend config
+        maxDurationMinutesRef.current = tokenData.config.session.max_duration_minutes;
+
         // Start session timer
         sessionTimerRef.current = setInterval(() => {
           setSessionDuration((prev) => {
             const newDuration = prev + 1;
-            // Auto-disconnect at max duration
-            if (newDuration >= SESSION_CONFIG.MAX_DURATION_MINUTES * 60) {
+            // Auto-disconnect at max duration (using backend config value)
+            if (newDuration >= maxDurationMinutesRef.current * 60) {
               disconnect();
             }
             return newDuration;
