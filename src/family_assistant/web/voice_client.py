@@ -1,68 +1,67 @@
 """
 Voice client interfaces and implementations for Live Audio API.
+
+This module wraps the Google GenAI Live API client. Since the google-genai
+package is an optional dependency, we use TYPE_CHECKING imports for type
+annotations and handle ImportError at runtime in the client class.
 """
 
+from __future__ import annotations
+
 import logging
-from collections.abc import AsyncIterator
-from contextlib import AbstractAsyncContextManager as AsyncContextManager
-from typing import Any, Protocol
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from contextlib import AbstractAsyncContextManager
+
+    from google import genai
+    from google.genai.live import AsyncSession
+    from google.genai.types import LiveConnectConfigOrDict
 
 logger = logging.getLogger(__name__)
 
 
-class LiveAudioSession(Protocol):
-    """Protocol for a live audio session."""
-
-    # ast-grep-ignore: no-dict-any - Protocol definition needs flexibility
-    async def send(
-        self,
-        *,
-        input: Any,  # noqa: ANN401
-        end_of_turn: bool | None = False,
-    ) -> None:
-        """Send data to the session."""
-        ...
-
-    # ast-grep-ignore: no-dict-any - Protocol definition needs flexibility
-    def receive(self) -> AsyncIterator[Any]:  # noqa: ANN401
-        """Receive data from the session."""
-        ...
-
-
-class LiveAudioClient(Protocol):
-    """Protocol for a live audio client."""
-
-    # ast-grep-ignore: no-dict-any - Protocol definition needs flexibility
-    def connect(
-        self,
-        config: Any,  # noqa: ANN401
-    ) -> AsyncContextManager[LiveAudioSession]:
-        """Establish a connection."""
-        ...
-
-
 class GoogleGeminiLiveClient:
-    """Google Gemini Live API client implementation."""
+    """Google Gemini Live API client.
+
+    This is the only implementation - we use the SDK types directly rather than
+    abstracting behind protocols, which allows full type checking.
+    """
 
     def __init__(self, api_key: str, model: str) -> None:
         self.api_key = api_key
         self.model = model
+        self._client: genai.Client | None = None
 
-    # ast-grep-ignore: no-dict-any - Protocol implementation needs flexibility
-    def connect(
-        self,
-        config: Any,  # noqa: ANN401
-    ) -> AsyncContextManager[LiveAudioSession]:
-        """Connect to Gemini Live API."""
-        try:
-            from google import (  # noqa: PLC0415
+    def _get_client(self) -> genai.Client:
+        """Get or create the genai client (lazy initialization)."""
+        if self._client is None:
+            from google import (  # noqa: PLC0415 - google-genai is an optional dependency
                 genai,
             )
-        except ImportError as e:
-            logger.error("google-genai package not found.")
-            raise RuntimeError("google-genai package is required for voice mode") from e
 
-        client = genai.Client(
-            api_key=self.api_key, http_options={"api_version": "v1alpha"}
-        )
-        return client.aio.live.connect(model=self.model, config=config)
+            self._client = genai.Client(
+                api_key=self.api_key, http_options={"api_version": "v1alpha"}
+            )
+        return self._client
+
+    def connect(
+        self,
+        config: LiveConnectConfigOrDict | None,
+    ) -> AbstractAsyncContextManager[AsyncSession]:
+        """Connect to Gemini Live API.
+
+        Returns an async context manager that yields an AsyncSession.
+        Use with `async with` to establish the connection.
+
+        Example:
+            async with client.connect(config) as session:
+                await session.send_realtime_input(audio={"data": audio_bytes, "mime_type": "audio/pcm"})
+                async for response in session.receive():
+                    ...
+        """
+        return self._get_client().aio.live.connect(model=self.model, config=config)
+
+
+# Backward-compatible alias
+LiveAudioClient = GoogleGeminiLiveClient

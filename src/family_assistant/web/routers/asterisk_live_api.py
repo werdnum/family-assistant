@@ -34,10 +34,7 @@ GEMINI_CHANNELS = 1
 # Check for dependencies (types only needed for config construction)
 try:
     from google.genai.types import (
-        Blob,
-        Content,
         LiveConnectConfig,
-        Part,
         PrebuiltVoiceConfig,
         SpeechConfig,
         VoiceConfig,
@@ -255,17 +252,10 @@ class AsteriskLiveHandler:
         if mime_rate not in {16000, 24000}:
             mime_rate = 24000  # Fallback
 
-        await self.gemini_session.send(
-            input=Content(
-                parts=[
-                    Part(
-                        inline_data=Blob(
-                            data=audio_to_send, mime_type=f"audio/pcm;rate={mime_rate}"
-                        )
-                    )
-                ]
-            ),
-            end_of_turn=False,
+        # Use send_realtime_input() for streaming audio to Gemini Live API
+        # The audio dict must contain 'data' (bytes) and 'mime_type'
+        await self.gemini_session.send_realtime_input(
+            audio={"data": audio_to_send, "mime_type": "audio/pcm"}
         )
 
     async def _receive_from_gemini(self) -> None:

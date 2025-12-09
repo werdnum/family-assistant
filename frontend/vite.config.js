@@ -228,10 +228,11 @@ export default defineConfig(({ mode }) => ({
     allowedHosts: true,
     // Proxy API and backend-only routes to FastAPI
     proxy: {
-      // API endpoints
+      // API endpoints (including WebSocket for /api/asterisk/live)
       '/api': {
         target: `http://127.0.0.1:${process.env.VITE_API_PORT || 8000}`,
         changeOrigin: true,
+        ws: true, // Enable WebSocket proxying
       },
       // Webhooks
       '/webhook': {
