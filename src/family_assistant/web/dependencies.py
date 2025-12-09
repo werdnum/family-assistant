@@ -3,7 +3,7 @@ import os
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 
-from fastapi import HTTPException, Request, status
+from fastapi import HTTPException, Request, WebSocket, status
 
 from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -257,8 +257,12 @@ async def get_web_chat_interface(request: Request) -> "WebChatInterface":
     return web_chat_interface
 
 
-async def get_live_audio_client(request: Request) -> LiveAudioClient:
-    """Dependency to get a configured LiveAudioClient."""
+async def get_live_audio_client(websocket: WebSocket) -> LiveAudioClient:
+    """Dependency to get a configured LiveAudioClient.
+
+    Note: This dependency uses WebSocket instead of Request because it's used
+    in WebSocket endpoints, which don't have access to a Request object.
+    """
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         logger.error("GEMINI_API_KEY not found in environment.")
@@ -268,7 +272,7 @@ async def get_live_audio_client(request: Request) -> LiveAudioClient:
         )
 
     # Get configuration from app state
-    config = getattr(request.app.state, "config", {})
+    config = getattr(websocket.app.state, "config", {})
     # Use nested get to safely retrieve model
     voice_config = config.get("voice_mode", {})
     # Default model if not specified
