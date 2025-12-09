@@ -145,7 +145,7 @@ jobs:
           app-id: ${{ secrets.IMAGE_UPDATER_APP_ID }}
           private-key: ${{ secrets.IMAGE_UPDATER_PRIVATE_KEY }}
           owner: werdnum
-          repositories: kube-config
+          # repositories: kube-config
 
       - name: Update kube-config
         if: needs.prepare.outputs.should-push == 'true'
