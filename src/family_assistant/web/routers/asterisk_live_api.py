@@ -15,6 +15,7 @@ import logging
 import os
 import secrets
 import uuid
+from datetime import datetime
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
@@ -35,9 +36,15 @@ GEMINI_CHANNELS = 1
 # Check for dependencies (types only needed for config construction)
 try:
     from google.genai.types import (
+        Content,
+        FunctionDeclaration,
         LiveConnectConfig,
+        Part,
         PrebuiltVoiceConfig,
+        Schema,
         SpeechConfig,
+        Tool,
+        Type,
         VoiceConfig,
     )
 
@@ -47,6 +54,67 @@ except ImportError:
     logger.warning(
         "google-genai types not found. Asterisk Live API will not work fully."
     )
+
+
+# ast-grep-ignore: no-dict-any - Tools are generic dictionaries
+def _convert_tools_to_genai_format(tools: list[dict[str, Any]]) -> list[Any]:
+    """Convert OpenAI-style tools to Gemini format."""
+    if not GOOGLE_GENAI_TYPES_AVAILABLE:
+        return []
+
+    function_declarations = []
+
+    for tool in tools:
+        if tool.get("type") != "function":
+            continue
+
+        func_def = tool.get("function", {})
+
+        # Convert OpenAI-style parameters to Google schema
+        params = func_def.get("parameters", {})
+        properties = params.get("properties", {})
+
+        # Convert properties to Google format
+        google_properties = {}
+        for prop_name, prop_def in properties.items():
+            prop_type = prop_def.get("type", "string")
+
+            if prop_type == "array":
+                # Handle array types
+                items_def = prop_def.get("items", {})
+                items_type = items_def.get("type", "string").upper()
+
+                google_properties[prop_name] = Schema(
+                    type=getattr(Type, items_type, Type.STRING),
+                    description=prop_def.get("description", ""),
+                    items=Schema(
+                        type=getattr(Type, items_type, Type.STRING),
+                        description=items_def.get("description", ""),
+                    ),
+                )
+            else:
+                # Handle non-array types
+                schema_type = prop_type.upper()
+                google_properties[prop_name] = Schema(
+                    type=getattr(Type, schema_type, Type.STRING),
+                    description=prop_def.get("description", ""),
+                )
+
+        # Create function declaration
+        func_decl = FunctionDeclaration(
+            name=func_def.get("name"),
+            description=func_def.get("description", ""),
+            parameters=Schema(
+                type=Type.OBJECT,
+                properties=google_properties,
+                required=params.get("required", []),
+            ),
+        )
+        function_declarations.append(func_decl)
+
+    if function_declarations:
+        return [Tool(function_declarations=function_declarations)]
+    return []
 
 
 def get_asterisk_auth_config() -> tuple[str | None, set[str]]:
@@ -73,11 +141,15 @@ class AsteriskLiveHandler:
         client: LiveAudioClient,
         extension: str | None = None,
         conversation_id: str | None = None,
+        system_instruction: str | None = None,
+        tools: list[Any] | None = None,
     ) -> None:
         self.websocket = websocket
         self.client = client
         self.extension = extension  # User identity (like Telegram chat_id)
         self.conversation_id = conversation_id or str(uuid.uuid4())  # For history
+        self.system_instruction = system_instruction
+        self.tools = tools
         self.sample_rate = 8000  # Default to 8kHz (slin)
         self.optimal_frame_size = 320  # Default for 8kHz 20ms
         self.audio_buffer = bytearray()
@@ -121,7 +193,6 @@ class AsteriskLiveHandler:
 
             config = LiveConnectConfig(
                 response_modalities=cast("list[Any]", ["AUDIO"]),
-                system_instruction="You are a helpful voice assistant. Greet the caller warmly and ask how you can help them today.",
                 speech_config=SpeechConfig(
                     voice_config=VoiceConfig(
                         prebuilt_voice_config=PrebuiltVoiceConfig(
@@ -129,6 +200,10 @@ class AsteriskLiveHandler:
                         )
                     )
                 ),
+                system_instruction=Content(parts=[Part(text=self.system_instruction)])
+                if self.system_instruction
+                else None,
+                tools=self.tools if self.tools else None,
             )
 
             # Use the injected client to connect
@@ -396,7 +471,52 @@ async def asterisk_live_endpoint(
         f"Asterisk connection authorized: extension={extension}, channel={conversation_id}"
     )
 
+    # Get configuration from telephone profile if available
+    system_instruction = None
+    tools = None
+
+    if GOOGLE_GENAI_TYPES_AVAILABLE:
+        try:
+            processing_services = getattr(
+                websocket.app.state, "processing_services", {}
+            )
+            telephone_service = processing_services.get("telephone")
+
+            if telephone_service:
+                # Get system prompt
+                prompts = telephone_service.service_config.prompts
+                sys_prompt_template = prompts.get("system_prompt", "")
+                if sys_prompt_template:
+                    current_time = datetime.now().strftime("%I:%M %p, %A, %B %d, %Y")
+                    system_instruction = sys_prompt_template.replace(
+                        "{current_time}", current_time
+                    )
+
+                # Get tools
+                if telephone_service.tools_provider:
+                    raw_tools = (
+                        await telephone_service.tools_provider.get_tool_definitions()
+                    )
+                    tools = _convert_tools_to_genai_format(raw_tools)
+                    logger.info(
+                        f"Loaded {len(tools)} tools (Gemini format) for telephone profile"
+                    )
+            else:
+                logger.warning(
+                    "Telephone profile not found, using default configuration"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"Error loading telephone profile configuration: {e}", exc_info=True
+            )
+
     handler = AsteriskLiveHandler(
-        websocket, client, extension=extension, conversation_id=conversation_id
+        websocket,
+        client,
+        extension=extension,
+        conversation_id=conversation_id,
+        system_instruction=system_instruction,
+        tools=tools,
     )
     await handler.run()

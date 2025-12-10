@@ -637,6 +637,64 @@ service_profiles:
       confirm_tools: [] # No confirmation needed for automation creation workflows
     slash_commands:
       - "/automate"
+  - id: "telephone"
+    description: "Assistant profile for telephone interactions via Asterisk Live API."
+    processing_config:
+      provider: "litellm"
+      # The actual model for voice is configured globally in voice_mode, but we define one here for consistency
+      llm_model: "gemini-2.5-pro"
+      prompts:
+        system_prompt: |
+          You are a helpful and friendly telephone assistant.
+          Speak in a friendly, natural manner, but do not sound excessively saccharine or over-enthusiastic.
+          Use a neutral accent that sits somewhere between British, American, and Australian.
+          Most queries will be conversational and should not require complex processes.
+          Keep your responses concise and suitable for voice interaction. Avoid using markdown formatting like bold or lists in your speech unless it translates well to spoken text.
+          Current time: {current_time}
+      delegation_security_level: "unrestricted"
+    tools_config:
+      enable_local_tools:
+        - "add_or_update_note"
+        - "get_note"
+        - "list_notes"
+        - "delete_note"
+        - "schedule_future_callback"
+        - "schedule_recurring_task"
+        - "schedule_reminder"
+        - "schedule_action"
+        - "schedule_recurring_action"
+        - "list_pending_callbacks"
+        - "modify_pending_callback"
+        - "cancel_pending_callback"
+        - "search_documents"
+        - "get_full_document_content"
+        - "get_attachment_info"
+        - "get_message_history"
+        - "get_user_documentation_content"
+        - "ingest_document_from_url"
+        - "execute_script"
+        - "send_message_to_user"
+        - "add_calendar_event"
+        - "search_calendar_events"
+        - "modify_calendar_event"
+        - "delete_calendar_event"
+        - "delegate_to_service"
+        - "query_recent_events"
+        - "render_home_assistant_template"
+        - "get_camera_snapshot"
+        - "download_state_history"
+        - "list_home_assistant_entities"
+        - "list_automations"
+        - "get_automation"
+        - "get_automation_stats"
+      enable_mcp_server_ids:
+        - "time"
+        - "brave"
+        - "python"
+        - "homeassistant"
+        - "google-maps"
+      confirm_tools: []
+    slash_commands: []
 # Other global settings like llm_parameters, indexing_pipeline_config remain at top level.
 # Attachment handling configuration
 attachment_config:
