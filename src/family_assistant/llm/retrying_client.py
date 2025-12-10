@@ -215,7 +215,7 @@ class RetryingLLMClient:
                 if self.fallback_model == self.primary_model:
                     logger.warning(
                         f"Fallback model '{self.fallback_model}' is the same as the primary model '{self.primary_model}'. "
-                        f"Skipping fallback."
+                        "Skipping fallback."
                     )
                     raise
 
