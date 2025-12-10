@@ -78,6 +78,66 @@ def _normalize_thought_signature(raw_value: bytes | None) -> bytes | None:
     return raw_value
 
 
+# ast-grep-ignore: no-dict-any - Provider tool schema mirrors OpenAI format
+def convert_tools_to_genai_format(tools: list[dict[str, Any]]) -> list[Any]:
+    """Convert OpenAI-style tools to Gemini format."""
+
+    function_declarations = []
+
+    for tool in tools:
+        if tool.get("type") != "function":
+            continue
+
+        func_def = tool.get("function", {})
+
+        # Convert OpenAI-style parameters to Google schema
+        params = func_def.get("parameters", {})
+        properties = params.get("properties", {})
+
+        # Convert properties to Google format
+        google_properties = {}
+        for prop_name, prop_def in properties.items():
+            prop_type = prop_def.get("type", "string")
+
+            if prop_type == "array":
+                # Handle array types - need to specify items
+                items_def = prop_def.get("items", {})
+                items_type = items_def.get("type", "string").upper()
+
+                google_properties[prop_name] = types.Schema(
+                    type=types.Type.ARRAY,
+                    description=prop_def.get("description", ""),
+                    items=types.Schema(
+                        type=items_type,
+                        description=items_def.get("description", ""),
+                    ),
+                )
+            else:
+                # Handle non-array types
+                schema_type = prop_type.upper()
+                google_properties[prop_name] = types.Schema(
+                    type=schema_type,
+                    description=prop_def.get("description", ""),
+                )
+
+        # Create function declaration
+        func_decl = types.FunctionDeclaration(
+            name=func_def.get("name"),
+            description=func_def.get("description", ""),
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties=google_properties,
+                required=params.get("required", []),
+            ),
+        )
+        function_declarations.append(func_decl)
+
+    # Return a Tool with all function declarations
+    if function_declarations:
+        return [types.Tool(function_declarations=function_declarations)]
+    return []
+
+
 class GoogleGenAIClient(BaseLLMClient):
     """Direct Google Generative AI implementation."""
 
@@ -521,61 +581,7 @@ class GoogleGenAIClient(BaseLLMClient):
     # ast-grep-ignore: no-dict-any - Provider tool schema mirrors OpenAI format
     def _convert_tools_to_genai_format(self, tools: list[dict[str, Any]]) -> list[Any]:
         """Convert OpenAI-style tools to Gemini format."""
-
-        function_declarations = []
-
-        for tool in tools:
-            if tool.get("type") != "function":
-                continue
-
-            func_def = tool.get("function", {})
-
-            # Convert OpenAI-style parameters to Google schema
-            params = func_def.get("parameters", {})
-            properties = params.get("properties", {})
-
-            # Convert properties to Google format
-            google_properties = {}
-            for prop_name, prop_def in properties.items():
-                prop_type = prop_def.get("type", "string")
-
-                if prop_type == "array":
-                    # Handle array types - need to specify items
-                    items_def = prop_def.get("items", {})
-                    items_type = items_def.get("type", "string").upper()
-
-                    google_properties[prop_name] = types.Schema(
-                        type=types.Type.ARRAY,
-                        description=prop_def.get("description", ""),
-                        items=types.Schema(
-                            type=items_type,
-                            description=items_def.get("description", ""),
-                        ),
-                    )
-                else:
-                    # Handle non-array types
-                    schema_type = prop_type.upper()
-                    google_properties[prop_name] = types.Schema(
-                        type=schema_type,
-                        description=prop_def.get("description", ""),
-                    )
-
-            # Create function declaration
-            func_decl = types.FunctionDeclaration(
-                name=func_def.get("name"),
-                description=func_def.get("description", ""),
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties=google_properties,
-                    required=params.get("required", []),
-                ),
-            )
-            function_declarations.append(func_decl)
-
-        # Return a Tool with all function declarations
-        if function_declarations:
-            return [types.Tool(function_declarations=function_declarations)]
-        return []
+        return convert_tools_to_genai_format(tools)
 
     def _create_grounding_tools(self) -> list[Any]:
         """Create grounding tools (URL context and Google Search) based on configuration."""

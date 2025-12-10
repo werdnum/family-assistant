@@ -640,9 +640,6 @@ service_profiles:
   - id: "telephone"
     description: "Assistant profile for telephone interactions via Asterisk Live API."
     processing_config:
-      provider: "litellm"
-      # The actual model for voice is configured globally in voice_mode, but we define one here for consistency
-      llm_model: "gemini-2.5-pro"
       prompts:
         system_prompt: |
           You are a helpful and friendly telephone assistant.
