@@ -17,6 +17,7 @@ import secrets
 import uuid
 from datetime import datetime
 from typing import Annotated, Any, cast
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
@@ -422,7 +423,18 @@ async def asterisk_live_endpoint(
                 prompts = telephone_service.service_config.prompts
                 sys_prompt_template = prompts.get("system_prompt", "")
                 if sys_prompt_template:
-                    current_time = datetime.now().strftime("%I:%M %p, %A, %B %d, %Y")
+                    # Use configured timezone if available
+                    timezone_str = telephone_service.service_config.timezone_str
+                    tz = None
+                    if timezone_str:
+                        try:
+                            tz = ZoneInfo(timezone_str)
+                        except Exception:
+                            logger.warning(
+                                f"Invalid timezone '{timezone_str}' configured for telephone profile. Falling back to system time."
+                            )
+
+                    current_time = datetime.now(tz).strftime("%I:%M %p, %A, %B %d, %Y")
                     system_instruction = sys_prompt_template.replace(
                         "{current_time}", current_time
                     )
