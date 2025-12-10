@@ -33,6 +33,7 @@ def mock_gemini_client(
     # Create the mock session that would be returned by client.aio.live.connect
     mock_session = MagicMock()
     mock_session.send = AsyncMock()
+    mock_session.send_realtime_input = AsyncMock()
 
     async def empty_receive() -> AsyncIterator[None]:
         # Empty async iterator - must have yield to be a generator
@@ -122,10 +123,10 @@ async def test_asterisk_connection_flow(
         websocket.send_bytes(audio_chunk)
 
         # Give time for async processing
-        await wait_for_condition(lambda: mock_session.send.called)
+        await wait_for_condition(lambda: mock_session.send_realtime_input.called)
 
         # Check that audio was forwarded to Gemini
-        assert mock_session.send.called
+        assert mock_session.send_realtime_input.called
 
         # 3. Send HANGUP
         websocket.send_text("HANGUP")
@@ -163,10 +164,10 @@ async def test_asterisk_json_protocol(
         websocket.send_bytes(b"\x00" * 320)
 
         # Give time for async processing
-        await wait_for_condition(lambda: mock_session.send.called)
+        await wait_for_condition(lambda: mock_session.send_realtime_input.called)
 
         # Verify send called
-        assert mock_session.send.called
+        assert mock_session.send_realtime_input.called
 
 
 # --- Authentication Tests ---
