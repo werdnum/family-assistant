@@ -37,14 +37,10 @@ GEMINI_CHANNELS = 1
 try:
     from google.genai.types import (
         Content,
-        FunctionDeclaration,
         LiveConnectConfig,
         Part,
         PrebuiltVoiceConfig,
-        Schema,
         SpeechConfig,
-        Tool,
-        Type,
         VoiceConfig,
     )
 
@@ -54,67 +50,6 @@ except ImportError:
     logger.warning(
         "google-genai types not found. Asterisk Live API will not work fully."
     )
-
-
-# ast-grep-ignore: no-dict-any - Tools are generic dictionaries
-def _convert_tools_to_genai_format(tools: list[dict[str, Any]]) -> list[Any]:
-    """Convert OpenAI-style tools to Gemini format."""
-    if not GOOGLE_GENAI_TYPES_AVAILABLE:
-        return []
-
-    function_declarations = []
-
-    for tool in tools:
-        if tool.get("type") != "function":
-            continue
-
-        func_def = tool.get("function", {})
-
-        # Convert OpenAI-style parameters to Google schema
-        params = func_def.get("parameters", {})
-        properties = params.get("properties", {})
-
-        # Convert properties to Google format
-        google_properties = {}
-        for prop_name, prop_def in properties.items():
-            prop_type = prop_def.get("type", "string")
-
-            if prop_type == "array":
-                # Handle array types
-                items_def = prop_def.get("items", {})
-                items_type = items_def.get("type", "string").upper()
-
-                google_properties[prop_name] = Schema(
-                    type=getattr(Type, items_type, Type.STRING),
-                    description=prop_def.get("description", ""),
-                    items=Schema(
-                        type=getattr(Type, items_type, Type.STRING),
-                        description=items_def.get("description", ""),
-                    ),
-                )
-            else:
-                # Handle non-array types
-                schema_type = prop_type.upper()
-                google_properties[prop_name] = Schema(
-                    type=getattr(Type, schema_type, Type.STRING),
-                    description=prop_def.get("description", ""),
-                )
-
-        # Create function declaration
-        func_decl = FunctionDeclaration(
-            name=func_def.get("name"),
-            description=func_def.get("description", ""),
-            parameters=Schema(
-                type=Type.OBJECT,
-                properties=google_properties,
-                required=params.get("required", []),
-            ),
-        )
-        function_declarations.append(func_decl)
-
-    if function_declarations:
-        return [Tool(function_declarations=function_declarations)]
-    return []
 
 
 def get_asterisk_auth_config() -> tuple[str | None, set[str]]:
@@ -494,10 +429,15 @@ async def asterisk_live_endpoint(
 
                 # Get tools
                 if telephone_service.tools_provider:
+                    # Import here to avoid hard dependency on google-genai at module level
+                    from family_assistant.llm.providers.google_genai_client import (  # noqa: PLC0415
+                        convert_tools_to_genai_format,
+                    )
+
                     raw_tools = (
                         await telephone_service.tools_provider.get_tool_definitions()
                     )
-                    tools = _convert_tools_to_genai_format(raw_tools)
+                    tools = convert_tools_to_genai_format(raw_tools)
                     logger.info(
                         f"Loaded {len(tools)} tools (Gemini format) for telephone profile"
                     )
