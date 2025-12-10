@@ -192,11 +192,9 @@ class RetryingLLMClient:
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Generate streaming response with retry and fallback logic."""
-        # For now, we'll use a simple approach: delegate directly to primary client
-        # without retry logic for streaming. In the future, we could implement
-        # retry logic that buffers events and replays them on retry.
         logger.info(f"Streaming from primary model ({self.primary_model})")
 
+        events_yielded = False
         try:
             async for event in self.primary_client.generate_response_stream(
                 messages=messages,
@@ -204,14 +202,48 @@ class RetryingLLMClient:
                 tool_choice=tool_choice,
             ):
                 yield event
+                events_yielded = True
         except Exception as e:
-            # For streaming, fallback is more complex as we can't replay already sent events
-            # For now, we'll just log and re-raise
             logger.error(
                 f"Streaming from primary model {self.primary_model} failed: {e}",
                 exc_info=True,
             )
-            raise
+
+            # Only fallback if no content has been sent to the client
+            if not events_yielded and self.fallback_client:
+                # Check if fallback model is same as primary
+                if self.fallback_model == self.primary_model:
+                    logger.warning(
+                        f"Fallback model '{self.fallback_model}' is the same as the primary model '{self.primary_model}'. "
+                        f"Skipping fallback."
+                    )
+                    raise
+
+                logger.info(
+                    f"Falling back to {self.fallback_model} (no content emitted yet)"
+                )
+                try:
+                    async for event in self.fallback_client.generate_response_stream(
+                        messages=messages,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                    ):
+                        yield event
+                except Exception as fallback_error:
+                    logger.error(
+                        f"Fallback streaming model {self.fallback_model} also failed: {fallback_error}",
+                        exc_info=True,
+                    )
+                    # Raise the original error as it's likely more relevant
+                    raise e from fallback_error
+            else:
+                if events_yielded:
+                    logger.warning(
+                        "Cannot fallback: Content already emitted to stream."
+                    )
+                else:
+                    logger.warning("Cannot fallback: No fallback client configured.")
+                raise
 
     async def format_user_message_with_file(
         self,
