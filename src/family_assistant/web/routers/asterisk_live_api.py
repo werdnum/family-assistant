@@ -8,6 +8,7 @@ Protocol documentation: https://docs.asterisk.org/Configuration/Channel-Drivers/
 """
 
 import asyncio
+import base64
 import contextlib
 import json
 import logging
@@ -120,6 +121,7 @@ class AsteriskLiveHandler:
 
             config = LiveConnectConfig(
                 response_modalities=cast("list[Any]", ["AUDIO"]),
+                system_instruction="You are a helpful voice assistant. Greet the caller warmly and ask how you can help them today.",
                 speech_config=SpeechConfig(
                     voice_config=VoiceConfig(
                         prebuilt_voice_config=PrebuiltVoiceConfig(
@@ -217,13 +219,11 @@ class AsteriskLiveHandler:
             self.gemini_to_asterisk_resampler = None
 
             # Initialize resamplers based on the sample rate
-            # Asterisk -> Gemini: resample to 16kHz for 8kHz input, otherwise use native rate
-            if self.sample_rate == 8000:
-                self.asterisk_to_gemini_resampler = StatefulResampler(8000, 16000)
-            elif self.sample_rate not in {16000, 24000}:
-                # For other rates, resample to 24kHz
+            # Asterisk -> Gemini: MUST resample to 16kHz (Gemini only accepts 16kHz input)
+            # See: https://ai.google.dev/gemini-api/docs/live
+            if self.sample_rate != 16000:
                 self.asterisk_to_gemini_resampler = StatefulResampler(
-                    self.sample_rate, 24000
+                    self.sample_rate, 16000
                 )
 
             # Gemini -> Asterisk: resample from 24kHz to target rate if needed
@@ -238,24 +238,34 @@ class AsteriskLiveHandler:
     async def _handle_media_message(self, audio_data: bytes) -> None:
         """Handle media (audio) from Asterisk."""
         if not self.gemini_session:
+            logger.warning("Received media but no Gemini session active")
             return
 
+        logger.debug(
+            f"Received {len(audio_data)} bytes from Asterisk ({self.sample_rate}Hz)"
+        )
+
         # Resample if needed (Asterisk -> Gemini)
+        # Gemini only accepts 16kHz input audio
         audio_to_send = audio_data
-        mime_rate = self.sample_rate
 
         if self.asterisk_to_gemini_resampler:
             audio_to_send = self.asterisk_to_gemini_resampler.resample(audio_data)
-            mime_rate = self.asterisk_to_gemini_resampler.dst_rate
+            logger.info(
+                f"Resampled Asterisk audio: {len(audio_data)} -> {len(audio_to_send)} bytes"
+            )
 
-        # Ensure mime_rate is valid for Gemini
-        if mime_rate not in {16000, 24000}:
-            mime_rate = 24000  # Fallback
+        # Gemini input MUST be 16kHz (see https://ai.google.dev/gemini-api/docs/live)
+        mime_rate = 16000
 
         # Use send_realtime_input() for streaming audio to Gemini Live API
         # The audio dict must contain 'data' (bytes) and 'mime_type'
+        # IMPORTANT: MIME type MUST include sample rate (e.g., audio/pcm;rate=16000)
+        # Without the rate parameter, Gemini may misinterpret the audio causing distortion
+        mime_type = f"audio/pcm;rate={mime_rate}"
+
         await self.gemini_session.send_realtime_input(
-            audio={"data": audio_to_send, "mime_type": "audio/pcm"}
+            audio={"data": audio_to_send, "mime_type": mime_type}
         )
 
     async def _receive_from_gemini(self) -> None:
@@ -275,7 +285,11 @@ class AsteriskLiveHandler:
                             and part.inline_data.mime_type.startswith("audio")
                             and part.inline_data.data
                         ):
-                            audio_data = part.inline_data.data
+                            raw_data = part.inline_data.data
+
+                            # Gemini SDK returns audio as base64-encoded string in bytes
+                            # Must decode to get actual PCM data
+                            audio_data = base64.b64decode(raw_data)
                             # Gemini output is 24kHz PCM
 
                             # Resample if needed (Gemini -> Asterisk)
