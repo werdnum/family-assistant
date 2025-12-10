@@ -1,5 +1,6 @@
 """Unit tests for RetryingLLMClient streaming fallback."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -35,18 +36,20 @@ async def test_streaming_fallback_on_immediate_error(
     """Test that streaming falls back to secondary model if primary fails immediately."""
 
     # Setup primary to fail immediately
-    async def primary_stream(*args, **kwargs):
+    async def primary_stream(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
         raise RateLimitError("Rate limited", "test", "test-model")
         yield  # unreachable
 
     mock_primary_client.generate_response_stream = MagicMock(side_effect=primary_stream)
 
     # Setup fallback to succeed
-    async def fallback_stream(*args, **kwargs):
+    async def fallback_stream(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
         yield LLMStreamEvent(type="content", content="Fallback content")
         yield LLMStreamEvent(type="done", metadata={})
 
-    mock_fallback_client.generate_response_stream = MagicMock(side_effect=fallback_stream)
+    mock_fallback_client.generate_response_stream = MagicMock(
+        side_effect=fallback_stream
+    )
 
     client = RetryingLLMClient(
         primary_client=mock_primary_client,
@@ -79,7 +82,7 @@ async def test_streaming_no_fallback_if_content_yielded(
     """Test that streaming does NOT fall back if primary yielded content before failing."""
 
     # Setup primary to yield content then fail
-    async def primary_stream(*args, **kwargs):
+    async def primary_stream(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
         yield LLMStreamEvent(type="content", content="Primary content")
         raise RateLimitError("Rate limited mid-stream", "test", "test-model")
 
@@ -96,7 +99,7 @@ async def test_streaming_no_fallback_if_content_yielded(
 
     # Expect exception to propagate
     with pytest.raises(RateLimitError):
-        async for event in client.generate_response_stream(messages):
+        async for _event in client.generate_response_stream(messages):
             pass
 
     # Verify fallback was NOT used
