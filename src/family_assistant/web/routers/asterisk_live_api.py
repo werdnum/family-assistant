@@ -132,12 +132,20 @@ class AsteriskLiveHandler:
             )
 
             # Use the injected client to connect
+            # Note: Caller hears ringing during this connection setup (~5-10 seconds)
             async with self.client.connect(config=config) as session:
                 self.gemini_session = session
                 logger.info("Connected to Gemini Live")
 
+                # Now that Gemini is ready, answer the call
+                # This stops the ringing and connects audio
+                await self._answer_call()
+
                 # Start task to receive from Gemini and send to Asterisk
                 self.receive_task = asyncio.create_task(self._receive_from_gemini())
+
+                # Note: We don't trigger a greeting here - let natural voice
+                # conversation flow. Caller speaks first, Gemini responds.
 
                 try:
                     while True:
@@ -234,6 +242,32 @@ class AsteriskLiveHandler:
 
         elif event_type == "HANGUP":
             await self.websocket.close()
+
+    async def _answer_call(self) -> None:
+        """Send ANSWER command to Asterisk to pick up the call.
+
+        This should be called after Gemini is ready, so the caller stops hearing
+        ringing and can immediately start conversing.
+        """
+        # Send as plain text - Asterisk accepts both plain text and JSON
+        await self.websocket.send_text("ANSWER")
+        logger.info("Sent ANSWER command to Asterisk")
+
+    async def _trigger_greeting(self) -> None:
+        """Send a trigger to Gemini to initiate the greeting.
+
+        Gemini Live API is reactive by default - it waits for user input.
+        We send a brief text message to prompt it to speak first.
+        """
+        if not self.gemini_session:
+            return
+
+        # Send a context message to trigger the greeting
+        # The system instruction already tells Gemini to greet warmly
+        await self.gemini_session.send_realtime_input(
+            text="[The caller has just connected. Please greet them.]"
+        )
+        logger.info("Sent greeting trigger to Gemini")
 
     async def _handle_media_message(self, audio_data: bytes) -> None:
         """Handle media (audio) from Asterisk."""
