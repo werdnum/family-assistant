@@ -105,8 +105,10 @@ gemini_live_config:
     # VAD settings optimized for telephone audio
     vad:
       # Higher sensitivity for speech start (telephone audio can be noisier)
-      start_of_speech_sensitivity: "HIGH"
+      # Valid: "START_SENSITIVITY_HIGH", "START_SENSITIVITY_LOW", "DEFAULT" (unspecified)
+      start_of_speech_sensitivity: "START_SENSITIVITY_HIGH"
       # Default sensitivity for speech end
+      # Valid: "END_SENSITIVITY_HIGH", "END_SENSITIVITY_LOW", "DEFAULT" (unspecified)
       end_of_speech_sensitivity: "DEFAULT"
       # Longer silence duration to account for telephone latency
       silence_duration_ms: 1000
