@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 
 
 def get_gemini_live_config_from_app(app: Starlette) -> GeminiLiveConfig:
-    """Get the Gemini Live configuration from app state."""
-    return GeminiLiveConfig.from_app_state(app.state)
+    """Get the Gemini Live configuration from app state with telephone overrides."""
+    return GeminiLiveConfig.from_app_state_with_telephone_overrides(app.state)
 
 
 asterisk_live_router = APIRouter(tags=["Asterisk Live API"])
@@ -45,11 +45,16 @@ GEMINI_CHANNELS = 1
 # Check for dependencies (types only needed for config construction)
 try:
     from google.genai.types import (
+        AudioTranscriptionConfig,
+        AutomaticActivityDetection,
         Content,
+        EndSensitivity,
         LiveConnectConfig,
         Part,
         PrebuiltVoiceConfig,
+        RealtimeInputConfig,
         SpeechConfig,
+        StartSensitivity,
         VoiceConfig,
     )
 
@@ -137,6 +142,66 @@ class AsteriskLiveHandler:
 
             logger.info(f"Configuration received. Format: {self.format}")
 
+            # Build VAD configuration from gemini_live_config
+            vad_config = self.gemini_live_config.vad
+
+            # Map config sensitivity strings to SDK enums (None means use default)
+            # Valid values: "DISABLED", "LOW", "DEFAULT", "HIGH"
+            start_sensitivity: StartSensitivity | None = None
+            if vad_config.start_of_speech_sensitivity != "DEFAULT":
+                try:
+                    start_sensitivity = StartSensitivity(
+                        vad_config.start_of_speech_sensitivity
+                    )
+                except ValueError:
+                    logger.warning(
+                        f"Invalid start_of_speech_sensitivity value: "
+                        f"'{vad_config.start_of_speech_sensitivity}', using default"
+                    )
+
+            end_sensitivity: EndSensitivity | None = None
+            if vad_config.end_of_speech_sensitivity != "DEFAULT":
+                try:
+                    end_sensitivity = EndSensitivity(
+                        vad_config.end_of_speech_sensitivity
+                    )
+                except ValueError:
+                    logger.warning(
+                        f"Invalid end_of_speech_sensitivity value: "
+                        f"'{vad_config.end_of_speech_sensitivity}', using default"
+                    )
+
+            # Build AutomaticActivityDetection with all configured values
+            # Only set disabled=True if automatic is False; otherwise leave as None
+            is_disabled = True if not vad_config.automatic else None
+            activity_detection = AutomaticActivityDetection(
+                disabled=is_disabled,
+                start_of_speech_sensitivity=start_sensitivity,
+                end_of_speech_sensitivity=end_sensitivity,
+                prefix_padding_ms=vad_config.prefix_padding_ms,
+                silence_duration_ms=vad_config.silence_duration_ms,
+            )
+
+            # Only include realtime_input_config if we have non-default VAD settings
+            has_custom_vad = (
+                not vad_config.automatic
+                or start_sensitivity is not None
+                or end_sensitivity is not None
+                or vad_config.prefix_padding_ms is not None
+                or vad_config.silence_duration_ms is not None
+            )
+            realtime_input_config = None
+            if has_custom_vad:
+                logger.info(
+                    f"Applying VAD settings: automatic={vad_config.automatic}, "
+                    f"start_sensitivity={vad_config.start_of_speech_sensitivity}, "
+                    f"end_sensitivity={vad_config.end_of_speech_sensitivity}, "
+                    f"silence_duration_ms={vad_config.silence_duration_ms}"
+                )
+                realtime_input_config = RealtimeInputConfig(
+                    automatic_activity_detection=activity_detection
+                )
+
             config = LiveConnectConfig(
                 response_modalities=cast("list[Any]", ["AUDIO"]),
                 speech_config=SpeechConfig(
@@ -150,6 +215,9 @@ class AsteriskLiveHandler:
                 if self.system_instruction
                 else None,
                 tools=self.tools if self.tools else None,
+                input_audio_transcription=AudioTranscriptionConfig(),
+                output_audio_transcription=AudioTranscriptionConfig(),
+                realtime_input_config=realtime_input_config,
             )
 
             # Use the injected client to connect
@@ -330,6 +398,20 @@ class AsteriskLiveHandler:
 
         try:
             async for response in self.gemini_session.receive():
+                # Log transcripts for debugging
+                if response.server_content:
+                    # Log input (user) transcription
+                    if response.server_content.input_transcription:
+                        text = response.server_content.input_transcription.text
+                        if text:
+                            logger.info(f"[TRANSCRIPT] User: {text}")
+
+                    # Log output (model) transcription
+                    if response.server_content.output_transcription:
+                        text = response.server_content.output_transcription.text
+                        if text:
+                            logger.info(f"[TRANSCRIPT] Assistant: {text}")
+
                 # Extract audio data
                 server_content = response.server_content
                 if server_content and server_content.model_turn:
