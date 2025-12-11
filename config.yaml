@@ -98,6 +98,19 @@ gemini_live_config:
     # Include thought summaries in responses (for debugging)
     include_thoughts: false
 
+  # Telephone-specific overrides for Asterisk Live API
+  # These override the base settings above for telephone calls
+  # Telephone audio has different characteristics (narrowband, potential noise)
+  telephone_overrides:
+    # VAD settings optimized for telephone audio
+    vad:
+      # Higher sensitivity for speech start (telephone audio can be noisier)
+      start_of_speech_sensitivity: "HIGH"
+      # Default sensitivity for speech end
+      end_of_speech_sensitivity: "DEFAULT"
+      # Longer silence duration to account for telephone latency
+      silence_duration_ms: 1000
+
 # Configuration for the document indexing pipeline
 indexing_pipeline_config:
   # Optional global configurations for the pipeline itself, if IndexingPipeline supports them
