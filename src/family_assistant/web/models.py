@@ -104,6 +104,48 @@ class GeminiLiveConfig(BaseModel):
         gemini_live_config_dict = config.get("gemini_live_config", {})
         return cls.from_dict(gemini_live_config_dict)
 
+    @classmethod
+    def from_app_state_with_telephone_overrides(
+        cls,
+        app_state: "State",
+    ) -> "GeminiLiveConfig":
+        """Get the Gemini Live configuration with telephone-specific overrides applied.
+
+        This loads the base configuration and then applies any overrides from the
+        'telephone_overrides' section. Telephone audio has different characteristics
+        (narrowband, potential noise) that may require different VAD settings.
+        """
+        config = getattr(app_state, "config", {})
+        gemini_live_config_dict = config.get("gemini_live_config", {})
+
+        # Start with base config
+        base_config = cls.from_dict(gemini_live_config_dict)
+
+        # Apply telephone-specific overrides if present
+        overrides = gemini_live_config_dict.get("telephone_overrides", {})
+        if overrides:
+            # Deep merge VAD overrides
+            if "vad" in overrides:
+                vad_dict = base_config.vad.model_dump()
+                for key, value in overrides["vad"].items():
+                    if value is not None:
+                        vad_dict[key] = value
+                base_config = base_config.model_copy(
+                    update={"vad": GeminiLiveVADConfig(**vad_dict)}
+                )
+
+            # Add other override sections as needed (voice, session, etc.)
+            if "voice" in overrides:
+                voice_dict = base_config.voice.model_dump()
+                for key, value in overrides["voice"].items():
+                    if value is not None:
+                        voice_dict[key] = value
+                base_config = base_config.model_copy(
+                    update={"voice": GeminiLiveVoiceConfig(**voice_dict)}
+                )
+
+        return base_config
+
 
 # --- Pydantic model for search results (optional but good practice) ---
 class SearchResultItem(BaseModel):
