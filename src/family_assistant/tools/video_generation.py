@@ -5,18 +5,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import Any, cast
 
 from google import genai
 from google.genai import types
 
-from family_assistant.tools.types import ToolAttachment, ToolExecutionContext, ToolResult
-
-if TYPE_CHECKING:
-    pass
+from family_assistant.tools.types import (
+    ToolAttachment,
+    ToolExecutionContext,
+    ToolResult,
+)
 
 logger = logging.getLogger(__name__)
 
+# ast-grep-ignore: no-dict-any - Tool definition schema uses dict structure
 VIDEO_GENERATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -83,6 +85,7 @@ async def generate_video_tool(
     """
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
+        # ast-grep-ignore: toolresult-text-literal-with-data - Error message is sufficient
         return ToolResult(
             text="Error: GEMINI_API_KEY is not set in the environment.",
             data={"error": "GEMINI_API_KEY missing"},
@@ -124,8 +127,15 @@ async def generate_video_tool(
 
         if operation.error:
             # Handle API error (e.g., safety filters)
-            error_msg = operation.error.message or "Unknown error"
-            error_code = operation.error.code
+            # Pyright might see operation.error as dict or object
+            op_error = operation.error
+            if isinstance(op_error, dict):
+                error_msg = op_error.get("message", "Unknown error")
+                error_code = op_error.get("code")
+            else:
+                error_msg = getattr(op_error, "message", "Unknown error")
+                error_code = getattr(op_error, "code", None)
+
             logger.error(f"Video generation failed: {error_msg} (Code: {error_code})")
             return ToolResult(
                 text=f"Error generating video: {error_msg}",
@@ -138,6 +148,7 @@ async def generate_video_tool(
             or not operation.response
             or not operation.response.generated_videos
         ):
+            # ast-grep-ignore: toolresult-text-literal-with-data - Error message is sufficient
             return ToolResult(
                 text="Error: No video generated in response.",
                 data={"error": "No video generated"},
@@ -145,10 +156,20 @@ async def generate_video_tool(
 
         video_asset = operation.response.generated_videos[0]
 
+        if not video_asset.video:
+            # ast-grep-ignore: toolresult-text-literal-with-data - Error message is sufficient
+            return ToolResult(
+                text="Error: Generated video asset is missing video file reference.",
+                data={"error": "Missing video file"},
+            )
+
         logger.info("Downloading video content...")
 
         # Download using async client - returns bytes
-        video_bytes = await client.aio.files.download(file=video_asset.video)
+        # cast to Any because Pyright might not recognize Video as valid input for download yet
+        video_bytes = await client.aio.files.download(
+            file=cast("Any", video_asset.video)
+        )
 
         # Create attachment
         attachment = ToolAttachment(
