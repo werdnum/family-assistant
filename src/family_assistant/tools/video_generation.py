@@ -5,33 +5,24 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from google import genai
 from google.genai import types
 
-from family_assistant.tools.types import ToolExecutionContext, ToolResult
+from family_assistant.tools.types import ToolAttachment, ToolExecutionContext, ToolResult
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
 
-# Constants
-GENERATED_VIDEOS_DIR = Path("src/family_assistant/static/generated")
-
-# Ensure the directory exists
-GENERATED_VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
-
-
 VIDEO_GENERATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
             "name": "generate_video",
-            "description": "Generates a video from a text prompt using Google's Veo model. The operation is asynchronous and may take some time (usually a few minutes). Returns a URL/path to the generated video.",
+            "description": "Generates a video from a text prompt using Google's Veo model. The operation is asynchronous and may take some time (usually a few minutes). Returns the generated video as an attachment.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -88,7 +79,7 @@ async def generate_video_tool(
         model: Model identifier.
 
     Returns:
-        ToolResult containing the path to the generated video.
+        ToolResult containing the video attachment.
     """
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -154,27 +145,23 @@ async def generate_video_tool(
 
         video_asset = operation.response.generated_videos[0]
 
-        # Generate filename
-        filename = f"video_{uuid.uuid4().hex}.mp4"
-        file_path = GENERATED_VIDEOS_DIR / filename
+        logger.info("Downloading video content...")
 
-        logger.info(f"Downloading video to {file_path}...")
+        # Download using async client - returns bytes
+        video_bytes = await client.aio.files.download(file=video_asset.video)
 
-        # Download using async client
-        await client.aio.files.download(file=video_asset.video)
-
-        # Save to disk (blocking operation run in thread)
-        # The save method writes the downloaded content from memory to disk
-        await asyncio.to_thread(video_asset.video.save, file_path)
-
-        relative_path = f"/static/generated/{filename}"
+        # Create attachment
+        attachment = ToolAttachment(
+            content=video_bytes,
+            mime_type="video/mp4",
+            description=f"Generated video: {prompt[:50]}...",
+        )
 
         return ToolResult(
-            text=f"Video generated successfully! You can view it here: {relative_path}",
+            text=f"Video generated successfully! (Model: {model})",
+            attachments=[attachment],
             data={
                 "status": "success",
-                "file_path": str(file_path),
-                "url": relative_path,
                 "model": model,
                 "prompt": prompt,
             },
