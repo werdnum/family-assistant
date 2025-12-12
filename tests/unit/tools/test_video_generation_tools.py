@@ -1,11 +1,15 @@
 """Tests for video generation tools."""
 
-import asyncio
+from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from family_assistant.tools.types import ToolExecutionContext, ToolResult, ToolAttachment
+from family_assistant.tools.types import (
+    ToolAttachment,
+    ToolExecutionContext,
+    ToolResult,
+)
 from family_assistant.tools.video_generation import (
     generate_video_tool,
 )
@@ -18,9 +22,11 @@ def mock_exec_context() -> MagicMock:
 
 
 @pytest.fixture
-def mock_genai_client() -> MagicMock:
+def mock_genai_client() -> Generator[MagicMock]:
     """Mock the genai.Client."""
-    with patch("family_assistant.tools.video_generation.genai.Client") as mock_client_cls:
+    with patch(
+        "family_assistant.tools.video_generation.genai.Client"
+    ) as mock_client_cls:
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
@@ -51,19 +57,21 @@ async def test_generate_video_tool_success(
     mock_exec_context: MagicMock, mock_genai_client: MagicMock
 ) -> None:
     """Test successful video generation."""
-    with patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}), \
-         patch("asyncio.sleep", AsyncMock()):
-
+    with (
+        patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
+        patch("asyncio.sleep", AsyncMock()),
+    ):
         result = await generate_video_tool(
             mock_exec_context,
             prompt="A video of a cat",
             aspect_ratio="16:9",
-            duration_seconds="8"
+            duration_seconds="8",
         )
 
         # Verify result
         assert isinstance(result, ToolResult)
         assert result.data is not None
+        assert isinstance(result.data, dict)
         assert result.data["status"] == "success"
         assert "A video of a cat" in result.data["prompt"]
 
@@ -82,17 +90,15 @@ async def test_generate_video_tool_success(
 
 @pytest.mark.asyncio
 async def test_generate_video_tool_missing_api_key(
-    mock_exec_context: MagicMock
+    mock_exec_context: MagicMock,
 ) -> None:
     """Test missing API key."""
     with patch.dict("os.environ", {}, clear=True):
-        result = await generate_video_tool(
-            mock_exec_context,
-            prompt="A video of a cat"
-        )
+        result = await generate_video_tool(mock_exec_context, prompt="A video of a cat")
 
         assert isinstance(result, ToolResult)
         assert result.data is not None
+        assert isinstance(result.data, dict)
         assert "error" in result.data
         assert "GEMINI_API_KEY missing" in result.data["error"]
 
@@ -102,9 +108,10 @@ async def test_generate_video_tool_api_error(
     mock_exec_context: MagicMock, mock_genai_client: MagicMock
 ) -> None:
     """Test API error handling."""
-    with patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}), \
-         patch("asyncio.sleep", AsyncMock()):
-
+    with (
+        patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
+        patch("asyncio.sleep", AsyncMock()),
+    ):
         # Setup operation with error
         mock_operation = MagicMock()
         mock_operation.done = True
@@ -116,13 +123,11 @@ async def test_generate_video_tool_api_error(
         # Mock immediate return for polling loop if it checks 'done' immediately
         mock_genai_client.aio.operations.get.return_value = mock_operation
 
-        result = await generate_video_tool(
-            mock_exec_context,
-            prompt="Unsafe prompt"
-        )
+        result = await generate_video_tool(mock_exec_context, prompt="Unsafe prompt")
 
         assert isinstance(result, ToolResult)
         assert result.data is not None
+        assert isinstance(result.data, dict)
         assert "error" in result.data
         assert "Safety violation" in result.data["error"]
 
@@ -132,9 +137,10 @@ async def test_generate_video_tool_polling(
     mock_exec_context: MagicMock, mock_genai_client: MagicMock
 ) -> None:
     """Test polling mechanism."""
-    with patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}), \
-         patch("asyncio.sleep", AsyncMock()) as mock_sleep:
-
+    with (
+        patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
+        patch("asyncio.sleep", AsyncMock()) as mock_sleep,
+    ):
         # Setup operation states: not done, then done
         op_pending = MagicMock()
         op_pending.done = False
@@ -152,10 +158,7 @@ async def test_generate_video_tool_polling(
         mock_genai_client.aio.operations.get.side_effect = [op_pending, op_done]
         mock_genai_client.aio.files.download.return_value = b"video-content"
 
-        await generate_video_tool(
-            mock_exec_context,
-            prompt="A video of a dog"
-        )
+        await generate_video_tool(mock_exec_context, prompt="A video of a dog")
 
         # Verify polling
         # Called initial + 2 polls
