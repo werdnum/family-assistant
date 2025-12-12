@@ -124,6 +124,10 @@ from family_assistant.tools.tasks import (
     schedule_reminder_tool,
 )
 from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.video_generation import (
+    VIDEO_GENERATION_TOOLS_DEFINITION,
+    generate_video_tool,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -201,6 +205,8 @@ __all__ = [
     "create_vega_chart_tool",
     "DATA_MANIPULATION_TOOLS_DEFINITION",
     "jq_query_tool",
+    "VIDEO_GENERATION_TOOLS_DEFINITION",
+    "generate_video_tool",
 ]
 
 
@@ -273,6 +279,8 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "transform_image": transform_image_tool,
     # Data visualization tools
     "create_vega_chart": create_vega_chart_tool,
+    # Video generation tools
+    "generate_video": generate_video_tool,
     # Data manipulation tools
     "jq_query": jq_query_tool,
     # Automation tools (unified event + schedule)
@@ -305,5 +313,6 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
     + IMAGE_GENERATION_TOOLS_DEFINITION
     + DATA_VISUALIZATION_TOOLS_DEFINITION
     + DATA_MANIPULATION_TOOLS_DEFINITION
+    + VIDEO_GENERATION_TOOLS_DEFINITION
     + MOCK_IMAGE_TOOLS_DEFINITION
 )

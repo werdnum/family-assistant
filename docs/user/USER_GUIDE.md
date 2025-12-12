@@ -157,6 +157,12 @@ You can ask the assistant a wide variety of things:
   attach CSV/JSON files. The system supports a wide variety of chart types including bar charts,
   line graphs, scatter plots, pie charts, area charts, and more complex visualizations.
 
+- **Generate Videos:** *Create short videos from text descriptions using the latest AI models:*
+  - "Generate a video of a futuristic city with flying cars."
+  - "Create a video of a puppy playing in the grass, 16:9 aspect ratio."
+  - "Make a 4-second video of ocean waves crashing on rocks."
+  *The assistant will generate the video and provide a link to view it.*
+
 - **Interact with Your Smart Home (Home Assistant):** \*If your family uses Home Assistant and it's
   connected to the assistant, you can control devices with your voice: \*"Turn on the kitchen
   lights." \*"Is the garage door closed?" \*"Set the thermostat to 70 degrees." \*"What's the
