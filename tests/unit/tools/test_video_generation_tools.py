@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from family_assistant.tools.types import ToolExecutionContext, ToolResult
+from family_assistant.tools.types import ToolExecutionContext, ToolResult, ToolAttachment
 from family_assistant.tools.video_generation import (
     generate_video_tool,
 )
@@ -32,7 +32,7 @@ def mock_genai_client() -> MagicMock:
 
         # Mock response
         mock_video_asset = MagicMock()
-        mock_video_asset.video = MagicMock()
+        mock_video_asset.video = "file-ref"
 
         mock_response = MagicMock()
         mock_response.generated_videos = [mock_video_asset]
@@ -41,7 +41,7 @@ def mock_genai_client() -> MagicMock:
         # Setup async methods
         mock_client.aio.models.generate_videos = AsyncMock(return_value=mock_operation)
         mock_client.aio.operations.get = AsyncMock(return_value=mock_operation)
-        mock_client.aio.files.download = AsyncMock()
+        mock_client.aio.files.download = AsyncMock(return_value=b"video-content")
 
         yield mock_client
 
@@ -52,8 +52,7 @@ async def test_generate_video_tool_success(
 ) -> None:
     """Test successful video generation."""
     with patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}), \
-         patch("asyncio.sleep", AsyncMock()), \
-         patch("asyncio.to_thread", AsyncMock()) as mock_to_thread:
+         patch("asyncio.sleep", AsyncMock()):
 
         result = await generate_video_tool(
             mock_exec_context,
@@ -67,13 +66,18 @@ async def test_generate_video_tool_success(
         assert result.data is not None
         assert result.data["status"] == "success"
         assert "A video of a cat" in result.data["prompt"]
-        assert result.data["model"] == "veo-3.1-generate-preview"
-        assert "video_" in str(result.data["file_path"])
+
+        # Verify attachment
+        assert result.attachments is not None
+        assert len(result.attachments) == 1
+        attachment = result.attachments[0]
+        assert isinstance(attachment, ToolAttachment)
+        assert attachment.content == b"video-content"
+        assert attachment.mime_type == "video/mp4"
 
         # Verify client calls
         mock_genai_client.aio.models.generate_videos.assert_called_once()
-        mock_genai_client.aio.files.download.assert_called_once()
-        mock_to_thread.assert_called_once()  # Verification of save call
+        mock_genai_client.aio.files.download.assert_called_once_with(file="file-ref")
 
 
 @pytest.mark.asyncio
@@ -129,8 +133,7 @@ async def test_generate_video_tool_polling(
 ) -> None:
     """Test polling mechanism."""
     with patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}), \
-         patch("asyncio.sleep", AsyncMock()) as mock_sleep, \
-         patch("asyncio.to_thread", AsyncMock()):
+         patch("asyncio.sleep", AsyncMock()) as mock_sleep:
 
         # Setup operation states: not done, then done
         op_pending = MagicMock()
@@ -147,6 +150,7 @@ async def test_generate_video_tool_polling(
         mock_genai_client.aio.models.generate_videos.return_value = op_pending
         # Polling calls: return pending first time, then done second time
         mock_genai_client.aio.operations.get.side_effect = [op_pending, op_done]
+        mock_genai_client.aio.files.download.return_value = b"video-content"
 
         await generate_video_tool(
             mock_exec_context,
