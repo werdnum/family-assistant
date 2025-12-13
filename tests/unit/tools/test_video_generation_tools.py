@@ -165,3 +165,37 @@ async def test_generate_video_tool_polling(
         assert mock_genai_client.aio.operations.get.call_count == 2
         # Sleep called twice
         assert mock_sleep.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_generate_video_tool_timeout(
+    mock_exec_context: MagicMock, mock_genai_client: MagicMock
+) -> None:
+    """Test timeout during polling."""
+    with (
+        patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
+        patch("asyncio.sleep", AsyncMock()),
+        patch("time.time") as mock_time,
+    ):
+        # Setup operation states: always not done
+        op_pending = MagicMock()
+        op_pending.done = False
+        op_pending.name = "op/pending"
+
+        mock_genai_client.aio.models.generate_videos.return_value = op_pending
+        mock_genai_client.aio.operations.get.return_value = op_pending
+
+        # Mock time to advance past timeout
+        # Initial call + loop check
+        # We need start_time, then next check > timeout
+        mock_time.side_effect = [1000.0, 1700.0]  # 700s > 600s
+
+        result = await generate_video_tool(
+            mock_exec_context, prompt="A video of a slow cat"
+        )
+
+        assert isinstance(result, ToolResult)
+        assert result.data is not None
+        assert isinstance(result.data, dict)
+        assert "error" in result.data
+        assert "Timeout" in result.data["error"]

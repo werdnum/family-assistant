@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import Any, cast
 
 from google import genai
@@ -120,7 +121,17 @@ async def generate_video_tool(
         logger.info(f"Video generation operation started: {operation.name}")
 
         # Poll for completion
+        start_time = time.time()
+        timeout_seconds = 600  # 10 minutes timeout
+
         while not operation.done:
+            if time.time() - start_time > timeout_seconds:
+                # ast-grep-ignore: toolresult-text-literal-with-data - Error message is sufficient
+                return ToolResult(
+                    text=f"Error: Video generation timed out after {timeout_seconds} seconds.",
+                    data={"error": "Timeout", "timeout_seconds": timeout_seconds},
+                )
+
             logger.debug("Waiting for video generation to complete...")
             await asyncio.sleep(10)  # Wait 10 seconds between checks
             operation = await client.aio.operations.get(operation)
