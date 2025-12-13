@@ -85,6 +85,25 @@ async def test_generate_video_tool_success(
 
         # Verify client calls
         mock_genai_client.aio.models.generate_videos.assert_called_once()
+
+        # Verify config parameters types
+        _, kwargs = mock_genai_client.aio.models.generate_videos.call_args
+        config = kwargs["config"]
+        # Verify duration_seconds is passed as int
+        # Note: google-genai types typically expose attributes in camelCase (durationSeconds)
+        # or allow snake_case access depending on version. Checking the value passed to constructor.
+        # Since we can't easily inspect internal state without knowing exact SDK version behavior,
+        # we assume if it accepted int in constructor, it's correct.
+        # But we can check if the attribute exists or check the repr if needed.
+        # For now, let's check if we can access it via snake_case which is standard for this SDK wrapper?
+        # Actually, the signature showed durationSeconds.
+        # Let's check if we can access it.
+        val = getattr(
+            config, "duration_seconds", getattr(config, "durationSeconds", None)
+        )
+        assert val == 8
+        assert isinstance(val, int)
+
         mock_genai_client.aio.files.download.assert_called_once_with(file="file-ref")
 
 
