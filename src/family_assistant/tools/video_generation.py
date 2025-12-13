@@ -103,7 +103,7 @@ async def generate_video_tool(
         if aspect_ratio:
             config_params["aspect_ratio"] = aspect_ratio
         if duration_seconds:
-            config_params["duration_seconds"] = duration_seconds
+            config_params["duration_seconds"] = int(duration_seconds)
 
         config = types.GenerateVideosConfig(**config_params)
 
