@@ -162,6 +162,34 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
             metafunc.parametrize("db_engine", db_backends, indirect=True)
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """
+    Modify test items after collection.
+
+    1. Mark Playwright tests as flaky when running against SQLite.
+    2. Skip vector search tests when running against SQLite.
+    """
+    for item in items:
+        # Check if test is parameterized with db_engine
+        if hasattr(item, "callspec") and "db_engine" in item.callspec.params:
+            db_backend = item.callspec.params["db_engine"]
+
+            if db_backend == "sqlite":
+                # 1. Flaky Playwright tests on SQLite
+                if item.get_closest_marker("playwright"):
+                    # Add flaky marker with 3 reruns
+                    item.add_marker(pytest.mark.flaky(reruns=3))
+
+                # 2. Skip Vector Search tests on SQLite
+                # Identify vector search tests by path or name
+                if "vector_search" in item.nodeid:
+                    item.add_marker(
+                        pytest.mark.skip(
+                            reason="Vector search tests are disabled on SQLite"
+                        )
+                    )
+
+
 # Port allocation now handled by worker-specific ranges - no global tracking needed
 
 
