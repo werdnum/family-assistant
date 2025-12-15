@@ -167,7 +167,6 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     Modify test items after collection.
 
     1. Mark Playwright tests as flaky when running against SQLite.
-    2. Skip vector search tests when running against SQLite.
     """
     for item in items:
         # Check if test is parameterized with db_engine
@@ -182,19 +181,6 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
                 if item.get_closest_marker("playwright"):
                     # Add flaky marker with 3 reruns
                     item.add_marker(pytest.mark.flaky(reruns=3))
-
-                # 2. Skip Vector Search tests on SQLite
-                # Detect tests requiring vector DB by checking for the fixture usage
-                # This is more robust than string matching on nodeid
-                # 'pg_vector_db_engine' is the fixture providing vector DB support
-                # Access 'fixturenames' dynamically to avoid basedpyright errors
-                fixturenames = getattr(item, "fixturenames", [])
-                if "pg_vector_db_engine" in fixturenames:
-                    item.add_marker(
-                        pytest.mark.skip(
-                            reason="Vector search tests (requiring pg_vector_db_engine) are disabled on SQLite"
-                        )
-                    )
 
 
 # Port allocation now handled by worker-specific ranges - no global tracking needed
