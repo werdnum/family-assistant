@@ -176,11 +176,10 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         if callspec and hasattr(callspec, "params") and "db_engine" in callspec.params:
             db_backend = callspec.params["db_engine"]
 
-            if db_backend == "sqlite":
-                # 1. Flaky Playwright tests on SQLite
-                if item.get_closest_marker("playwright"):
-                    # Add flaky marker with 3 reruns
-                    item.add_marker(pytest.mark.flaky(reruns=3))
+            # 1. Flaky Playwright tests on SQLite
+            if db_backend == "sqlite" and item.get_closest_marker("playwright"):
+                # Add flaky marker with 3 reruns
+                item.add_marker(pytest.mark.flaky(reruns=3))
 
 
 # Port allocation now handled by worker-specific ranges - no global tracking needed
