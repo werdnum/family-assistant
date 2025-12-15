@@ -171,8 +171,11 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """
     for item in items:
         # Check if test is parameterized with db_engine
-        if hasattr(item, "callspec") and "db_engine" in item.callspec.params:
-            db_backend = item.callspec.params["db_engine"]
+        # Use getattr/hasattr to satisfy static analysis (basedpyright) which doesn't know about 'callspec' on Item
+        # Access 'callspec' dynamically to avoid basedpyright errors
+        callspec = getattr(item, "callspec", None)
+        if callspec and hasattr(callspec, "params") and "db_engine" in callspec.params:
+            db_backend = callspec.params["db_engine"]
 
             if db_backend == "sqlite":
                 # 1. Flaky Playwright tests on SQLite
@@ -181,11 +184,15 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
                     item.add_marker(pytest.mark.flaky(reruns=3))
 
                 # 2. Skip Vector Search tests on SQLite
-                # Identify vector search tests by path or name
-                if "vector_search" in item.nodeid:
+                # Detect tests requiring vector DB by checking for the fixture usage
+                # This is more robust than string matching on nodeid
+                # 'pg_vector_db_engine' is the fixture providing vector DB support
+                # Access 'fixturenames' dynamically to avoid basedpyright errors
+                fixturenames = getattr(item, "fixturenames", [])
+                if "pg_vector_db_engine" in fixturenames:
                     item.add_marker(
                         pytest.mark.skip(
-                            reason="Vector search tests are disabled on SQLite"
+                            reason="Vector search tests (requiring pg_vector_db_engine) are disabled on SQLite"
                         )
                     )
 
