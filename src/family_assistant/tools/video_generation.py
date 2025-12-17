@@ -92,131 +92,116 @@ async def generate_video_tool(
             data={"error": "GEMINI_API_KEY missing"},
         )
 
-    # Initialize client
-    client = genai.Client(api_key=api_key)
+    # Use client.aio as async context manager
+    async with genai.Client(api_key=api_key).aio as client:
+        try:
+            # Configure video generation
+            config_params = {}
+            if negative_prompt:
+                config_params["negative_prompt"] = negative_prompt
+            if aspect_ratio:
+                config_params["aspect_ratio"] = aspect_ratio
+            if duration_seconds:
+                config_params["duration_seconds"] = int(duration_seconds)
 
-    try:
-        # Configure video generation
-        config_params = {}
-        if negative_prompt:
-            config_params["negative_prompt"] = negative_prompt
-        if aspect_ratio:
-            config_params["aspect_ratio"] = aspect_ratio
-        if duration_seconds:
-            config_params["duration_seconds"] = int(duration_seconds)
+            config = types.GenerateVideosConfig(**config_params)
 
-        config = types.GenerateVideosConfig(**config_params)
+            logger.info(
+                f"Starting video generation with model {model} and prompt: {prompt[:50]}..."
+            )
 
-        logger.info(
-            f"Starting video generation with model {model} and prompt: {prompt[:50]}..."
-        )
+            # Start the operation
+            # Note: client is the AsyncClient here (from .aio)
+            operation = await client.models.generate_videos(
+                model=model,
+                prompt=prompt,
+                config=config,
+            )
 
-        # Start the operation
-        operation = await client.aio.models.generate_videos(
-            model=model,
-            prompt=prompt,
-            config=config,
-        )
+            logger.info(f"Video generation operation started: {operation.name}")
 
-        logger.info(f"Video generation operation started: {operation.name}")
+            # Poll for completion
+            start_time = time.time()
+            timeout_seconds = 600  # 10 minutes timeout
 
-        # Poll for completion
-        start_time = time.time()
-        timeout_seconds = 600  # 10 minutes timeout
+            while not operation.done:
+                if time.time() - start_time > timeout_seconds:
+                    # ast-grep-ignore: toolresult-text-literal-with-data - Error message is sufficient
+                    return ToolResult(
+                        text=f"Error: Video generation timed out after {timeout_seconds} seconds.",
+                        data={"error": "Timeout", "timeout_seconds": timeout_seconds},
+                    )
 
-        while not operation.done:
-            if time.time() - start_time > timeout_seconds:
-                # ast-grep-ignore: toolresult-text-literal-with-data - Error message is sufficient
+                logger.debug("Waiting for video generation to complete...")
+                await asyncio.sleep(10)  # Wait 10 seconds between checks
+                operation = await client.operations.get(operation)
+
+            if operation.error:
+                # Handle API error (e.g., safety filters)
+                # Pyright might see operation.error as dict or object
+                op_error = operation.error
+                if isinstance(op_error, dict):
+                    error_msg = op_error.get("message", "Unknown error")
+                    error_code = op_error.get("code")
+                else:
+                    error_msg = getattr(op_error, "message", "Unknown error")
+                    error_code = getattr(op_error, "code", None)
+
+                logger.error(f"Video generation failed: {error_msg} (Code: {error_code})")
                 return ToolResult(
-                    text=f"Error: Video generation timed out after {timeout_seconds} seconds.",
-                    data={"error": "Timeout", "timeout_seconds": timeout_seconds},
+                    text=f"Error generating video: {error_msg}",
+                    data={"error": error_msg, "code": error_code},
                 )
 
-            logger.debug("Waiting for video generation to complete...")
-            await asyncio.sleep(10)  # Wait 10 seconds between checks
-            operation = await client.aio.operations.get(operation)
+            # Download the video
+            if (
+                not hasattr(operation, "response")
+                or not operation.response
+                or not operation.response.generated_videos
+            ):
+                # ast-grep-ignore: toolresult-text-literal-with-data - Error message is sufficient
+                return ToolResult(
+                    text="Error: No video generated in response.",
+                    data={"error": "No video generated"},
+                )
 
-        if operation.error:
-            # Handle API error (e.g., safety filters)
-            # Pyright might see operation.error as dict or object
-            op_error = operation.error
-            if isinstance(op_error, dict):
-                error_msg = op_error.get("message", "Unknown error")
-                error_code = op_error.get("code")
-            else:
-                error_msg = getattr(op_error, "message", "Unknown error")
-                error_code = getattr(op_error, "code", None)
+            video_asset = operation.response.generated_videos[0]
 
-            logger.error(f"Video generation failed: {error_msg} (Code: {error_code})")
-            return ToolResult(
-                text=f"Error generating video: {error_msg}",
-                data={"error": error_msg, "code": error_code},
+            if not video_asset.video:
+                # ast-grep-ignore: toolresult-text-literal-with-data - Error message is sufficient
+                return ToolResult(
+                    text="Error: Generated video asset is missing video file reference.",
+                    data={"error": "Missing video file"},
+                )
+
+            logger.info("Downloading video content...")
+
+            # Download using async client - returns bytes
+            # cast to Any because Pyright might not recognize Video as valid input for download yet
+            video_bytes = await client.files.download(
+                file=cast("Any", video_asset.video)
             )
 
-        # Download the video
-        if (
-            not hasattr(operation, "response")
-            or not operation.response
-            or not operation.response.generated_videos
-        ):
-            # ast-grep-ignore: toolresult-text-literal-with-data - Error message is sufficient
-            return ToolResult(
-                text="Error: No video generated in response.",
-                data={"error": "No video generated"},
+            # Create attachment
+            attachment = ToolAttachment(
+                content=video_bytes,
+                mime_type="video/mp4",
+                description=f"Generated video: {prompt[:50]}...",
             )
 
-        video_asset = operation.response.generated_videos[0]
-
-        if not video_asset.video:
-            # ast-grep-ignore: toolresult-text-literal-with-data - Error message is sufficient
             return ToolResult(
-                text="Error: Generated video asset is missing video file reference.",
-                data={"error": "Missing video file"},
+                text=f"Video generated successfully! (Model: {model})",
+                attachments=[attachment],
+                data={
+                    "status": "success",
+                    "model": model,
+                    "prompt": prompt,
+                },
             )
 
-        logger.info("Downloading video content...")
-
-        # Download using async client - returns bytes
-        # cast to Any because Pyright might not recognize Video as valid input for download yet
-        video_bytes = await client.aio.files.download(
-            file=cast("Any", video_asset.video)
-        )
-
-        # Create attachment
-        attachment = ToolAttachment(
-            content=video_bytes,
-            mime_type="video/mp4",
-            description=f"Generated video: {prompt[:50]}...",
-        )
-
-        return ToolResult(
-            text=f"Video generated successfully! (Model: {model})",
-            attachments=[attachment],
-            data={
-                "status": "success",
-                "model": model,
-                "prompt": prompt,
-            },
-        )
-
-    except Exception as e:
-        logger.error(f"Error in generate_video_tool: {e}", exc_info=True)
-        return ToolResult(
-            text=f"An error occurred during video generation: {str(e)}",
-            data={"error": str(e)},
-        )
-    finally:
-        # Close the underlying API client session to prevent resource leaks
-        try:
-            # The genai.Client doesn't expose a close method directly, but we need
-            # to close the underlying session.
-            # We access the private _api_client similar to how the main LLM client does.
-            api_client = getattr(client, "_api_client", None)
-            if api_client:
-                # Check for _aiohttp_session (seen in runtime inspection)
-                session = getattr(api_client, "_aiohttp_session", None)
-                if session and not session.closed:
-                    await session.close()
-                    logger.debug("Closed genai.Client aiohttp session")
         except Exception as e:
-            logger.debug(f"Error closing genai client: {e}")
+            logger.error(f"Error in generate_video_tool: {e}", exc_info=True)
+            return ToolResult(
+                text=f"An error occurred during video generation: {str(e)}",
+                data={"error": str(e)},
+            )
