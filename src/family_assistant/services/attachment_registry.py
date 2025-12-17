@@ -40,6 +40,7 @@ DEFAULT_ALLOWED_MIME_TYPES = {
     "text/plain",
     "text/markdown",
     "application/pdf",
+    "video/mp4",
 }
 
 

@@ -92,10 +92,10 @@ async def generate_video_tool(
             data={"error": "GEMINI_API_KEY missing"},
         )
 
-    try:
-        # Initialize client
-        client = genai.Client(api_key=api_key)
+    # Initialize client
+    client = genai.Client(api_key=api_key)
 
+    try:
         # Configure video generation
         config_params = {}
         if negative_prompt:
@@ -205,3 +205,18 @@ async def generate_video_tool(
             text=f"An error occurred during video generation: {str(e)}",
             data={"error": str(e)},
         )
+    finally:
+        # Close the underlying API client session to prevent resource leaks
+        try:
+            # The genai.Client doesn't expose a close method directly, but we need
+            # to close the underlying session.
+            # We access the private _api_client similar to how the main LLM client does.
+            api_client = getattr(client, "_api_client", None)
+            if api_client:
+                # Check for _aiohttp_session (seen in runtime inspection)
+                session = getattr(api_client, "_aiohttp_session", None)
+                if session and not session.closed:
+                    await session.close()
+                    logger.debug("Closed genai.Client aiohttp session")
+        except Exception as e:
+            logger.debug(f"Error closing genai client: {e}")
