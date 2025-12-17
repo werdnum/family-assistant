@@ -172,14 +172,16 @@ async def generate_video_tool(
                     )
                     images_list = images_list[:3]
 
-                reference_images = []
-
-                for img in images_list:
-                    image_obj = await _process_image_attachment(img, "reference image")
-                    if image_obj:
-                        reference_images.append(
-                            types.VideoGenerationReferenceImage(image=image_obj)
-                        )
+                # Process images concurrently
+                image_results = await asyncio.gather(*[
+                    _process_image_attachment(img, "reference image")
+                    for img in images_list
+                ])
+                reference_images = [
+                    types.VideoGenerationReferenceImage(image=img)
+                    for img in image_results
+                    if img is not None
+                ]
 
                 if reference_images:
                     config_params["reference_images"] = reference_images
