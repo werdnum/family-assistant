@@ -11,6 +11,7 @@ from typing import Any, cast
 from google import genai
 from google.genai import types
 
+from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.tools.types import (
     ToolAttachment,
     ToolExecutionContext,
@@ -32,6 +33,20 @@ VIDEO_GENERATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
                     "prompt": {
                         "type": "string",
                         "description": "The text description for the video. Supports audio cues, camera motion, style, etc.",
+                    },
+                    "images": {
+                        "type": "array",
+                        "items": {"type": "attachment"},
+                        "description": "Optional list of up to 3 reference images (style/content guide) for Veo 3.1.",
+                        "maxItems": 3,
+                    },
+                    "first_frame_image": {
+                        "type": "attachment",
+                        "description": "The initial image to animate (for Image-to-Video or Interpolation).",
+                    },
+                    "last_frame_image": {
+                        "type": "attachment",
+                        "description": "The final image for interpolation. Must be used with `first_frame_image`.",
                     },
                     "negative_prompt": {
                         "type": "string",
@@ -62,9 +77,47 @@ VIDEO_GENERATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
 ]
 
 
+async def _process_image_attachment(
+    attachment: ScriptAttachment, label: str
+) -> types.Image | None:
+    """
+    Helper to process a single attachment into a Google GenAI Image object.
+
+    Args:
+        attachment: The ScriptAttachment object to process.
+        label: A label for logging (e.g., "reference image", "first frame").
+
+    Returns:
+        A types.Image object if successful, or None if content retrieval fails.
+    """
+    if not isinstance(attachment, ScriptAttachment):
+        logger.warning(f"Invalid object for {label}: {type(attachment)}")
+        return None
+
+    try:
+        content = await attachment.get_content_async()
+        if content:
+            mime_type = attachment.get_mime_type()
+            logger.info(
+                f"Processed {label} attachment {attachment.get_id()} ({len(content)} bytes)"
+            )
+            return types.Image(image_bytes=content, mime_type=mime_type)
+        else:
+            logger.warning(
+                f"Could not retrieve content for {label} attachment {attachment.get_id()}"
+            )
+            return None
+    except Exception as e:
+        logger.error(f"Error processing {label} attachment {attachment.get_id()}: {e}")
+        return None
+
+
 async def generate_video_tool(
     exec_context: ToolExecutionContext,
     prompt: str,
+    images: list[ScriptAttachment] | None = None,
+    first_frame_image: ScriptAttachment | None = None,
+    last_frame_image: ScriptAttachment | None = None,
     negative_prompt: str | None = None,
     aspect_ratio: str = "16:9",
     duration_seconds: str = "8",
@@ -76,6 +129,9 @@ async def generate_video_tool(
     Args:
         exec_context: The tool execution context.
         prompt: The text prompt for video generation.
+        images: Optional list of reference images.
+        first_frame_image: Optional first frame image.
+        last_frame_image: Optional last frame image.
         negative_prompt: Optional negative prompt.
         aspect_ratio: Aspect ratio ("16:9" or "9:16").
         duration_seconds: Duration in seconds ("4", "6", or "8").
@@ -104,7 +160,57 @@ async def generate_video_tool(
             if duration_seconds:
                 config_params["duration_seconds"] = int(duration_seconds)
 
+            # Handle reference images (Style/Content guide)
+            if images:
+                # Handle single attachment passed by mistake (if middleware flattens it)
+                images_list = images if isinstance(images, list) else [images]
+
+                # Enforce maxItems: 3
+                if len(images_list) > 3:
+                    logger.warning(
+                        f"Too many reference images ({len(images_list)}), truncating to 3."
+                    )
+                    images_list = images_list[:3]
+
+                reference_images = []
+
+                for img in images_list:
+                    image_obj = await _process_image_attachment(img, "reference image")
+                    if image_obj:
+                        reference_images.append(
+                            types.VideoGenerationReferenceImage(image=image_obj)
+                        )
+
+                if reference_images:
+                    config_params["reference_images"] = reference_images
+                    # Docs say duration must be 8 when using reference images
+                    if config_params.get("duration_seconds") != 8:
+                        logger.info("Forcing duration to 8s for reference images mode")
+                        config_params["duration_seconds"] = 8
+
+            # Handle Last Frame (for interpolation)
+            if last_frame_image:
+                last_frame_obj = await _process_image_attachment(
+                    last_frame_image, "last frame"
+                )
+                if last_frame_obj:
+                    config_params["last_frame"] = last_frame_obj
+                    # Docs say duration must be 8 when using interpolation
+                    if config_params.get("duration_seconds") != 8:
+                        logger.info("Forcing duration to 8s for interpolation mode")
+                        config_params["duration_seconds"] = 8
+
             config = types.GenerateVideosConfig(**config_params)
+
+            # Handle First Frame (Image-to-Video or Interpolation)
+            first_frame_obj = None
+            if first_frame_image:
+                first_frame_obj = await _process_image_attachment(
+                    first_frame_image, "first frame"
+                )
+
+            # Construct source
+            source = types.GenerateVideosSource(prompt=prompt, image=first_frame_obj)
 
             logger.info(
                 f"Starting video generation with model {model} and prompt: {prompt[:50]}..."
@@ -114,7 +220,7 @@ async def generate_video_tool(
             # Note: client is the AsyncClient here (from .aio)
             operation = await client.models.generate_videos(
                 model=model,
-                prompt=prompt,
+                source=source,
                 config=config,
             )
 
