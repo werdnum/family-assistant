@@ -24,7 +24,7 @@ dependencies = [
     # Direct provider SDKs
     "openai>=1.0.0,<1.93.0",
     # OpenAI SDK for direct API access
-    "google-genai>=0.4.0",
+    "google-genai>=1.0.0",
     # Google Gemini SDK for direct API access
     "python-dotenv>=1.0.0",
     "sqlalchemy[asyncio]>=2.0.0",
