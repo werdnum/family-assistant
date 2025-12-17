@@ -792,6 +792,7 @@ attachment_config:
     - "text/plain"
     - "application/json"
     - "text/csv"
+    - "video/mp4"
     - "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     - "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     - "application/vnd.openxmlformats-officedocument.presentationml.presentation"

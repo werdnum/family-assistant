@@ -29,16 +29,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Default configuration values (fallbacks)
+# Default configuration values (fallbacks if not specified in config.yaml)
 DEFAULT_MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
 DEFAULT_MAX_MULTIMODAL_SIZE = 20 * 1024 * 1024  # 20MB
-DEFAULT_ALLOWED_MIME_TYPES = {
+# NOTE: In production, allowed_mime_types is configured in config.yaml under
+# attachments.allowed_mime_types. This default is only used when config is not provided
+# (e.g., in tests). To add new MIME types, update config.yaml.
+DEFAULT_ALLOWED_MIME_TYPES: set[str] = {
     "image/png",
     "image/jpeg",
     "image/gif",
     "image/webp",
     "text/plain",
-    "text/markdown",
     "application/pdf",
     "video/mp4",
 }
@@ -148,14 +150,11 @@ class AttachmentRegistry:
         self.max_multimodal_size = attachment_config.get(
             "max_multimodal_size", DEFAULT_MAX_MULTIMODAL_SIZE
         )
-        allowed_types = attachment_config.get(
-            "allowed_mime_types", list(DEFAULT_ALLOWED_MIME_TYPES)
-        )
-        self.allowed_mime_types = (
-            set(allowed_types)
-            if isinstance(allowed_types, list)
-            else DEFAULT_ALLOWED_MIME_TYPES
-        )
+        allowed_types = attachment_config.get("allowed_mime_types")
+        if allowed_types and isinstance(allowed_types, list):
+            self.allowed_mime_types = set(allowed_types)
+        else:
+            self.allowed_mime_types = DEFAULT_ALLOWED_MIME_TYPES
 
         logger.info(
             f"AttachmentRegistry initialized with storage path: {self.storage_path}, "
