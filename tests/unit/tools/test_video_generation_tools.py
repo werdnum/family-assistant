@@ -1,10 +1,13 @@
 """Tests for video generation tools."""
 
 from collections.abc import Generator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from google.genai import types
 
+from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.tools.types import (
     ToolAttachment,
     ToolExecutionContext,
@@ -94,26 +97,121 @@ async def test_generate_video_tool_success(
 
         # Verify client calls
         mock_genai_client.models.generate_videos.assert_called_once()
-
-        # Verify config parameters types
         _, kwargs = mock_genai_client.models.generate_videos.call_args
+
+        # Verify source
+        assert "source" in kwargs
+        assert isinstance(kwargs["source"], types.GenerateVideosSource)
+        assert kwargs["source"].prompt == "A video of a cat"
+
+        # Verify config parameters
         config = kwargs["config"]
-        # Verify duration_seconds is passed as int
-        # Note: google-genai types typically expose attributes in camelCase (durationSeconds)
-        # or allow snake_case access depending on version. Checking the value passed to constructor.
-        # Since we can't easily inspect internal state without knowing exact SDK version behavior,
-        # we assume if it accepted int in constructor, it's correct.
-        # But we can check if the attribute exists or check the repr if needed.
-        # For now, let's check if we can access it via snake_case which is standard for this SDK wrapper?
-        # Actually, the signature showed durationSeconds.
-        # Let's check if we can access it.
-        val = getattr(
-            config, "duration_seconds", getattr(config, "durationSeconds", None)
-        )
-        assert val == 8
-        assert isinstance(val, int)
+        # Check duration_seconds access via snake_case (sdk default) or raw dict check if model dump
+        # We assume the object is passed correctly
+        assert config.duration_seconds == 8
 
         mock_genai_client.files.download.assert_called_once_with(file="file-ref")
+
+
+@pytest.mark.asyncio
+async def test_generate_video_multimodal(
+    mock_exec_context: MagicMock, mock_genai_client: MagicMock
+) -> None:
+    """Test video generation with reference images and first/last frame."""
+    with (
+        patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
+        patch("asyncio.sleep", AsyncMock()),
+    ):
+        # Create mock ScriptAttachment objects
+        ref_img1 = MagicMock(spec=ScriptAttachment)
+        ref_img1.get_content_async = AsyncMock(return_value=b"img1")
+        ref_img1.get_mime_type.return_value = "image/png"
+        ref_img1.get_id.return_value = "ref1"
+
+        first_frame = MagicMock(spec=ScriptAttachment)
+        first_frame.get_content_async = AsyncMock(return_value=b"first")
+        first_frame.get_mime_type.return_value = "image/jpeg"
+        first_frame.get_id.return_value = "first1"
+
+        last_frame = MagicMock(spec=ScriptAttachment)
+        last_frame.get_content_async = AsyncMock(return_value=b"last")
+        last_frame.get_mime_type.return_value = "image/jpeg"
+        last_frame.get_id.return_value = "last1"
+
+        result = await generate_video_tool(
+            mock_exec_context,
+            prompt="A multimodal video",
+            images=[ref_img1],
+            first_frame_image=first_frame,
+            last_frame_image=last_frame,
+            duration_seconds="4",  # Should be forced to 8
+        )
+
+        assert isinstance(result, ToolResult)
+        # ast-grep-ignore: no-dict-any - ToolResult.data is flexible
+        result_data: dict[str, Any] = result.data  # type: ignore
+        assert result_data["status"] == "success"
+
+        # Verify client calls
+        mock_genai_client.models.generate_videos.assert_called_once()
+        _, kwargs = mock_genai_client.models.generate_videos.call_args
+
+        source = kwargs["source"]
+        config = kwargs["config"]
+
+        # Check First Frame in Source
+        assert source.image is not None
+        assert source.image.image_bytes == b"first"
+
+        # Check Last Frame in Config
+        assert config.last_frame is not None
+        assert config.last_frame.image_bytes == b"last"
+
+        # Check Reference Images in Config
+        assert config.reference_images is not None
+        assert len(config.reference_images) == 1
+        assert config.reference_images[0].image.image_bytes == b"img1"
+
+        # Check Duration Forced to 8s
+        assert config.duration_seconds == 8
+
+
+@pytest.mark.asyncio
+async def test_generate_video_invalid_attachments(
+    mock_exec_context: MagicMock, mock_genai_client: MagicMock
+) -> None:
+    """Test video generation with invalid attachments (should skip them)."""
+    with (
+        patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
+        patch("asyncio.sleep", AsyncMock()),
+    ):
+        # Invalid object passed as attachment
+        invalid_att = MagicMock()  # Not ScriptAttachment spec
+
+        # Valid attachment but empty content
+        empty_att = MagicMock(spec=ScriptAttachment)
+        empty_att.get_content_async = AsyncMock(return_value=None)
+        empty_att.get_id.return_value = "empty1"
+
+        result = await generate_video_tool(
+            mock_exec_context,
+            prompt="Invalid inputs",
+            images=[invalid_att, empty_att],
+            first_frame_image=empty_att,
+        )
+
+        assert isinstance(result, ToolResult)
+        # ast-grep-ignore: no-dict-any - ToolResult.data is flexible
+        result_data: dict[str, Any] = result.data  # type: ignore
+        assert result_data["status"] == "success"
+
+        _, kwargs = mock_genai_client.models.generate_videos.call_args
+        source = kwargs["source"]
+        config = kwargs["config"]
+
+        # Should be None/Empty because inputs were invalid
+        assert source.image is None
+        assert not hasattr(config, "reference_images") or not config.reference_images
 
 
 @pytest.mark.asyncio
