@@ -44,12 +44,21 @@ def mock_genai_client() -> Generator[MagicMock]:
         mock_response.generated_videos = [mock_video_asset]
         mock_operation.response = mock_response
 
-        # Setup async methods
-        mock_client.aio.models.generate_videos = AsyncMock(return_value=mock_operation)
-        mock_client.aio.operations.get = AsyncMock(return_value=mock_operation)
-        mock_client.aio.files.download = AsyncMock(return_value=b"video-content")
+        # Create an async client that will be yielded by the context manager
+        mock_async_client = MagicMock()
+        mock_async_client.models.generate_videos = AsyncMock(
+            return_value=mock_operation
+        )
+        mock_async_client.operations.get = AsyncMock(return_value=mock_operation)
+        mock_async_client.files.download = AsyncMock(return_value=b"video-content")
 
-        yield mock_client
+        # Setup .aio as an async context manager that yields mock_async_client
+        mock_aio = MagicMock()
+        mock_aio.__aenter__ = AsyncMock(return_value=mock_async_client)
+        mock_aio.__aexit__ = AsyncMock(return_value=None)
+        mock_client.aio = mock_aio
+
+        yield mock_async_client
 
 
 @pytest.mark.asyncio
@@ -84,10 +93,10 @@ async def test_generate_video_tool_success(
         assert attachment.mime_type == "video/mp4"
 
         # Verify client calls
-        mock_genai_client.aio.models.generate_videos.assert_called_once()
+        mock_genai_client.models.generate_videos.assert_called_once()
 
         # Verify config parameters types
-        _, kwargs = mock_genai_client.aio.models.generate_videos.call_args
+        _, kwargs = mock_genai_client.models.generate_videos.call_args
         config = kwargs["config"]
         # Verify duration_seconds is passed as int
         # Note: google-genai types typically expose attributes in camelCase (durationSeconds)
@@ -104,7 +113,7 @@ async def test_generate_video_tool_success(
         assert val == 8
         assert isinstance(val, int)
 
-        mock_genai_client.aio.files.download.assert_called_once_with(file="file-ref")
+        mock_genai_client.files.download.assert_called_once_with(file="file-ref")
 
 
 @pytest.mark.asyncio
@@ -138,9 +147,9 @@ async def test_generate_video_tool_api_error(
         mock_operation.error.message = "Safety violation"
         mock_operation.error.code = 400
 
-        mock_genai_client.aio.models.generate_videos.return_value = mock_operation
+        mock_genai_client.models.generate_videos.return_value = mock_operation
         # Mock immediate return for polling loop if it checks 'done' immediately
-        mock_genai_client.aio.operations.get.return_value = mock_operation
+        mock_genai_client.operations.get.return_value = mock_operation
 
         result = await generate_video_tool(mock_exec_context, prompt="Unsafe prompt")
 
@@ -172,16 +181,16 @@ async def test_generate_video_tool_polling(
         op_done.response.generated_videos = [MagicMock()]
 
         # Initial call returns pending operation
-        mock_genai_client.aio.models.generate_videos.return_value = op_pending
+        mock_genai_client.models.generate_videos.return_value = op_pending
         # Polling calls: return pending first time, then done second time
-        mock_genai_client.aio.operations.get.side_effect = [op_pending, op_done]
-        mock_genai_client.aio.files.download.return_value = b"video-content"
+        mock_genai_client.operations.get.side_effect = [op_pending, op_done]
+        mock_genai_client.files.download.return_value = b"video-content"
 
         await generate_video_tool(mock_exec_context, prompt="A video of a dog")
 
         # Verify polling
         # Called initial + 2 polls
-        assert mock_genai_client.aio.operations.get.call_count == 2
+        assert mock_genai_client.operations.get.call_count == 2
         # Sleep called twice
         assert mock_sleep.call_count == 2
 
@@ -201,8 +210,8 @@ async def test_generate_video_tool_timeout(
         op_pending.done = False
         op_pending.name = "op/pending"
 
-        mock_genai_client.aio.models.generate_videos.return_value = op_pending
-        mock_genai_client.aio.operations.get.return_value = op_pending
+        mock_genai_client.models.generate_videos.return_value = op_pending
+        mock_genai_client.operations.get.return_value = op_pending
 
         # Mock time to advance past timeout
         # Initial call + loop check
