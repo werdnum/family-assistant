@@ -147,7 +147,9 @@ async def generate_video_tool(
                     error_msg = getattr(op_error, "message", "Unknown error")
                     error_code = getattr(op_error, "code", None)
 
-                logger.error(f"Video generation failed: {error_msg} (Code: {error_code})")
+                logger.error(
+                    f"Video generation failed: {error_msg} (Code: {error_code})"
+                )
                 return ToolResult(
                     text=f"Error generating video: {error_msg}",
                     data={"error": error_msg, "code": error_code},

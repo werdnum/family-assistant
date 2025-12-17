@@ -14,7 +14,7 @@ from abc import abstractmethod
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 # Optional import for production use
 try:
@@ -230,13 +230,10 @@ class MockImageBackend:
         ):
             img = img.convert("L").convert("RGB")
         elif "sepia" in instruction_lower:
-            # Simple sepia effect
-            img = img.convert("L")
-            sepia_img = Image.new("RGB", img.size)
-            pixels = list(img.getdata())
-            sepia_pixels = [(int(p * 0.9), int(p * 0.7), int(p * 0.4)) for p in pixels]
-            sepia_img.putdata(sepia_pixels)
-            img = sepia_img
+            # Sepia effect using colorize
+            img = ImageOps.colorize(
+                img.convert("L"), black=(40, 30, 10), white=(230, 180, 100)
+            )
         elif any(phrase in instruction_lower for phrase in ["darker", "darken"]):
             img = img.point(lambda p: int(p * 0.7))
         elif any(phrase in instruction_lower for phrase in ["brighter", "brighten"]):
