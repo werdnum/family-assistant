@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import logging
+import mimetypes
 from typing import TYPE_CHECKING
 
 from PIL import Image
@@ -423,15 +424,58 @@ class TelegramChatInterface(ChatInterface):
                                 )
 
                         i = j
-                    else:
-                        filename = (
+                    elif content_type.startswith("video/"):
+                        # Send as video
+                        caption = (
                             attachment["metadata"].description
                             or f"attachment_{attachment['id']}"
+                        )[:1024]
+
+                        sent_msg = await self.application.bot.send_video(
+                            chat_id=chat_id,
+                            video=io.BytesIO(attachment["content"]),
+                            caption=caption,
+                            reply_to_message_id=reply_to_msg_id,
                         )
+                        message_ids.append(str(sent_msg.message_id))
+                        logger.info(
+                            f"Sent video attachment {attachment['id']} as message {sent_msg.message_id}"
+                        )
+                        i += 1
+                    else:
+                        # Determine filename
+                        filename = None
+                        metadata_dict = attachment["metadata"].metadata
+                        if metadata_dict and "original_filename" in metadata_dict:
+                            filename = metadata_dict["original_filename"]
+
+                        if not filename:
+                            # Try to use description if it looks like a filename
+                            desc = attachment["metadata"].description
+                            if desc and "." in desc and len(desc) < 100:
+                                filename = desc
+
+                        if not filename:
+                            # Construct filename
+                            ext = mimetypes.guess_extension(content_type) or ""
+                            # Handle common types explicitly if mimetypes fails or returns weird extensions
+                            if content_type == "video/mp4" and not ext:
+                                ext = ".mp4"
+                            elif content_type == "text/plain" and not ext:
+                                ext = ".txt"
+
+                            filename = f"attachment_{attachment['id']}{ext}"
+
+                        caption = (
+                            attachment["metadata"].description
+                            or f"attachment_{attachment['id']}"
+                        )[:1024]
+
                         sent_msg = await self.application.bot.send_document(
                             chat_id=chat_id,
                             document=io.BytesIO(attachment["content"]),
                             filename=filename,
+                            caption=caption,
                             reply_to_message_id=reply_to_msg_id,
                         )
                         message_ids.append(str(sent_msg.message_id))
