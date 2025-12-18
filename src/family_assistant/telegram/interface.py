@@ -459,9 +459,7 @@ class TelegramChatInterface(ChatInterface):
                             # Construct filename
                             ext = mimetypes.guess_extension(content_type) or ""
                             # Handle common types explicitly if mimetypes fails or returns weird extensions
-                            if content_type == "video/mp4" and not ext:
-                                ext = ".mp4"
-                            elif content_type == "text/plain" and not ext:
+                            if content_type == "text/plain" and not ext:
                                 ext = ".txt"
 
                             filename = f"attachment_{attachment['id']}{ext}"
