@@ -769,6 +769,11 @@ class AttachmentRegistry:
             content_type=content_type,
         )
 
+        # Merge metadata from file storage (contains original_filename) with provided metadata
+        final_metadata = file_metadata.metadata.copy() if file_metadata.metadata else {}
+        if metadata:
+            final_metadata.update(metadata)
+
         # Then register it in the database
         return await self.register_tool_attachment_with_context(
             attachment_id=file_metadata.attachment_id,
@@ -783,7 +788,7 @@ class AttachmentRegistry:
             else None,
             conversation_id=conversation_id,
             message_id=message_id,
-            metadata=metadata,
+            metadata=final_metadata,
         )
 
     # File storage methods (previously from AttachmentService)
