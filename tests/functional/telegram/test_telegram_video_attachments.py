@@ -123,7 +123,6 @@ async def test_document_attachment_uses_original_filename(
         assert call_args[1]["chat_id"] == 123
 
         # Verify filename is correct (from metadata, not description)
-        # Note: In current implementation this will fail because it uses description
         assert call_args[1]["filename"] == "report.pdf"
 
         # Verify caption uses description
