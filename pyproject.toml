@@ -104,6 +104,7 @@ dependencies = [
     "jq>=1.10.0",
     "soxr>=0.5.0",
     "pycares>=4.4.0,<5.0.0",
+    "anyio>=4.9.0",
 ]
 
 [project.optional-dependencies]
