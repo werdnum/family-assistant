@@ -38,6 +38,7 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
 )
+from tests.helpers import find_free_port, wait_for_server
 from tests.mocks.mock_llm import (
     LLMOutput,  # Use LLMOutput from mocks for rules
     MatcherArgs,
@@ -65,101 +66,6 @@ MCP_TIME_TOOL_NAME = (
 )
 
 
-# Port allocation now handled by worker-specific ranges - no global tracking needed
-
-
-def find_free_port() -> int:
-    """Find a free port, using worker-specific ranges when running under pytest-xdist."""
-
-    # Check if we're running under pytest-xdist
-    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
-
-    if worker_id and worker_id.startswith("gw"):
-        # Extract worker number (gw0 -> 0, gw1 -> 1, etc.)
-        worker_num = int(worker_id[2:])
-
-        # Each worker gets 2000 ports (enough for any test suite)
-        base_port = 40000 + (worker_num * 2000)
-        max_port = base_port + 1999
-
-        # Try random ports in our range until we find a free one
-        for _ in range(100):  # Max 100 attempts
-            port = random.randint(base_port, max_port)
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                try:
-                    s.bind(("127.0.0.1", port))
-                    return port
-                except OSError:
-                    continue  # Port in use, try another
-
-        raise RuntimeError(f"Could not find free port in range {base_port}-{max_port}")
-
-    else:
-        # Not running under xdist or single worker - use traditional approach
-        # Just find any free port
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("127.0.0.1", 0))
-            return s.getsockname()[1]
-
-
-async def wait_for_server(
-    url: str, timeout: float = 30.0, check_interval: float = 0.5
-) -> None:
-    """
-    Wait for a server to be ready by attempting to connect to it.
-
-    Args:
-        url: The URL to check
-        timeout: Maximum time to wait in seconds
-        check_interval: Time between checks in seconds
-
-    Raises:
-        RuntimeError: If the server doesn't start within the timeout
-    """
-
-    start_time = asyncio.get_event_loop().time()
-    last_error = None
-
-    while asyncio.get_event_loop().time() - start_time < timeout:
-        try:
-            async with (
-                httpx.AsyncClient() as client,
-                client.stream("GET", url, timeout=1.0) as response,
-            ):
-                # Just check if we can connect and get headers
-                if response.status_code == 200:
-                    logger.info(
-                        f"Server is ready on {url} (status: {response.status_code})"
-                    )
-                    return
-                # Non-200 status might indicate server is up but misconfigured
-                elif response.status_code:
-                    logger.warning(
-                        f"Server responded with status {response.status_code} on {url}"
-                    )
-                    return
-        except httpx.ConnectError as e:
-            # Connection refused - server not ready yet
-            last_error = e
-            # ast-grep-ignore: no-asyncio-sleep-in-tests - Simulating async MCP server response
-            await asyncio.sleep(check_interval)
-        except httpx.ReadTimeout:
-            # For SSE, read timeout is expected - server is up!
-            logger.info(f"Server is ready on {url} (SSE stream established)")
-            return
-        except Exception as e:
-            # For other exceptions, log but continue trying
-            logger.warning(f"Unexpected error checking {url}: {type(e).__name__}: {e}")
-            last_error = e
-            # ast-grep-ignore: no-asyncio-sleep-in-tests - Simulating async MCP server response
-            await asyncio.sleep(check_interval)
-
-    raise RuntimeError(
-        f"Server did not start on {url} within {timeout} seconds. "
-        f"Last error: {last_error}"
-    )
-
-
 # --- Fixture to manage mcp-proxy subprocess for SSE tests ---
 @pytest_asyncio.fixture(scope="function")  # Use pytest_asyncio.fixture
 async def mcp_proxy_server() -> AsyncGenerator[str]:
@@ -181,10 +87,9 @@ async def mcp_proxy_server() -> AsyncGenerator[str]:
 
     logger.info(f"Starting MCP proxy server: {' '.join(command)}")
     # Capture stderr to see any errors, stdout can go to parent
-    # Use preexec_fn to ensure the child process gets its own process group,
-    # so signals don't affect the parent pytest process.
+    # Use start_new_session=True for correct process group handling
     process = await asyncio.create_subprocess_exec(
-        *command, preexec_fn=os.setpgrp, stderr=asyncio.subprocess.PIPE
+        *command, start_new_session=True, stderr=asyncio.subprocess.PIPE
     )
 
     # Wait for the server to be ready

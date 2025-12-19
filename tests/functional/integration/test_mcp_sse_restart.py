@@ -1,83 +1,24 @@
 import asyncio
 import logging
 import os
-import random
 import signal
-import socket
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
-import httpx
+import anyio
 import pytest
 import pytest_asyncio
 
 from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.types import ToolExecutionContext
+from tests.helpers import find_free_port, wait_for_server
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
 logger = logging.getLogger(__name__)
 
-# --- Helpers copied from test_mcp_integration.py ---
-
-
-def find_free_port() -> int:
-    """Find a free port, using worker-specific ranges when running under pytest-xdist."""
-    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
-
-    if worker_id and worker_id.startswith("gw"):
-        worker_num = int(worker_id[2:])
-        base_port = 40000 + (worker_num * 2000)
-        max_port = base_port + 1999
-
-        for _ in range(100):
-            port = random.randint(base_port, max_port)
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                try:
-                    s.bind(("127.0.0.1", port))
-                    return port
-                except OSError:
-                    continue
-        raise RuntimeError(f"Could not find free port in range {base_port}-{max_port}")
-    else:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("127.0.0.1", 0))
-            return s.getsockname()[1]
-
-
-async def wait_for_server(
-    url: str, timeout: float = 30.0, check_interval: float = 0.5
-) -> None:
-    start_time = asyncio.get_event_loop().time()
-    last_error = None
-
-    while asyncio.get_event_loop().time() - start_time < timeout:
-        try:
-            async with (
-                httpx.AsyncClient() as client,
-                client.stream("GET", url, timeout=1.0) as response,
-            ):
-                if response.status_code == 200 or response.status_code:
-                    return
-        except httpx.ConnectError as e:
-            last_error = e
-            # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling retry
-            await asyncio.sleep(check_interval)
-        except httpx.ReadTimeout:
-            return
-        except Exception as e:
-            last_error = e
-            # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling retry
-            await asyncio.sleep(check_interval)
-
-    raise RuntimeError(
-        f"Server did not start on {url} within {timeout} seconds. Last error: {last_error}"
-    )
-
-
 # --- Controller ---
-
 
 class MCPProxyController:
     def __init__(self, port: int) -> None:
@@ -92,15 +33,15 @@ class MCPProxyController:
 
         command = [
             "mcp-proxy",
-            "--port",
-            str(self.port),
-            "--host",
-            self.host,
+            "--port", str(self.port),
+            "--host", self.host,
             "mcp-server-time",
         ]
         logger.info(f"Starting MCP proxy server: {' '.join(command)}")
         self.process = await asyncio.create_subprocess_exec(
-            *command, preexec_fn=os.setpgrp, stderr=asyncio.subprocess.PIPE
+            *command,
+            start_new_session=True,
+            stderr=asyncio.subprocess.PIPE
         )
         await wait_for_server(self.sse_url, timeout=30.0)
 
@@ -133,7 +74,6 @@ class MCPProxyController:
         await asyncio.sleep(1)
         await self.start()
 
-
 @pytest_asyncio.fixture
 async def mcp_proxy_controller() -> "AsyncGenerator[MCPProxyController]":
     port = find_free_port()
@@ -141,7 +81,6 @@ async def mcp_proxy_controller() -> "AsyncGenerator[MCPProxyController]":
     await controller.start()
     yield controller
     await controller.stop()
-
 
 @pytest.mark.asyncio
 async def test_mcp_sse_restart(mcp_proxy_controller: MCPProxyController) -> None:
@@ -169,12 +108,12 @@ async def test_mcp_sse_restart(mcp_proxy_controller: MCPProxyController) -> None
         clock=None,
         home_assistant_client=None,
         event_sources=None,
-        attachment_registry=None,
+        attachment_registry=None
     )
     args = {
         "time": "12:00",
         "source_timezone": "America/New_York",
-        "target_timezone": "UTC",
+        "target_timezone": "UTC"
     }
 
     logger.info("Executing tool before restart...")

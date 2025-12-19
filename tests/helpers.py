@@ -4,9 +4,13 @@ Utility functions for testing.
 
 import asyncio
 import logging
+import os
+import random
+import socket
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import sqlalchemy as sa  # Import sqlalchemy
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -305,4 +309,84 @@ async def wait_for_condition(
     raise TimeoutError(f"{error_message} (waited {timeout_seconds}s)")
 
 
-__all__ = ["wait_for_tasks_to_complete", "wait_for_condition"]
+def find_free_port() -> int:
+    """Find a free port, using worker-specific ranges when running under pytest-xdist."""
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+
+    if worker_id and worker_id.startswith("gw"):
+        worker_num = int(worker_id[2:])
+        base_port = 40000 + (worker_num * 2000)
+        max_port = base_port + 1999
+
+        for _ in range(100):
+            port = random.randint(base_port, max_port)
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                try:
+                    s.bind(("127.0.0.1", port))
+                    return port
+                except OSError:
+                    continue
+        raise RuntimeError(f"Could not find free port in range {base_port}-{max_port}")
+    else:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            return s.getsockname()[1]
+
+
+async def wait_for_server(
+    url: str, timeout: float = 30.0, check_interval: float = 0.5
+) -> None:
+    """
+    Wait for a server to be ready by attempting to connect to it.
+
+    Args:
+        url: The URL to check
+        timeout: Maximum time to wait in seconds
+        check_interval: Time between checks in seconds
+
+    Raises:
+        RuntimeError: If the server doesn't start within the timeout
+    """
+    start_time = asyncio.get_event_loop().time()
+    last_error = None
+
+    while asyncio.get_event_loop().time() - start_time < timeout:
+        try:
+            async with (
+                httpx.AsyncClient() as client,
+                client.stream("GET", url, timeout=1.0) as response,
+            ):
+                if response.status_code == 200:
+                    logger.info(
+                        f"Server is ready on {url} (status: {response.status_code})"
+                    )
+                    return
+                elif response.status_code:
+                    logger.warning(
+                        f"Server responded with status {response.status_code} on {url}"
+                    )
+                    return
+        except httpx.ConnectError as e:
+            last_error = e
+            # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling retry
+            await asyncio.sleep(check_interval)
+        except httpx.ReadTimeout:
+            logger.info(f"Server is ready on {url} (SSE stream established)")
+            return
+        except Exception as e:
+            logger.warning(f"Unexpected error checking {url}: {type(e).__name__}: {e}")
+            last_error = e
+            # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling retry
+            await asyncio.sleep(check_interval)
+
+    raise RuntimeError(
+        f"Server did not start on {url} within {timeout} seconds. Last error: {last_error}"
+    )
+
+
+__all__ = [
+    "wait_for_tasks_to_complete",
+    "wait_for_condition",
+    "find_free_port",
+    "wait_for_server",
+]
