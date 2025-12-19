@@ -6,6 +6,7 @@ from typing import (
     Any,
 )  # Added Tuple
 
+import anyio
 from mcp import ClientSession, StdioServerParameters, stdio_client
 from mcp.client.sse import sse_client  # Assuming sse_client is in mcp.client.sse
 from mcp.types import TextContent  # Import TextContent from mcp.types
@@ -743,6 +744,12 @@ class MCPToolsProvider:
                             "not connected",
                         ]
                     )
+
+                    # Explicitly check for AnyIO ClosedResourceError which may not have a descriptive message
+                    if not is_connection_error and isinstance(
+                        e, anyio.ClosedResourceError
+                    ):
+                        is_connection_error = True
 
                     if is_connection_error:
                         # Try to reconnect
