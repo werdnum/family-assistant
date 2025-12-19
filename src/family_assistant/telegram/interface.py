@@ -450,12 +450,6 @@ class TelegramChatInterface(ChatInterface):
                             filename = metadata_dict["original_filename"]
 
                         if not filename:
-                            # Try to use description if it looks like a filename
-                            desc = attachment["metadata"].description
-                            if desc and "." in desc and len(desc) < 100:
-                                filename = desc
-
-                        if not filename:
                             # Construct filename
                             ext = mimetypes.guess_extension(content_type) or ""
                             # Handle common types explicitly if mimetypes fails or returns weird extensions
