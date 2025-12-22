@@ -53,6 +53,7 @@ async def test_execute_script_return_single_attachment(
             event_sources=None,
             attachment_registry=attachment_registry,
             processing_service=None,
+            camera_backend=None,
         )
 
         # Create an attachment and return it
@@ -94,6 +95,7 @@ async def test_execute_script_return_multiple_attachments_list(
             event_sources=None,
             attachment_registry=attachment_registry,
             processing_service=None,
+            camera_backend=None,
         )
 
         # Create multiple attachments and return them as a list
@@ -190,6 +192,7 @@ async def test_execute_script_return_attachment_from_tool(
             event_sources=None,
             attachment_registry=attachment_registry,
             processing_service=mock_service,
+            camera_backend=None,
         )
 
         # Call tool and return its result
@@ -321,6 +324,7 @@ async def test_execute_script_functional_composition(
             event_sources=None,
             attachment_registry=attachment_registry,
             processing_service=mock_service,
+            camera_backend=None,
         )
 
         # Functional composition: pass result of one tool to another
@@ -408,6 +412,7 @@ async def test_execute_script_mixed_attachment_sources(
             event_sources=None,
             attachment_registry=attachment_registry,
             processing_service=mock_service,
+            camera_backend=None,
         )
 
         # Mix attachment_create and tool results
@@ -458,6 +463,7 @@ async def test_execute_script_nested_list_attachments(
             event_sources=None,
             attachment_registry=attachment_registry,
             processing_service=None,
+            camera_backend=None,
         )
 
         # Test nested structures
@@ -529,6 +535,7 @@ async def test_tool_chaining_json_query_workflow(
             event_sources=None,
             attachment_registry=attachment_registry,
             processing_service=processing_service,
+            camera_backend=None,
         )
 
         # Script that creates JSON data and queries it with jq_query

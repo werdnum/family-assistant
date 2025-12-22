@@ -32,6 +32,14 @@ from family_assistant.tools.calendar import (
     modify_calendar_event_tool,
     search_calendar_events_tool,
 )
+from family_assistant.tools.camera import (
+    CAMERA_TOOLS_DEFINITION,
+    get_camera_frame_tool,
+    get_camera_frames_batch_tool,
+    get_camera_recordings_tool,
+    list_cameras_tool,
+    search_camera_events_tool,
+)
 from family_assistant.tools.communication import (
     COMMUNICATION_TOOLS_DEFINITION,
     get_attachment_info_tool,
@@ -184,6 +192,13 @@ __all__ = [
     "test_event_listener_tool",
     "HOME_ASSISTANT_TOOLS_DEFINITION",
     "render_home_assistant_template_tool",
+    # Camera tools
+    "CAMERA_TOOLS_DEFINITION",
+    "list_cameras_tool",
+    "search_camera_events_tool",
+    "get_camera_frame_tool",
+    "get_camera_frames_batch_tool",
+    "get_camera_recordings_tool",
     "storage",
     "execute_script_tool",
     "SCRIPT_TOOLS_DEFINITION",
@@ -267,6 +282,12 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "get_camera_snapshot": get_camera_snapshot_tool,
     "download_state_history": download_state_history_tool,
     "list_home_assistant_entities": list_home_assistant_entities_tool,
+    # Camera tools (Reolink/Frigate backend)
+    "list_cameras": list_cameras_tool,
+    "search_camera_events": search_camera_events_tool,
+    "get_camera_frame": get_camera_frame_tool,
+    "get_camera_frames_batch": get_camera_frames_batch_tool,
+    "get_camera_recordings": get_camera_recordings_tool,
     "execute_script": execute_script_tool,
     "attach_to_response": attach_to_response_tool,
     # Mock image processing tools (for testing)
@@ -305,6 +326,7 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
     + EVENT_TOOLS_DEFINITION
     + AUTOMATIONS_TOOLS_DEFINITION  # Unified automations (event + schedule)
     + HOME_ASSISTANT_TOOLS_DEFINITION
+    + CAMERA_TOOLS_DEFINITION
     + CALENDAR_TOOLS_DEFINITION
     + COMMUNICATION_TOOLS_DEFINITION
     + SCRIPT_TOOLS_DEFINITION

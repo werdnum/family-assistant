@@ -100,6 +100,7 @@ class TestDocumentRetrieval:
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=None,
+                camera_backend=None,
             )
 
             # Ingest PDF document
@@ -186,6 +187,7 @@ class TestDocumentRetrieval:
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=None,
+                camera_backend=None,
             )
 
             # Ingest image document
@@ -257,6 +259,7 @@ class TestDocumentRetrieval:
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=None,
+                camera_backend=None,
             )
 
             # Ingest text-only document (no file)
@@ -333,6 +336,7 @@ class TestDocumentRetrieval:
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=None,
+                camera_backend=None,
             )
 
             # Ingest PDF document
@@ -404,6 +408,7 @@ class TestDocumentRetrieval:
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=None,
+                camera_backend=None,
             )
 
             # Create large dummy file content (over 20MB)

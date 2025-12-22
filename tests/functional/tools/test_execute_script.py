@@ -37,6 +37,7 @@ async def test_execute_script_without_tools_provider(db_engine: AsyncEngine) -> 
             event_sources=None,
             attachment_registry=None,
             processing_service=None,
+            camera_backend=None,
         )
 
         # Simple script should work
@@ -76,6 +77,7 @@ async def test_execute_script_with_empty_tools_provider(db_engine: AsyncEngine) 
             event_sources=None,
             attachment_registry=None,
             processing_service=mock_service,
+            camera_backend=None,
         )
 
         # Should be able to list tools (empty list)
@@ -136,6 +138,7 @@ async def test_execute_script_with_tools(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             processing_service=mock_service,
+            camera_backend=None,
         )
 
         # Test listing tools
@@ -177,6 +180,7 @@ async def test_execute_script_syntax_error(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             processing_service=None,
+            camera_backend=None,
         )
 
         # Invalid syntax
@@ -202,6 +206,7 @@ async def test_execute_script_with_globals(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             processing_service=None,
+            camera_backend=None,
         )
 
         # Pass globals
@@ -230,6 +235,7 @@ async def test_execute_script_with_wake_llm(db_engine: AsyncEngine) -> None:
             event_sources=None,
             attachment_registry=None,
             processing_service=None,
+            camera_backend=None,
         )
 
         # Test single wake_llm call
@@ -434,6 +440,7 @@ async def test_script_attachment_composition_dict_format(
             event_sources=None,
             attachment_registry=attachment_registry,
             processing_service=mock_service,
+            camera_backend=None,
         )
 
         # Script that calls a tool returning ToolResult with attachments,

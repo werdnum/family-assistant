@@ -246,6 +246,7 @@ async def test_indexing_pipeline_e2e(
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=None,
+                camera_backend=None,
                 chat_interface=MagicMock(),  # Provide a mock ChatInterface
                 embedding_generator=mock_pipeline_embedding_generator,
             )
@@ -468,6 +469,7 @@ async def test_indexing_pipeline_pdf_processing(
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=None,
+                camera_backend=None,
                 chat_interface=MagicMock(),  # Provide a mock ChatInterface
                 embedding_generator=mock_pipeline_embedding_generator,
             )

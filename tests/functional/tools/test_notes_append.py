@@ -23,6 +23,7 @@ async def test_add_or_update_note_append(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create initial note
@@ -101,6 +102,7 @@ async def test_append_multiple_times(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create initial note
@@ -147,6 +149,7 @@ async def test_add_or_update_note_append_postgres(
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create initial note

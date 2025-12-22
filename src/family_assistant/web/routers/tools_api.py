@@ -81,6 +81,7 @@ async def execute_tool_api(
         else None,
         event_sources=event_sources,
         attachment_registry=attachment_registry,
+        camera_backend=None,
         # Optional fields (with defaults)
         chat_interface=None,  # No direct chat interface for API calls
         timezone_str=timezone_str,  # Pass fetched timezone string

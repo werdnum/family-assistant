@@ -37,6 +37,7 @@ async def test_deny_all_tools(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create engine with security config
@@ -87,6 +88,7 @@ async def test_allowed_tools_filter(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create engine with security config
@@ -154,6 +156,7 @@ async def test_no_restrictions_by_default(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create engine with default config
@@ -199,6 +202,7 @@ async def test_empty_allowed_tools_denies_all(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create engine with security config
@@ -242,6 +246,7 @@ async def test_security_logging(db_engine: AsyncEngine, caplog: Any) -> None:  #
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create engine with security config
@@ -293,6 +298,7 @@ async def test_multiple_allowed_tools(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create engine with security config
@@ -339,6 +345,7 @@ async def test_deny_all_overrides_allowed_tools(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create engine with security config

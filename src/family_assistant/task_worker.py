@@ -744,6 +744,7 @@ class TaskWorker:
                 attachment_registry=self.processing_service.attachment_registry
                 if self.processing_service
                 else None,
+                camera_backend=None,
                 # Optional fields (with defaults)
                 chat_interface=self.chat_interface,
                 timezone_str=self.timezone_str,

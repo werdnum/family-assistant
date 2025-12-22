@@ -102,6 +102,7 @@ async def test_event_type_matching(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await event_listener_test_tool(
@@ -134,6 +135,7 @@ async def test_event_type_matching(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await event_listener_test_tool(

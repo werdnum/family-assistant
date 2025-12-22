@@ -77,6 +77,7 @@ async def test_calendar_config_from_provider() -> None:
         attachment_registry=None,
         chat_interface=None,
         timezone_str="UTC",
+        camera_backend=None,
     )
 
     # Execute the tool
@@ -140,6 +141,7 @@ async def test_calendar_tool_without_config() -> None:
         attachment_registry=None,
         chat_interface=None,
         timezone_str="UTC",
+        camera_backend=None,
     )
 
     # Execute the tool - should return error
@@ -221,6 +223,7 @@ async def test_calendar_config_preference() -> None:
         attachment_registry=None,
         chat_interface=None,
         timezone_str="UTC",
+        camera_backend=None,
     )
 
     # Execute the tool

@@ -764,6 +764,34 @@ service_profiles:
         - "google-maps"
       confirm_tools: []
     slash_commands: []
+  - id: "camera_analyst"
+    description: "Analyze camera footage to investigate events using binary search through thumbnails"
+    processing_config:
+      retry_config:
+        primary:
+          provider: "google"
+          model: "gemini-3-flash-preview"
+        fallback:
+          provider: "openai"
+          model: "gpt-4o"
+      max_iterations: 25
+      delegation_security_level: "unrestricted"
+    tools_config:
+      enable_local_tools:
+        - "list_cameras"
+        - "search_camera_events"
+        - "get_camera_frame"
+        - "get_camera_frames_batch"
+        - "get_camera_recordings"
+        - "add_or_update_note"
+        - "get_note"
+        - "list_notes"
+        - "attach_to_response"
+        - "get_attachment_info"
+      enable_mcp_server_ids: []
+    slash_commands:
+      - "/camera"
+      - "/investigate"
 # Other global settings like llm_parameters, indexing_pipeline_config remain at top level.
 # Attachment handling configuration
 attachment_config:

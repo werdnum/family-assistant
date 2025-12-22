@@ -165,6 +165,7 @@ class TestJqQueryTool:
                 clock=None,
                 home_assistant_client=None,
                 event_sources={},
+                camera_backend=None,
             )
 
             # Query: get all items (via script)
@@ -212,6 +213,7 @@ result
                 clock=None,
                 home_assistant_client=None,
                 event_sources={},
+                camera_backend=None,
             )
 
             # Query: count items (via script)
@@ -254,6 +256,7 @@ result
                 clock=None,
                 home_assistant_client=None,
                 event_sources={},
+                camera_backend=None,
             )
 
             # Query: get first item (via script)
@@ -298,6 +301,7 @@ result
                 clock=None,
                 home_assistant_client=None,
                 event_sources={},
+                camera_backend=None,
             )
 
             # Query: extract all names (via script)
@@ -341,6 +345,7 @@ result
                 clock=None,
                 home_assistant_client=None,
                 event_sources={},
+                camera_backend=None,
             )
 
             # Query: get IDs of first and last item (via script)
@@ -384,6 +389,7 @@ result
                 clock=None,
                 home_assistant_client=None,
                 event_sources={},
+                camera_backend=None,
             )
 
             # Query: invalid jq syntax (via script)
@@ -426,6 +432,7 @@ result
                 clock=None,
                 home_assistant_client=None,
                 event_sources={},
+                camera_backend=None,
             )
 
             # Query with non-existent attachment ID (via script)
@@ -465,6 +472,7 @@ result = jq_query(
                 clock=None,
                 home_assistant_client=None,
                 event_sources={},
+                camera_backend=None,
             )
 
             # Try to query attachment from different conversation (via script)
@@ -522,6 +530,7 @@ result
                 clock=None,
                 home_assistant_client=None,
                 event_sources={},
+                camera_backend=None,
             )
 
             # Try to query non-JSON attachment (via script)
@@ -556,6 +565,7 @@ result
                 clock=None,
                 home_assistant_client=None,
                 event_sources={},
+                camera_backend=None,
             )
 
             # Try to query without attachment registry (via script)

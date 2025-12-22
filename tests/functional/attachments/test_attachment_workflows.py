@@ -99,6 +99,7 @@ class TestAttachmentWorkflows:
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=attachment_registry,
+                camera_backend=None,
             )
 
             # Step 1: Get camera snapshot (using mock camera tool)
@@ -261,6 +262,7 @@ class TestAttachmentWorkflows:
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=attachment_registry,
+                camera_backend=None,
             )
 
             # Step 1: Simulate user uploading an image
@@ -347,6 +349,7 @@ class TestAttachmentWorkflows:
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=attachment_registry,
+                camera_backend=None,
                 chat_interface=mock_chat_interface,
             )
 
