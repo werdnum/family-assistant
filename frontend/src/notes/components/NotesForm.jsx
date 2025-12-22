@@ -7,6 +7,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { AttachmentPreview } from './AttachmentPreview';
+import { AttachmentUpload } from './AttachmentUpload';
 
 const NotesForm = ({ isEdit, onSuccess, onCancel }) => {
   const { title: urlTitle } = useParams();
@@ -14,6 +16,7 @@ const NotesForm = ({ isEdit, onSuccess, onCancel }) => {
     title: '',
     content: '',
     include_in_prompt: true,
+    attachment_ids: [],
   });
   const [originalTitle, setOriginalTitle] = useState(null); // Track original title for edits
   const [loading, setLoading] = useState(false);
@@ -38,6 +41,7 @@ const NotesForm = ({ isEdit, onSuccess, onCancel }) => {
         title: note.title,
         content: note.content,
         include_in_prompt: note.include_in_prompt,
+        attachment_ids: note.attachment_ids || [],
       });
       setOriginalTitle(note.title); // Remember the original title
     } catch (err) {
@@ -59,6 +63,20 @@ const NotesForm = ({ isEdit, onSuccess, onCancel }) => {
     setFormData((prev) => ({
       ...prev,
       include_in_prompt: checked,
+    }));
+  };
+
+  const handleAttachmentUpload = (attachmentId) => {
+    setFormData((prev) => ({
+      ...prev,
+      attachment_ids: [...prev.attachment_ids, attachmentId],
+    }));
+  };
+
+  const handleAttachmentRemove = (attachmentId) => {
+    setFormData((prev) => ({
+      ...prev,
+      attachment_ids: prev.attachment_ids.filter((id) => id !== attachmentId),
     }));
   };
 
@@ -168,6 +186,27 @@ const NotesForm = ({ isEdit, onSuccess, onCancel }) => {
               </div>
               <p className="text-sm text-muted-foreground pl-6">
                 When enabled, this note will be included in the system prompt for LLM conversations.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <Label>Attachments</Label>
+              <AttachmentUpload onUploadComplete={handleAttachmentUpload} disabled={loading} />
+              {formData.attachment_ids.length > 0 && (
+                <div className="flex flex-wrap gap-3 mt-3">
+                  {formData.attachment_ids.map((attachmentId) => (
+                    <AttachmentPreview
+                      key={attachmentId}
+                      attachmentId={attachmentId}
+                      onRemove={handleAttachmentRemove}
+                      canRemove={!loading}
+                    />
+                  ))}
+                </div>
+              )}
+              <p className="text-sm text-muted-foreground">
+                Attach images, documents, or other files to this note. Supported formats: images,
+                text, markdown, PDF.
               </p>
             </div>
 

@@ -42,6 +42,12 @@ notes_table = Table(
     Column("content", Text, nullable=False),
     Column("include_in_prompt", Boolean, nullable=False, server_default="true"),
     Column(
+        "attachment_ids",
+        Text,
+        nullable=False,
+        server_default="[]",
+    ),  # JSON array of attachment UUIDs
+    Column(
         "created_at",
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),

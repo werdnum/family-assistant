@@ -4,14 +4,11 @@ import asyncio
 import json
 import logging
 import os  # Added os import
-import random
 import signal  # Import the signal module
-import socket
 import uuid  # Added for turn_id
 from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock  # Keep mocks for LLM
 
-import httpx
 import pytest
 import pytest_asyncio  # Import pytest_asyncio
 
