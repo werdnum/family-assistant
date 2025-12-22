@@ -200,6 +200,7 @@ async def test_direct_tool_callable(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create engine
@@ -251,6 +252,7 @@ async def test_tool_prefix_fallback(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create engine
@@ -301,6 +303,7 @@ async def test_direct_callable_with_security(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create engine with only echo allowed
@@ -379,6 +382,7 @@ async def test_direct_callable_validates_parameters(db_engine: AsyncEngine) -> N
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create engine
@@ -422,6 +426,7 @@ async def test_tools_api_still_works(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create engine
@@ -479,6 +484,7 @@ async def test_no_tools_when_denied(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create engine with all tools denied

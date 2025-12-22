@@ -831,6 +831,30 @@ class Assistant:
                 processing_service_instance.home_assistant_client = (
                     self.home_assistant_clients[profile_id]
                 )
+
+            # Set camera backend if configured for this profile
+            camera_config = profile_proc_conf_dict.get("camera_config")
+            if camera_config:
+                backend_type = camera_config.get("backend", "reolink")
+                if backend_type == "reolink":
+                    try:
+                        from family_assistant.camera.reolink import (  # noqa: PLC0415
+                            create_reolink_backend,
+                        )
+
+                        camera_backend = create_reolink_backend(
+                            camera_config.get("cameras", {})
+                        )
+                        if camera_backend:
+                            processing_service_instance.camera_backend = camera_backend
+                            logger.info(
+                                f"Camera backend initialized for profile '{profile_id}' with {len(camera_config.get('cameras', {}))} cameras"
+                            )
+                    except ImportError:
+                        logger.warning(
+                            "Reolink backend requested but reolink-aio not installed"
+                        )
+
             self.processing_services_registry[profile_id] = processing_service_instance
 
         if not self.processing_services_registry:

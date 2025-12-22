@@ -375,6 +375,7 @@ async def test_search_documents_tool(pg_vector_db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
             chat_interface=None,  # Add chat_interface (None for this tool context)
             embedding_generator=mock_generator,
         )
@@ -521,6 +522,7 @@ async def test_get_full_document_content_with_raw_content(
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=None,
+                camera_backend=None,
                 timezone_str="UTC",
             )
 

@@ -31,6 +31,7 @@ async def test_create_event_automation_basic(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Act
@@ -70,6 +71,7 @@ async def test_create_schedule_automation_basic(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Act - create daily 7am reminder
@@ -108,6 +110,7 @@ async def test_create_automation_cross_type_name_uniqueness(
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create event automation
@@ -136,6 +139,7 @@ async def test_create_automation_cross_type_name_uniqueness(
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await create_automation_tool(
@@ -167,6 +171,7 @@ async def test_create_automation_with_script_action(db_engine: AsyncEngine) -> N
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         script_code = """
@@ -206,6 +211,7 @@ async def test_create_automation_invalid_type(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await create_automation_tool(
@@ -236,6 +242,7 @@ async def test_create_automation_missing_trigger_config(db_engine: AsyncEngine) 
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Event automation missing event_source
@@ -269,6 +276,7 @@ async def test_create_automation_missing_recurrence_rule(
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await create_automation_tool(
@@ -299,6 +307,7 @@ async def test_list_automations_empty(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await list_automations_tool(exec_context=exec_context)
@@ -321,6 +330,7 @@ async def test_list_automations_with_both_types(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create event automation
@@ -373,6 +383,7 @@ async def test_list_automations_filter_by_type(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create multiple automations
@@ -432,6 +443,7 @@ async def test_list_automations_filter_enabled_only(db_engine: AsyncEngine) -> N
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create automations
@@ -493,6 +505,7 @@ async def test_get_automation_event_type(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create automation
@@ -547,6 +560,7 @@ async def test_get_automation_schedule_type(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await create_automation_tool(
@@ -593,6 +607,7 @@ async def test_get_automation_not_found(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await get_automation_tool(
@@ -620,6 +635,7 @@ async def test_update_automation_action_config(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create automation
@@ -676,6 +692,7 @@ async def test_update_automation_description(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await create_automation_tool(
@@ -732,6 +749,7 @@ async def test_update_automation_trigger_config_schedule(
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await create_automation_tool(
@@ -785,6 +803,7 @@ async def test_update_automation_not_found(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await update_automation_tool(
@@ -813,6 +832,7 @@ async def test_enable_disable_automation(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await create_automation_tool(
@@ -891,6 +911,7 @@ async def test_delete_automation(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await create_automation_tool(
@@ -946,6 +967,7 @@ async def test_delete_automation_not_found(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await delete_automation_tool(

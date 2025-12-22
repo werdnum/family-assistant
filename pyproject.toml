@@ -169,6 +169,10 @@ local-embeddings = [
 pgserver = [
     "pixeltable-pgserver>=0.4.0",  # PostgreSQL test server (supports Python 3.13+)
 ]
+reolink = [
+    "reolink-aio>=0.16.0",
+    "opencv-python-headless>=4.8.0",
+]
 
 [project.scripts]
 family-assistant = "family_assistant.__main__:main"

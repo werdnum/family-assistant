@@ -69,6 +69,7 @@ def create_test_execution_context(
         attachment_registry=None,
         chat_interface=None,
         request_confirmation_callback=None,
+        camera_backend=None,
     )
 
 
@@ -112,6 +113,7 @@ async def create_test_event_in_radicale(
             chat_interface=None,
             timezone_str=TEST_TIMEZONE_STR,
             request_confirmation_callback=None,
+            camera_backend=None,
         )
 
         result = await add_calendar_event_tool(
@@ -418,6 +420,7 @@ async def test_confirming_tools_provider_with_calendar_events(
             chat_interface=None,
             timezone_str=TEST_TIMEZONE_STR,
             request_confirmation_callback=capture_confirmation_callback,
+            camera_backend=None,
         )
 
         # Execute modify with confirmation
