@@ -22,7 +22,9 @@ class NoteModel(BaseModel):
     title: str
     content: str
     include_in_prompt: bool = True
-    attachment_ids: list[str] = []
+    attachment_ids: list[str] | None = (
+        None  # None=preserve existing, []=clear, [ids]=set
+    )
     original_title: str | None = None  # For edit operations when title changes
 
 
@@ -60,7 +62,7 @@ async def create_or_update_note(
                 note.title,
                 note.content,
                 note.include_in_prompt,
-                note.attachment_ids if note.attachment_ids else None,
+                note.attachment_ids,  # Always pass - empty list clears attachments
             )
         except NoteNotFoundError as err:
             raise HTTPException(status.HTTP_404_NOT_FOUND, str(err)) from err
@@ -79,7 +81,7 @@ async def create_or_update_note(
                 note.title,
                 note.content,
                 note.include_in_prompt,
-                attachment_ids=note.attachment_ids if note.attachment_ids else None,
+                attachment_ids=note.attachment_ids,  # Always pass - empty list clears attachments
             )
         except IntegrityError as err:
             # Handle race condition where title was taken between check and create
