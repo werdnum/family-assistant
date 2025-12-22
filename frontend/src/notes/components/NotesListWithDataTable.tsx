@@ -1,4 +1,5 @@
 import { ColumnDef } from '@tanstack/react-table';
+import { PaperclipIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -8,6 +9,7 @@ interface Note {
   title: string;
   content: string;
   include_in_prompt: boolean;
+  attachment_ids?: string[];
 }
 
 const NotesListWithDataTable = () => {
@@ -118,6 +120,28 @@ const NotesListWithDataTable = () => {
           {row.getValue('content')}
         </div>
       ),
+    },
+    {
+      accessorKey: 'attachment_ids',
+      header: ({ column }) => <SortableHeader column={column} title="Attachments" />,
+      cell: ({ row }) => {
+        const attachmentIds = (row.getValue('attachment_ids') as string[]) || [];
+        const count = attachmentIds.length;
+        if (count === 0) {
+          return <span className="text-sm text-muted-foreground">-</span>;
+        }
+        return (
+          <div className="flex items-center gap-1">
+            <PaperclipIcon className="size-4 text-muted-foreground" />
+            <span className="text-sm font-medium">{count}</span>
+          </div>
+        );
+      },
+      sortingFn: (rowA, rowB) => {
+        const countA = ((rowA.getValue('attachment_ids') as string[]) || []).length;
+        const countB = ((rowB.getValue('attachment_ids') as string[]) || []).length;
+        return countA - countB;
+      },
     },
     {
       id: 'actions',

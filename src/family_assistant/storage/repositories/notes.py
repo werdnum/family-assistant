@@ -1,5 +1,6 @@
 """Repository for notes storage operations."""
 
+import json
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -11,6 +12,16 @@ from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.base import BaseRepository
+
+
+def _parse_attachment_ids(value: str | None) -> list[str]:
+    """Parse attachment_ids JSON string to list."""
+    if not value:
+        return []
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return []
 
 
 class NoteNotFoundError(Exception):
@@ -36,6 +47,7 @@ class NotesRepository(BaseRepository):
                 notes_table.c.title,
                 notes_table.c.content,
                 notes_table.c.include_in_prompt,
+                notes_table.c.attachment_ids,
             ).order_by(notes_table.c.title)
             rows = await self._db.fetch_all(stmt)
             return [
@@ -43,6 +55,7 @@ class NotesRepository(BaseRepository):
                     "title": row["title"],
                     "content": row["content"],
                     "include_in_prompt": row["include_in_prompt"],
+                    "attachment_ids": _parse_attachment_ids(row["attachment_ids"]),
                 }
                 for row in rows
             ]
@@ -50,16 +63,28 @@ class NotesRepository(BaseRepository):
             self._logger.error(f"Database error in get_all: {e}", exc_info=True)
             raise
 
-    async def get_prompt_notes(self) -> list[dict[str, str]]:
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    async def get_prompt_notes(self) -> list[dict[str, Any]]:
         """Retrieves only notes that should be included in prompts."""
         try:
             stmt = (
-                select(notes_table.c.title, notes_table.c.content)
+                select(
+                    notes_table.c.title,
+                    notes_table.c.content,
+                    notes_table.c.attachment_ids,
+                )
                 .where(notes_table.c.include_in_prompt.is_(True))
                 .order_by(notes_table.c.title)
             )
             rows = await self._db.fetch_all(stmt)
-            return [{"title": row["title"], "content": row["content"]} for row in rows]
+            return [
+                {
+                    "title": row["title"],
+                    "content": row["content"],
+                    "attachment_ids": _parse_attachment_ids(row["attachment_ids"]),
+                }
+                for row in rows
+            ]
         except SQLAlchemyError as e:
             self._logger.error(
                 f"Database error in get_prompt_notes: {e}", exc_info=True
@@ -95,7 +120,13 @@ class NotesRepository(BaseRepository):
         """
         query = select(notes_table).where(notes_table.c.id == note_id)
         row = await self._db.fetch_one(query)
-        return dict(row) if row else None
+        if row:
+            result = dict(row)
+            result["attachment_ids"] = _parse_attachment_ids(
+                result.get("attachment_ids")
+            )
+            return result
+        return None
 
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def get_by_title(self, title: str) -> dict[str, Any] | None:
@@ -105,9 +136,17 @@ class NotesRepository(BaseRepository):
                 notes_table.c.title,
                 notes_table.c.content,
                 notes_table.c.include_in_prompt,
+                notes_table.c.attachment_ids,
             ).where(notes_table.c.title == title)
             row = await self._db.fetch_one(stmt)
-            return row if row else None
+            if row:
+                return {
+                    "title": row["title"],
+                    "content": row["content"],
+                    "include_in_prompt": row["include_in_prompt"],
+                    "attachment_ids": _parse_attachment_ids(row["attachment_ids"]),
+                }
+            return None
         except SQLAlchemyError as e:
             self._logger.error(
                 f"Database error in get_by_title({title}): {e}", exc_info=True
@@ -120,15 +159,39 @@ class NotesRepository(BaseRepository):
         content: str,
         include_in_prompt: bool = True,
         append: bool = False,
+        attachment_ids: list[str] | None = None,
     ) -> str:
         """Adds a new note or updates an existing note with the given title (upsert)."""
         now = datetime.now(UTC)
 
         # If append is True, fetch existing content first
+        existing_note = None
         if append:
             existing_note = await self.get_by_title(title)
             if existing_note:
                 content = existing_note["content"] + "\n" + content
+
+        # Determine attachment_ids to use
+        if attachment_ids is None:
+            if existing_note:
+                # Preserve existing attachment_ids on update
+                attachment_ids_to_use = existing_note.get("attachment_ids", [])
+            else:
+                # Check if note exists (if not already fetched)
+                if not append:
+                    existing_note = await self.get_by_title(title)
+                if existing_note:
+                    # Preserve existing attachment_ids on update
+                    attachment_ids_to_use = existing_note.get("attachment_ids", [])
+                else:
+                    # New note, use empty list
+                    attachment_ids_to_use = []
+        else:
+            # Use provided attachment_ids
+            attachment_ids_to_use = attachment_ids
+
+        # Serialize attachment_ids to JSON string
+        attachment_ids_json = json.dumps(attachment_ids_to_use)
 
         if self._db.engine.dialect.name == "postgresql":
             # Use PostgreSQL's ON CONFLICT DO UPDATE for atomic upsert
@@ -137,6 +200,7 @@ class NotesRepository(BaseRepository):
                     title=title,
                     content=content,
                     include_in_prompt=include_in_prompt,
+                    attachment_ids=attachment_ids_json,
                     created_at=now,
                     updated_at=now,
                 )
@@ -144,6 +208,7 @@ class NotesRepository(BaseRepository):
                 update_dict = {
                     "content": stmt.excluded.content,
                     "include_in_prompt": stmt.excluded.include_in_prompt,
+                    "attachment_ids": stmt.excluded.attachment_ids,
                     "updated_at": stmt.excluded.updated_at,
                 }
                 stmt = stmt.on_conflict_do_update(
@@ -173,6 +238,7 @@ class NotesRepository(BaseRepository):
                     title=title,
                     content=content,
                     include_in_prompt=include_in_prompt,
+                    attachment_ids=attachment_ids_json,
                     created_at=now,
                     updated_at=now,
                 )
@@ -195,6 +261,7 @@ class NotesRepository(BaseRepository):
                         .values(
                             content=content,
                             include_in_prompt=include_in_prompt,
+                            attachment_ids=attachment_ids_json,
                             updated_at=now,
                         )
                     )
@@ -240,7 +307,12 @@ class NotesRepository(BaseRepository):
             raise
 
     async def rename_and_update(
-        self, original_title: str, new_title: str, content: str, include_in_prompt: bool
+        self,
+        original_title: str,
+        new_title: str,
+        content: str,
+        include_in_prompt: bool,
+        attachment_ids: list[str] | None = None,
     ) -> str:
         """Renames a note and updates its content, preserving the primary key.
 
@@ -249,6 +321,7 @@ class NotesRepository(BaseRepository):
             new_title: New title for the note
             content: Updated content
             include_in_prompt: Whether to include in prompt
+            attachment_ids: Optional list of attachment IDs. If None, preserves existing.
 
         Returns:
             Status message
@@ -274,6 +347,17 @@ class NotesRepository(BaseRepository):
                         f"A note with title '{new_title}' already exists"
                     )
 
+            # Determine attachment_ids to use
+            if attachment_ids is None:
+                # Preserve existing attachment_ids
+                attachment_ids_to_use = existing_note.get("attachment_ids", [])
+            else:
+                # Use provided attachment_ids
+                attachment_ids_to_use = attachment_ids
+
+            # Serialize attachment_ids to JSON string
+            attachment_ids_json = json.dumps(attachment_ids_to_use)
+
             # Update the note in place, preserving the primary key
             stmt = (
                 update(notes_table)
@@ -282,6 +366,7 @@ class NotesRepository(BaseRepository):
                     title=new_title,
                     content=content,
                     include_in_prompt=include_in_prompt,
+                    attachment_ids=attachment_ids_json,
                     updated_at=func.now(),
                 )
             )

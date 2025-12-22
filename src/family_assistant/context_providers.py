@@ -72,6 +72,7 @@ class NotesContextProvider(ContextProvider):
         self,
         get_db_context_func: Callable[[], Awaitable[DatabaseContext]],
         prompts: PromptsType,
+        attachment_registry: Any = None,  # noqa: ANN401 # AttachmentRegistry | None
     ) -> None:
         """
         Initializes the NotesContextProvider.
@@ -79,13 +80,61 @@ class NotesContextProvider(ContextProvider):
         Args:
             get_db_context_func: An async function that returns a DatabaseContext.
             prompts: A dictionary containing prompt templates for formatting.
+            attachment_registry: Optional attachment registry for fetching attachment metadata.
         """
         self._get_db_context_func = get_db_context_func
         self._prompts = prompts
+        self._attachment_registry = attachment_registry
 
     @property
     def name(self) -> str:
         return "notes"
+
+    async def _format_attachments(
+        self, db_context: DatabaseContext, attachment_ids: list[str]
+    ) -> str:
+        """
+        Formats attachment metadata for display in the prompt.
+
+        Args:
+            db_context: Database context for fetching attachment metadata.
+            attachment_ids: List of attachment IDs to format.
+
+        Returns:
+            Formatted string with attachment references, one per line.
+        """
+        if not attachment_ids or not self._attachment_registry:
+            return ""
+
+        attachment_lines = []
+        attachment_format = self._prompts.get(
+            "note_attachment_format", "  📎 [{id}] {filename} ({mime_type})"
+        )
+
+        for attachment_id in attachment_ids:
+            try:
+                metadata = await self._attachment_registry.get_attachment(
+                    db_context, attachment_id
+                )
+                if metadata:
+                    # Extract filename from description or use a default
+                    filename = metadata.description or "attachment"
+                    attachment_line = attachment_format.format(
+                        id=attachment_id,
+                        filename=filename,
+                        mime_type=metadata.mime_type,
+                    )
+                    attachment_lines.append(attachment_line)
+                else:
+                    logger.warning(
+                        f"[{self.name}] Attachment {attachment_id} not found in registry"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"[{self.name}] Failed to fetch attachment metadata for {attachment_id}: {e}"
+                )
+
+        return "\n".join(attachment_lines)
 
     async def get_context_fragments(self) -> list[str]:
         fragments: list[str] = []
@@ -106,12 +155,19 @@ class NotesContextProvider(ContextProvider):
                         "- {title}: {content}",  # Default format
                     )
                     for note in prompt_notes:
-                        notes_list_str += (
-                            note_item_format.format(
-                                title=note["title"], content=note["content"]
-                            )
-                            + "\n"
+                        note_text = note_item_format.format(
+                            title=note["title"], content=note["content"]
                         )
+                        notes_list_str += note_text + "\n"
+
+                        # Add attachment references if present
+                        attachment_ids = note.get("attachment_ids", [])
+                        if attachment_ids:
+                            attachment_text = await self._format_attachments(
+                                db_context, attachment_ids
+                            )
+                            if attachment_text:
+                                notes_list_str += attachment_text + "\n"
 
                     notes_context_header_template = self._prompts.get(
                         "notes_context_header", "Relevant notes:\n{notes_list}"

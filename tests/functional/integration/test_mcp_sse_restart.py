@@ -5,7 +5,6 @@ import signal
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
-import anyio
 import pytest
 import pytest_asyncio
 
@@ -20,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 # --- Controller ---
 
+
 class MCPProxyController:
     def __init__(self, port: int) -> None:
         self.port = port
@@ -33,15 +33,15 @@ class MCPProxyController:
 
         command = [
             "mcp-proxy",
-            "--port", str(self.port),
-            "--host", self.host,
+            "--port",
+            str(self.port),
+            "--host",
+            self.host,
             "mcp-server-time",
         ]
         logger.info(f"Starting MCP proxy server: {' '.join(command)}")
         self.process = await asyncio.create_subprocess_exec(
-            *command,
-            start_new_session=True,
-            stderr=asyncio.subprocess.PIPE
+            *command, start_new_session=True, stderr=asyncio.subprocess.PIPE
         )
         await wait_for_server(self.sse_url, timeout=30.0)
 
@@ -74,6 +74,7 @@ class MCPProxyController:
         await asyncio.sleep(1)
         await self.start()
 
+
 @pytest_asyncio.fixture
 async def mcp_proxy_controller() -> "AsyncGenerator[MCPProxyController]":
     port = find_free_port()
@@ -81,6 +82,7 @@ async def mcp_proxy_controller() -> "AsyncGenerator[MCPProxyController]":
     await controller.start()
     yield controller
     await controller.stop()
+
 
 @pytest.mark.asyncio
 async def test_mcp_sse_restart(mcp_proxy_controller: MCPProxyController) -> None:
@@ -108,12 +110,12 @@ async def test_mcp_sse_restart(mcp_proxy_controller: MCPProxyController) -> None
         clock=None,
         home_assistant_client=None,
         event_sources=None,
-        attachment_registry=None
+        attachment_registry=None,
     )
     args = {
         "time": "12:00",
         "source_timezone": "America/New_York",
-        "target_timezone": "UTC"
+        "target_timezone": "UTC",
     }
 
     logger.info("Executing tool before restart...")

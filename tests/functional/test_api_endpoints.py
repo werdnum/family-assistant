@@ -72,18 +72,67 @@ class TestDocument:
 
 @pytest.mark.asyncio
 async def test_notes_api_crud(api_client: httpx.AsyncClient) -> None:
+    # Create note without attachments
     resp = await api_client.post(
         "/api/notes/",
         json={"title": "Note1", "content": "Hello", "include_in_prompt": True},
     )
     assert resp.status_code == 201
 
+    # List notes and verify attachment_ids field is present
     resp = await api_client.get("/api/notes/")
     assert resp.status_code == 200
     notes = resp.json()
-    assert any(n["title"] == "Note1" for n in notes)
+    note1 = next((n for n in notes if n["title"] == "Note1"), None)
+    assert note1 is not None
+    assert "attachment_ids" in note1
+    assert note1["attachment_ids"] == []
 
-    resp = await api_client.delete("/api/notes/Note1")
+    # Get specific note and verify attachment_ids
+    resp = await api_client.get("/api/notes/Note1")
+    assert resp.status_code == 200
+    note_data = resp.json()
+    assert note_data["title"] == "Note1"
+    assert "attachment_ids" in note_data
+    assert note_data["attachment_ids"] == []
+
+    # Update note with attachments
+    resp = await api_client.post(
+        "/api/notes/",
+        json={
+            "title": "Note1",
+            "content": "Updated with attachments",
+            "include_in_prompt": True,
+            "attachment_ids": ["attachment-uuid-1", "attachment-uuid-2"],
+        },
+    )
+    assert resp.status_code == 201
+
+    # Verify attachments were saved
+    resp = await api_client.get("/api/notes/Note1")
+    assert resp.status_code == 200
+    note_data = resp.json()
+    assert note_data["attachment_ids"] == ["attachment-uuid-1", "attachment-uuid-2"]
+
+    # Test rename with attachment preservation
+    resp = await api_client.post(
+        "/api/notes/",
+        json={
+            "title": "Note1Renamed",
+            "content": "Renamed note",
+            "include_in_prompt": True,
+            "original_title": "Note1",
+        },
+    )
+    assert resp.status_code == 201
+
+    # Verify attachments preserved after rename
+    resp = await api_client.get("/api/notes/Note1Renamed")
+    assert resp.status_code == 200
+    note_data = resp.json()
+    assert note_data["attachment_ids"] == ["attachment-uuid-1", "attachment-uuid-2"]
+
+    resp = await api_client.delete("/api/notes/Note1Renamed")
     assert resp.status_code == 200
 
 

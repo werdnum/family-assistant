@@ -24,6 +24,9 @@ no_notes: "No notes available." # Added for consistency
 # Format for each individual note item in the list.
 # Use {title} and {content}.
 note_item_format: "- {title}: {content}"
+# Format for attachment references in notes.
+# Use {id}, {filename}, and {mime_type}.
+note_attachment_format: "  📎 [{id}] {filename} ({mime_type})"
 # Format for showing excluded notes (notes with include_in_prompt=False).
 # Use {excluded_titles} for the comma-separated list of note titles.
 excluded_notes_format: "Other available notes (not included above): {excluded_titles}"

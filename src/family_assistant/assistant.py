@@ -741,6 +741,7 @@ class Assistant:
             notes_provider = NotesContextProvider(
                 get_db_context_func=self._get_db_context_for_provider,
                 prompts=profile_proc_conf_dict["prompts"],
+                attachment_registry=self.attachment_registry,
             )
             calendar_provider = CalendarContextProvider(
                 calendar_config=self.config.get(
