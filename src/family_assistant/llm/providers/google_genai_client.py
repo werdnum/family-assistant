@@ -247,8 +247,8 @@ class GoogleGenAIClient(BaseLLMClient):
         return params
 
     def _supports_multimodal_tools(self) -> bool:
-        """Gemini doesn't support multimodal tool responses"""
-        return False
+        """Check if model supports multimodal tool responses (Gemini 3+)."""
+        return "gemini-3" in self.model_name.lower()
 
     def create_attachment_injection(
         self,
@@ -559,13 +559,38 @@ class GoogleGenAIClient(BaseLLMClient):
                 if not isinstance(response_data, dict):
                     response_data = {"result": response_data}
 
+                # Prepare FunctionResponse arguments
+                function_response_args = {
+                    "id": msg.tool_call_id,
+                    "name": msg.name,
+                    "response": response_data,
+                }
+
+                # Handle multimodal attachments for Gemini 3+
+                if self._supports_multimodal_tools() and msg.transient_attachments:
+                    fr_parts = []
+                    for att in msg.transient_attachments:
+                        if att.content:
+                            fr_parts.append(
+                                types.FunctionResponsePart(
+                                    inline_data=types.FunctionResponseBlob(
+                                        mime_type=att.mime_type,
+                                        data=att.content,
+                                        display_name=att.description
+                                        or att.attachment_id,
+                                    )
+                                )
+                            )
+                        # We currently only support inline data (bytes) for simplicity
+                        # file_path would require uploading to File API or reading to bytes
+                        # but ToolAttachment usually populates content for small files.
+
+                    if fr_parts:
+                        function_response_args["parts"] = fr_parts
+
                 # Create FunctionResponse using SDK types with snake_case
                 part = types.Part(
-                    function_response=types.FunctionResponse(
-                        id=msg.tool_call_id,
-                        name=msg.name,
-                        response=response_data,
-                    ),
+                    function_response=types.FunctionResponse(**function_response_args),
                 )
                 contents.append(
                     types.Content(
