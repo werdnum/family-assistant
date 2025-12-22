@@ -18,9 +18,10 @@ if [ "$HAS_VALID_KEY" = "true" ] && [ -n "$GITHUB_APP_ID" ] && [ -n "$GITHUB_APP
 
     # Configure git credential helper
     # We use a shell function in the config to execute gh-token
-    # We refer to the environment variables so they can be changed without re-running setup
+    # We bake the environment variable values into the config because tools like 'claude code'
+    # may strip the environment variables when running git commands
     git config --global credential.helper "!f() { \
-        TOKEN=\$(gh-token generate -k \"\$GITHUB_APP_PRIVATE_KEY_FILE\" -i \"\$GITHUB_APP_ID\" -n \"\$GITHUB_APP_INSTALLATION_ID\"); \
+        TOKEN=\$(/usr/local/bin/gh-token generate -k \"$GITHUB_APP_PRIVATE_KEY_FILE\" -i \"$GITHUB_APP_ID\" -n \"$GITHUB_APP_INSTALLATION_ID\"); \
         echo \"username=x-access-token\"; \
         echo \"password=\$TOKEN\"; \
     }; f"
