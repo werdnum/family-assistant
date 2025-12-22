@@ -44,8 +44,10 @@ async def add_or_update_note_tool(
     attachment_registry = exec_context.attachment_registry
 
     # Validate attachment IDs if provided
-    valid_attachment_ids: list[str] = []
-    if attachment_ids:
+    # None means "preserve existing", empty list means "clear all attachments"
+    valid_attachment_ids: list[str] | None = None
+    if attachment_ids is not None:
+        valid_attachment_ids = []
         for attachment_id in attachment_ids:
             if attachment_registry:
                 # Verify attachment exists
@@ -71,7 +73,7 @@ async def add_or_update_note_tool(
             content=content,
             include_in_prompt=include_in_prompt,
             append=append,
-            attachment_ids=valid_attachment_ids if valid_attachment_ids else None,
+            attachment_ids=valid_attachment_ids,  # None preserves existing, [] clears
         )
         attachment_info = (
             f" with {len(valid_attachment_ids)} attachment(s)"
