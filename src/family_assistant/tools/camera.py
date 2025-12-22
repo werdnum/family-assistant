@@ -7,7 +7,7 @@ and extract frames for visual analysis using binary search methodology.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.tools.types import ToolAttachment, ToolResult
@@ -16,6 +16,34 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_timestamp(timestamp_str: str) -> datetime:
+    """Parse ISO 8601 timestamp string to timezone-aware datetime.
+
+    Handles:
+    - UTC 'Z' suffix: "2024-01-15T08:00:00Z"
+    - Explicit offset: "2024-01-15T08:00:00+00:00"
+    - Naive datetime: "2024-01-15T08:00:00" (assumes UTC)
+
+    Args:
+        timestamp_str: ISO 8601 formatted timestamp string.
+
+    Returns:
+        Timezone-aware datetime object (always UTC or explicit timezone).
+
+    Raises:
+        ValueError: If the timestamp format is invalid.
+    """
+    # Replace Z suffix with +00:00 for consistent parsing
+    normalized = timestamp_str.replace("Z", "+00:00")
+    dt = datetime.fromisoformat(normalized)
+
+    # If naive datetime, assume UTC
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+
+    return dt
 
 
 # Tool Definitions
@@ -224,8 +252,8 @@ async def search_camera_events_tool(
         )
 
     try:
-        start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-        end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+        start_dt = _parse_timestamp(start_time)
+        end_dt = _parse_timestamp(end_time)
     except ValueError as e:
         return ToolResult(data={"error": f"Invalid timestamp format: {e}"})
 
@@ -270,7 +298,7 @@ async def get_camera_frame_tool(
         )
 
     try:
-        ts = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        ts = _parse_timestamp(timestamp)
     except ValueError as e:
         return ToolResult(data={"error": f"Invalid timestamp format: {e}"})
 
@@ -313,8 +341,8 @@ async def get_camera_frames_batch_tool(
         )
 
     try:
-        start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-        end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+        start_dt = _parse_timestamp(start_time)
+        end_dt = _parse_timestamp(end_time)
     except ValueError as e:
         return ToolResult(data={"error": f"Invalid timestamp format: {e}"})
 
@@ -370,8 +398,8 @@ async def get_camera_recordings_tool(
         )
 
     try:
-        start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-        end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+        start_dt = _parse_timestamp(start_time)
+        end_dt = _parse_timestamp(end_time)
     except ValueError as e:
         return ToolResult(data={"error": f"Invalid timestamp format: {e}"})
 

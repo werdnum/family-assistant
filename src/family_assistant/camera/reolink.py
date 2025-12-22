@@ -26,9 +26,6 @@ from family_assistant.camera.protocol import (
 )
 
 try:
-    # cv2 and numpy will be needed for frame extraction, imported but not used yet
-    import cv2  # noqa: F401  # pyright: ignore[reportMissingImports, reportUnusedImport]
-    import numpy as np  # noqa: F401  # pyright: ignore[reportUnusedImport]
     from reolink_aio.api import Host  # type: ignore[import-not-found]
 
     REOLINK_AVAILABLE = True
@@ -94,6 +91,13 @@ class ReolinkBackend:
 
     The implementation uses connection pooling to reuse Host instances and
     per-camera locks to prevent concurrent API calls that could exceed session limits.
+
+    NOTE: This is currently a stub implementation. The infrastructure for connection
+    management and camera listing is functional, but the core methods (search_events,
+    get_recordings, get_frame, get_frames_batch) raise NotImplementedError and need
+    to be implemented with access to real Reolink hardware for testing.
+
+    The FakeCameraBackend can be used for testing the camera tools without real hardware.
     """
 
     def __init__(self, cameras: dict[str, ReolinkCameraConfig]) -> None:

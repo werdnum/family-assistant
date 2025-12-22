@@ -81,6 +81,8 @@ async def execute_tool_api(
         else None,
         event_sources=event_sources,
         attachment_registry=attachment_registry,
+        # TODO: Wire camera_backend from processing_service when camera tools
+        # should be available via HTTP API (similar to home_assistant_client)
         camera_backend=None,
         # Optional fields (with defaults)
         chat_interface=None,  # No direct chat interface for API calls
