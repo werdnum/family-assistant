@@ -949,24 +949,33 @@ class GoogleGenAIClient(BaseLLMClient):
         """
         try:
             # 1. Extract input and history context
-            input_text = ""
             previous_interaction_id = None
 
-            # Find the last user message for input
+            # Collect all contiguous trailing user messages for input
+            # This handles cases where user sends multiple messages in a row
+            user_input_parts = []
             for msg in reversed(messages):
                 if msg.role == "user":
-                    # Concatenate all text parts
-                    parts = []
+                    # Extract text content from message
+                    msg_text = ""
                     if isinstance(msg.content, str):
-                        parts.append(msg.content)
+                        msg_text = msg.content
                     elif isinstance(msg.content, list):
+                        text_fragments = []
                         for part in msg.content:
                             if isinstance(part, TextContentPart):
-                                parts.append(part.text)
+                                text_fragments.append(part.text)
                             elif isinstance(part, str):
-                                parts.append(part)
-                    input_text = "\n".join(parts)
+                                text_fragments.append(part)
+                        msg_text = "\n".join(text_fragments)
+
+                    if msg_text:
+                        user_input_parts.insert(0, msg_text)
+                else:
+                    # Stop at the first non-user message
                     break
+
+            input_text = "\n\n".join(user_input_parts)
 
             # Check for previous interaction ID in assistant history
             # Iterate through messages to find the last assistant message with provider metadata
@@ -1034,6 +1043,7 @@ class GoogleGenAIClient(BaseLLMClient):
 
                 # Track IDs for potential reconnection (not fully implemented in this loop yet)
                 if chunk.event_id:
+                    # TODO: Implement resumption logic using chunk.event_id
                     pass
 
                 # Handle Content
