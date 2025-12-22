@@ -318,11 +318,11 @@ service_profiles:
     slash_commands:
       - "/browse"
   - id: "research"
-    description: "Assistant profile for deep research, utilizing the Perplexity Sonar model. Ideal for comprehensive information gathering and analysis when web browsing or specific tool execution is not required."
+    description: "Assistant profile for deep research, utilizing the Google Gemini Deep Research agent. Ideal for comprehensive information gathering and analysis when web browsing or specific tool execution is not required."
     processing_config:
-      # Research profile still uses LiteLLM for access to Perplexity models
-      provider: "litellm"
-      llm_model: "openrouter/perplexity/sonar-deep-research"
+      # Updated to use Google Gemini Deep Research agent
+      provider: "google"
+      llm_model: "deep-research-pro-preview-12-2025"
       prompts:
         system_prompt: "You are a research assistant interacting with {user_name}. Please focus on providing comprehensive and accurate information. After any tool calls you make, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users."
       # Inherits default timezone, history settings.

@@ -76,13 +76,16 @@ class GeminiProviderMetadata:
     def __init__(
         self,
         thought_signature: GeminiThoughtSignature | None = None,
+        interaction_id: str | None = None,
     ) -> None:
         """Initialize provider metadata.
 
         Args:
             thought_signature: Optional thought signature for this tool call.
+            interaction_id: Optional interaction ID for Deep Research sessions.
         """
         self.thought_signature = thought_signature
+        self.interaction_id = interaction_id
 
     # ast-grep-ignore: no-dict-any - JSON serialization
     def to_dict(self) -> dict[str, Any]:
@@ -96,6 +99,8 @@ class GeminiProviderMetadata:
         if self.thought_signature:
             # Convert thought signature to string for storage
             result["thought_signature"] = self.thought_signature.to_storage_string()
+        if self.interaction_id:
+            result["interaction_id"] = self.interaction_id
         return result
 
     @classmethod
@@ -115,11 +120,12 @@ class GeminiProviderMetadata:
             thought_sig = GeminiThoughtSignature.from_storage_string(
                 data["thought_signature"]
             )
-        return cls(thought_signature=thought_sig)
+        interaction_id = data.get("interaction_id")
+        return cls(thought_signature=thought_sig, interaction_id=interaction_id)
 
     def __repr__(self) -> str:
         """Return string representation."""
-        return f"GeminiProviderMetadata(thought_signature={self.thought_signature})"
+        return f"GeminiProviderMetadata(thought_signature={self.thought_signature}, interaction_id={self.interaction_id})"
 
     @classmethod
     def __get_pydantic_core_schema__(  # noqa: PLW3201

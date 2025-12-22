@@ -621,6 +621,10 @@ class GoogleGenAIClient(BaseLLMClient):
 
         return all_tools
 
+    def _is_deep_research_model(self, model: str) -> bool:
+        """Check if model identifier corresponds to deep research agent."""
+        return "deep-research" in model
+
     async def generate_response(
         self,
         messages: Sequence[LLMMessage],
@@ -930,7 +934,160 @@ class GoogleGenAIClient(BaseLLMClient):
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Generate streaming response using Google GenAI."""
+        if self._is_deep_research_model(self.model_name):
+            return self._generate_deep_research_stream(messages)
         return self._generate_response_stream(messages, tools, tool_choice)
+
+    async def _generate_deep_research_stream(
+        self,
+        messages: Sequence[LLMMessage],
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """
+        Handle Deep Research agent interactions using the Interactions API.
+
+        Deep Research requires background execution and polling/streaming via interactions.create.
+        """
+        try:
+            # 1. Extract input and history context
+            input_text = ""
+            previous_interaction_id = None
+
+            # Find the last user message for input
+            for msg in reversed(messages):
+                if msg.role == "user":
+                    # Concatenate all text parts
+                    parts = []
+                    if isinstance(msg.content, str):
+                        parts.append(msg.content)
+                    elif isinstance(msg.content, list):
+                        for part in msg.content:
+                            if isinstance(part, TextContentPart):
+                                parts.append(part.text)
+                            elif isinstance(part, str):
+                                parts.append(part)
+                    input_text = "\n".join(parts)
+                    break
+
+            # Check for previous interaction ID in assistant history
+            # Iterate through messages to find the last assistant message with provider metadata
+            for msg in reversed(messages):
+                if (
+                    msg.role == "assistant"
+                    and isinstance(msg, AssistantMessage)
+                    and msg.provider_metadata
+                ):
+                    pm = msg.provider_metadata
+                    if isinstance(pm, GeminiProviderMetadata) and pm.interaction_id:
+                        previous_interaction_id = pm.interaction_id
+                        break
+                    elif isinstance(pm, dict) and pm.get("interaction_id"):
+                        previous_interaction_id = pm.get("interaction_id")
+                        break
+
+            # Prepend system prompt if present (Deep Research takes input string)
+            system_prompt = ""
+            for msg in messages:
+                if msg.role == "system" and msg.content:
+                    system_prompt += f"System: {msg.content}\n\n"
+
+            if system_prompt:
+                input_text = system_prompt + input_text
+
+            if not input_text:
+                raise InvalidRequestError(
+                    "Deep Research requires non-empty input",
+                    provider="google",
+                    model=self.model_name,
+                )
+
+            # 2. Start interaction
+            logger.info(
+                f"Starting Deep Research interaction. Model: {self.model_name}, "
+                f"Prev ID: {previous_interaction_id}"
+            )
+
+            # We need to strip 'models/' prefix if present for 'agent' parameter?
+            # The docs say: agent='deep-research-pro-preview-12-2025'
+            # self.model_name likely has 'models/' prefix.
+            agent_name = self.model_name.replace("models/", "")
+
+            # Create the interaction stream
+            # Using loop for potential reconnection logic could be added here
+            stream = await self.client.aio.interactions.create(
+                input=input_text,
+                agent=agent_name,
+                previous_interaction_id=previous_interaction_id,
+                background=True,
+                stream=True,
+                agent_config={"type": "deep-research", "thinking_summaries": "auto"},
+            )
+
+            interaction_id = None
+            thought_summaries = []
+
+            # 3. Process stream
+            async for chunk in stream:
+                # Capture Interaction ID
+                if chunk.event_type == "interaction.start":
+                    interaction_id = chunk.interaction.id
+                    logger.info(f"Deep Research interaction started: {interaction_id}")
+
+                # Track IDs for potential reconnection (not fully implemented in this loop yet)
+                if chunk.event_id:
+                    pass
+
+                # Handle Content
+                if chunk.event_type == "content.delta":
+                    if chunk.delta.type == "text":
+                        yield LLMStreamEvent(type="content", content=chunk.delta.text)
+                    elif chunk.delta.type == "thought_summary":
+                        thought_text = chunk.delta.content.text
+                        thought_summaries.append(thought_text)
+                        # Yield thoughts as special content or just log?
+                        # Yielding as content with prefix allows user to see progress
+                        yield LLMStreamEvent(
+                            type="content", content=f"\n*Thinking: {thought_text}*\n"
+                        )
+
+                elif chunk.event_type == "interaction.complete":
+                    logger.info("Deep Research interaction complete")
+
+                elif chunk.event_type == "error":
+                    logger.error(f"Deep Research stream error: {chunk.error}")
+                    yield LLMStreamEvent(
+                        type="error",
+                        error=str(chunk.error),
+                        metadata={"provider": "google", "model": self.model_name},
+                    )
+
+            # 4. Finalize
+            done_metadata = {}
+            if interaction_id:
+                # Pass interaction_id back via provider_metadata for storage
+                done_metadata["provider_metadata"] = GeminiProviderMetadata(
+                    interaction_id=interaction_id
+                )
+
+            if thought_summaries:
+                if "reasoning_info" not in done_metadata:
+                    done_metadata["reasoning_info"] = {}
+                done_metadata["reasoning_info"]["thought_summaries"] = [
+                    {"summary": t} for t in thought_summaries
+                ]
+
+            yield LLMStreamEvent(type="done", metadata=done_metadata)
+
+        except Exception as e:
+            logger.error(f"Error in Deep Research stream: {e}", exc_info=True)
+            yield LLMStreamEvent(
+                type="error",
+                error=str(e),
+                metadata={
+                    "error_id": str(e.__class__.__name__),
+                    "provider": "google",
+                    "model": self.model_name,
+                },
+            )
 
     async def _generate_response_stream(
         self,
