@@ -2,11 +2,14 @@
 Test the NotesContextProvider with prompt inclusion filtering.
 """
 
+from pathlib import Path
+
 import pytest
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.context_providers import NotesContextProvider
+from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.notes import notes_table
 
@@ -326,3 +329,162 @@ async def test_notes_context_provider_no_excluded_list_when_all_included(
     assert "Note 1" in fragments[0]
     assert "Note 2" in fragments[0]
     assert "Other available notes" not in fragments[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_notes_context_provider_with_attachments(
+    pg_vector_db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """Test NotesContextProvider displays attachment references for notes."""
+    # Clean up any existing notes
+    await cleanup_notes(pg_vector_db_engine)
+
+    # Create attachment registry
+    attachment_registry = AttachmentRegistry(
+        storage_path=str(tmp_path / "attachments"),
+        db_engine=pg_vector_db_engine,
+    )
+
+    # Create test note with attachments
+    async with DatabaseContext(engine=pg_vector_db_engine) as db:
+        # Register two test attachments
+        attachment_id_1 = "test-attachment-1"
+        attachment_id_2 = "test-attachment-2"
+
+        await attachment_registry.register_attachment(
+            db_context=db,
+            attachment_id=attachment_id_1,
+            source_type="user",
+            source_id="test_user",
+            mime_type="application/pdf",
+            description="schedule.pdf",
+            size=1024,
+        )
+
+        await attachment_registry.register_attachment(
+            db_context=db,
+            attachment_id=attachment_id_2,
+            source_type="user",
+            source_id="test_user",
+            mime_type="image/png",
+            description="calendar.png",
+            size=2048,
+        )
+
+        # Create note with attachments
+        await db.notes.add_or_update(
+            title="Family Schedule",
+            content="Monday through Friday morning meetings",
+            include_in_prompt=True,
+            attachment_ids=[attachment_id_1, attachment_id_2],
+        )
+
+        # Create note without attachments for comparison
+        await db.notes.add_or_update(
+            title="Shopping List",
+            content="Milk, Bread, Eggs",
+            include_in_prompt=True,
+        )
+
+    # Create context provider with attachment registry
+    test_prompts = {
+        "note_item_format": "- {title}: {content}",
+        "notes_context_header": "Relevant notes:\n{notes_list}",
+        "note_attachment_format": "  📎 [{id}] {filename} ({mime_type})",
+    }
+
+    async def get_db_context_func() -> DatabaseContext:
+        return DatabaseContext(engine=pg_vector_db_engine)
+
+    provider = NotesContextProvider(
+        get_db_context_func=get_db_context_func,
+        prompts=test_prompts,
+        attachment_registry=attachment_registry,
+    )
+
+    # Get context fragments
+    fragments = await provider.get_context_fragments()
+
+    # Should have 1 fragment with both notes
+    assert len(fragments) == 1
+    notes_fragment = fragments[0]
+
+    # Verify note content is present
+    assert "Family Schedule" in notes_fragment
+    assert "Monday through Friday morning meetings" in notes_fragment
+    assert "Shopping List" in notes_fragment
+    assert "Milk, Bread, Eggs" in notes_fragment
+
+    # Verify attachment references are present for the first note
+    assert f"📎 [{attachment_id_1}]" in notes_fragment
+    assert "schedule.pdf" in notes_fragment
+    assert "application/pdf" in notes_fragment
+    assert f"📎 [{attachment_id_2}]" in notes_fragment
+    assert "calendar.png" in notes_fragment
+    assert "image/png" in notes_fragment
+
+    # Verify attachment references appear after the note content
+    # This ensures proper formatting
+    family_schedule_pos = notes_fragment.find("Family Schedule")
+    first_attachment_pos = notes_fragment.find(f"📎 [{attachment_id_1}]")
+    shopping_list_pos = notes_fragment.find("Shopping List")
+
+    assert family_schedule_pos < first_attachment_pos < shopping_list_pos
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_notes_context_provider_handles_missing_attachments(
+    pg_vector_db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """Test NotesContextProvider handles missing attachments gracefully."""
+    # Clean up any existing notes
+    await cleanup_notes(pg_vector_db_engine)
+
+    # Create attachment registry
+    attachment_registry = AttachmentRegistry(
+        storage_path=str(tmp_path / "attachments"),
+        db_engine=pg_vector_db_engine,
+    )
+
+    # Create note with reference to non-existent attachment
+    async with DatabaseContext(engine=pg_vector_db_engine) as db:
+        await db.notes.add_or_update(
+            title="Test Note",
+            content="This note references a missing attachment",
+            include_in_prompt=True,
+            attachment_ids=["non-existent-attachment-id"],
+        )
+
+    # Create context provider
+    test_prompts = {
+        "note_item_format": "- {title}: {content}",
+        "notes_context_header": "Relevant notes:\n{notes_list}",
+        "note_attachment_format": "  📎 [{id}] {filename} ({mime_type})",
+    }
+
+    async def get_db_context_func() -> DatabaseContext:
+        return DatabaseContext(engine=pg_vector_db_engine)
+
+    provider = NotesContextProvider(
+        get_db_context_func=get_db_context_func,
+        prompts=test_prompts,
+        attachment_registry=attachment_registry,
+    )
+
+    # Get context fragments - should not raise an exception
+    fragments = await provider.get_context_fragments()
+
+    # Should have 1 fragment with the note content
+    assert len(fragments) == 1
+    notes_fragment = fragments[0]
+
+    # Note content should be present
+    assert "Test Note" in notes_fragment
+    assert "This note references a missing attachment" in notes_fragment
+
+    # Missing attachment should not be displayed (logged as warning instead)
+    assert "non-existent-attachment-id" not in notes_fragment

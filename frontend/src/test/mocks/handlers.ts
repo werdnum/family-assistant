@@ -183,9 +183,64 @@ export const handlers = [
 
   // Mock notes endpoint
   http.get('/api/notes/', () => {
-    return HttpResponse.json({
-      notes: [{ title: 'Test Note', content: 'This is a test note' }],
-    });
+    return HttpResponse.json([
+      {
+        title: 'Test Note',
+        content: 'This is a test note',
+        include_in_prompt: true,
+        attachment_ids: [],
+      },
+      {
+        title: 'Note with Attachments',
+        content: 'This note has attachments',
+        include_in_prompt: false,
+        attachment_ids: ['attachment-1', 'attachment-2'],
+      },
+    ]);
+  }),
+
+  // Mock individual note GET endpoint
+  http.get('/api/notes/:title', ({ params }) => {
+    const { title } = params;
+    if (title === 'Test Note') {
+      return HttpResponse.json({
+        title: 'Test Note',
+        content: 'This is a test note',
+        include_in_prompt: true,
+        attachment_ids: [],
+      });
+    }
+    if (title === 'Note with Attachments') {
+      return HttpResponse.json({
+        title: 'Note with Attachments',
+        content: 'This note has attachments',
+        include_in_prompt: false,
+        attachment_ids: ['attachment-1', 'attachment-2'],
+      });
+    }
+    return HttpResponse.json({ detail: 'Note not found' }, { status: 404 });
+  }),
+
+  // Mock note POST endpoint (create/update)
+  http.post('/api/notes/', async ({ request }) => {
+    const body = (await request.json()) as {
+      title: string;
+      content: string;
+      include_in_prompt: boolean;
+      attachment_ids?: string[];
+    };
+
+    // Basic validation
+    if (!body.title || !body.content) {
+      return HttpResponse.json({ detail: 'Title and content are required' }, { status: 400 });
+    }
+
+    return HttpResponse.json({ message: 'Note saved' }, { status: 201 });
+  }),
+
+  // Mock note DELETE endpoint
+  http.delete('/api/notes/:title', () => {
+    return HttpResponse.json({ message: 'Note deleted' });
   }),
 
   // Mock documents endpoint
@@ -207,9 +262,23 @@ export const handlers = [
   }),
 
   // Mock attachment GET endpoint - returns attachment data with proper headers
-  http.get('/api/attachments/:attachmentId', ({ params }) => {
+  http.get('/api/attachments/:attachmentId', ({ params, request }) => {
     const { attachmentId } = params;
 
+    // If Accept header is application/json, return metadata
+    const acceptHeader = request.headers.get('Accept');
+    if (acceptHeader?.includes('application/json')) {
+      // Return metadata for the attachment
+      return HttpResponse.json({
+        attachment_id: attachmentId as string,
+        mime_type: 'image/png',
+        filename: `test-attachment-${attachmentId}.png`,
+        size: 1024,
+        created_at: '2025-01-01T10:00:00Z',
+      });
+    }
+
+    // Otherwise, return the binary file data
     // Create a simple test image binary data (small PNG)
     const pngData = new Uint8Array([
       137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 100, 0, 0, 0, 100, 8,
