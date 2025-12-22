@@ -417,6 +417,7 @@ class TestCreateAttachmentAPI:
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=attachment_registry,
+                camera_backend=None,
             )
 
             api = create_attachment_api(execution_context)
@@ -441,6 +442,7 @@ class TestCreateAttachmentAPI:
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=None,  # No attachment registry
+                camera_backend=None,
             )
 
             with pytest.raises(
@@ -470,6 +472,7 @@ class TestStarlarkIntegration:
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=None,  # No attachment registry
+                camera_backend=None,
             )
 
             config = StarlarkConfig(enable_print=True)
@@ -507,6 +510,7 @@ print("Hello world")
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=attachment_registry,
+                camera_backend=None,
             )
 
             # Create tools provider with attachment tools
@@ -571,6 +575,7 @@ result
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=attachment_registry,
+                camera_backend=None,
             )
 
             config = StarlarkConfig(enable_print=True)
@@ -609,6 +614,7 @@ result == None
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=attachment_registry,
+                camera_backend=None,
             )
 
             config = StarlarkConfig(enable_print=True)
@@ -647,6 +653,7 @@ attachment_list()
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=attachment_registry,
+                camera_backend=None,
             )
 
             config = StarlarkConfig(enable_print=True)
@@ -717,6 +724,7 @@ attachment_id
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=attachment_registry,
+                camera_backend=None,
             )
 
             config = StarlarkConfig(enable_print=True)
@@ -790,6 +798,7 @@ attachment_id
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=attachment_registry,
+                camera_backend=None,
             )
 
             config = StarlarkConfig(enable_print=True)

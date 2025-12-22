@@ -147,6 +147,7 @@ async def test_tools_api_list(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         # Create engine
@@ -183,6 +184,7 @@ async def test_tools_api_get(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         engine = StarlarkEngine(tools_provider=tools_provider)
@@ -223,6 +225,7 @@ async def test_tools_api_execute(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         engine = StarlarkEngine(tools_provider=tools_provider)
@@ -263,6 +266,7 @@ async def test_tools_api_execute_json(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         engine = StarlarkEngine(tools_provider=tools_provider)
@@ -324,6 +328,7 @@ async def test_tools_api_invalid_tool(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         engine = StarlarkEngine(tools_provider=tools_provider)

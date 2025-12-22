@@ -18,6 +18,7 @@ from typing import (
 )
 
 if TYPE_CHECKING:
+    from family_assistant.camera.protocol import CameraBackend
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
 
 import aiofiles
@@ -174,6 +175,9 @@ class ProcessingService:
         # Store the confirmation callback function if provided at init? No, get from context.
         self.home_assistant_client: HomeAssistantClientWrapper | None = (
             None  # Store HA client if available
+        )
+        self.camera_backend: CameraBackend | None = (
+            None  # Store camera backend if available
         )
         self.event_sources = event_sources  # Store event sources for validation  # Store event sources for validation
 
@@ -908,6 +912,7 @@ class ProcessingService:
                 self.event_sources.get("indexing") if self.event_sources else None
             ),
             attachment_registry=self.attachment_registry,
+            camera_backend=self.camera_backend,
         )
 
         try:

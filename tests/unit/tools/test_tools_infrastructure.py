@@ -51,6 +51,7 @@ class TestLocalToolsProvider:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await provider.execute_tool("tool_returns_dict", {}, context)
@@ -105,6 +106,7 @@ class TestLocalToolsProvider:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await provider.execute_tool("tool_returns_list", {}, context)
@@ -167,6 +169,7 @@ class TestLocalToolsProvider:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await provider.execute_tool("tool_returns_complex", {}, context)
@@ -227,6 +230,7 @@ class TestLocalToolsProvider:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await provider.execute_tool("tool_returns_none", {}, context)
@@ -271,6 +275,7 @@ class TestLocalToolsProvider:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await provider.execute_tool("tool_returns_string", {}, context)
@@ -313,6 +318,7 @@ class TestLocalToolsProvider:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await provider.execute_tool("tool_returns_number", {}, context)
@@ -369,6 +375,7 @@ class TestLocalToolsProvider:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,  # No attachment registry
+            camera_backend=None,
         )
 
         # Test with a valid UUID format but non-existent attachment

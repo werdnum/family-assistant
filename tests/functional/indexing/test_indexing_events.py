@@ -237,6 +237,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                     home_assistant_client=None,
                     event_sources=None,
                     attachment_registry=None,
+                    camera_backend=None,
                     embedding_generator=embedding_generator,
                     indexing_source=indexing_source,
                 )
@@ -360,6 +361,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
             embedding_generator=embedding_generator,
             indexing_source=indexing_source,
         )
@@ -464,6 +466,7 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
             embedding_generator=embedding_generator,
             indexing_source=indexing_source,
         )
@@ -590,6 +593,7 @@ async def test_document_ready_event_includes_rich_metadata(
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=None,
+                camera_backend=None,
                 embedding_generator=embedding_generator,
                 indexing_source=indexing_source,
             )
@@ -710,6 +714,7 @@ async def test_document_ready_event_handles_none_metadata(
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=None,
+                camera_backend=None,
                 embedding_generator=embedding_generator,
                 indexing_source=indexing_source,
             )
