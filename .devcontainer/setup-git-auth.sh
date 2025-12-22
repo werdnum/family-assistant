@@ -25,6 +25,11 @@ if [ "$HAS_VALID_KEY" = "true" ] && [ -n "$GITHUB_APP_ID" ] && [ -n "$GITHUB_APP
         echo \"password=\$TOKEN\"; \
     }; f"
 
+    # Configure git to use HTTPS instead of SSH for GitHub
+    # This ensures that tools trying to use SSH URLs (like claude-code)
+    # will be redirected to HTTPS where our credential helper works
+    git config --global url."https://github.com/".insteadOf "git@github.com:"
+
     echo "Git credential helper configured."
 else
     echo "GitHub App authentication skipped (missing configuration or valid key file)."
