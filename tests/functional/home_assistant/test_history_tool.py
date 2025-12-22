@@ -370,6 +370,7 @@ async def test_download_state_history_direct_call() -> None:
         home_assistant_client=mock_ha_client,
         event_sources=None,
         attachment_registry=None,
+        camera_backend=None,
     )
 
     # Call the tool with a specific entity_id (common case)
@@ -412,6 +413,7 @@ async def test_download_state_history_no_client() -> None:
         home_assistant_client=None,
         event_sources=None,
         attachment_registry=None,
+        camera_backend=None,
     )
 
     # Call the tool
@@ -479,6 +481,7 @@ async def test_download_state_history_empty() -> None:
         home_assistant_client=mock_ha_client,
         event_sources=None,
         attachment_registry=None,
+        camera_backend=None,
     )
 
     # Call the tool
@@ -527,6 +530,7 @@ async def test_download_state_history_missing_entity() -> None:
         home_assistant_client=mock_ha_client,
         event_sources=None,
         attachment_registry=None,
+        camera_backend=None,
     )
 
     # Call the tool with a mix of existing and non-existent entity_ids

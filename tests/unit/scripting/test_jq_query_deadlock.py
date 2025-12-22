@@ -73,6 +73,7 @@ async def test_jq_query_from_script_no_deadlock(
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=attachment_registry,
+            camera_backend=None,
             processing_service=None,
             tools_provider=confirming_provider,  # Use confirming provider
         )

@@ -111,6 +111,7 @@ async def test_mcp_sse_restart(mcp_proxy_controller: MCPProxyController) -> None
         home_assistant_client=None,
         event_sources=None,
         attachment_registry=None,
+        camera_backend=None,
     )
     args = {
         "time": "12:00",

@@ -53,6 +53,7 @@ class TestGetAttachmentInfoTool:
                     home_assistant_client=None,
                     event_sources=None,
                     attachment_registry=attachment_registry,
+                    camera_backend=None,
                 )
 
                 # Execute the tool
@@ -98,6 +99,7 @@ class TestGetAttachmentInfoTool:
                     home_assistant_client=None,
                     event_sources=None,
                     attachment_registry=attachment_registry,
+                    camera_backend=None,
                 )
 
                 # Try to get info for non-existent attachment
@@ -147,6 +149,7 @@ class TestGetAttachmentInfoTool:
                     home_assistant_client=None,
                     event_sources=None,
                     attachment_registry=attachment_registry,
+                    camera_backend=None,
                 )
 
                 result = await get_attachment_info_tool(
@@ -174,6 +177,7 @@ class TestGetAttachmentInfoTool:
                 home_assistant_client=None,
                 event_sources=None,
                 attachment_registry=None,  # No attachment registry
+                camera_backend=None,
             )
 
             result = await get_attachment_info_tool(
@@ -221,6 +225,7 @@ class TestGetAttachmentInfoTool:
                     home_assistant_client=None,
                     event_sources=None,
                     attachment_registry=attachment_registry,
+                    camera_backend=None,
                 )
 
                 result = await get_attachment_info_tool(

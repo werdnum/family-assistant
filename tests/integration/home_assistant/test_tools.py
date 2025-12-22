@@ -52,6 +52,7 @@ async def test_render_template_tool(
             home_assistant_client=wrapper,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         try:
@@ -104,6 +105,7 @@ async def test_camera_snapshot_tool_list_cameras(
             home_assistant_client=wrapper,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         try:
@@ -154,6 +156,7 @@ async def test_camera_snapshot_tool_get_snapshot(
             home_assistant_client=wrapper,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         try:
@@ -220,6 +223,7 @@ async def test_history_tool_with_entities(
             home_assistant_client=wrapper,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         try:

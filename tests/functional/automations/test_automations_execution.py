@@ -47,6 +47,7 @@ async def test_get_automation_stats_event(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await create_automation_tool(
@@ -90,6 +91,7 @@ async def test_get_automation_stats_not_found(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await get_automation_stats_tool(
@@ -135,6 +137,7 @@ async def test_event_automation_with_script_execution(
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
             tools_provider=tools_provider,
         )
 

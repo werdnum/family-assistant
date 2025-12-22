@@ -165,6 +165,7 @@ async def test_home_assistant_event_processing(db_engine: AsyncEngine) -> None:
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await query_recent_events_tool(
@@ -312,6 +313,7 @@ async def test_test_event_listener_tool_matches_person_coming_home(
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await event_listener_test_tool(
@@ -372,6 +374,7 @@ async def test_test_event_listener_tool_no_match_wrong_state(
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await event_listener_test_tool(
@@ -415,6 +418,7 @@ async def test_test_event_listener_tool_empty_conditions_error(
             home_assistant_client=None,
             event_sources=None,
             attachment_registry=None,
+            camera_backend=None,
         )
 
         result = await event_listener_test_tool(

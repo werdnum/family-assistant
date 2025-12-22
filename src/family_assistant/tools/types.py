@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from datetime import date, datetime
 
+    from family_assistant.camera.protocol import CameraBackend
     from family_assistant.config_models import AppConfig
     from family_assistant.embeddings import EmbeddingGenerator
     from family_assistant.events.indexing_source import IndexingSource
@@ -119,6 +120,7 @@ class ToolExecutionContext:
     attachment_registry: (
         AttachmentRegistry | None
     )  # NO DEFAULT - must specify explicitly
+    camera_backend: CameraBackend | None  # NO DEFAULT - must specify explicitly
     # Optional fields with defaults (for backward compatibility and convenience)
     user_id: str | None = None  # User identifier
     chat_interface: ChatInterface | None = None  # Replaced application

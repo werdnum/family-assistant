@@ -108,6 +108,7 @@ class TestAttachToResponseTool:
                 event_sources=None,
                 chat_interface=None,
                 attachment_registry=attachment_registry,
+                camera_backend=None,
             )
 
             # Create ScriptAttachment object for the tool
@@ -166,6 +167,7 @@ class TestAttachToResponseTool:
                 event_sources=None,
                 chat_interface=None,
                 attachment_registry=attachment_registry,
+                camera_backend=None,
             )
 
             # Create a mock ScriptAttachment that will fail validation
@@ -200,6 +202,7 @@ class TestAttachToResponseTool:
                 event_sources=None,
                 chat_interface=None,
                 attachment_registry=None,  # No attachment registry
+                camera_backend=None,
             )
 
             # Create a mock ScriptAttachment for this test
@@ -264,6 +267,7 @@ class TestSendMessageToUserWithAttachments:
                 event_sources=None,
                 chat_interface=mock_chat_interface,
                 attachment_registry=attachment_registry,
+                camera_backend=None,
             )
 
             result = await send_message_to_user_tool(
@@ -307,6 +311,7 @@ class TestSendMessageToUserWithAttachments:
                 event_sources=None,
                 chat_interface=mock_chat_interface,
                 attachment_registry=None,
+                camera_backend=None,
             )
 
             result = await send_message_to_user_tool(
@@ -446,6 +451,7 @@ class TestHighlightImageTool:
                 event_sources=None,
                 chat_interface=None,
                 attachment_registry=attachment_registry,
+                camera_backend=None,
             )
 
             # Get attachment metadata
@@ -552,6 +558,7 @@ class TestHighlightImageTool:
                 event_sources=None,
                 chat_interface=None,
                 attachment_registry=attachment_registry,
+                camera_backend=None,
             )
 
             attachment_metadata = await attachment_registry.get_attachment(
@@ -631,6 +638,7 @@ class TestHighlightImageTool:
                 event_sources=None,
                 chat_interface=None,
                 attachment_registry=attachment_registry,
+                camera_backend=None,
             )
 
             attachment_metadata = await attachment_registry.get_attachment(
@@ -716,6 +724,7 @@ class TestHighlightImageTool:
                 event_sources=None,
                 chat_interface=None,
                 attachment_registry=attachment_registry,
+                camera_backend=None,
             )
 
             attachment_metadata = await attachment_registry.get_attachment(
