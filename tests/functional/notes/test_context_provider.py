@@ -2,6 +2,7 @@
 Test the NotesContextProvider with prompt inclusion filtering.
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -488,3 +489,140 @@ async def test_notes_context_provider_handles_missing_attachments(
 
     # Missing attachment should not be displayed (logged as warning instead)
     assert "non-existent-attachment-id" not in notes_fragment
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_notes_clearing_attachments_with_empty_list(
+    pg_vector_db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """Test that passing an empty list clears attachments from a note.
+
+    This tests the fix for a bug where empty list [] was treated as None,
+    which preserved existing attachments instead of clearing them.
+    """
+    # Clean up any existing notes
+    await cleanup_notes(pg_vector_db_engine)
+
+    # Create attachment registry
+    attachment_registry = AttachmentRegistry(
+        storage_path=str(tmp_path / "attachments"),
+        db_engine=pg_vector_db_engine,
+    )
+
+    # Create test note with attachments
+    async with DatabaseContext(engine=pg_vector_db_engine) as db:
+        # Register test attachment
+        attachment_id = "test-attachment-clear"
+
+        await attachment_registry.register_attachment(
+            db_context=db,
+            attachment_id=attachment_id,
+            source_type="user",
+            source_id="test_user",
+            mime_type="application/pdf",
+            description="document.pdf",
+            size=1024,
+        )
+
+        # Create note with attachment
+        await db.notes.add_or_update(
+            title="Note With Attachments",
+            content="This note has an attachment",
+            include_in_prompt=True,
+            attachment_ids=[attachment_id],
+        )
+
+        # Verify attachment was added
+        note = await db.notes.get_by_title("Note With Attachments")
+        assert note is not None
+        assert len(note.get("attachment_ids", [])) == 1
+
+        # Now clear attachments by passing empty list
+        await db.notes.add_or_update(
+            title="Note With Attachments",
+            content="This note has an attachment",
+            include_in_prompt=True,
+            attachment_ids=[],  # Empty list should clear attachments
+        )
+
+        # Verify attachments were cleared
+        note_after = await db.notes.get_by_title("Note With Attachments")
+        assert note_after is not None
+        attachment_ids = note_after.get("attachment_ids", [])
+        # Handle case where attachment_ids is a JSON string
+        if isinstance(attachment_ids, str):
+            attachment_ids = json.loads(attachment_ids)
+        assert len(attachment_ids) == 0, (
+            f"Attachments should be cleared, but got: {attachment_ids}"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_notes_preserving_attachments_when_not_specified(
+    pg_vector_db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """Test that not passing attachment_ids preserves existing attachments.
+
+    This ensures that updating a note without specifying attachment_ids
+    does not accidentally clear existing attachments.
+    """
+    # Clean up any existing notes
+    await cleanup_notes(pg_vector_db_engine)
+
+    # Create attachment registry
+    attachment_registry = AttachmentRegistry(
+        storage_path=str(tmp_path / "attachments"),
+        db_engine=pg_vector_db_engine,
+    )
+
+    # Create test note with attachments
+    async with DatabaseContext(engine=pg_vector_db_engine) as db:
+        # Register test attachment
+        attachment_id = "test-attachment-preserve"
+
+        await attachment_registry.register_attachment(
+            db_context=db,
+            attachment_id=attachment_id,
+            source_type="user",
+            source_id="test_user",
+            mime_type="image/png",
+            description="image.png",
+            size=2048,
+        )
+
+        # Create note with attachment
+        await db.notes.add_or_update(
+            title="Note To Preserve",
+            content="Original content",
+            include_in_prompt=True,
+            attachment_ids=[attachment_id],
+        )
+
+        # Verify attachment was added
+        note = await db.notes.get_by_title("Note To Preserve")
+        assert note is not None
+        assert len(note.get("attachment_ids", [])) == 1
+
+        # Update note content without specifying attachment_ids
+        await db.notes.add_or_update(
+            title="Note To Preserve",
+            content="Updated content",
+            include_in_prompt=True,
+            # attachment_ids not specified - should preserve existing
+        )
+
+        # Verify attachments were preserved
+        note_after = await db.notes.get_by_title("Note To Preserve")
+        assert note_after is not None
+        attachment_ids = note_after.get("attachment_ids", [])
+        # Handle case where attachment_ids is a JSON string
+        if isinstance(attachment_ids, str):
+            attachment_ids = json.loads(attachment_ids)
+        assert len(attachment_ids) == 1, (
+            f"Attachments should be preserved, but got: {attachment_ids}"
+        )
+        assert attachment_id in attachment_ids
