@@ -1022,14 +1022,17 @@ class GoogleGenAIClient(BaseLLMClient):
 
             # Create the interaction stream
             # Using loop for potential reconnection logic could be added here
-            stream = await self.client.aio.interactions.create(
-                input=input_text,
-                agent=agent_name,
-                previous_interaction_id=previous_interaction_id,
-                background=True,
-                stream=True,
-                agent_config={"type": "deep-research", "thinking_summaries": "auto"},
-            )
+            create_kwargs = {
+                "input": input_text,
+                "agent": agent_name,
+                "background": True,
+                "stream": True,
+                "agent_config": {"type": "deep-research", "thinking_summaries": "auto"},
+            }
+            if previous_interaction_id:
+                create_kwargs["previous_interaction_id"] = previous_interaction_id
+
+            stream = await self.client.aio.interactions.create(**create_kwargs)
 
             interaction_id = None
             thought_summaries = []
