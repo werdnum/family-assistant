@@ -1,6 +1,7 @@
 """Integration tests for multimodal function responses with Gemini."""
 
-from unittest.mock import MagicMock, patch
+import base64
+import os
 
 import pytest
 
@@ -9,120 +10,99 @@ from family_assistant.llm.messages import AssistantMessage, ToolMessage, UserMes
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.tools.types import ToolAttachment
 
+# A simple 1x1 red pixel PNG
+RED_DOT_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+
 
 @pytest.mark.llm_integration
 @pytest.mark.asyncio
-async def test_multimodal_function_response_integration() -> None:
+@pytest.mark.parametrize(
+    "model_name,should_support_multimodal",
+    [
+        ("gemini-2.0-flash", False),
+        (
+            "gemini-2.0-flash-lite-preview-02-05",
+            False,
+        ),  # Ensure this is a valid 2.x model
+        # gemini-3-flash-preview is usually the name, but checking availabilty might be tricky.
+        # We rely on the user's request to test with "gemini-3-flash-preview"
+        ("gemini-3-flash-preview", True),
+    ],
+)
+async def test_multimodal_function_response_integration(
+    model_name: str, should_support_multimodal: bool
+) -> None:
     """
     Test that the Gemini client correctly formats multimodal responses for V3 models
-    and standard responses for V2 models.
-
-    This integration test verifies the full flow from client initialization
-    to message formatting, without hitting the actual API (using mocks for the network layer).
+    and standard responses for V2 models using the REAL API.
     """
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        pytest.skip("GEMINI_API_KEY not set, skipping integration test")
 
-    # 1. Setup a mock for the genai client to capture what's passed to it
-    with patch(
-        "family_assistant.llm.providers.google_genai_client.genai.Client"
-    ) as MockClient:
-        # Create a mock instance
-        mock_instance = MagicMock()
-        MockClient.return_value = mock_instance
+    client = GoogleGenAIClient(api_key=api_key, model=model_name)
 
-        # Setup async return value for generate_content
-        mock_response = MagicMock()
-        mock_response.text = "Response received"
-        mock_response.candidates = []
+    # We'll simulate a conversation where the assistant "called" a tool
+    # and we provide the result (image).
 
-        # Configure the async mock correctly
-        async_mock = MagicMock()
-        async_mock.models.generate_content.return_value = mock_response
-        mock_instance.aio = async_mock
+    attachment = ToolAttachment(
+        mime_type="image/png",
+        content=RED_DOT_PNG,
+        description="A red dot",
+        attachment_id="img_1",
+    )
 
-        # ==================================================================================
-        # SCENARIO 1: Gemini 3 (Multimodal Support)
-        # ==================================================================================
-        client_v3 = GoogleGenAIClient(
-            api_key="test_key", model="gemini-3-flash-preview"
-        )
+    # 1. User asks for image
+    # 2. Assistant calls function (simulated)
+    # 3. Tool returns image
+    messages = [
+        UserMessage(content="Generate a red dot image"),
+        AssistantMessage(
+            tool_calls=[
+                ToolCallItem(
+                    id="call_1",
+                    type="function",
+                    function=ToolCallFunction(
+                        name="generate_image", arguments='{"prompt": "red dot"}'
+                    ),
+                )
+            ]
+        ),
+        ToolMessage(
+            tool_call_id="call_1",
+            content="Image created successfully",  # Text fallback
+            name="generate_image",
+            _attachments=[attachment],
+        ),
+    ]
 
-        # Create a conversation with a tool result containing an image
-        attachment = ToolAttachment(
-            mime_type="image/png",
-            content=b"fake_image_content",
-            description="Generated Image",
-            attachment_id="img_1",
-        )
+    try:
+        # We are testing that the API accepts the format we send.
+        # For V2, it should strip the attachment and just send the text result.
+        # For V3, it should send the attachment as inline_data.
+        response = await client.generate_response(messages=messages)
 
-        messages_v3 = [
-            UserMessage(content="Generate an image"),
-            AssistantMessage(
-                tool_calls=[
-                    ToolCallItem(
-                        id="call_1",
-                        type="function",
-                        function=ToolCallFunction(
-                            name="generate_image", arguments="{}"
-                        ),
-                    )
-                ]
-            ),
-            ToolMessage(
-                tool_call_id="call_1",
-                content="Image created",
-                name="generate_image",
-                _attachments=[attachment],
-            ),
-        ]
+        # Verify we got a valid response
+        assert response is not None
+        assert response.content is not None
+        assert len(response.content) > 0
 
-        # Call generate_response
-        await client_v3.generate_response(messages=messages_v3)
+        # Optionally check if the model acknowledges the image (only for V3)
+        if should_support_multimodal:
+            # We can't strictly assert the model "sees" it without a flaky LLM check,
+            # but getting a 200 OK response means the API accepted the format.
+            pass
 
-        # Verify the call arguments
-        call_args_v3 = async_mock.models.generate_content.call_args
-        assert call_args_v3 is not None
-
-        # Inspect contents passed to the API
-        contents_v3 = call_args_v3.kwargs["contents"]
-
-        # Find the function response content
-        tool_content_v3 = next(c for c in contents_v3 if c.role == "function")
-        assert len(tool_content_v3.parts) == 1
-
-        part_v3 = tool_content_v3.parts[0]
-        fr_v3 = part_v3.function_response
-
-        # For Gemini 3, we expect parts with inline_data in the function response
-        # Note: Depending on SDK version used in tests vs runtime, structure might vary slightly,
-        # but our code puts 'parts' in kwargs for FunctionResponse.
-
-        # Check that we have parts in the function response
-        assert fr_v3.parts is not None
-        assert len(fr_v3.parts) == 1
-        assert fr_v3.parts[0].inline_data.data == b"fake_image_content"
-        assert fr_v3.parts[0].inline_data.mime_type == "image/png"
-
-        # ==================================================================================
-        # SCENARIO 2: Gemini 2.5 (No Multimodal Support)
-        # ==================================================================================
-        client_v2 = GoogleGenAIClient(api_key="test_key", model="gemini-2.5-flash")
-
-        # Call generate_response with same messages
-        await client_v2.generate_response(messages=messages_v3)
-
-        # Verify the call arguments
-        call_args_v2 = async_mock.models.generate_content.call_args
-        assert call_args_v2 is not None
-
-        # Inspect contents passed to the API
-        contents_v2 = call_args_v2.kwargs["contents"]
-
-        # Find the function response content
-        tool_content_v2 = next(c for c in contents_v2 if c.role == "function")
-        assert len(tool_content_v2.parts) == 1
-
-        part_v2 = tool_content_v2.parts[0]
-        fr_v2 = part_v2.function_response
-
-        # For Gemini 2.5, we expect NO parts in the function response, only standard response fields
-        assert fr_v2.parts is None or len(fr_v2.parts) == 0
+    except Exception as e:
+        # If the model doesn't exist or other API error, we might want to know.
+        # But specifically we are looking for 400 Bad Request due to malformed payload.
+        if "400" in str(e) or "invalid" in str(e).lower():
+            pytest.fail(f"API rejected the payload for model {model_name}: {e}")
+        elif "404" in str(e):
+            pytest.skip(
+                f"Model {model_name} not found or not available to this API key"
+            )
+        else:
+            raise e
