@@ -21,13 +21,7 @@ RED_DOT_PNG = base64.b64decode(
 @pytest.mark.parametrize(
     "model_name,should_support_multimodal",
     [
-        ("gemini-2.0-flash", False),
-        (
-            "gemini-2.0-flash-lite-preview-02-05",
-            False,
-        ),  # Ensure this is a valid 2.x model
-        # gemini-3-flash-preview is usually the name, but checking availabilty might be tricky.
-        # We rely on the user's request to test with "gemini-3-flash-preview"
+        ("gemini-2.5-flash", False),
         ("gemini-3-flash-preview", True),
     ],
 )
