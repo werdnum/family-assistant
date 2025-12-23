@@ -1,7 +1,7 @@
 """Test Google Deep Research Agent integration."""
 
 from collections.abc import AsyncGenerator, Generator
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -52,7 +52,10 @@ async def test_deep_research_stream_initiation(mock_genai_client: MagicMock) -> 
         mock_complete.event_id = "evt_2"
         yield mock_complete
 
-    mock_genai_client.aio.interactions.create.return_value = mock_stream_generator()
+    # create must be an awaitable that returns the generator
+    mock_genai_client.aio.interactions.create = AsyncMock(
+        return_value=mock_stream_generator()
+    )
 
     messages = [
         SystemMessage(content="You are a helpful researcher."),
@@ -104,7 +107,9 @@ async def test_deep_research_continuation(mock_genai_client: MagicMock) -> None:
         mock_complete.event_type = "interaction.complete"
         yield mock_complete
 
-    mock_genai_client.aio.interactions.create.return_value = mock_stream_generator()
+    mock_genai_client.aio.interactions.create = AsyncMock(
+        return_value=mock_stream_generator()
+    )
 
     # Setup history with previous interaction ID
     prev_metadata = GeminiProviderMetadata(interaction_id="inter_123")
@@ -147,7 +152,9 @@ async def test_deep_research_thought_summaries(mock_genai_client: MagicMock) -> 
         mock_complete.event_type = "interaction.complete"
         yield mock_complete
 
-    mock_genai_client.aio.interactions.create.return_value = mock_stream_generator()
+    mock_genai_client.aio.interactions.create = AsyncMock(
+        return_value=mock_stream_generator()
+    )
 
     messages = [UserMessage(content="Test")]
     events = []
