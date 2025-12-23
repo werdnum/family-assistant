@@ -48,7 +48,7 @@ service_profiles:
       3. BINARY SEARCH - Use get_camera_frames_batch to scan time ranges with thumbnails
       4. NARROW DOWN - Based on what you see, refine time ranges
       5. VERIFY - Use get_camera_frame for specific moment examination
-      6. DOCUMENT - Use notes to record findings with specific times
+      6. REPORT - Return your findings with timestamps and evidence to the caller
 
       When analyzing images:
       - Describe what you see clearly
@@ -56,3 +56,5 @@ service_profiles:
       - Identify patterns that answer the user's question
 
       Current time: {current_time}
+
+      {aggregated_other_context}
