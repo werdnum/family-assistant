@@ -835,6 +835,14 @@ service_profiles:
           model: "gpt-4o"
       max_iterations: 25
       delegation_security_level: "unrestricted"
+      # Camera backend configuration for Reolink cameras
+      # Can be configured here or via REOLINK_CAMERAS environment variable (JSON format)
+      # Environment variable takes precedence if cameras_config is empty
+      # Example environment variable:
+      #   REOLINK_CAMERAS='{"coop": {"host": "192.168.1.100", "username": "admin", "password": "secret", "name": "Chicken Coop"}}'
+      camera_config:
+        backend: "reolink"
+        # cameras_config: {}  # Uncomment and populate, or use REOLINK_CAMERAS env var
     tools_config:
       enable_local_tools:
         - "list_cameras"
