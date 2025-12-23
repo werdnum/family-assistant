@@ -424,9 +424,8 @@ class AsteriskLiveHandler:
                         ):
                             raw_data = part.inline_data.data
 
-                            # Gemini SDK returns audio as base64-encoded string in bytes
-                            # Must decode to get actual PCM data
-                            audio_data = base64.b64decode(raw_data)
+                            # Gemini SDK returns raw audio bytes (PCM) in part.inline_data.data
+                            audio_data = raw_data
                             # Gemini output is 24kHz PCM
 
                             # Resample if needed (Gemini -> Asterisk)
