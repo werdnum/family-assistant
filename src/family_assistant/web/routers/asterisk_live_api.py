@@ -8,7 +8,6 @@ Protocol documentation: https://docs.asterisk.org/Configuration/Channel-Drivers/
 """
 
 import asyncio
-import base64
 import contextlib
 import json
 import logging
