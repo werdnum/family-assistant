@@ -73,7 +73,8 @@ async def test_deep_research_stream_initiation(mock_genai_client: MagicMock) -> 
     assert call_kwargs["agent"] == "deep-research-pro-preview-12-2025"
     assert call_kwargs["background"] is True
     assert call_kwargs["stream"] is True
-    assert call_kwargs["previous_interaction_id"] is None
+    # previous_interaction_id should be absent if not provided
+    assert "previous_interaction_id" not in call_kwargs
 
     # Verify events
     # 1. Content event
