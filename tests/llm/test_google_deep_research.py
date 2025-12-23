@@ -1,5 +1,6 @@
 """Test Google Deep Research Agent integration."""
 
+from collections.abc import AsyncGenerator, Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,7 +11,7 @@ from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 
 
 @pytest.fixture
-def mock_genai_client() -> MagicMock:
+def mock_genai_client() -> Generator[MagicMock]:
     with patch(
         "family_assistant.llm.providers.google_genai_client.genai.Client"
     ) as mock_client:
@@ -29,7 +30,7 @@ async def test_deep_research_stream_initiation(mock_genai_client: MagicMock) -> 
     )
 
     # Mock stream response
-    async def mock_stream_generator() -> MagicMock:
+    async def mock_stream_generator() -> AsyncGenerator[MagicMock]:
         # Yield start event
         mock_start = MagicMock()
         mock_start.event_type = "interaction.start"
@@ -92,7 +93,7 @@ async def test_deep_research_continuation(mock_genai_client: MagicMock) -> None:
     )
 
     # Mock stream response (minimal)
-    async def mock_stream_generator() -> MagicMock:
+    async def mock_stream_generator() -> AsyncGenerator[MagicMock]:
         mock_start = MagicMock()
         mock_start.event_type = "interaction.start"
         mock_start.interaction.id = "inter_456"
@@ -128,7 +129,7 @@ async def test_deep_research_thought_summaries(mock_genai_client: MagicMock) -> 
         api_key="test", model="deep-research-pro-preview-12-2025"
     )
 
-    async def mock_stream_generator() -> MagicMock:
+    async def mock_stream_generator() -> AsyncGenerator[MagicMock]:
         mock_start = MagicMock()
         mock_start.event_type = "interaction.start"
         mock_start.interaction.id = "inter_123"
