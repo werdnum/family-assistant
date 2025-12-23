@@ -832,7 +832,7 @@ service_profiles:
           model: "gemini-3-flash-preview"
         fallback:
           provider: "openai"
-          model: "gpt-4o"
+          model: "gpt-5.2"
       max_iterations: 25
       delegation_security_level: "unrestricted"
       # Camera backend configuration for Reolink cameras
@@ -850,9 +850,6 @@ service_profiles:
         - "get_camera_frame"
         - "get_camera_frames_batch"
         - "get_camera_recordings"
-        - "add_or_update_note"
-        - "get_note"
-        - "list_notes"
         - "attach_to_response"
         - "get_attachment_info"
       enable_mcp_server_ids: []
