@@ -1,0 +1,36 @@
+name: Auto Request Review
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+
+jobs:
+  auto-request-review:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Request review from werdnum
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const reviewers = ['werdnum'];
+              const { owner, repo, number } = context.issue;
+
+              // Check if werdnum is the author
+              if (context.payload.pull_request.user.login === 'werdnum') {
+                console.log('User werdnum is the author, skipping review request.');
+                return;
+              }
+
+              await github.rest.pulls.requestReviewers({
+                owner,
+                repo,
+                pull_number: number,
+                reviewers: reviewers
+              });
+              console.log(`Requested review from ${reviewers.join(', ')}`);
+            } catch (error) {
+              console.log('Error requesting review:', error.message);
+            }
