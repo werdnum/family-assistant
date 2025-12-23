@@ -1,13 +1,14 @@
-
-import asyncio
 import unittest
-from unittest.mock import MagicMock, AsyncMock, patch
+from collections.abc import AsyncGenerator
+from unittest.mock import AsyncMock, MagicMock
+
+from google.genai.types import Blob, Part
 
 from family_assistant.web.routers.asterisk_live_api import AsteriskLiveHandler
-from google.genai.types import Blob, Part, Content, LiveServerMessage
+
 
 class TestAsteriskLiveHandler(unittest.IsolatedAsyncioTestCase):
-    async def asyncSetUp(self):
+    async def asyncSetUp(self) -> None:
         self.mock_websocket = AsyncMock()
         self.mock_client = MagicMock()
         self.mock_config = MagicMock()
@@ -18,18 +19,20 @@ class TestAsteriskLiveHandler(unittest.IsolatedAsyncioTestCase):
         self.handler = AsteriskLiveHandler(
             websocket=self.mock_websocket,
             client=self.mock_client,
-            gemini_live_config=self.mock_config
+            gemini_live_config=self.mock_config,
         )
-        self.handler.format = "slin16" # Pre-configure format to avoid waiting loop in run()
+        self.handler.format = (
+            "slin16"  # Pre-configure format to avoid waiting loop in run()
+        )
 
-    async def test_receive_from_gemini_forwards_audio(self):
+    async def test_receive_from_gemini_forwards_audio(self) -> None:
         """Test that audio received from Gemini is correctly forwarded to Asterisk."""
         # Setup the mock Gemini session
         mock_session = MagicMock()
         self.handler.gemini_session = mock_session
 
         # Create a mock response with raw audio bytes
-        raw_audio = b'\x01\x02\x03\x04' * 100 # Some dummy audio data
+        raw_audio = b"\x01\x02\x03\x04" * 100  # Some dummy audio data
         blob = Blob(data=raw_audio, mime_type="audio/pcm;rate=24000")
         part = Part(inline_data=blob)
 
@@ -37,7 +40,7 @@ class TestAsteriskLiveHandler(unittest.IsolatedAsyncioTestCase):
         mock_response.server_content.model_turn.parts = [part]
 
         # Configure receive to yield the response then cancel
-        async def mock_receive():
+        async def mock_receive() -> AsyncGenerator[MagicMock]:
             yield mock_response
 
         mock_session.receive.return_value = mock_receive()
@@ -65,43 +68,35 @@ class TestAsteriskLiveHandler(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(sent_data, bytes)
         self.assertGreater(len(sent_data), 0)
 
-    async def test_receive_from_gemini_handles_invalid_format_gracefully(self):
+    async def test_receive_from_gemini_handles_invalid_format_gracefully(self) -> None:
         """Test that valid-but-odd audio data doesn't crash the handler."""
         # This covers the specific bug case where previous code assumed base64
         mock_session = MagicMock()
         self.handler.gemini_session = mock_session
 
         # Data that isn't valid base64 (length not multiple of 4)
-        raw_audio = b'\x00\x01\x02'
+        raw_audio = b"\x00\x01\x02"
         blob = Blob(data=raw_audio, mime_type="audio/pcm;rate=24000")
         part = Part(inline_data=blob)
 
         mock_response = MagicMock()
         mock_response.server_content.model_turn.parts = [part]
 
-        async def mock_receive():
+        async def mock_receive() -> AsyncGenerator[MagicMock]:
             yield mock_response
 
         mock_session.receive.return_value = mock_receive()
 
         # No resampler for simplicity (or simplistic one)
         self.handler.gemini_to_asterisk_resampler = None
-        self.handler.optimal_frame_size = 1 # Force send immediately
+        self.handler.optimal_frame_size = 1  # Force send immediately
 
         await self.handler._receive_from_gemini()
 
         # It should have buffered/sent the 3 bytes without crashing
-        # The loop logic:
-        # while len(self.audio_buffer) >= self.optimal_frame_size:
-        #   chunk = self.audio_buffer[: self.optimal_frame_size]
-        #   del self.audio_buffer[: self.optimal_frame_size]
-        #   await self.websocket.send_bytes(bytes(chunk))
-
-        # If optimal_frame_size is 1, and we have 3 bytes, it should send 3 times.
-        # self.mock_websocket.send_bytes.assert_called()
-        # Verify calls.
-
-        self.assertEqual(self.handler.audio_buffer, bytearray()) # Should be empty if all sent
+        self.assertEqual(
+            self.handler.audio_buffer, bytearray()
+        )  # Should be empty if all sent
 
         # Check that we sent 3 bytes total.
         # call_args_list is a list of calls.
@@ -112,5 +107,6 @@ class TestAsteriskLiveHandler(unittest.IsolatedAsyncioTestCase):
         sent_data = b"".join([c[0][0] for c in calls])
         self.assertEqual(sent_data, raw_audio)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()
