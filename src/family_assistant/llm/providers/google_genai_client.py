@@ -631,8 +631,20 @@ class GoogleGenAIClient(BaseLLMClient):
         self,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = "auto",
     ) -> list[Any]:
-        """Prepare all tools including function tools and grounding tools."""
+        """Prepare all tools including function tools and grounding tools.
+
+        Args:
+            tools: List of tool definitions in OpenAI format
+            tool_choice: Tool choice mode - "auto", "none", or specific tool name.
+                        When "none", returns empty list to prevent any tool calls.
+        """
+        # When tool_choice is "none", don't include any tools at all
+        # This forces the model to return a text response
+        if tool_choice == "none":
+            return []
+
         all_tools = []
 
         # Add function tools if provided
@@ -725,7 +737,8 @@ class GoogleGenAIClient(BaseLLMClient):
                 generation_config.top_k = config_params["top_k"]
 
             # Prepare all tools (function tools + grounding tools)
-            all_tools = self._prepare_all_tools(tools)
+            # Pass tool_choice to respect "none" mode which returns empty list
+            all_tools = self._prepare_all_tools(tools, tool_choice)
 
             # Add tools to config if any are available
             if all_tools:
@@ -734,6 +747,15 @@ class GoogleGenAIClient(BaseLLMClient):
                 # function calls and thought signatures
                 generation_config.automatic_function_calling = (
                     types.AutomaticFunctionCallingConfig(disable=True)
+                )
+
+            # When tool_choice is "none", explicitly configure the model to not call functions
+            # This ensures the model returns text even if tools were provided earlier in conversation
+            if tool_choice == "none":
+                generation_config.tool_config = types.ToolConfig(
+                    function_calling_config=types.FunctionCallingConfig(
+                        mode=types.FunctionCallingConfigMode.NONE
+                    )
                 )
 
             response = await self.client.aio.models.generate_content(
@@ -1183,7 +1205,8 @@ class GoogleGenAIClient(BaseLLMClient):
                 generation_config.top_k = config_params["top_k"]
 
             # Prepare all tools (function tools + grounding tools)
-            all_tools = self._prepare_all_tools(tools)
+            # Pass tool_choice to respect "none" mode which returns empty list
+            all_tools = self._prepare_all_tools(tools, tool_choice)
 
             # Add tools to config if any are available
             if all_tools:
@@ -1193,8 +1216,15 @@ class GoogleGenAIClient(BaseLLMClient):
                 generation_config.automatic_function_calling = (
                     types.AutomaticFunctionCallingConfig(disable=True)
                 )
-                # TODO: The tool_choice parameter is not currently mapped to Google's API
-                # This matches the behavior of the non-streaming implementation
+
+            # When tool_choice is "none", explicitly configure the model to not call functions
+            # This ensures the model returns text even if tools were provided earlier in conversation
+            if tool_choice == "none":
+                generation_config.tool_config = types.ToolConfig(
+                    function_calling_config=types.FunctionCallingConfig(
+                        mode=types.FunctionCallingConfigMode.NONE
+                    )
+                )
 
             # Make streaming API call using generate_content_stream
             stream_response = await self.client.aio.models.generate_content_stream(
