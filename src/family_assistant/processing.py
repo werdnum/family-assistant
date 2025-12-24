@@ -501,6 +501,21 @@ class ProcessingService:
                 messages[0] = SystemMessage(
                     content=original_system_content + iteration_suffix
                 )
+            elif is_final_iteration and has_thought_signatures:
+                # When thought signatures are present, we can't modify the system prompt
+                # Instead, add a user message with the final iteration instruction
+                # This ensures the model knows it must summarize its findings
+                final_iteration_instruction = UserMessage(
+                    content=(
+                        "[SYSTEM: This is the final processing iteration. Tools are no longer available. "
+                        "You MUST now provide your final response summarizing your findings and conclusions. "
+                        "Do NOT output raw JSON or tool call arguments - provide a natural language response to the user.]"
+                    )
+                )
+                messages.append(final_iteration_instruction)
+                logger.info(
+                    "Added final iteration instruction as user message (thought signatures prevent system prompt modification)"
+                )
 
             # Stream from LLM
             accumulated_content = []
