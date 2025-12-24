@@ -7,13 +7,6 @@
       }
     }
   },
-  "enabledPlugins": {
-    "bash-guard@werdnum-plugins": true,
-    "format-and-lint@werdnum-plugins": true,
-    "guardian@werdnum-plugins": true,
-    "development-agents@werdnum-plugins": true,
-    "python-utils@werdnum-plugins": true
-  },
   "hooks": {
     "SessionStart": [
       {
@@ -27,6 +20,14 @@
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "bash-guard@werdnum-plugins": true,
+    "format-and-lint@werdnum-plugins": true,
+    "guardian@werdnum-plugins": true,
+    "development-agents@werdnum-plugins": true,
+    "python-utils@werdnum-plugins": true,
+    "pyright-lsp@werdnum-plugins": true
   }
 }
 
