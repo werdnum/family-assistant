@@ -71,6 +71,7 @@ async def llm_client_factory() -> Callable[
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
+        ("openai", "gpt-5.2"),
         ("google", "gemini-2.5-flash-lite"),
     ],
 )
