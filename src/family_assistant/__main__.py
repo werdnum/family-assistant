@@ -592,10 +592,21 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> AppConfig:
 
     # 4. Load other config files (Prompts, MCP)
     # Load prompts from YAML file into the profile's prompts
+    # Also extract service_profiles section for profile-specific prompt overrides
+    # ast-grep-ignore: no-dict-any - YAML-loaded prompt configs have flexible structure
+    prompts_yaml_service_profiles: dict[str, dict[str, Any]] = {}
     try:
         with open("prompts.yaml", encoding="utf-8") as f:
             loaded_prompts = yaml.safe_load(f)
             if isinstance(loaded_prompts, dict):
+                # Extract service_profiles section for later merging into individual profiles
+                prompts_yaml_service_profiles = loaded_prompts.pop(
+                    "service_profiles", {}
+                )
+                if prompts_yaml_service_profiles:
+                    logger.info(
+                        f"Found {len(prompts_yaml_service_profiles)} profile-specific prompt overrides in prompts.yaml"
+                    )
                 profile_proc_config["prompts"] = loaded_prompts
                 logger.info(
                     "Successfully loaded prompts from prompts.yaml into profile."
@@ -633,6 +644,22 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> AppConfig:
         resolved_profile_config["id"] = profile_def["id"]  # Ensure ID is set
         resolved_profile_config["description"] = profile_def.get("description", "")
 
+        # Merge profile-specific prompts from prompts.yaml service_profiles section
+        # This is merged BEFORE config.yaml prompts, so config.yaml takes precedence
+        profile_id = profile_def["id"]
+        if profile_id in prompts_yaml_service_profiles:
+            prompts_yaml_profile_prompts = prompts_yaml_service_profiles[profile_id]
+            if isinstance(prompts_yaml_profile_prompts, dict):
+                resolved_profile_config["processing_config"]["prompts"] = (
+                    deep_merge_dicts(
+                        resolved_profile_config["processing_config"].get("prompts", {}),
+                        prompts_yaml_profile_prompts,
+                    )
+                )
+                logger.info(
+                    f"Merged prompts from prompts.yaml service_profiles for profile '{profile_id}'"
+                )
+
         # Merge processing_config
         if "processing_config" in profile_def and isinstance(
             profile_def["processing_config"], dict
@@ -654,6 +681,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> AppConfig:
                 "history_max_age_hours",
                 "web_max_history_messages",
                 "web_history_max_age_hours",
+                "max_iterations",  # Maximum tool call iterations per request
                 "delegation_security_level",  # Add delegation_security_level here
                 "retry_config",  # Add retry_config for LLM provider retry/fallback configuration
                 "camera_config",  # Camera backend configuration for camera_analyst profile
