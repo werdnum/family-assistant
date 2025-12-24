@@ -32,39 +32,50 @@ from family_assistant.camera.protocol import (
     Recording,
 )
 
+if TYPE_CHECKING:
+    from datetime import datetime
+
+    from reolink_aio.api import (  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]  # reolink_aio is optional dependency, not installed in all environments
+        Host,
+    )
+    from reolink_aio.enums import (  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]  # reolink_aio is optional dependency, not installed in all environments
+        VodRequestType,
+    )
+    from reolink_aio.typings import (  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]  # reolink_aio is optional dependency, not installed in all environments
+        VOD_trigger,
+    )
+
 try:
     import cv2  # pyright: ignore[reportMissingImports]
     import numpy as np  # pyright: ignore[reportMissingImports]
     from reolink_aio.api import Host  # type: ignore[import-not-found]
+    from reolink_aio.enums import VodRequestType  # type: ignore[import-not-found]
+    from reolink_aio.typings import VOD_trigger  # type: ignore[import-not-found]
 
     REOLINK_AVAILABLE = True
 except ImportError:
     REOLINK_AVAILABLE = False
-    Host = None  # type: ignore[assignment]
-    cv2 = None  # type: ignore[assignment]
-    np = None  # type: ignore[assignment]
 
-if TYPE_CHECKING:
-    from datetime import datetime
-
-    from reolink_aio.api import Host as HostType  # type: ignore[import-not-found]
-else:
-    HostType = Any
+# Type alias for Host - use actual type when available, Any otherwise
+_AnyType = Any  # Keep reference for type alias
+# pylint: disable-next=using-generic-type-syntax-in-unsupported-version  # Python 3.12+ type syntax, project requires 3.12+
+type HostType = Host if REOLINK_AVAILABLE else _AnyType  # type: ignore[possibly-undefined]  # Host only defined when reolink_aio available
 
 logger = logging.getLogger(__name__)
 
 # Environment variable for camera configuration
 REOLINK_CAMERAS_ENV = "REOLINK_CAMERAS"
 
-# Mapping from Reolink VOD triggers to our event types
-TRIGGER_TO_EVENT_TYPE: dict[str, str] = {
-    "person": "person",
-    "face": "person",
-    "vehicle": "vehicle",
-    "car": "vehicle",
-    "dog_cat": "pet",
-    "pet": "pet",
-    "motion": "motion",
+# Mapping from VOD_trigger flag names to our event types
+# VOD_trigger is an IntFlag with values: PERSON, VEHICLE, ANIMAL, MOTION, FACE, etc.
+VOD_TRIGGER_TO_EVENT_TYPE: dict[str, str] = {
+    "PERSON": "person",
+    "FACE": "person",
+    "VEHICLE": "vehicle",
+    "ANIMAL": "pet",
+    "MOTION": "motion",
+    "DOORBELL": "doorbell",
+    "PACKAGE": "package",
 }
 
 # VOD split time for searching recordings (5 minutes per chunk)
@@ -140,6 +151,20 @@ class ReolinkBackend:
             camera_id: asyncio.Lock() for camera_id in cameras
         }
 
+    def _validate_camera_id(self, camera_id: str) -> None:
+        """Validate that camera_id exists.
+
+        Args:
+            camera_id: ID of the camera.
+
+        Raises:
+            ValueError: If camera_id is unknown.
+        """
+        if camera_id not in self._cameras:
+            available = ", ".join(self._cameras.keys())
+            msg = f"Unknown camera ID: '{camera_id}'. Available cameras: {available}"
+            raise ValueError(msg)
+
     async def _get_or_create_host(self, camera_id: str) -> HostType:
         """Get or create Host instance for camera.
 
@@ -152,9 +177,7 @@ class ReolinkBackend:
         Raises:
             ValueError: If camera_id is unknown.
         """
-        if camera_id not in self._cameras:
-            msg = f"Unknown camera ID: {camera_id}"
-            raise ValueError(msg)
+        self._validate_camera_id(camera_id)
 
         # Check if we already have a host connection
         if camera_id in self._hosts:
@@ -240,6 +263,7 @@ class ReolinkBackend:
         Returns:
             List of CameraEvent objects matching the criteria.
         """
+        self._validate_camera_id(camera_id)
         async with self._locks[camera_id]:
             host = await self._get_or_create_host(camera_id)
             config = self._cameras[camera_id]
@@ -258,18 +282,23 @@ class ReolinkBackend:
                 )
 
                 for vod_file in vod_files:
-                    # Get triggers from the VOD file
-                    triggers = getattr(vod_file, "triggers", [])
-                    if not triggers:
+                    # Get triggers from the VOD file (VOD_trigger is an IntFlag)
+                    trigger_flags = vod_file.triggers
+                    if not trigger_flags or trigger_flags == VOD_trigger.NONE:
                         continue
 
-                    for trigger in triggers:
-                        trigger_lower = trigger.lower()
-                        # Map trigger to standard event type, or use the raw trigger
-                        if trigger_lower in TRIGGER_TO_EVENT_TYPE:
-                            event_type = TRIGGER_TO_EVENT_TYPE[trigger_lower]
-                        else:
-                            event_type = trigger_lower
+                    # Iterate over each flag that is set in the IntFlag
+                    for trigger_flag in VOD_trigger:
+                        if trigger_flag == VOD_trigger.NONE:
+                            continue
+                        if trigger_flag not in trigger_flags:
+                            continue
+
+                        # Map trigger flag to event type
+                        trigger_name = trigger_flag.name or str(trigger_flag)
+                        event_type = VOD_TRIGGER_TO_EVENT_TYPE.get(
+                            trigger_name, trigger_name.lower()
+                        )
 
                         # Filter by event type if specified
                         if event_types and event_type not in event_types:
@@ -284,7 +313,7 @@ class ReolinkBackend:
                                 confidence=None,  # Reolink doesn't provide confidence
                                 metadata={
                                     "filename": vod_file.file_name,
-                                    "raw_trigger": trigger,
+                                    "raw_trigger": trigger_name,
                                 },
                             )
                         )
@@ -311,6 +340,7 @@ class ReolinkBackend:
         Returns:
             List of Recording objects representing available footage.
         """
+        self._validate_camera_id(camera_id)
         async with self._locks[camera_id]:
             host = await self._get_or_create_host(camera_id)
             config = self._cameras[camera_id]
@@ -377,6 +407,7 @@ class ReolinkBackend:
             ValueError: If no recording exists at the timestamp.
             RuntimeError: If frame extraction fails.
         """
+        self._validate_camera_id(camera_id)
         async with self._locks[camera_id]:
             host = await self._get_or_create_host(camera_id)
             config = self._cameras[camera_id]
@@ -418,7 +449,7 @@ class ReolinkBackend:
                     channel,
                     target_file.file_name,
                     "sub",
-                    "RTMP",  # RTMP or RTSP depending on camera support
+                    VodRequestType.FLV,  # FLV is more reliable than RTMP
                 )
 
                 # Extract frame using OpenCV in a thread
@@ -484,6 +515,7 @@ class ReolinkBackend:
         Returns:
             List of FrameWithTimestamp objects with timestamps and JPEG bytes.
         """
+        self._validate_camera_id(camera_id)
         frames: list[FrameWithTimestamp] = []
 
         # Calculate timestamps

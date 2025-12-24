@@ -199,8 +199,16 @@ async def list_cameras_tool(
             }
             for cam in cameras
         ]
+        # Include camera IDs in text so LLM knows what IDs to use
+        if cameras:
+            camera_summary = ", ".join(
+                f"'{cam.id}' ({cam.name}, {cam.status})" for cam in cameras
+            )
+            text = f"Found {len(cameras)} camera(s): {camera_summary}"
+        else:
+            text = "No cameras configured"
         return ToolResult(
-            text=f"Found {len(cameras)} camera(s)",
+            text=text,
             data={"cameras": camera_list, "count": len(cameras)},
         )
     except Exception as e:
@@ -251,6 +259,9 @@ async def search_camera_events_tool(
             text=f"Found {len(events)} event(s) on camera '{camera_id}' between {start_time} and {end_time}",
             data={"events": event_list, "count": len(events)},
         )
+    except ValueError as e:
+        # Expected errors (invalid camera ID, etc.) - return cleanly without traceback
+        return ToolResult(data={"error": str(e)})
     except Exception as e:
         logger.exception("Error searching camera events")
         return ToolResult(data={"error": f"Failed to search events: {e}"})
@@ -290,7 +301,8 @@ async def get_camera_frame_tool(
             ],
         )
     except ValueError as e:
-        return ToolResult(data={"error": f"No recording at timestamp: {e}"})
+        # Expected errors (invalid camera ID, no recording, etc.) - return cleanly
+        return ToolResult(data={"error": str(e)})
     except Exception as e:
         logger.exception("Error getting camera frame")
         return ToolResult(data={"error": f"Failed to get frame: {e}"})
@@ -350,6 +362,9 @@ async def get_camera_frames_batch_tool(
                 "count": len(frames),
             },
         )
+    except ValueError as e:
+        # Expected errors (invalid camera ID, etc.) - return cleanly
+        return ToolResult(data={"error": str(e)})
     except Exception as e:
         logger.exception("Error getting camera frames batch")
         return ToolResult(data={"error": f"Failed to get frames: {e}"})
@@ -397,6 +412,9 @@ async def get_camera_recordings_tool(
             text=f"Found {len(recordings)} recording segment(s) on camera '{camera_id}' ({total_duration / 3600:.1f} hours total)",
             data={"recordings": recording_list, "count": len(recordings)},
         )
+    except ValueError as e:
+        # Expected errors (invalid camera ID, etc.) - return cleanly
+        return ToolResult(data={"error": str(e)})
     except Exception as e:
         logger.exception("Error getting camera recordings")
         return ToolResult(data={"error": f"Failed to get recordings: {e}"})

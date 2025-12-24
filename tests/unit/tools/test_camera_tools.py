@@ -302,7 +302,7 @@ async def test_get_camera_frame_not_found(
     data = result.get_data()
     assert isinstance(data, dict)
     assert "error" in data
-    assert "No recording at timestamp" in data["error"]
+    assert "No frame available" in data["error"]
 
 
 @pytest.mark.asyncio

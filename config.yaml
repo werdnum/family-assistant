@@ -833,7 +833,7 @@ service_profiles:
         fallback:
           provider: "openai"
           model: "gpt-5.2"
-      max_iterations: 25
+      max_iterations: 50
       delegation_security_level: "unrestricted"
       # Camera backend configuration for Reolink cameras
       # Can be configured here or via REOLINK_CAMERAS environment variable (JSON format)
