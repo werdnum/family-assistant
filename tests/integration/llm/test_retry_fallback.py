@@ -243,6 +243,7 @@ async def test_non_retriable_error_goes_to_fallback(
     [
         ("openai", "gpt-4.1-nano", "google", "gemini-2.5-flash-lite"),
         ("google", "gemini-2.5-flash-lite", "openai", "gpt-4.1-nano"),
+        ("google", "gemini-2.5-flash-lite", "openai", "gpt-5.2"),
     ],
 )
 async def test_real_provider_fallback(
