@@ -181,7 +181,7 @@ if [ -f "pyproject.toml" ]; then
     
     # Install dependencies using uv sync to respect lock file
     echo "Installing Python dependencies..."
-    uv sync --extra dev
+    uv sync --extra dev --extra reolink
 
     uv pip install poethepoet pytest-xdist pre-commit
     
@@ -320,6 +320,8 @@ if [ "$RUNNING_AS_ROOT" = "true" ]; then
 fi
 
 echo "Workspace setup complete!"
+
+happy doctor clean
 
 # Execute the command passed to the container
 exec "$@"

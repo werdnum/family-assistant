@@ -153,4 +153,4 @@ RUN chmod +x /usr/local/bin/setup-workspace.sh \
 # Final user and entrypoint
 USER claude
 ENTRYPOINT ["/usr/local/bin/setup-workspace.sh"]
-CMD ["happy", "daemon", "start-sync"]
+CMD ["sh", "-c", "happy daemon start-sync"]
