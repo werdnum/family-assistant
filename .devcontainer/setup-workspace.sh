@@ -313,6 +313,27 @@ $CLAUDE_BIN mcp add --scope user serena -- sh -c "$(which uvx) -q --from git+htt
 $CLAUDE_BIN mcp add --scope user playwright $(which npx) -- -y -q @playwright/mcp@latest --no-sandbox --allowed-origins "localhost:8000;localhost:5173;localhost:8001;unpkg.com;cdn.jsdelivr.net;cdnjs.cloudflare.com;cdn.simplecss.org;devcontainer-backend-1" --headless --isolated --browser chromium
 # $CLAUDE_BIN mcp add --scope user github -t http https://api.githubcopilot.com/mcp/ -H "Authorization: Bearer $GITHUB_TOKEN"
 
+# Configure Claude plugin marketplace from local clone
+# Note: Using local path because Claude Code's git auth handler doesn't work with GitHub URLs
+PLUGINS_DIR="/home/claude/claude-code-plugins"
+echo "Setting up Claude plugin marketplace..."
+if [ ! -d "$PLUGINS_DIR" ]; then
+    echo "Cloning claude-code-plugins repository..."
+    if [ -n "$GITHUB_TOKEN" ]; then
+        git clone "https://${GITHUB_TOKEN}@github.com/werdnum/claude-code-plugins.git" "$PLUGINS_DIR"
+    else
+        git clone "https://github.com/werdnum/claude-code-plugins.git" "$PLUGINS_DIR"
+    fi
+    if [ "$RUNNING_AS_ROOT" = "true" ]; then
+        chown -R claude:claude "$PLUGINS_DIR"
+    fi
+fi
+
+# Add the marketplace by file path (remove first to avoid duplicates)
+$CLAUDE_BIN plugin marketplace remove claude-code-plugins 2>/dev/null || true
+$CLAUDE_BIN plugin marketplace add "$PLUGINS_DIR"
+echo "Claude plugin marketplace configured from local path"
+
 # Ensure proper ownership if running as root
 if [ "$RUNNING_AS_ROOT" = "true" ]; then
     # Ensure claude owns the entire workspace
