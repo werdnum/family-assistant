@@ -656,6 +656,7 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> AppConfig:
                 "web_history_max_age_hours",
                 "delegation_security_level",  # Add delegation_security_level here
                 "retry_config",  # Add retry_config for LLM provider retry/fallback configuration
+                "camera_config",  # Camera backend configuration for camera_analyst profile
             ]:
                 if scalar_key in profile_def["processing_config"]:
                     resolved_profile_config["processing_config"][scalar_key] = (
