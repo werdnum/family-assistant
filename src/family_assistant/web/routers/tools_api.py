@@ -45,15 +45,13 @@ async def execute_tool_api(
     )
 
     # --- Retrieve necessary config and services from app state ---
-    app_config = getattr(
-        request.app.state, "config", {}
-    )  # Assuming config is stored in state
+    app_config = getattr(request.app.state, "config", None)
     if not app_config:
         logger.error("Main application configuration not found in app state.")
-        # Fallback to empty dicts/defaults, but log error
         timezone_str = "UTC"
     else:
-        timezone_str = app_config.get("timezone", "UTC")
+        # Get default timezone from default profile settings
+        timezone_str = app_config.default_profile_settings.processing_config.timezone
 
     # Get infrastructure dependencies from app state
     processing_service = getattr(request.app.state, "processing_service", None)

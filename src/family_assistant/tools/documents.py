@@ -17,6 +17,7 @@ import aiofiles
 import filetype  # type: ignore[import-untyped]
 from sqlalchemy import text
 
+from family_assistant.config_models import AppConfig
 from family_assistant.indexing.ingestion import process_document_ingestion_request
 from family_assistant.storage.vector_search import (
     VectorSearchQuery,
@@ -554,9 +555,11 @@ async def ingest_document_from_url_tool(
     # Get document_storage_path from config
     document_storage_path_str = None
     if exec_context.processing_service and exec_context.processing_service.app_config:
-        document_storage_path_str = exec_context.processing_service.app_config.get(
-            "document_storage_path"
-        )
+        app_config = exec_context.processing_service.app_config
+        if isinstance(app_config, AppConfig):
+            document_storage_path_str = app_config.document_storage_path
+        elif isinstance(app_config, dict):
+            document_storage_path_str = app_config.get("document_storage_path")
 
     if not document_storage_path_str:
         document_storage_path_str = os.getenv("DOCUMENT_STORAGE_PATH")

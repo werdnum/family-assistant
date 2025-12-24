@@ -278,14 +278,13 @@ async def test_document_indexing_and_query_e2e(
     # --- Arrange: Register Task Handler ---
     # Create a TaskWorker instance for this test and register the handler
     # Use fastapi_app as the application so the test handler can access app.state
-    dummy_calendar_config = {}
     dummy_timezone_str = "UTC"
     mock_chat_interface = MagicMock()  # Create a mock ChatInterface
 
     worker = TaskWorker(
         processing_service=_create_mock_processing_service(),  # No processing service needed for this handler
         chat_interface=mock_chat_interface,  # Pass mock ChatInterface
-        calendar_config=dummy_calendar_config,
+        calendar_config=None,
         timezone_str=dummy_timezone_str,
         embedding_generator=mock_embedding_generator,  # Pass the mock generator
         engine=pg_vector_db_engine,  # Pass the database engine

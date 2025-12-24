@@ -33,7 +33,7 @@ async def test_calendar_config_from_provider() -> None:
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def mock_calendar_tool(calendar_config: CalendarConfig, summary: str) -> str:
         """Mock calendar tool that requires calendar_config."""
-        caldav_config = calendar_config.get("caldav", {})
+        caldav_config = calendar_config.get("caldav") or {}
         username = caldav_config.get("username", "NO_USER")
         return f"Calendar user: {username}, Event: {summary}"
 
@@ -177,7 +177,7 @@ async def test_calendar_config_preference() -> None:
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def mock_calendar_tool(calendar_config: CalendarConfig, summary: str) -> str:
         """Mock calendar tool that requires calendar_config."""
-        caldav_config = calendar_config.get("caldav", {})
+        caldav_config = calendar_config.get("caldav") or {}
         username = caldav_config.get("username", "NO_USER")
         return f"Calendar user: {username}, Event: {summary}"
 

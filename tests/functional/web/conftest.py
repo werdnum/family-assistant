@@ -22,6 +22,7 @@ from playwright.async_api import Page, async_playwright
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from family_assistant.assistant import Assistant
+from family_assistant.config_models import AppConfig
 from family_assistant.context_providers import (
     CalendarContextProvider,
     KnownUsersContextProvider,
@@ -400,7 +401,7 @@ async def _create_web_assistant(
 
     # Create Assistant instance
     assistant = Assistant(
-        config=test_config,
+        config=AppConfig.model_validate(test_config),
         llm_client_overrides={
             "default_assistant": mock_llm_client,
             "test_browser": mock_llm_client,

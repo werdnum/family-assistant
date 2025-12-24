@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 import aiofiles
 import pytz  # Added
 
+from family_assistant.config_models import AppConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 
 # Import storage and calendar integration for context building
@@ -94,7 +95,7 @@ class ProcessingServiceConfig:
     prompts: dict[str, str]
     timezone_str: str
     max_history_messages: int
-    history_max_age_hours: int
+    history_max_age_hours: float  # Can be fractional (e.g., 0.5 hours)
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     tools_config: dict[
         str, Any
@@ -110,7 +111,7 @@ class ProcessingServiceConfig:
     fallback_model_parameters: dict[str, dict[str, Any]] | None = None  # Corrected type
     # Web-specific history settings
     web_max_history_messages: int | None = None  # If None, uses max_history_messages
-    web_history_max_age_hours: int | None = None  # If None, uses history_max_age_hours
+    web_history_max_age_hours: float | None = None  # Can be fractional
     max_iterations: int = 5
 
 
@@ -131,8 +132,8 @@ class ProcessingService:
         service_config: ProcessingServiceConfig,  # Updated to use service_config
         context_providers: list[ContextProvider],  # NEW: List of context providers
         server_url: str | None,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        app_config: dict[str, Any],  # Keep app_config for now
+        # ast-grep-ignore: no-dict-any - Accept both AppConfig and dict for backward compatibility
+        app_config: AppConfig | dict[str, Any],
         clock: Clock | None = None,
         attachment_registry: AttachmentRegistry
         | None = None,  # AttachmentRegistry (required for attachment operations)
@@ -148,7 +149,7 @@ class ProcessingService:
             service_config: Configuration specific to this service instance.
             context_providers: A list of initialized context provider objects.
             server_url: The base URL of the web server.
-            app_config: The main application configuration dictionary (global settings).
+            app_config: The main application configuration (typed AppConfig model).
             clock: Clock instance for time operations.
             attachment_registry: AttachmentRegistry instance for handling file attachments.
             event_sources: Dictionary mapping event source IDs to EventSource instances.
@@ -202,7 +203,7 @@ class ProcessingService:
         return self.service_config.max_history_messages
 
     @property
-    def history_max_age_hours(self) -> int:
+    def history_max_age_hours(self) -> float:
         return self.service_config.history_max_age_hours
 
     @property
@@ -213,7 +214,7 @@ class ProcessingService:
         return self.service_config.max_history_messages
 
     @property
-    def web_history_max_age_hours(self) -> int:
+    def web_history_max_age_hours(self) -> float:
         # Use web-specific setting if available, otherwise fall back to default
         if self.service_config.web_history_max_age_hours is not None:
             return self.service_config.web_history_max_age_hours
@@ -1364,7 +1365,7 @@ class ProcessingService:
         return converted_parts
 
     async def _extract_conversation_attachments_context(
-        self, db_context: DatabaseContext, conversation_id: str, max_age_hours: int
+        self, db_context: DatabaseContext, conversation_id: str, max_age_hours: float
     ) -> str:
         """
         Extracts recent attachment information from the conversation and formats it for LLM context.

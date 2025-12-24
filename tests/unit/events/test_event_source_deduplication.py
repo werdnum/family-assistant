@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from family_assistant.assistant import Assistant
+from family_assistant.config_models import AppConfig
 
 
 class TestEventSourceDeduplication:
@@ -36,7 +37,6 @@ class TestEventSourceDeduplication:
                         "home_assistant_token": "test_token",
                         "home_assistant_verify_ssl": True,
                         "prompts": {},
-                        "calendar_config": {},
                         "timezone": "UTC",
                         "max_history_messages": 10,
                         "history_max_age_hours": 24,
@@ -50,7 +50,6 @@ class TestEventSourceDeduplication:
                         "home_assistant_token": "test_token",
                         "home_assistant_verify_ssl": True,
                         "prompts": {},
-                        "calendar_config": {},
                         "timezone": "UTC",
                         "max_history_messages": 10,
                         "history_max_age_hours": 24,
@@ -69,7 +68,7 @@ class TestEventSourceDeduplication:
             mock_create_ha_client.return_value = mock_ha_client
 
             # Create assistant with real dependencies
-            assistant = Assistant(config)
+            assistant = Assistant(AppConfig.model_validate(config))
             await assistant.setup_dependencies()
 
             try:
