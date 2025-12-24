@@ -842,17 +842,25 @@ class Assistant:
                             create_reolink_backend,
                         )
 
-                        camera_backend = create_reolink_backend(
-                            camera_config.get("cameras", {})
-                        )
+                        cameras_config = camera_config.get("cameras_config")
+                        camera_backend = create_reolink_backend(cameras_config)
                         if camera_backend:
                             processing_service_instance.camera_backend = camera_backend
                             logger.info(
-                                f"Camera backend initialized for profile '{profile_id}' with {len(camera_config.get('cameras', {}))} cameras"
+                                f"Camera backend initialized for profile '{profile_id}'"
+                            )
+                        else:
+                            logger.warning(
+                                f"Camera backend not created for profile '{profile_id}' "
+                                "(no config or reolink-aio unavailable)"
                             )
                     except ImportError:
                         logger.warning(
                             "Reolink backend requested but reolink-aio not installed"
+                        )
+                    except Exception:
+                        logger.exception(
+                            f"Failed to create camera backend for profile '{profile_id}'"
                         )
 
             self.processing_services_registry[profile_id] = processing_service_instance
