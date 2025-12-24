@@ -7,10 +7,13 @@ and extract frames for visual analysis using binary search methodology.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.tools.types import ToolAttachment, ToolResult
+
+# Threshold for warning about old dates (likely model confusion about current date)
+OLD_DATE_THRESHOLD = timedelta(days=30)
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
@@ -237,6 +240,16 @@ async def search_camera_events_tool(
     except ValueError as e:
         return ToolResult(data={"error": f"Invalid timestamp format: {e}"})
 
+    # Warn if dates are suspiciously old (likely model confused about current date)
+    now = datetime.now(UTC)
+    date_warning = ""
+    if now - end_dt > OLD_DATE_THRESHOLD:
+        date_warning = (
+            f" WARNING: These dates are more than {OLD_DATE_THRESHOLD.days} days in the past. "
+            f"Current time is {now.strftime('%Y-%m-%d %H:%M UTC')}. "
+            "Did you mean to search a more recent time range?"
+        )
+
     try:
         events = await exec_context.camera_backend.search_events(
             camera_id=camera_id,
@@ -255,8 +268,9 @@ async def search_camera_events_tool(
             }
             for evt in events
         ]
+        result_text = f"Found {len(events)} event(s) on camera '{camera_id}' between {start_time} and {end_time}"
         return ToolResult(
-            text=f"Found {len(events)} event(s) on camera '{camera_id}' between {start_time} and {end_time}",
+            text=result_text + date_warning,
             data={"events": event_list, "count": len(events)},
         )
     except ValueError as e:
