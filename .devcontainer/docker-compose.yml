@@ -63,6 +63,7 @@ services:
       - HOMEASSISTANT_API_KEY=${HOMEASSISTANT_API_KEY:-}
       - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY:-}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - REOLINK_CAMERAS=${REOLINK_CAMERAS:-}
       - DEBUG_LLM_MESSAGES=true
     volumes:
       # Mount workspace - you can change this to your desired host directory
