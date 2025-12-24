@@ -9,13 +9,17 @@ import sys
 import zoneinfo
 from asyncio import subprocess as asyncio_subprocess
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 import uvicorn
 
 # Import Embedding interface/clients
 from family_assistant import embeddings
+from family_assistant.config_models import AppConfig  # noqa: TC001  # Used at runtime
+from family_assistant.config_models import (  # noqa: TC001  # Used at runtime
+    CalendarConfig as PydanticCalendarConfig,
+)
 
 # Import the whole storage module for task queue functions etc.
 # --- NEW: Import ContextProvider and its implementations ---
@@ -87,9 +91,17 @@ if TYPE_CHECKING:
 
     from family_assistant.llm import LLMInterface
     from family_assistant.services.attachment_registry import AttachmentRegistry
+    from family_assistant.tools.types import CalendarConfig as CalendarConfigDict
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
+
+
+def _calendar_config_to_dict(
+    pydantic_config: PydanticCalendarConfig,
+) -> CalendarConfigDict:
+    """Convert Pydantic CalendarConfig to TypedDict format for tool functions."""
+    return cast("CalendarConfigDict", pydantic_config.model_dump(exclude_none=True))
 
 
 # Helper function (can be moved to utils if used elsewhere)
@@ -155,13 +167,12 @@ class Assistant:
 
     def __init__(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        config: dict[str, Any],
+        config: AppConfig,
         llm_client_overrides: dict[str, LLMInterface] | None = None,
         database_engine: AsyncEngine | None = None,
         server_socket: socket.socket | None = None,
     ) -> None:
-        self.config = config
+        self.config: AppConfig = config
         self._injected_database_engine = database_engine
         self.shutdown_event = asyncio.Event()
         self.server_socket = server_socket
@@ -293,7 +304,7 @@ class Assistant:
         # Ensure Playwright browsers are installed as a failsafe
         await self._ensure_playwright_browsers_installed()
 
-        logger.info(f"Using model: {self.config['model']}")
+        logger.info(f"Using model: {self.config.model}")
 
         # Create FastAPI app instance
         self.fastapi_app = create_app()
@@ -319,25 +330,23 @@ class Assistant:
         logger.info("Shared httpx.AsyncClient created.")
 
         # Check if Telegram is enabled
-        self.telegram_enabled = self.config.get("telegram_enabled", True)
+        self.telegram_enabled = self.config.telegram_enabled
 
-        if self.telegram_enabled and not self.config.get("telegram_token"):
+        if self.telegram_enabled and not self.config.telegram_token:
             raise ValueError(
                 "Telegram Bot Token is missing when telegram_enabled=True."
             )
 
-        selected_model = self.config.get("model", "")
+        selected_model = self.config.model
         if selected_model.startswith("gemini/"):
             if not os.getenv("GEMINI_API_KEY"):
                 raise ValueError("Gemini API Key is missing (GEMINI_API_KEY env var).")
             logger.info("Gemini model selected. Using GEMINI_API_KEY from environment.")
         elif selected_model.startswith("openrouter/"):
-            if not self.config.get("openrouter_api_key"):
+            if not self.config.openrouter_api_key:
                 raise ValueError("OpenRouter API Key is missing.")
-            if self.config.get(
-                "openrouter_api_key"
-            ):  # Redundant check, but for clarity
-                os.environ["OPENROUTER_API_KEY"] = self.config["openrouter_api_key"]
+            if self.config.openrouter_api_key:
+                os.environ["OPENROUTER_API_KEY"] = self.config.openrouter_api_key
             logger.info(
                 "OpenRouter model selected. OPENROUTER_API_KEY set for LiteLLM."
             )
@@ -346,8 +355,8 @@ class Assistant:
                 f"No specific API key validation for model: {selected_model}."
             )
 
-        embedding_model_name = self.config["embedding_model"]
-        embedding_dimensions = self.config["embedding_dimensions"]
+        embedding_model_name = self.config.embedding_model
+        embedding_dimensions = self.config.embedding_dimensions
         if embedding_model_name == "mock-deterministic-embedder":
             self.embedding_generator = embeddings.MockEmbeddingGenerator(
                 model_name=embedding_model_name,
@@ -386,7 +395,7 @@ class Assistant:
             self.database_engine = self._injected_database_engine
             logger.info("Using injected database engine")
         else:
-            database_url = self.config["database_url"]
+            database_url = self.config.database_url
             self.database_engine = create_engine_with_sqlite_optimizations(database_url)
             logger.info(f"Database engine created for URL: {database_url}")
 
@@ -404,13 +413,12 @@ class Assistant:
 
         # Initialize AttachmentRegistry (consolidates file storage and database metadata)
         # Must come after database engine initialization
-        attachment_storage_path = self.config.get(
-            "chat_attachment_storage_path",
-            self.config.get("attachment_config", {}).get(
-                "storage_path", "/tmp/chat_attachments"
-            ),
+        # Prefer chat_attachment_storage_path, fall back to attachment_config.storage_path
+        attachment_storage_path = (
+            self.config.chat_attachment_storage_path
+            or self.config.attachment_config.storage_path
         )
-        attachment_config = self.config.get("attachment_config")
+        attachment_config = self.config.attachment_config
 
         # Import locally to avoid circular imports
         from family_assistant.services.attachment_registry import (  # noqa: PLC0415
@@ -420,7 +428,7 @@ class Assistant:
         self.attachment_registry = AttachmentRegistry(
             storage_path=attachment_storage_path,
             db_engine=self.database_engine,
-            config=attachment_config,
+            config=attachment_config.model_dump(),
         )
 
         # Store in FastAPI app state for web access
@@ -430,10 +438,8 @@ class Assistant:
         )
 
         # Initialize PushNotificationService
-        vapid_private_key = self.config.get("pwa_config", {}).get("vapid_private_key")
-        vapid_contact_email = self.config.get("pwa_config", {}).get(
-            "vapid_contact_email"
-        )
+        vapid_private_key = self.config.pwa_config.vapid_private_key
+        vapid_contact_email = self.config.pwa_config.vapid_contact_email
 
         self.push_notification_service = PushNotificationService(
             vapid_private_key=vapid_private_key,
@@ -449,18 +455,16 @@ class Assistant:
         )
 
         # Setup error logging to database if enabled
-        error_logging_config = self.config.get("logging", {}).get("database_errors", {})
+        error_logging_enabled = self.config.logging.database_errors.enabled
         # Also check environment variable to disable for testing
-        if error_logging_config.get("enabled", True) and not os.environ.get(
+        if error_logging_enabled and not os.environ.get(
             "FAMILY_ASSISTANT_DISABLE_DB_ERROR_LOGGING"
         ):
             self.error_logging_handler = setup_error_logging(self.database_engine)
             logger.info("Database error logging handler initialized")
 
-        resolved_profiles = self.config.get("service_profiles", [])
-        default_service_profile_id = self.config.get(
-            "default_service_profile_id", "default_assistant"
-        )
+        resolved_profiles = self.config.service_profiles
+        default_service_profile_id = self.config.default_service_profile_id
 
         available_doc_files = _scan_user_docs()
         formatted_doc_list_for_tool_desc = ", ".join(available_doc_files) or "None"
@@ -469,9 +473,9 @@ class Assistant:
         # Prepare the string listing available service profiles and their descriptions
         profile_descriptions_list = []
         for profile_config_item in resolved_profiles:
-            profile_id_item = profile_config_item.get("id", "Unknown ID")
-            description_item = profile_config_item.get(
-                "description", "No description available."
+            profile_id_item = profile_config_item.id
+            description_item = (
+                profile_config_item.description or "No description available."
             )
             profile_descriptions_list.append(
                 f"- ID: {profile_id_item}, Description: {description_item}"
@@ -522,13 +526,14 @@ class Assistant:
             definitions=base_local_tools_definition,  # ALL local tools
             implementations=local_tool_implementations,  # ALL implementations
             embedding_generator=self.embedding_generator,
-            calendar_config=self.config.get(
-                "calendar_config"
-            ),  # Top-level calendar config
+            calendar_config=_calendar_config_to_dict(self.config.calendar_config),
         )
 
         # Create root MCP provider with ALL configured servers
-        all_mcp_servers_config = self.config.get("mcp_config", {}).get("mcpServers", {})
+        all_mcp_servers_config = {
+            server_id: server_config.model_dump()
+            for server_id, server_config in self.config.mcp_config.mcpServers.items()
+        }
         root_mcp_provider = MCPToolsProvider(
             mcp_server_configs=all_mcp_servers_config,
             initialization_timeout_seconds=60,
@@ -550,17 +555,15 @@ class Assistant:
         )
 
         for profile_conf in resolved_profiles:
-            profile_id = profile_conf["id"]
+            profile_id = profile_conf.id
             logger.info(
                 f"Initializing ProcessingService for profile ID: '{profile_id}'"
             )
-            profile_proc_conf_dict = profile_conf["processing_config"]
-            profile_tools_conf_dict = profile_conf["tools_config"]
-            profile_chat_id_map = profile_conf.get("chat_id_to_name_map", {})
+            profile_proc_conf = profile_conf.processing_config
+            profile_tools_conf = profile_conf.tools_config
+            profile_chat_id_map = profile_conf.chat_id_to_name_map
 
-            profile_llm_model = profile_proc_conf_dict.get(
-                "llm_model", self.config["model"]
-            )
+            profile_llm_model = profile_proc_conf.llm_model or self.config.model
 
             if profile_id in self.llm_client_overrides:
                 llm_client_for_profile = self.llm_client_overrides[profile_id]
@@ -569,79 +572,47 @@ class Assistant:
                 )
             else:
                 # Check if using retry_config format
-                if "retry_config" in profile_proc_conf_dict:
-                    # Direct retry_config format
-                    retry_config = profile_proc_conf_dict["retry_config"]
+                if profile_proc_conf.retry_config is not None:
+                    # Direct retry_config format - convert to dict for LLMClientFactory
+                    retry_config_dict = profile_proc_conf.retry_config.model_dump(
+                        exclude_none=True
+                    )
                     # Add shared llm_parameters to both primary and fallback if not already specified
-                    llm_params = self.config.get("llm_parameters", {})
-                    if "primary" in retry_config:
+                    llm_params = self.config.llm_parameters
+                    if "primary" in retry_config_dict:
                         for k, v in llm_params.items():
-                            if k not in retry_config["primary"]:
-                                retry_config["primary"][k] = v
-                    if "fallback" in retry_config:
+                            if k not in retry_config_dict["primary"]:
+                                retry_config_dict["primary"][k] = v
+                    if (
+                        "fallback" in retry_config_dict
+                        and retry_config_dict["fallback"]
+                    ):
                         for k, v in llm_params.items():
-                            if k not in retry_config["fallback"]:
-                                retry_config["fallback"][k] = v
+                            if k not in retry_config_dict["fallback"]:
+                                retry_config_dict["fallback"][k] = v
 
                     # Wrap in a config dict with retry_config key
-                    client_config = {"retry_config": retry_config}
+                    # ast-grep-ignore: no-dict-any - Temporary dict passed to RetryingLLMClient
+                    client_config: dict[str, Any] = {"retry_config": retry_config_dict}
 
-                    logger.info(
-                        f"Creating RetryingLLMClient for profile '{profile_id}' with primary='{retry_config.get('primary', {}).get('model')}', "
-                        f"fallback='{retry_config.get('fallback', {}).get('model')}'"
+                    primary_model = retry_config_dict.get("primary", {}).get("model")
+                    fallback_model = (
+                        retry_config_dict.get("fallback", {}).get("model")
+                        if retry_config_dict.get("fallback")
+                        else None
                     )
-                elif "fallback_model_id" in profile_proc_conf_dict:
-                    # Transform flat fallback config to retry_config format (backward compatibility)
-                    provider = profile_proc_conf_dict.get("provider", "litellm")
-                    fallback_provider = profile_proc_conf_dict.get(
-                        "fallback_provider"
-                    ) or LLMClientFactory._determine_provider(
-                        profile_proc_conf_dict["fallback_model_id"]
-                    )
-
-                    client_config = {
-                        "retry_config": {
-                            "primary": {
-                                "model": profile_llm_model,
-                                "provider": provider,
-                                **self.config.get("llm_parameters", {}),
-                            },
-                            "fallback": {
-                                "model": profile_proc_conf_dict["fallback_model_id"],
-                                "provider": fallback_provider,
-                                **self.config.get("llm_parameters", {}),
-                            },
-                        }
-                    }
-
-                    # Add any additional parameters from config to primary
-                    for key, value in profile_proc_conf_dict.items():
-                        if (
-                            key.startswith("llm_")
-                            and key != "llm_model"
-                            and not key.startswith("fallback_")
-                        ):
-                            # Remove 'llm_' prefix for the client config
-                            client_config["retry_config"]["primary"][key[4:]] = value
-
                     logger.info(
-                        f"Creating RetryingLLMClient for profile '{profile_id}' (from flat config) with primary='{profile_llm_model}', "
-                        f"fallback='{profile_proc_conf_dict['fallback_model_id']}'"
+                        f"Creating RetryingLLMClient for profile '{profile_id}' with primary='{primary_model}', "
+                        f"fallback='{fallback_model}'"
                     )
                 else:
                     # Simple configuration without retry
-                    provider = profile_proc_conf_dict.get("provider", "litellm")
+                    provider = profile_proc_conf.provider or "litellm"
                     client_config = {
                         "model": profile_llm_model,
                         "provider": provider,
-                        **self.config.get("llm_parameters", {}),
+                        **self.config.llm_parameters,
                     }
-
-                    # Add any additional parameters from config
-                    for key, value in profile_proc_conf_dict.items():
-                        if key.startswith("llm_") and key != "llm_model":
-                            # Remove 'llm_' prefix for the client config
-                            client_config[key[4:]] = value
 
                     logger.info(
                         f"Creating LLM client for profile '{profile_id}' with provider='{provider}', model='{profile_llm_model}'"
@@ -654,9 +625,7 @@ class Assistant:
                     f"Profile '{profile_id}' using client: {type(llm_client_for_profile).__name__}"
                 )
 
-            local_tools_list_from_config = profile_tools_conf_dict.get(
-                "enable_local_tools"
-            )
+            local_tools_list_from_config = profile_tools_conf.enable_local_tools
             enabled_local_tool_names = (
                 set(local_tool_implementations.keys())
                 if local_tools_list_from_config is None
@@ -682,9 +651,7 @@ class Assistant:
                     profile_specific_local_definitions.append(current_tool_def)
 
             # Build complete set of allowed tools (local + MCP)
-            mcp_server_ids_from_config = profile_tools_conf_dict.get(
-                "enable_mcp_server_ids"
-            )
+            mcp_server_ids_from_config = profile_tools_conf.enable_mcp_server_ids
 
             # Start with local tools
             all_enabled_tool_names = enabled_local_tool_names.copy()
@@ -718,19 +685,15 @@ class Assistant:
                     wrapped_provider=self.root_tools_provider,
                     allowed_tool_names=all_enabled_tool_names,
                 )
-            profile_confirm_tools_set = set(
-                profile_tools_conf_dict.get("confirm_tools", [])
-            )
+            profile_confirm_tools_set = set(profile_tools_conf.confirm_tools)
             logger.debug(
-                f"Assistant: Profile {profile_id} confirm_tools from config: {profile_tools_conf_dict.get('confirm_tools', [])}"
+                f"Assistant: Profile {profile_id} confirm_tools from config: {profile_tools_conf.confirm_tools}"
             )
             logger.debug(
                 f"Assistant: Profile {profile_id} confirm_tools_set: {profile_confirm_tools_set}"
             )
             # Get confirmation timeout from config, default to 3600 seconds (1 hour)
-            confirmation_timeout = profile_tools_conf_dict.get(
-                "confirmation_timeout_seconds", 3600.0
-            )
+            confirmation_timeout = profile_tools_conf.confirmation_timeout_seconds
             confirming_provider_for_profile = ConfirmingToolsProvider(
                 wrapped_provider=filtered_provider,
                 tools_requiring_confirmation=profile_confirm_tools_set,
@@ -740,19 +703,17 @@ class Assistant:
 
             notes_provider = NotesContextProvider(
                 get_db_context_func=self._get_db_context_for_provider,
-                prompts=profile_proc_conf_dict["prompts"],
+                prompts=profile_proc_conf.prompts,
                 attachment_registry=self.attachment_registry,
             )
             calendar_provider = CalendarContextProvider(
-                calendar_config=self.config.get(
-                    "calendar_config", {}
-                ),  # Use top-level calendar config with empty dict fallback
-                timezone_str=profile_proc_conf_dict["timezone"],
-                prompts=profile_proc_conf_dict["prompts"],
+                calendar_config=_calendar_config_to_dict(self.config.calendar_config),
+                timezone_str=profile_proc_conf.timezone,
+                prompts=profile_proc_conf.prompts,
             )
             known_users_provider = KnownUsersContextProvider(
                 chat_id_to_name_map=profile_chat_id_map,
-                prompts=profile_proc_conf_dict["prompts"],
+                prompts=profile_proc_conf.prompts,
             )
             context_providers = [
                 notes_provider,
@@ -760,8 +721,8 @@ class Assistant:
                 known_users_provider,
             ]
 
-            willyweather_api_key = self.config.get("willyweather_api_key")
-            willyweather_location_id = self.config.get("willyweather_location_id")
+            willyweather_api_key = self.config.willyweather_api_key
+            willyweather_location_id = self.config.willyweather_location_id
             if (
                 willyweather_api_key
                 and willyweather_location_id
@@ -770,19 +731,17 @@ class Assistant:
                 weather_provider = WeatherContextProvider(
                     location_id=willyweather_location_id,
                     api_key=willyweather_api_key,
-                    prompts=profile_proc_conf_dict["prompts"],
-                    timezone_str=profile_proc_conf_dict["timezone"],
+                    prompts=profile_proc_conf.prompts,
+                    timezone_str=profile_proc_conf.timezone,
                     httpx_client=self.shared_httpx_client,
                 )
                 context_providers.append(weather_provider)
 
             # --- Home Assistant Context Provider ---
-            ha_api_url = profile_proc_conf_dict.get("home_assistant_api_url")
-            ha_token = profile_proc_conf_dict.get("home_assistant_token")
-            ha_template = profile_proc_conf_dict.get("home_assistant_context_template")
-            ha_verify_ssl = profile_proc_conf_dict.get(
-                "home_assistant_verify_ssl", True
-            )
+            ha_api_url = profile_proc_conf.home_assistant_api_url
+            ha_token = profile_proc_conf.home_assistant_token
+            ha_template = profile_proc_conf.home_assistant_context_template
+            ha_verify_ssl = profile_proc_conf.home_assistant_verify_ssl
 
             if ha_api_url and ha_token:
                 # Create or reuse Home Assistant client
@@ -816,7 +775,7 @@ class Assistant:
                                 api_url=ha_api_url,
                                 token=ha_token,
                                 context_template=ha_template,
-                                prompts=profile_proc_conf_dict["prompts"],
+                                prompts=profile_proc_conf.prompts,
                                 verify_ssl=ha_verify_ssl,
                                 client=ha_client,
                             )
@@ -841,25 +800,18 @@ class Assistant:
             # --- End Home Assistant Context Provider ---
 
             service_config = ProcessingServiceConfig(
-                prompts=profile_proc_conf_dict["prompts"],
-                timezone_str=profile_proc_conf_dict["timezone"],
-                max_history_messages=profile_proc_conf_dict["max_history_messages"],
-                history_max_age_hours=profile_proc_conf_dict["history_max_age_hours"],
-                web_max_history_messages=profile_proc_conf_dict.get(
-                    "web_max_history_messages"
-                ),
-                web_history_max_age_hours=profile_proc_conf_dict.get(
-                    "web_history_max_age_hours"
-                ),
-                max_iterations=profile_proc_conf_dict.get("max_iterations", 5),
-                tools_config=profile_tools_conf_dict,
-                delegation_security_level=profile_proc_conf_dict.get(
-                    "delegation_security_level", "confirm"
-                ),
+                prompts=profile_proc_conf.prompts,
+                timezone_str=profile_proc_conf.timezone,
+                max_history_messages=profile_proc_conf.max_history_messages,
+                history_max_age_hours=profile_proc_conf.history_max_age_hours,
+                web_max_history_messages=profile_proc_conf.web_max_history_messages,
+                web_history_max_age_hours=profile_proc_conf.web_history_max_age_hours,
+                max_iterations=profile_proc_conf.max_iterations,
+                tools_config=profile_tools_conf.model_dump(),
+                delegation_security_level=profile_proc_conf.delegation_security_level,
                 id=profile_id,
-                description=profile_conf.get(
-                    "description", f"Processing profile: {profile_id}"
-                ),
+                description=profile_conf.description
+                or f"Processing profile: {profile_id}",
             )
 
             processing_service_instance = ProcessingService(
@@ -867,7 +819,7 @@ class Assistant:
                 tools_provider=confirming_provider_for_profile,
                 service_config=service_config,
                 context_providers=context_providers,
-                server_url=self.config["server_url"],
+                server_url=self.config.server_url,
                 app_config=self.config,
                 attachment_registry=self.attachment_registry,
                 event_sources=self.event_processor.sources
@@ -916,7 +868,7 @@ class Assistant:
         self.scraper_instance = PlaywrightScraper()
         self.fastapi_app.state.scraper = self.scraper_instance
 
-        pipeline_config = self.config.get("indexing_pipeline_config", {})
+        pipeline_config = self.config.indexing_pipeline_config.model_dump()
         if not pipeline_config.get("processors"):
             logger.warning("No processors in 'indexing_pipeline_config'.")
 
@@ -941,10 +893,12 @@ class Assistant:
             assert self.database_engine is not None, (
                 "Database engine must be initialized before creating TelegramService"
             )
+            # telegram_token is verified earlier when telegram_enabled is True
+            assert self.config.telegram_token is not None
             self.telegram_service = TelegramService(
-                telegram_token=self.config["telegram_token"],
-                allowed_user_ids=self.config["allowed_user_ids"],
-                developer_chat_id=self.config["developer_chat_id"],
+                telegram_token=self.config.telegram_token,
+                allowed_user_ids=self.config.allowed_user_ids,
+                developer_chat_id=self.config.developer_chat_id,
                 processing_service=self.default_processing_service,
                 processing_services_registry=self.processing_services_registry,
                 app_config=self.config,
@@ -967,16 +921,12 @@ class Assistant:
             logger.info("Telegram service disabled (telegram_enabled=False)")
 
         # Initialize event system if enabled
-        event_config = self.config.get("event_system", {})
-        if event_config.get("enabled", False):
+        event_config = self.config.event_system
+        if event_config.enabled:
             event_sources = {}  # Dict, not list
 
             # Create Home Assistant event sources for unique HA instances
-            if (
-                event_config.get("sources", {})
-                .get("home_assistant", {})
-                .get("enabled", False)
-            ):
+            if event_config.sources.home_assistant.enabled:
                 # Get unique HA clients (use cache keys which represent unique instances)
                 unique_clients = {}
                 for key, ha_client in self.home_assistant_clients.items():
@@ -1000,8 +950,7 @@ class Assistant:
             logger.info("Created IndexingSource for document indexing events")
 
             if event_sources:
-                storage_config = event_config.get("storage", {})
-                sample_interval_hours = storage_config.get("sample_interval_hours", 1.0)
+                sample_interval_hours = event_config.storage.sample_interval_hours
 
                 assert self.database_engine is not None, (
                     "Database engine must be initialized before creating EventProcessor"
@@ -1009,7 +958,7 @@ class Assistant:
                 self.event_processor = EventProcessor(
                     sources=event_sources,
                     sample_interval_hours=sample_interval_hours,
-                    config=event_config,
+                    config=event_config.model_dump(),  # Convert to dict for backward compatibility
                     get_db_context_func=self._get_db_context_for_events,
                     # db_context will be created internally if not provided
                 )
@@ -1037,7 +986,7 @@ class Assistant:
             logger.info("Telegram service disabled, skipping polling.")
 
         # Get port from config, default to 8000
-        server_port = self.config.get("server_port", 8000)
+        server_port = self.config.server_port
 
         if self.server_socket is not None:
             # Use the pre-bound socket to avoid race conditions
@@ -1061,8 +1010,8 @@ class Assistant:
 
         default_profile_conf = next(
             p
-            for p in self.config["service_profiles"]
-            if p["id"] == self.default_processing_service.service_config.id
+            for p in self.config.service_profiles
+            if p.id == self.default_processing_service.service_config.id
         )
 
         self.task_worker_instance = TaskWorker(
@@ -1070,10 +1019,8 @@ class Assistant:
             chat_interface=self.telegram_service.chat_interface
             if self.telegram_service
             else NullChatInterface(),
-            calendar_config=self.config.get(
-                "calendar_config", {}
-            ),  # Use top-level calendar config with empty dict fallback
-            timezone_str=default_profile_conf["processing_config"]["timezone"],
+            calendar_config=_calendar_config_to_dict(self.config.calendar_config),
+            timezone_str=default_profile_conf.processing_config.timezone,
             embedding_generator=self.embedding_generator,
             # shutdown_event is likely handled internally by TaskWorker or passed differently
             indexing_source=getattr(
@@ -1175,10 +1122,10 @@ class Assistant:
 
                 default_profile_conf = next(
                     p
-                    for p in self.config["service_profiles"]
-                    if p["id"] == self.default_processing_service.service_config.id
+                    for p in self.config.service_profiles
+                    if p.id == self.default_processing_service.service_config.id
                 )
-                timezone_str = default_profile_conf["processing_config"]["timezone"]
+                timezone_str = default_profile_conf.processing_config.timezone
                 local_tz = zoneinfo.ZoneInfo(timezone_str)
 
                 # Get current time in local timezone and calculate next 3 AM local time
@@ -1215,9 +1162,7 @@ class Assistant:
                 try:
                     # Get retention days from config
                     error_log_retention_days = (
-                        self.config.get("logging", {})
-                        .get("database_errors", {})
-                        .get("retention_days", 30)
+                        self.config.logging.database_errors.retention_days
                     )
 
                     await db_ctx.tasks.enqueue(

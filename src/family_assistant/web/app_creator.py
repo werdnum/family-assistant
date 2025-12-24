@@ -468,8 +468,7 @@ def configure_app_auth(
         logger.info("Authentication not configured (AUTH_ENABLED=False)")
 
     # Store auth configuration in app state for dependencies
-    app.state.config = app.state.config if hasattr(app.state, "config") else {}
-    app.state.config["auth_enabled"] = AUTH_ENABLED
+    app.state.auth_enabled = AUTH_ENABLED
 
     # IMPORTANT: Register catch-all route AFTER auth routes to prevent it from
     # intercepting /login, /logout, /auth paths

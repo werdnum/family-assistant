@@ -92,7 +92,7 @@ async def test_backend_api_accessible(web_test_fixture: WebTestFixture) -> None:
     page = web_test_fixture.page
 
     # Get the actual API port from the assistant's configuration
-    api_port = web_test_fixture.assistant.config.get("server_port", 8000)
+    api_port = web_test_fixture.assistant.config.server_port
 
     # Make a direct API request through the page context to the backend directly
     response = await page.request.get(f"http://localhost:{api_port}/health")

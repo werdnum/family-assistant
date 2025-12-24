@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from PIL import Image
 
+from family_assistant.config_models import AppConfig
 from family_assistant.tools.image_backends import (
     GeminiImageBackend,
     ImageGenerationBackend,
@@ -87,13 +88,15 @@ def _create_image_backend(
         return exec_context.image_backend  # type: ignore[attr-defined]
 
     # Check configuration for API key
-    config = {}
+    api_key = None
     if exec_context.processing_service and hasattr(
         exec_context.processing_service, "app_config"
     ):
-        config = exec_context.processing_service.app_config or {}
-
-    api_key = config.get("google_api_key") or config.get("gemini_api_key")
+        app_config = exec_context.processing_service.app_config
+        if isinstance(app_config, AppConfig):
+            api_key = app_config.gemini_api_key
+        elif isinstance(app_config, dict):
+            api_key = app_config.get("gemini_api_key")
 
     # Create appropriate backend
     if api_key:
