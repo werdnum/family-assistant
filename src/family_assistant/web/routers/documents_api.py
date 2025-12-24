@@ -273,8 +273,8 @@ async def upload_document(
     )
 
     # --- 0. Get Document Storage Path from Config ---
-    app_config = getattr(request.app.state, "config", {})
-    document_storage_path_str = app_config.get("document_storage_path")
+    app_config = getattr(request.app.state, "config", None)
+    document_storage_path_str = app_config.document_storage_path if app_config else None
     if not document_storage_path_str:
         logger.error("Document storage path not configured. Upload will fail.")
         raise HTTPException(

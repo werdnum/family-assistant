@@ -14,6 +14,7 @@ from typing import Any
 
 import yaml  # Keep for config.yaml and prompts.yaml
 from dotenv import load_dotenv  # Keep for .env loading
+from pydantic import ValidationError
 
 # Import the FastAPI app (needed for app.state)
 from family_assistant.web.app_creator import app as fastapi_app
@@ -22,6 +23,9 @@ from family_assistant.web.app_creator import app as fastapi_app
 from .assistant import (  # Import helpers too
     Assistant,
 )
+
+# Import typed configuration models
+from .config_models import AppConfig
 
 # --- Logging Configuration ---
 # Set root logger level back to INFO
@@ -134,8 +138,7 @@ CONFIG_FILE_PATH = "config.yaml"  # Path to the new config file
 
 
 # --- Configuration Loading ---
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # noqa: ANN401  # Config structure has nested dicts with various value types
+def load_config(config_file_path: str = CONFIG_FILE_PATH) -> AppConfig:
     """
     Loads configuration according to the defined hierarchy:
     Defaults -> config.yaml -> Environment Variables.
@@ -145,7 +148,8 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
         config_file_path: Path to the main YAML configuration file.
 
     Returns:
-        A dictionary containing the resolved configuration.
+        A validated AppConfig model containing all configuration.
+        Raises ValidationError if configuration contains invalid keys or values.
     """
     # 1. Code Defaults
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
@@ -830,7 +834,15 @@ def load_config(config_file_path: str = CONFIG_FILE_PATH) -> dict[str, Any]:  # 
         f"Final configuration loaded (excluding secrets): {json.dumps(loggable_config, indent=2, default=str)}"
     )
 
-    return config_data
+    # Validate configuration through Pydantic model
+    # This catches typos in config keys and invalid values
+    try:
+        validated_config = AppConfig.model_validate(config_data)
+        logger.info("Configuration validated successfully through Pydantic model.")
+        return validated_config
+    except ValidationError as e:
+        logger.error(f"Configuration validation failed: {e}")
+        raise
 
 
 # --- MCP Configuration Loading & Connection --- (REMOVED - Handled by MCPToolsProvider)
@@ -897,31 +909,37 @@ def reload_config_handler(signum: int, frame: types.FrameType | None) -> None:
 
 def main() -> int:
     """Loads config, parses args, sets up event loop, and runs the application."""
-    config_data = load_config()
+    config = load_config()
     args = parser.parse_args()
 
-    # Apply CLI Overrides to config_data
+    # Apply CLI Overrides to config using model_copy for immutable updates
+    # ast-grep-ignore: no-dict-any - Used for dynamic kwargs passed to model_copy()
+    cli_overrides: dict[str, Any] = {}
     if args.telegram_token is not None:
-        config_data["telegram_token"] = args.telegram_token
+        cli_overrides["telegram_token"] = args.telegram_token
     if args.openrouter_api_key is not None:
-        config_data["openrouter_api_key"] = args.openrouter_api_key
+        cli_overrides["openrouter_api_key"] = args.openrouter_api_key
     if args.model is not None:
-        config_data["model"] = args.model
+        cli_overrides["model"] = args.model
     if args.embedding_model is not None:
-        config_data["embedding_model"] = args.embedding_model
+        cli_overrides["embedding_model"] = args.embedding_model
     if args.embedding_dimensions is not None:
-        config_data["embedding_dimensions"] = args.embedding_dimensions
+        cli_overrides["embedding_dimensions"] = args.embedding_dimensions
     if args.document_storage_path is not None:
-        config_data["document_storage_path"] = args.document_storage_path
+        cli_overrides["document_storage_path"] = args.document_storage_path
     if args.attachment_storage_path is not None:
-        config_data["attachment_storage_path"] = args.attachment_storage_path
+        cli_overrides["attachment_storage_path"] = args.attachment_storage_path
 
-    fastapi_app.state.config = config_data
-    logger.info("Stored final configuration dictionary in FastAPI app state.")
+    if cli_overrides:
+        config = config.model_copy(update=cli_overrides)
+        logger.info(f"Applied CLI overrides: {list(cli_overrides.keys())}")
+
+    fastapi_app.state.config = config
+    logger.info("Stored final AppConfig in FastAPI app state.")
 
     # LLM client overrides would be passed here if needed for main execution,
     # but typically this is for testing. For main run, it's None.
-    assistant_app = Assistant(config_data, llm_client_overrides=None)
+    assistant_app = Assistant(config, llm_client_overrides=None)
     loop = asyncio.get_event_loop()
 
     # Setup Signal Handlers

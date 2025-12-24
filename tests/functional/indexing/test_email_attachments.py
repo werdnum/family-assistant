@@ -477,7 +477,6 @@ async def test_email_with_pdf_attachment_indexing_e2e(
     mock_application_pdf.state.embedding_generator = mock_embedder
     mock_application_pdf.state.llm_client = None  # Or a mock LLM if needed
 
-    dummy_calendar_config_pdf = {}
     dummy_timezone_str_pdf = "UTC"
     mock_chat_interface_pdf = MagicMock()
     test_shutdown_event = asyncio.Event()  # Create shutdown event early
@@ -485,7 +484,7 @@ async def test_email_with_pdf_attachment_indexing_e2e(
         processing_service=_create_mock_processing_service(),
         chat_interface=mock_chat_interface_pdf,
         embedding_generator=mock_embedder,  # Pass the embedder directly
-        calendar_config=dummy_calendar_config_pdf,
+        calendar_config=None,
         timezone_str=dummy_timezone_str_pdf,
         shutdown_event_instance=test_shutdown_event,  # Pass the shutdown event
         engine=pg_vector_db_engine,  # Pass the engine for database operations

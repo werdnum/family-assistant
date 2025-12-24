@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from telegram.ext import Application, JobQueue
 
 from family_assistant.assistant import Assistant
+from family_assistant.config_models import AppConfig
 from family_assistant.llm import LLMInterface
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.context import DatabaseContext, get_db_context
@@ -115,7 +116,7 @@ async def telegram_handler_fixture(
 
     # 3. Instantiate Assistant with LLM Override and Database Engine
     assistant_app = Assistant(
-        config=test_config,
+        config=AppConfig.model_validate(test_config),
         llm_client_overrides={test_profile_id: mock_llm_client},
         database_engine=db_engine,  # Pass the actual test engine, not just the URL
     )

@@ -10,6 +10,34 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from family_assistant.config_models import AppConfig
+
+# Note: CalendarConfig TypedDict kept here for backward compatibility with tool functions
+# The Pydantic CalendarConfig in config_models.py is used for config file validation
+
+
+class CalDavConfig(TypedDict, total=False):
+    """CalDAV configuration for calendar access."""
+
+    username: str | None
+    password: str | None
+    calendar_urls: list[str]
+    base_url: str | None
+
+
+class ICalConfig(TypedDict, total=False):
+    """iCal URL configuration."""
+
+    urls: list[str]
+
+
+class CalendarConfig(TypedDict, total=False):
+    """Calendar configuration used by tools."""
+
+    caldav: CalDavConfig | None
+    ical: ICalConfig | None
+
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from datetime import date, datetime
@@ -24,21 +52,6 @@ if TYPE_CHECKING:
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.tools.infrastructure import ToolsProvider
     from family_assistant.utils.clock import Clock
-
-
-class CalDavConfig(TypedDict):
-    """CalDAV configuration for calendar access."""
-
-    username: str
-    password: str
-    base_url: str
-    calendar_urls: list[str]
-
-
-class CalendarConfig(TypedDict):
-    """Calendar configuration containing CalDAV settings."""
-
-    caldav: CalDavConfig
 
 
 class CalendarEvent(TypedDict):
@@ -246,18 +259,30 @@ def get_attachment_limits(exec_context: ToolExecutionContext) -> tuple[int, int]
     default_max_file_size = 100 * 1024 * 1024  # 100MB
     default_max_multimodal_size = 20 * 1024 * 1024  # 20MB
 
-    # Try to get from processing service config
+    # Try to get from processing service config (supports both AppConfig and dict)
     if exec_context.processing_service and hasattr(
         exec_context.processing_service, "app_config"
     ):
-        attachment_config = exec_context.processing_service.app_config.get(
-            "attachment_config", {}
-        )
-        max_file_size = attachment_config.get("max_file_size", default_max_file_size)
-        max_multimodal_size = attachment_config.get(
-            "max_multimodal_size", default_max_multimodal_size
-        )
-        return max_file_size, max_multimodal_size
+        app_config = exec_context.processing_service.app_config
+        if app_config:
+            # Handle both AppConfig (Pydantic model) and dict types
+            if isinstance(app_config, AppConfig):
+                # AppConfig - use attribute access
+                attachment_config = app_config.attachment_config
+                return (
+                    attachment_config.max_file_size,
+                    attachment_config.max_multimodal_size,
+                )
+            elif isinstance(app_config, dict):
+                # Legacy dict config
+                attachment_config = app_config.get("attachment_config", {})
+                max_file_size = attachment_config.get(
+                    "max_file_size", default_max_file_size
+                )
+                max_multimodal_size = attachment_config.get(
+                    "max_multimodal_size", default_max_multimodal_size
+                )
+                return max_file_size, max_multimodal_size
 
     # Fallback to defaults
     return default_max_file_size, default_max_multimodal_size

@@ -407,7 +407,6 @@ async def test_vector_ranking(
     mock_application_kw.state.embedding_generator = mock_embedder
     mock_application_kw.state.llm_client = None
 
-    dummy_calendar_config_kw = {}  # Define dummy_calendar_config_kw
     dummy_timezone_str_kw = "UTC"  # Define dummy_timezone_str_kw
 
     # --- Arrange: Ingest Emails ---
@@ -434,7 +433,7 @@ async def test_vector_ranking(
         processing_service=_create_mock_processing_service(),  # No processing service needed for this handler
         chat_interface=mock_chat_interface_kw,
         embedding_generator=mock_embedder,  # Pass the embedder directly
-        calendar_config=dummy_calendar_config_kw,
+        calendar_config=None,
         timezone_str=dummy_timezone_str_kw,
         shutdown_event_instance=test_shutdown_event,  # Pass the shutdown event
         engine=pg_vector_db_engine,  # Pass the engine for database operations
@@ -618,7 +617,6 @@ async def test_metadata_filtering(
 
     # Create TaskWorker instance and start it
     # Provide dummy/mock values for the required arguments
-    dummy_calendar_config_meta = {}  # Define dummy_calendar_config_meta
     dummy_timezone_str_meta = "UTC"
     mock_chat_interface_meta = MagicMock()
     test_shutdown_event = asyncio.Event()  # Create shutdown event before TaskWorker
@@ -626,7 +624,7 @@ async def test_metadata_filtering(
         processing_service=_create_mock_processing_service(),  # No processing service needed for this handler
         chat_interface=mock_chat_interface_meta,
         embedding_generator=mock_embedder,  # Pass the embedder directly
-        calendar_config=dummy_calendar_config_meta,
+        calendar_config=None,
         timezone_str=dummy_timezone_str_meta,
         shutdown_event_instance=test_shutdown_event,  # Pass the shutdown event
         engine=pg_vector_db_engine,  # Pass the engine for database operations
@@ -784,7 +782,6 @@ async def test_keyword_filtering(
     mock_application_kw.state.embedding_generator = mock_embedder
     mock_application_kw.state.llm_client = None
 
-    dummy_calendar_config_kw = {}  # Define dummy_calendar_config_kw
     dummy_timezone_str_kw = "UTC"  # Define dummy_timezone_str_kw
 
     # --- Arrange: Ingest Emails ---
@@ -800,7 +797,6 @@ async def test_keyword_filtering(
 
     # Create TaskWorker instance and start it
     # Provide dummy/mock values for the required arguments
-    dummy_timezone_str_kw = "UTC"
     # Define new mocks for this test scope
     mock_chat_interface_keyword_test = MagicMock()
     test_shutdown_event = asyncio.Event()  # Create shutdown event before TaskWorker
@@ -809,7 +805,7 @@ async def test_keyword_filtering(
         processing_service=_create_mock_processing_service(),  # No processing service needed for this handler
         chat_interface=mock_chat_interface_keyword_test,
         embedding_generator=mock_embedder,  # Pass the embedder directly
-        calendar_config=dummy_calendar_config_kw,  # Now defined
+        calendar_config=None,
         timezone_str=dummy_timezone_str_kw,
         shutdown_event_instance=test_shutdown_event,  # Pass the shutdown event
         engine=pg_vector_db_engine,  # Pass the engine for database operations

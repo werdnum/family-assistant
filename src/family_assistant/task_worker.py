@@ -27,6 +27,7 @@ from family_assistant.scripting import (
     StarlarkEngine,
 )
 from family_assistant.scripting.engine import StarlarkConfig
+from family_assistant.tools.types import CalendarConfig
 
 if TYPE_CHECKING:
     from family_assistant.events.indexing_source import IndexingSource
@@ -490,8 +491,7 @@ class TaskWorker:
         self,
         processing_service: ProcessingService,
         chat_interface: ChatInterface,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        calendar_config: dict[str, Any],
+        calendar_config: CalendarConfig | None,
         timezone_str: str,
         embedding_generator: EmbeddingGenerator,
         shutdown_event_instance: asyncio.Event | None = None,  # Made optional
@@ -513,7 +513,9 @@ class TaskWorker:
             if shutdown_event_instance is not None
             else asyncio.Event()
         )
-        self.calendar_config = calendar_config
+        self.calendar_config: CalendarConfig = (
+            calendar_config if calendar_config else {}
+        )
         self.timezone_str = timezone_str
         self.embedding_generator = embedding_generator
         self.clock = (

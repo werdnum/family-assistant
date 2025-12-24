@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
     from fastapi import FastAPI
 
+    from family_assistant.config_models import AppConfig
     from family_assistant.processing import ProcessingService
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.context import DatabaseContext
@@ -43,8 +44,7 @@ class TelegramService:
         processing_services_registry: dict[
             str, ProcessingService
         ],  # Registry of all services
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        app_config: dict[str, Any],  # Main application config
+        app_config: AppConfig,
         attachment_registry: AttachmentRegistry,  # Changed from AttachmentService
         get_db_context_func: Callable[
             ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
@@ -60,7 +60,7 @@ class TelegramService:
             developer_chat_id: Optional chat ID for sending error notifications.
             processing_service: The Default ProcessingService instance.
             processing_services_registry: Dictionary of all ProcessingService instances.
-            app_config: The main application configuration dictionary.
+            app_config: The main application configuration (typed AppConfig model).
             attachment_registry: The AttachmentRegistry instance for handling file attachments.
             get_db_context_func: Async context manager function to get a DatabaseContext.
         """
@@ -94,12 +94,11 @@ class TelegramService:
 
         # Build slash command to profile ID map
         self.slash_command_to_profile_id_map: dict[str, str] = {}
-        service_profiles = self.app_config.get("service_profiles", [])
-        for profile_config in service_profiles:  # Renamed variable for clarity
-            profile_id = profile_config.get("id")
+        for profile_config in self.app_config.service_profiles:
+            profile_id = profile_config.id
             if not profile_id:
                 continue
-            for command in profile_config.get("slash_commands", []):
+            for command in profile_config.slash_commands:
                 if command in self.slash_command_to_profile_id_map:
                     logger.warning(
                         f"Slash command '{command}' is mapped to multiple profile IDs. "
@@ -130,11 +129,9 @@ class TelegramService:
             confirmation_manager=self.confirmation_manager,
         )
 
-        batching_config = self.app_config.get("message_batching_config", {})
-        batching_strategy = batching_config.get(
-            "strategy", "default"
-        )  # Default to 'default' (which means DefaultMessageBatcher)
-        batch_delay_seconds = batching_config.get("delay_seconds", 0.5)
+        batching_config = self.app_config.message_batching_config
+        batching_strategy = batching_config.strategy
+        batch_delay_seconds = batching_config.delay_seconds
 
         if batching_strategy == "none":
             self.message_batcher = NoBatchMessageBatcher(
@@ -206,18 +203,17 @@ class TelegramService:
 
         processed_command_names = set()  # To avoid duplicates if a command maps to multiple profiles (though map prevents this)
 
-        for profile_config in self.app_config.get("service_profiles", []):
-            profile_id = profile_config.get("id")
-            profile_name = profile_config.get(
-                "name", profile_id
-            )  # Use profile name or ID for description
+        for profile_config in self.app_config.service_profiles:
+            profile_id = profile_config.id
+            profile_name = profile_id  # Use profile ID as name
 
-            for slash_command_str in profile_config.get("slash_commands", []):
+            for slash_command_str in profile_config.slash_commands:
                 command_name = slash_command_str.lstrip("/")
                 if command_name not in processed_command_names:
-                    description = profile_config.get(
-                        "description",  # Check for a general profile description
-                        f"Activate {profile_name} mode",  # Fallback description
+                    description = (
+                        profile_config.description
+                        if profile_config.description
+                        else f"Activate {profile_name} mode"
                     )
                     # Telegram has a 255 character limit for command descriptions
                     if len(description) > 255:

@@ -401,7 +401,6 @@ async def test_email_indexing_and_query_e2e(
     )
     # If ATTACHMENT_STORAGE_DIR is needed by any task run by worker via app.state.config:
 
-    dummy_calendar_config = {}  # Not used by email/embedding tasks
     dummy_timezone_str = "UTC"  # Not used by email/embedding tasks
     mock_chat_interface_e2e = MagicMock()
     test_shutdown_event = asyncio.Event()  # Create shutdown event early
@@ -409,7 +408,7 @@ async def test_email_indexing_and_query_e2e(
         processing_service=_create_mock_processing_service(),  # No processing service needed for this handler
         chat_interface=mock_chat_interface_e2e,
         embedding_generator=mock_embedder,  # Pass the embedder directly
-        calendar_config=dummy_calendar_config,
+        calendar_config=None,
         timezone_str=dummy_timezone_str,
         shutdown_event_instance=test_shutdown_event,  # Pass the shutdown event
         engine=pg_vector_db_engine,  # Pass the engine for database operations
