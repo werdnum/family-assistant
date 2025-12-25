@@ -484,6 +484,17 @@ access, input validation, and defense-in-depth approaches.
   the user. These hooks exist to enforce quality standards and prevent broken code from being
   committed.
 
+### Refactoring and Error Handling
+
+- **No Backwards Compatibility for Internal Code**: When migrating from implementation X to Y,
+  delete X immediately. Do not keep backwards compatibility layers. Rely on the type checker and
+  tests to identify all places that need to be updated. This ensures a clean migration and prevents
+  technical debt.
+- **Fail Fast**: Do not implement "graceful fallbacks" that mask bugs (e.g., returning `None` or
+  empty lists when an unexpected error occurs). Errors should look like errors. Let exceptions
+  propagate so they can be caught by tests and debugging tools. Silent failures make production
+  issues impossible to debug.
+
 ### Debugging and Change Verification
 
 Once you've implemented a change, you ALWAYS go through the following algorithm:
