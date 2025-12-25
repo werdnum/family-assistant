@@ -195,14 +195,9 @@ async def app_fixture(
     app.state.processing_service = test_processing_service
     app.state.tools_provider = test_tools_provider
     app.state.database_engine = db_engine
-    app.state.config = {
-        "auth_enabled": False,
-        "database_url": str(db_engine.url),
-        "default_profile_settings": {
-            "chat_id_to_name_map": {},
-            "processing_config": {"prompts": {}},
-        },
-    }
+    app.state.config = AppConfig(
+        database_url=str(db_engine.url),
+    )
     app.state.llm_client = mock_llm_client
     app.state.debug_mode = False
 
