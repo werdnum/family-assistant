@@ -15,6 +15,7 @@ import aiofiles
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -172,7 +173,7 @@ if motion_detected:
             ),
             context_providers=[],
             server_url="http://test:8000",
-            app_config={},
+            app_config=AppConfig(),
             clock=SystemClock(),
             attachment_registry=attachment_registry,
         )
@@ -409,7 +410,7 @@ wake_llm({
             tools_provider=tools_provider,
             context_providers=[],
             server_url="http://test:8000",
-            app_config={},
+            app_config=AppConfig(),
             clock=SystemClock(),
             attachment_registry=attachment_registry,
         )

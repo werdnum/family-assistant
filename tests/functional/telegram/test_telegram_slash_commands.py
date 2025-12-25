@@ -19,6 +19,7 @@ from assertpy import assert_that, soft_assertions
 from telegram import Chat, Message, Update, User
 from telegram.ext import ContextTypes
 
+from family_assistant.config_models import AppConfig
 from family_assistant.llm import (
     LLMOutput as LLMResponseOutput,  # Renamed to avoid clash
 )
@@ -133,11 +134,8 @@ async def test_slash_command_routes_to_specific_profile(
         # llm_model_name, llm_temperature, llm_max_tokens can be added if needed
     )
 
-    # Define a simple app_config for this test context
-    test_app_config_for_profile = {
-        "mcp_servers": {},  # Example, can be populated if tools need it
-        # Add other app_config keys if the ProcessingService uses them directly
-    }
+    # Define a typed AppConfig for this test context
+    test_app_config_for_profile = AppConfig()
 
     # Create the ProcessingService instance for the focused profile
     # It will use the same mock LLM and tools provider as the default service for simplicity in this test

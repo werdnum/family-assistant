@@ -16,6 +16,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.indexing.document_indexer import DocumentIndexer
 from family_assistant.storage.context import DatabaseContext
@@ -93,13 +94,13 @@ async def http_client(
         fastapi_app.state, "embedding_generator", None
     )
     original_database_engine = getattr(fastapi_app.state, "database_engine", None)
-    original_config = getattr(fastapi_app.state, "config", {})
+    original_config: AppConfig | None = getattr(fastapi_app.state, "config", None)
 
     # Set up test state
     fastapi_app.state.embedding_generator = mock_embedding_generator
     fastapi_app.state.database_engine = pg_vector_db_engine
-    test_config = original_config.copy() if isinstance(original_config, dict) else {}
-    test_config["document_storage_path"] = "/tmp/reindex_test"
+    # Create a new AppConfig with the test document storage path
+    test_config = AppConfig(document_storage_path="/tmp/reindex_test")
     fastapi_app.state.config = test_config
 
     transport = httpx.ASGITransport(app=fastapi_app)

@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.context_providers import (
     CalendarContextProvider,
     KnownUsersContextProvider,
@@ -168,7 +169,7 @@ def test_processing_service(
         service_config=mock_processing_service_config,
         context_providers=context_providers,
         server_url="http://testserver",
-        app_config={},
+        app_config=AppConfig(),
     )
 
 

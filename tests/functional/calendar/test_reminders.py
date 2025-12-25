@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 # Import select for direct DB queries
 from sqlalchemy.sql import select
 
+from family_assistant.config_models import AppConfig
+
 # Import necessary components from the application
 from family_assistant.interfaces import ChatInterface  # Import ChatInterface
 from family_assistant.llm import ToolCallFunction, ToolCallItem  # Added imports
@@ -187,7 +189,7 @@ async def test_schedule_and_execute_callback(
     dummy_timezone_str = "UTC"
     dummy_max_history = 5
     dummy_history_age = 24
-    dummy_app_config = {}  # Add dummy app_config
+    dummy_app_config = AppConfig()  # Typed app_config
 
     test_service_config_obj_callback = ProcessingServiceConfig(
         prompts=dummy_prompts,
@@ -485,7 +487,7 @@ async def test_modify_pending_callback(
         llm_client=llm_client,
         tools_provider=composite_provider,
         service_config=test_service_config_obj_modify,
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
         clock=mock_clock,  # Inject mock_clock into ProcessingService
@@ -812,7 +814,7 @@ async def test_cancel_pending_callback(
         llm_client=llm_client,
         tools_provider=composite_provider,
         service_config=test_service_config_obj_cancel,
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
         clock=mock_clock,  # Inject mock_clock into ProcessingService
@@ -1114,7 +1116,7 @@ async def test_schedule_reminder_with_follow_up(
         llm_client=llm_client,
         tools_provider=composite_provider,
         service_config=test_service_config,
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
         clock=mock_clock,
@@ -1460,14 +1462,11 @@ async def test_schedule_recurring_callback(
         id="recurring_test_profile",
     )
 
-    # Disable database error logging for tests to avoid connection issues
-    test_app_config = {"logging": {"database_errors": {"enabled": False}}}
-
     processing_service = ProcessingService(
         llm_client=llm_client,
         tools_provider=composite_provider,
         service_config=test_service_config,
-        app_config=test_app_config,
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
         clock=mock_clock,
@@ -1693,7 +1692,7 @@ async def test_list_pending_callbacks(db_engine: AsyncEngine) -> None:
         llm_client=llm_client,
         tools_provider=composite_provider,
         service_config=test_service_config,
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
         clock=mock_clock,

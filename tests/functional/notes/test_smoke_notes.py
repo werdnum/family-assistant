@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 # Import necessary classes for instantiation
 # _generate_llm_response_for_chat was moved to ProcessingService
 # Import DatabaseContext and getter
+from family_assistant.config_models import AppConfig
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 
 # Import the rule-based mock
@@ -159,7 +160,7 @@ async def test_add_and_retrieve_note_rule_mock(
     dummy_timezone_str = "UTC"
     dummy_max_history = 5
     dummy_history_age = 24
-    dummy_app_config = {}  # Add dummy app_config
+    dummy_app_config = AppConfig()  # Typed app_config
 
     # --- Instantiate Context Providers ---
     # Function to get DB context for the specific test engine.

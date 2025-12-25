@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any
 
 from PIL import Image
 
-from family_assistant.config_models import AppConfig
 from family_assistant.tools.image_backends import (
     GeminiImageBackend,
     ImageGenerationBackend,
@@ -24,6 +23,7 @@ from family_assistant.tools.image_backends import (
 from family_assistant.tools.types import ToolAttachment, ToolResult
 
 if TYPE_CHECKING:
+    from family_assistant.config_models import AppConfig
     from family_assistant.scripting.apis.attachments import ScriptAttachment
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -92,11 +92,9 @@ def _create_image_backend(
     if exec_context.processing_service and hasattr(
         exec_context.processing_service, "app_config"
     ):
-        app_config = exec_context.processing_service.app_config
-        if isinstance(app_config, AppConfig):
+        app_config: AppConfig | None = exec_context.processing_service.app_config
+        if app_config:
             api_key = app_config.gemini_api_key
-        elif isinstance(app_config, dict):
-            api_key = app_config.get("gemini_api_key")
 
     # Create appropriate backend
     if api_key:

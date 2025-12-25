@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -323,7 +324,7 @@ async def test_end_to_end_event_listener_wakes_llm(
         llm_client=llm_client,
         tools_provider=composite_provider,
         service_config=test_service_config,
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
         clock=None,

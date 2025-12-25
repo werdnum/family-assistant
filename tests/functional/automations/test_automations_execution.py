@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -189,7 +190,7 @@ log_event()
             tools_config={},
             delegation_security_level="blocked",
         ),
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
     )

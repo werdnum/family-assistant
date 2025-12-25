@@ -17,6 +17,7 @@ import pytest
 from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -100,7 +101,7 @@ async def create_processing_service_with_image_tools(
         context_providers=[],
         service_config=service_config,
         server_url=None,
-        app_config={},
+        app_config=AppConfig(),
     )
 
 

@@ -11,6 +11,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import (
     ToolCallFunction,
@@ -189,7 +190,7 @@ async def primary_processing_service(
         service_config=primary_service_config,
         context_providers=[],
         server_url="http://test.server",
-        app_config={},
+        app_config=AppConfig(),
     )
 
 
@@ -221,7 +222,7 @@ async def delegated_processing_service(
         service_config=delegated_service_config,
         context_providers=[],
         server_url="http://test.server",
-        app_config={},
+        app_config=AppConfig(),
     )
 
 

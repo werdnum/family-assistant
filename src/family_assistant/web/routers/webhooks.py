@@ -4,7 +4,7 @@ import os
 import re
 import uuid  # For generating unique IDs for attachment paths
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import aiofiles
 from dateutil.parser import parse as parse_datetime
@@ -15,6 +15,9 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import AttachmentData, ParsedEmailData
 from family_assistant.web.dependencies import get_db
+
+if TYPE_CHECKING:
+    from family_assistant.config_models import AppConfig
 
 logger = logging.getLogger(__name__)
 webhooks_router = APIRouter()
@@ -43,15 +46,11 @@ async def handle_mail_webhook(
     raw_body_content = await request.body()
 
     # Determine directory for saving raw requests from app config or fallback
+
     mailbox_raw_dir_to_use: str = DEFAULT_MAILBOX_RAW_DIR_FALLBACK
-    if hasattr(request.app.state, "config"):
-        config = request.app.state.config
-        if hasattr(config, "mailbox_raw_dir") and config.mailbox_raw_dir:
-            mailbox_raw_dir_to_use = config.mailbox_raw_dir
-        elif isinstance(config, dict):
-            mailbox_raw_dir_to_use = config.get(
-                "mailbox_raw_dir", DEFAULT_MAILBOX_RAW_DIR_FALLBACK
-            )
+    config: AppConfig | None = getattr(request.app.state, "config", None)
+    if config and config.mailbox_raw_dir:
+        mailbox_raw_dir_to_use = config.mailbox_raw_dir
     if mailbox_raw_dir_to_use == DEFAULT_MAILBOX_RAW_DIR_FALLBACK:
         logger.warning(
             f"mailbox_raw_dir not found in app.state.config, using fallback: {DEFAULT_MAILBOX_RAW_DIR_FALLBACK}"
@@ -115,14 +114,9 @@ async def handle_mail_webhook(
 
             # Get attachment storage path from app config
             attachment_storage_path = DEFAULT_ATTACHMENT_STORAGE_PATH
-            if hasattr(request.app.state, "config"):
-                config = request.app.state.config
-                if hasattr(config, "attachment_storage_path"):
-                    attachment_storage_path = config.attachment_storage_path
-                elif isinstance(config, dict):
-                    attachment_storage_path = config.get(
-                        "attachment_storage_path", DEFAULT_ATTACHMENT_STORAGE_PATH
-                    )
+            app_config: AppConfig | None = getattr(request.app.state, "config", None)
+            if app_config and app_config.attachment_storage_path:
+                attachment_storage_path = app_config.attachment_storage_path
 
             base_attachment_dir = os.path.join(
                 attachment_storage_path, email_attachment_batch_id

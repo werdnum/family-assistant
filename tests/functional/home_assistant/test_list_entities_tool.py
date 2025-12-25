@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import DatabaseContext
@@ -177,7 +178,7 @@ async def test_list_home_assistant_entities_with_filter(
         context_providers=[],
         service_config=service_config,
         server_url=None,
-        app_config={},
+        app_config=AppConfig(),
     )
 
     # Inject the mock HA client
@@ -337,7 +338,7 @@ async def test_list_home_assistant_entities_with_area_filter(
         context_providers=[],
         service_config=service_config,
         server_url=None,
-        app_config={},
+        app_config=AppConfig(),
     )
 
     # Inject the mock HA client
@@ -460,7 +461,7 @@ async def test_list_home_assistant_entities_no_client(
         context_providers=[],
         service_config=service_config,
         server_url=None,
-        app_config={},
+        app_config=AppConfig(),
     )
 
     # Don't set home_assistant_client - it should be None

@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 
+from family_assistant.config_models import AppConfig
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext
@@ -51,7 +52,7 @@ def _create_processing_service() -> ProcessingService:
     llm_client = RuleBasedMockLLMClient(rules=[], default_response=None)
 
     # ast-grep-ignore: no-dict-any - Test code
-    dummy_app_config: dict[str, Any] = {}
+    dummy_app_config = AppConfig()
 
     # Create real ProcessingService with minimal dependencies
     return ProcessingService(

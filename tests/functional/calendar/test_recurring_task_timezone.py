@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.sql import select
 
+from family_assistant.config_models import AppConfig
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -182,7 +183,7 @@ async def test_recurring_task_respects_user_timezone(
         llm_client=llm_client,
         tools_provider=composite_provider,
         service_config=test_service_config,
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
         clock=mock_clock,

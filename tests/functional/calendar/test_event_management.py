@@ -17,6 +17,7 @@ from family_assistant.calendar_integration import (
     fetch_upcoming_events,
     format_datetime_or_date,  # Added import
 )
+from family_assistant.config_models import AppConfig
 from family_assistant.context_providers import CalendarContextProvider
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import (
@@ -280,7 +281,7 @@ async def test_modify_event(
         context_providers=[calendar_context_provider_for_add],
         service_config=service_config_for_add,
         server_url=None,
-        app_config={},
+        app_config=AppConfig(),
     )
 
     # --- Simulate User Interaction to Create Initial Event ---
@@ -500,7 +501,7 @@ async def test_modify_event(
         context_providers=[calendar_context_provider],
         service_config=service_config,
         server_url=None,
-        app_config={},
+        app_config=AppConfig(),
     )
 
     # --- Simulate User Interaction to Modify ---
@@ -687,7 +688,7 @@ async def test_delete_event(
         context_providers=[calendar_context_provider],
         service_config=service_config,
         server_url=None,
-        app_config={},
+        app_config=AppConfig(),
     )
 
     # --- Simulate User Interaction to Create Event to Delete ---
@@ -918,7 +919,7 @@ async def test_search_events(
         context_providers=[calendar_context_provider],
         service_config=service_config,
         server_url=None,
-        app_config={},
+        app_config=AppConfig(),
     )
 
     # --- Phase 1: Create Event 1 using LLM Tool ---
@@ -1377,7 +1378,7 @@ async def test_similarity_based_search_finds_similar_events(
         context_providers=[calendar_context_provider],
         service_config=service_config,
         server_url=None,
-        app_config={},
+        app_config=AppConfig(),
     )
 
     # Create event 1
