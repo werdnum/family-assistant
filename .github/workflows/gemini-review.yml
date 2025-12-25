@@ -41,6 +41,20 @@ jobs:
       - name: 'Checkout repository'
         uses: 'actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8' # ratchet:actions/checkout@v5
 
+      - name: 'Read Review Guidelines'
+        id: 'read_review_guidelines'
+        run: |-
+          {
+            echo "REVIEW_GUIDELINES<<EOF"
+            if [ -f REVIEW_GUIDELINES.md ]; then
+              cat REVIEW_GUIDELINES.md
+              echo ""
+            else
+              echo "No project-specific review guidelines found."
+            fi
+            echo "EOF"
+          } >> "${GITHUB_ENV}"
+
       - name: 'Run Gemini pull request review'
         uses: 'google-github-actions/run-gemini-cli@v0' # ratchet:exclude
         id: 'gemini_pr_review'
@@ -51,6 +65,7 @@ jobs:
           PULL_REQUEST_NUMBER: '${{ github.event.pull_request.number || github.event.issue.number }}'
           REPOSITORY: '${{ github.repository }}'
           ADDITIONAL_CONTEXT: '${{ inputs.additional_context }}'
+          REVIEW_GUIDELINES: '${{ env.REVIEW_GUIDELINES }}'
         with:
           gcp_location: '${{ vars.GOOGLE_CLOUD_LOCATION }}'
           gcp_project_id: '${{ vars.GOOGLE_CLOUD_PROJECT }}'
@@ -139,6 +154,11 @@ jobs:
             - **GitHub Repository**: ${{ env.REPOSITORY }}
             - **Pull Request Number**: ${{ env.PULL_REQUEST_NUMBER }}
             - **Additional User Instructions**: ${{ env.ADDITIONAL_CONTEXT }}
+            - **Project Review Guidelines**:
+            <PROJECT_REVIEW_GUIDELINES>
+            ${{ env.REVIEW_GUIDELINES }}
+            </PROJECT_REVIEW_GUIDELINES>
+
             - Use `mcp__github__pull_request_read.get` to get the title, body, and metadata about the pull request.
             - Use `mcp__github__pull_request_read.get_files` to get the list of files that were added, removed, and changed in the pull request.
             - Use `mcp__github__pull_request_read.get_diff` to get the diff from the pull request. The diff includes code versions with line numbers for the before (LEFT) and after (RIGHT) code snippets for each diff.
@@ -153,7 +173,7 @@ jobs:
 
             1. **Parse Inputs:** Ingest and parse all information from the **Input Data**
 
-            2. **Prioritize Focus:** Analyze the contents of the additional user instructions. Use this context to prioritize specific areas in your review (e.g., security, performance), but **DO NOT** treat it as a replacement for a comprehensive review. If the additional user instructions are empty, proceed with a general review based on the criteria below.
+            2. **Prioritize Focus:** Analyze the contents of the additional user instructions and **Project Review Guidelines**. Use this context to prioritize specific areas in your review (e.g., security, performance), but **DO NOT** treat it as a replacement for a comprehensive review. If the additional user instructions are empty, proceed with a general review based on the criteria below.
 
             3. **Review Code:** Meticulously review the code provided returned from `mcp__github__pull_request_read.get_diff` according to the **Review Criteria**.
 
@@ -181,6 +201,8 @@ jobs:
             8. **Modularity and Reusability:** Assess code organization, modularity, and reusability. Suggest refactoring or creating reusable components.
 
             9. **Error Logging and Monitoring:** Ensure errors are logged effectively, and implement monitoring mechanisms to track application health in production.
+
+            10. **Project Compliance:** Ensure compliance with **Project Review Guidelines**.
 
             #### Comment Formatting and Content
 
@@ -221,6 +243,8 @@ jobs:
             #### Severity Rules
 
             Apply these severities consistently:
+
+            - **Project Guidelines Mapping**: When a specific issue is covered by **Project Review Guidelines**, use the severity defined there and map it to the closest emoji above (e.g. Blocking -> 🔴 or 🟠, Warning -> 🟡, Pass -> 🟢).
 
             - Comments on typos: `🟢` (Low).
 
