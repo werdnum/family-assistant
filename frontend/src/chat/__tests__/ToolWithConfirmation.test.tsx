@@ -88,6 +88,11 @@ describe('ToolWithConfirmation', () => {
       expect(messageInput).toHaveValue('');
     });
 
+    // Verify the initial text response appears
+    await waitFor(() => {
+      expect(screen.getByText("I'll add that note for you.")).toBeInTheDocument();
+    });
+
     // Note: The exact selectors depend on how @assistant-ui/react and ToolWithConfirmation
     // render the confirmation dialog. This tests the integration at a high level.
     // In a real implementation, we'd look for specific confirmation UI elements.
@@ -277,13 +282,13 @@ describe('ToolWithConfirmation', () => {
       expect(messageInput).toHaveValue('');
     });
 
-    // Wait for the complete flow to finish
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    // In a real implementation, we would check that:
-    // 1. Initially the tool shows running/pending status (spinning clock icon)
-    // 2. After tool result arrives, the status changes to complete (checkmark icon)
-    // For now, this test ensures the streaming flow handles status updates properly
+    // Wait for the tool result to appear, which indicates the flow has completed
+    await waitFor(
+      () => {
+        expect(screen.getByText('Note added successfully')).toBeInTheDocument();
+      },
+      { timeout: 5000 }
+    );
 
     expect(screen.getByText('Chat')).toBeInTheDocument();
   }, 10000);
