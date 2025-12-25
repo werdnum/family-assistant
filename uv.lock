@@ -1568,6 +1568,7 @@ dependencies = [
     { name = "numpy", version = "2.2.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2' or platform_python_implementation == 'PyPy'" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy'" },
     { name = "openai" },
+    { name = "opencv-python-headless" },
     { name = "passlib", extra = ["bcrypt"] },
     { name = "pgvector" },
     { name = "playwright" },
@@ -1580,6 +1581,7 @@ dependencies = [
     { name = "pytz" },
     { name = "pywebpush" },
     { name = "pyyaml" },
+    { name = "reolink-aio" },
     { name = "soxr" },
     { name = "sqlalchemy", version = "2.0.39", source = { registry = "https://pypi.org/simple" }, extra = ["asyncio"], marker = "python_full_version < '3.13.2'" },
     { name = "sqlalchemy", version = "2.0.40", source = { registry = "https://pypi.org/simple" }, extra = ["asyncio"], marker = "python_full_version >= '3.13.2' and platform_python_implementation == 'PyPy'" },
@@ -1655,10 +1657,6 @@ local-embeddings = [
 pgserver = [
     { name = "pixeltable-pgserver" },
 ]
-reolink = [
-    { name = "opencv-python-headless" },
-    { name = "reolink-aio" },
-]
 
 [package.metadata]
 requires-dist = [
@@ -1712,7 +1710,7 @@ requires-dist = [
     { name = "mdit-py-plugins", specifier = ">=0.4.0" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "openai", specifier = ">=1.0.0,<1.93.0" },
-    { name = "opencv-python-headless", marker = "extra == 'reolink'", specifier = ">=4.8.0" },
+    { name = "opencv-python-headless", specifier = ">=4.8.0" },
     { name = "passlib", extras = ["bcrypt"], specifier = ">=1.7" },
     { name = "passlib", extras = ["bcrypt"], specifier = ">=1.7.4" },
     { name = "pgvector", specifier = ">=0.2.0" },
@@ -1746,7 +1744,7 @@ requires-dist = [
     { name = "pywebpush", specifier = ">=2.1.1" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "radicale", marker = "extra == 'dev'", specifier = ">=3" },
-    { name = "reolink-aio", marker = "extra == 'reolink'", specifier = ">=0.16.0" },
+    { name = "reolink-aio", specifier = ">=0.16.0" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "sentence-transformers", marker = "extra == 'local-embeddings'", specifier = ">=3.0.1" },
     { name = "soxr", specifier = ">=0.5.0" },
@@ -1768,7 +1766,7 @@ requires-dist = [
     { name = "vobject", specifier = ">=0.9.6" },
     { name = "watchdog", marker = "extra == 'dev'", specifier = ">=3.0.0" },
 ]
-provides-extras = ["dev", "local-embeddings", "pgserver", "reolink"]
+provides-extras = ["dev", "local-embeddings", "pgserver"]
 
 [[package]]
 name = "fastapi"
