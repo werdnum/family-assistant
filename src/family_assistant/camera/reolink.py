@@ -21,9 +21,12 @@ import asyncio
 import json
 import logging
 import os
+import tempfile
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, TypedDict
+
+import aiohttp
 
 from family_assistant.camera.protocol import (
     CameraEvent,
@@ -444,47 +447,76 @@ class ReolinkBackend:
                 if target_file is None:
                     target_file = vod_files[0]  # Use first available
 
-                # Get playback URL for this file
-                _mime_type, playback_url = await host.get_vod_source(
+                # Get download URL for this file (DOWNLOAD works better than FLV)
+                _mime_type, download_url = await host.get_vod_source(
                     channel,
                     target_file.file_name,
                     "sub",
-                    VodRequestType.FLV,  # FLV is more reliable than RTMP
+                    VodRequestType.DOWNLOAD,
                 )
 
-                # Extract frame using OpenCV in a thread
+                # Download the video file
+                async with (
+                    aiohttp.ClientSession() as session,
+                    session.get(
+                        download_url,
+                        ssl=False,
+                        timeout=aiohttp.ClientTimeout(total=60),
+                    ) as resp,
+                ):
+                    if resp.status != 200:
+                        msg = f"Failed to download video: HTTP {resp.status}"
+                        raise RuntimeError(msg)
+
+                    video_data = await resp.read()
+
+                # Save to temp file and extract frame
+                file_start = target_file.start_time
+
                 def _extract_frame() -> bytes:
                     if cv2 is None or np is None:
                         msg = "OpenCV not available"
                         raise RuntimeError(msg)
 
-                    cap = cv2.VideoCapture(playback_url)
+                    # Write to temp file for OpenCV to read
+                    with tempfile.NamedTemporaryFile(
+                        suffix=".mp4", delete=False
+                    ) as tmp:
+                        tmp.write(video_data)
+                        tmp_path = tmp.name
+
                     try:
-                        # Calculate offset into video
-                        fps = cap.get(cv2.CAP_PROP_FPS) or 15
-                        offset_seconds = (
-                            timestamp - target_file.start_time
-                        ).total_seconds()
-                        frame_number = int(offset_seconds * fps)
+                        cap = cv2.VideoCapture(tmp_path)
+                        try:
+                            if not cap.isOpened():
+                                msg = "Failed to open video file"
+                                raise RuntimeError(msg)
 
-                        # Seek to frame
-                        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+                            # Calculate offset into video
+                            fps = cap.get(cv2.CAP_PROP_FPS) or 15
+                            offset_seconds = (timestamp - file_start).total_seconds()
+                            frame_number = int(offset_seconds * fps)
 
-                        ret, frame = cap.read()
-                        if not ret:
-                            msg = "Failed to read frame from video"
-                            raise RuntimeError(msg)
+                            # Seek to frame
+                            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
 
-                        # Encode to JPEG
-                        encode_params = [cv2.IMWRITE_JPEG_QUALITY, 85]
-                        success, buffer = cv2.imencode(".jpg", frame, encode_params)
-                        if not success:
-                            msg = "Failed to encode frame to JPEG"
-                            raise RuntimeError(msg)
+                            ret, frame = cap.read()
+                            if not ret:
+                                msg = "Failed to read frame from video"
+                                raise RuntimeError(msg)
 
-                        return buffer.tobytes()
+                            # Encode to JPEG
+                            encode_params = [cv2.IMWRITE_JPEG_QUALITY, 85]
+                            success, buffer = cv2.imencode(".jpg", frame, encode_params)
+                            if not success:
+                                msg = "Failed to encode frame to JPEG"
+                                raise RuntimeError(msg)
+
+                            return buffer.tobytes()
+                        finally:
+                            cap.release()
                     finally:
-                        cap.release()
+                        os.unlink(tmp_path)
 
                 return await asyncio.to_thread(_extract_frame)
 
