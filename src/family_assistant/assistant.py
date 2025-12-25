@@ -833,17 +833,19 @@ class Assistant:
                 )
 
             # Set camera backend if configured for this profile
-            camera_config = profile_proc_conf_dict.get("camera_config")
+            camera_config = profile_proc_conf.camera_config
             if camera_config:
-                backend_type = camera_config.get("backend", "reolink")
+                backend_type = camera_config.backend
                 if backend_type == "reolink":
                     try:
                         from family_assistant.camera.reolink import (  # noqa: PLC0415
                             create_reolink_backend,
                         )
 
-                        cameras_config = camera_config.get("cameras_config")
-                        camera_backend = create_reolink_backend(cameras_config)
+                        # Pass typed config directly
+                        camera_backend = create_reolink_backend(
+                            camera_config.cameras_config or None
+                        )
                         if camera_backend:
                             processing_service_instance.camera_backend = camera_backend
                             logger.info(

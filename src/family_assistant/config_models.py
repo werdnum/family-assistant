@@ -38,6 +38,33 @@ class RetryConfig(BaseModel):
     fallback: RetryModelConfig | None = None
 
 
+class ReolinkCameraItemConfig(BaseModel):
+    """Configuration for a single Reolink camera."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    host: str
+    username: str
+    password: str
+    port: int = 443
+    use_https: bool = True
+    channel: int = 0
+    name: str | None = None
+
+
+class CameraConfig(BaseModel):
+    """Camera backend configuration.
+
+    Can be configured per-profile (e.g., camera_analyst profile) to enable
+    camera tools. Currently supports 'reolink' backend.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    backend: str = "reolink"  # Currently only 'reolink' is supported
+    cameras_config: dict[str, ReolinkCameraItemConfig] = Field(default_factory=dict)
+
+
 class ProcessingConfig(BaseModel):
     """Configuration for message processing behavior.
 
@@ -64,6 +91,7 @@ class ProcessingConfig(BaseModel):
     include_system_docs: list[str] | None = None
     max_iterations: int = 5
     calendar_config: CalendarConfig | None = None  # Per-profile calendar config
+    camera_config: CameraConfig | None = None  # Per-profile camera backend config
 
 
 class ToolsConfig(BaseModel):
