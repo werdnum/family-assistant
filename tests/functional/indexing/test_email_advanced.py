@@ -21,6 +21,7 @@ from assertpy import assert_that
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.indexing.email_indexer import EmailIndexer
 from family_assistant.indexing.pipeline import IndexingPipeline
@@ -153,16 +154,6 @@ async def http_client(
         fastapi_app.state, "embedding_generator", None
     )
 
-    current_test_config = {}
-    if original_app_state_config_present and isinstance(
-        original_app_state_config_value, dict
-    ):
-        current_test_config = original_app_state_config_value.copy()
-    elif original_app_state_config_present:
-        logger.warning(
-            f"app.state.config was present but not a dict ({type(original_app_state_config_value)}). Overwriting."
-        )
-
     # Setup mock embedding generator for the app state
     mock_embedder_for_fixture = MockEmbeddingGenerator(
         embedding_map={},
@@ -183,15 +174,14 @@ async def http_client(
         logger.info(
             f"Test http_client: Using temporary attachment directory: {temp_attachment_dir}"
         )
-        current_test_config["attachment_storage_path"] = temp_attachment_dir
-        current_test_config["mailbox_raw_dir"] = os.path.join(
-            temp_attachment_dir, "raw_mailbox_dumps"
+        mailbox_raw_dir = os.path.join(temp_attachment_dir, "raw_mailbox_dumps")
+        os.makedirs(mailbox_raw_dir, exist_ok=True)
+        test_config = AppConfig(
+            attachment_storage_path=temp_attachment_dir,
+            mailbox_raw_dir=mailbox_raw_dir,
         )
-        os.makedirs(current_test_config["mailbox_raw_dir"], exist_ok=True)
-        fastapi_app.state.config = current_test_config
-        logger.info(
-            f"Test http_client: Set app.state.config with temp paths: {current_test_config}"
-        )
+        fastapi_app.state.config = test_config
+        logger.info("Test http_client: Set app.state.config with temp paths")
 
         transport = httpx.ASGITransport(app=fastapi_app)
         async with httpx.AsyncClient(
