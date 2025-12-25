@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
 
 from family_assistant.tools.types import ToolAttachment, ToolResult
 
@@ -61,11 +62,11 @@ CAMERA_TOOLS_DEFINITION: list[dict[str, Any]] = [
                     },
                     "start_time": {
                         "type": "string",
-                        "description": "Start of time range (ISO 8601 format, e.g., '2024-01-15T08:00:00Z')",
+                        "description": "Start of time range in LOCAL TIME (e.g., '2024-01-15T08:00:00' or '2024-01-15T08:00'). Use local time, not UTC.",
                     },
                     "end_time": {
                         "type": "string",
-                        "description": "End of time range (ISO 8601 format, e.g., '2024-01-15T18:00:00Z')",
+                        "description": "End of time range in LOCAL TIME (e.g., '2024-01-15T18:00:00'). Use local time, not UTC.",
                     },
                     "event_types": {
                         "type": "array",
@@ -99,7 +100,7 @@ CAMERA_TOOLS_DEFINITION: list[dict[str, Any]] = [
                     },
                     "timestamp": {
                         "type": "string",
-                        "description": "Exact timestamp to extract frame (ISO 8601 format)",
+                        "description": "Exact timestamp in LOCAL TIME (e.g., '2024-01-15T14:30:00'). Use local time, not UTC.",
                     },
                 },
                 "required": ["camera_id", "timestamp"],
@@ -128,11 +129,11 @@ CAMERA_TOOLS_DEFINITION: list[dict[str, Any]] = [
                     },
                     "start_time": {
                         "type": "string",
-                        "description": "Start of time range (ISO 8601 format)",
+                        "description": "Start of time range in LOCAL TIME (e.g., '2024-01-15T08:00:00'). Use local time, not UTC.",
                     },
                     "end_time": {
                         "type": "string",
-                        "description": "End of time range (ISO 8601 format)",
+                        "description": "End of time range in LOCAL TIME (e.g., '2024-01-15T18:00:00'). Use local time, not UTC.",
                     },
                     "interval_minutes": {
                         "type": "integer",
@@ -166,11 +167,11 @@ CAMERA_TOOLS_DEFINITION: list[dict[str, Any]] = [
                     },
                     "start_time": {
                         "type": "string",
-                        "description": "Start of time range (ISO 8601 format)",
+                        "description": "Start of time range in LOCAL TIME (e.g., '2024-01-15T08:00:00'). Use local time, not UTC.",
                     },
                     "end_time": {
                         "type": "string",
-                        "description": "End of time range (ISO 8601 format)",
+                        "description": "End of time range in LOCAL TIME (e.g., '2024-01-15T18:00:00'). Use local time, not UTC.",
                     },
                 },
                 "required": ["camera_id", "start_time", "end_time"],
@@ -178,6 +179,34 @@ CAMERA_TOOLS_DEFINITION: list[dict[str, Any]] = [
         },
     },
 ]
+
+
+def _parse_local_time(time_str: str, timezone_str: str) -> datetime:
+    """Parse a time string, assuming local timezone if not specified.
+
+    Args:
+        time_str: ISO 8601 formatted time string, with or without timezone.
+        timezone_str: The local timezone to use if not specified in time_str.
+
+    Returns:
+        A timezone-aware datetime object.
+
+    Raises:
+        ValueError: If the time string cannot be parsed.
+    """
+    # Handle 'Z' suffix (UTC)
+    if time_str.endswith("Z"):
+        time_str = time_str[:-1] + "+00:00"
+
+    dt = datetime.fromisoformat(time_str)
+
+    # If no timezone info, assume local timezone
+    if dt.tzinfo is None:
+        local_tz = ZoneInfo(timezone_str)
+        dt = dt.replace(tzinfo=local_tz)
+        logger.debug(f"Time '{time_str}' lacks timezone, assuming {timezone_str}")
+
+    return dt
 
 
 async def list_cameras_tool(
@@ -235,8 +264,8 @@ async def search_camera_events_tool(
         )
 
     try:
-        start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-        end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+        start_dt = _parse_local_time(start_time, exec_context.timezone_str)
+        end_dt = _parse_local_time(end_time, exec_context.timezone_str)
     except ValueError as e:
         return ToolResult(data={"error": f"Invalid timestamp format: {e}"})
 
@@ -295,7 +324,7 @@ async def get_camera_frame_tool(
         )
 
     try:
-        ts = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        ts = _parse_local_time(timestamp, exec_context.timezone_str)
     except ValueError as e:
         return ToolResult(data={"error": f"Invalid timestamp format: {e}"})
 
@@ -339,8 +368,8 @@ async def get_camera_frames_batch_tool(
         )
 
     try:
-        start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-        end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+        start_dt = _parse_local_time(start_time, exec_context.timezone_str)
+        end_dt = _parse_local_time(end_time, exec_context.timezone_str)
     except ValueError as e:
         return ToolResult(data={"error": f"Invalid timestamp format: {e}"})
 
@@ -399,8 +428,8 @@ async def get_camera_recordings_tool(
         )
 
     try:
-        start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-        end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+        start_dt = _parse_local_time(start_time, exec_context.timezone_str)
+        end_dt = _parse_local_time(end_time, exec_context.timezone_str)
     except ValueError as e:
         return ToolResult(data={"error": f"Invalid timestamp format: {e}"})
 
