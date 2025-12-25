@@ -6,6 +6,8 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from starlette.datastructures import State
 
+    from family_assistant.config_models import AppConfig
+
 
 # --- Gemini Live Voice API Configuration Models ---
 class GeminiLiveVoiceConfig(BaseModel):
@@ -100,9 +102,12 @@ class GeminiLiveConfig(BaseModel):
 
         This is a convenience method to avoid duplicating config retrieval logic.
         """
-        config = getattr(app_state, "config", {})
-        gemini_live_config_dict = config.get("gemini_live_config", {})
-        return cls.from_dict(gemini_live_config_dict)
+        config: AppConfig | None = getattr(app_state, "config", None)
+        if config is None:
+            return cls.from_dict({})
+        # Access gemini_live_config attribute from AppConfig
+        gemini_live_config = config.gemini_live_config
+        return cls.from_dict(gemini_live_config.model_dump())
 
     @classmethod
     def from_app_state_with_telephone_overrides(
@@ -115,8 +120,12 @@ class GeminiLiveConfig(BaseModel):
         'telephone_overrides' section. Telephone audio has different characteristics
         (narrowband, potential noise) that may require different VAD settings.
         """
-        config = getattr(app_state, "config", {})
-        gemini_live_config_dict = config.get("gemini_live_config", {})
+        app_config: AppConfig | None = getattr(app_state, "config", None)
+        if app_config is None:
+            return cls.from_dict({})
+
+        gemini_live_config = app_config.gemini_live_config
+        gemini_live_config_dict = gemini_live_config.model_dump()
 
         # Start with base config
         base_config = cls.from_dict(gemini_live_config_dict)
