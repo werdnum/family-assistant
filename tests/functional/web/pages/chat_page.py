@@ -581,6 +581,106 @@ class ChatPage(BasePage):
                 self.LOADING_INDICATOR, state="hidden", timeout=1000
             )
 
+    async def _wait_for_stable_streaming(
+        self, stability_ms: int = 600, timeout: int = 10000
+    ) -> None:
+        """Wait for streaming content to stabilize using an explicit wait.
+
+        This waits for the content of the last assistant message to remain unchanged
+        for the specified stability duration.
+        """
+        # Pass constants to JS to avoid hardcoding
+        args = [
+            stability_ms,
+            timeout,
+            self.MESSAGE_ASSISTANT,
+            self.MESSAGE_USER,
+            self.MESSAGE_ASSISTANT_CONTENT,
+            self.ASSISTANT_LOADING_PLACEHOLDER,
+        ]
+
+        # Using evaluate to run the stability check in the browser
+        js_function = """
+        ([stabilityMs, timeout, assistantSelector, userSelector, contentSelector, loadingPlaceholder]) => {
+            return new Promise((resolve, reject) => {
+                const startTime = Date.now();
+                let lastContent = null;
+                let stableStart = 0;
+
+                const check = () => {
+                    // Check timeout
+                    if (Date.now() - startTime > timeout) {
+                         reject(new Error("Timeout waiting for streaming stability"));
+                         return;
+                    }
+
+                    const messages = document.querySelectorAll(`${assistantSelector}, ${userSelector}`);
+
+                    if (messages.length === 0) {
+                        // If no messages, assume stable/done
+                        resolve(true);
+                        return;
+                    }
+
+                    const lastMsg = messages[messages.length - 1];
+
+                    // If last message is user, streaming is definitely complete
+                    // We check if it matches the user selector
+                    if (lastMsg.matches(userSelector)) {
+                        resolve(true);
+                        return;
+                    }
+
+                    // Check for typing indicator
+                    if (lastMsg.querySelector('.typing-indicator')) {
+                        lastContent = null;
+                        stableStart = 0;
+                        setTimeout(check, 100);
+                        return;
+                    }
+
+                    // Extract content
+                    let content = '';
+                    const contentElem = lastMsg.querySelector(contentSelector);
+                    if (contentElem) {
+                        const md = contentElem.querySelector('.markdown-text');
+                        content = md ? (md.innerText || md.textContent) : (contentElem.innerText || contentElem.textContent);
+                    } else {
+                        content = lastMsg.innerText || lastMsg.textContent;
+                    }
+                    content = (content || '').trim();
+
+                    // Check for loading placeholder
+                    if (content === '...' || content === '___LOADING___' || content === loadingPlaceholder) {
+                        lastContent = null;
+                        stableStart = 0;
+                    } else if (content === lastContent) {
+                        if (stableStart === 0) stableStart = Date.now();
+                        if (Date.now() - stableStart >= stabilityMs) {
+                            resolve(true);
+                            return;
+                        }
+                    } else {
+                        lastContent = content;
+                        stableStart = Date.now();
+                    }
+
+                    setTimeout(check, 100);
+                };
+                check();
+            });
+        }
+        """
+        try:
+            await self.page.evaluate(js_function, args)
+        except Exception as e:
+            # Re-raise as TimeoutError to match original behavior
+            if "Timeout" in str(e):
+                raise TimeoutError(
+                    f"Timeout waiting for streaming to complete after {timeout}ms"
+                ) from e
+            raise
+
     async def wait_for_streaming_complete(self, timeout: int = 10000) -> None:
         """Wait for any active streaming response to complete.
 
@@ -597,34 +697,7 @@ class ChatPage(BasePage):
         )
 
         # Get the last assistant message content and wait for it to stabilize
-        start_time = time.time()
-        last_content = ""
-        stable_count = 0
-
-        while stable_count < 3:  # Need 3 consecutive checks with same content
-            # Check for timeout
-            if (time.time() - start_time) * 1000 > timeout:
-                raise TimeoutError(
-                    f"Timeout waiting for streaming to complete after {timeout}ms. "
-                    f"Last content: {last_content}"
-                )
-
-            # TODO(#TBD-replace-playwright-timeouts): replace wait_for_timeout with explicit wait
-            # ast-grep-ignore: no-playwright-wait-for-timeout
-            await self.page.wait_for_timeout(200)
-            messages = await self.get_all_messages()
-            if messages and messages[-1]["role"] == "assistant":
-                current_content = messages[-1].get("content", "")
-                if (
-                    current_content == last_content
-                    and current_content != self.ASSISTANT_LOADING_PLACEHOLDER
-                ):
-                    stable_count += 1
-                else:
-                    stable_count = 0
-                    last_content = current_content
-            else:
-                break
+        await self._wait_for_stable_streaming(stability_ms=600, timeout=timeout)
 
     async def wait_for_conversation_saved(self, timeout: int = 20000) -> None:
         """Wait for conversation to be saved to backend by polling the API directly."""
