@@ -3,7 +3,7 @@ import logging
 import pathlib
 import uuid
 from datetime import UTC, date, datetime
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import (
     APIRouter,
@@ -24,6 +24,9 @@ from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.vector import DocumentRecord, get_document_by_id
 from family_assistant.web.dependencies import get_db
 from family_assistant.web.models import DocumentUploadResponse
+
+if TYPE_CHECKING:
+    from family_assistant.config_models import AppConfig
 
 logger = logging.getLogger(__name__)
 documents_api_router = APIRouter()
@@ -273,13 +276,9 @@ async def upload_document(
     )
 
     # --- 0. Get Document Storage Path from Config ---
-    app_config = getattr(request.app.state, "config", None)
-    document_storage_path_str = None
-    if app_config:
-        if hasattr(app_config, "document_storage_path"):
-            document_storage_path_str = app_config.document_storage_path
-        elif isinstance(app_config, dict):
-            document_storage_path_str = app_config.get("document_storage_path")
+
+    app_config: AppConfig | None = getattr(request.app.state, "config", None)
+    document_storage_path_str = app_config.document_storage_path if app_config else None
     if not document_storage_path_str:
         logger.error("Document storage path not configured. Upload will fail.")
         raise HTTPException(

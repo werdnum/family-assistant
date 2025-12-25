@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.context_providers import NotesContextProvider
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -89,7 +90,7 @@ async def create_processing_service(
         context_providers=[notes_provider],
         service_config=service_config,
         server_url=None,
-        app_config={},
+        app_config=AppConfig(),
     )
 
 

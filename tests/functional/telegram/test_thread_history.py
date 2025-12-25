@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -369,7 +370,7 @@ async def test_attachment_context_extraction(db_engine: AsyncEngine) -> None:
             service_config=service_config,
             context_providers=[],
             server_url="http://localhost:8000",
-            app_config={},
+            app_config=AppConfig(),
             attachment_registry=attachment_registry,
         )
 

@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -98,7 +99,7 @@ add_or_update_note(
             tools_config={},
             delegation_security_level="blocked",
         ),
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
     )
@@ -194,7 +195,7 @@ async def test_script_with_syntax_error_creates_no_note(
             tools_config={},
             delegation_security_level="blocked",
         ),
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
     )
@@ -306,7 +307,7 @@ add_or_update_note(
             tools_config={},
             delegation_security_level="blocked",
         ),
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
     )

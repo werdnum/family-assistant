@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.calendar_integration import (
     format_datetime_or_date,
 )
+from family_assistant.config_models import AppConfig
 from family_assistant.context_providers import CalendarContextProvider
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import (
@@ -282,7 +283,7 @@ async def test_add_event_and_verify_in_system_prompt(
         context_providers=[calendar_context_provider],
         service_config=service_config,
         server_url=None,
-        app_config={},
+        app_config=AppConfig(),
     )
 
     user_message_create = f"Please schedule {event_summary} for tomorrow at 10 AM."

@@ -132,8 +132,7 @@ class ProcessingService:
         service_config: ProcessingServiceConfig,  # Updated to use service_config
         context_providers: list[ContextProvider],  # NEW: List of context providers
         server_url: str | None,
-        # ast-grep-ignore: no-dict-any - Accept both AppConfig and dict for backward compatibility
-        app_config: AppConfig | dict[str, Any],
+        app_config: AppConfig,
         clock: Clock | None = None,
         attachment_registry: AttachmentRegistry
         | None = None,  # AttachmentRegistry (required for attachment operations)

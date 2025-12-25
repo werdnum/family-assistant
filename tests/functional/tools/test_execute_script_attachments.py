@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext
@@ -506,7 +507,7 @@ async def test_tool_chaining_json_query_workflow(
     )
 
     llm_client = RuleBasedMockLLMClient(rules=[], default_response=None)
-    dummy_app_config: dict = {}
+    dummy_app_config = AppConfig()
 
     processing_service = ProcessingService(
         llm_client=llm_client,

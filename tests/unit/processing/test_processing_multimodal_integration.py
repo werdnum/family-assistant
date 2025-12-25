@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from family_assistant.config_models import AppConfig
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentMetadata
@@ -56,7 +57,7 @@ class TestProcessingServiceMultimodal:
             service_config=config,
             context_providers=[],
             server_url=None,
-            app_config={},
+            app_config=AppConfig(),
         )
         return service
 

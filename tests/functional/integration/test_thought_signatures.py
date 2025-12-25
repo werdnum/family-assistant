@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment
 
+from family_assistant.config_models import AppConfig
 from family_assistant.llm import (
     LLMMessage,
     LLMOutput,
@@ -246,7 +247,7 @@ async def test_thought_signatures_persist_and_roundtrip(
         service_config=config,
         context_providers=[],
         server_url="http://testserver",
-        app_config={},
+        app_config=AppConfig(),
     )
 
     # Act: Process first message
@@ -325,7 +326,7 @@ async def test_thought_signatures_without_tool_calls(
         service_config=config,
         context_providers=[],
         server_url="http://testserver",
-        app_config={},
+        app_config=AppConfig(),
     )
 
     # Act: Process message
