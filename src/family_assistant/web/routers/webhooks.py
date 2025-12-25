@@ -43,12 +43,15 @@ async def handle_mail_webhook(
     raw_body_content = await request.body()
 
     # Determine directory for saving raw requests from app config or fallback
-    mailbox_raw_dir_to_use = (
-        request.app.state.config.mailbox_raw_dir
-        if hasattr(request.app.state, "config")
-        and request.app.state.config.mailbox_raw_dir
-        else DEFAULT_MAILBOX_RAW_DIR_FALLBACK
-    )
+    mailbox_raw_dir_to_use: str = DEFAULT_MAILBOX_RAW_DIR_FALLBACK
+    if hasattr(request.app.state, "config"):
+        config = request.app.state.config
+        if hasattr(config, "mailbox_raw_dir") and config.mailbox_raw_dir:
+            mailbox_raw_dir_to_use = config.mailbox_raw_dir
+        elif isinstance(config, dict):
+            mailbox_raw_dir_to_use = config.get(
+                "mailbox_raw_dir", DEFAULT_MAILBOX_RAW_DIR_FALLBACK
+            )
     if mailbox_raw_dir_to_use == DEFAULT_MAILBOX_RAW_DIR_FALLBACK:
         logger.warning(
             f"mailbox_raw_dir not found in app.state.config, using fallback: {DEFAULT_MAILBOX_RAW_DIR_FALLBACK}"
@@ -111,11 +114,15 @@ async def handle_mail_webhook(
             email_attachment_batch_id = str(uuid.uuid4())
 
             # Get attachment storage path from app config
-            attachment_storage_path = (
-                request.app.state.config.attachment_storage_path
-                if hasattr(request.app.state, "config")
-                else DEFAULT_ATTACHMENT_STORAGE_PATH
-            )
+            attachment_storage_path = DEFAULT_ATTACHMENT_STORAGE_PATH
+            if hasattr(request.app.state, "config"):
+                config = request.app.state.config
+                if hasattr(config, "attachment_storage_path"):
+                    attachment_storage_path = config.attachment_storage_path
+                elif isinstance(config, dict):
+                    attachment_storage_path = config.get(
+                        "attachment_storage_path", DEFAULT_ATTACHMENT_STORAGE_PATH
+                    )
 
             base_attachment_dir = os.path.join(
                 attachment_storage_path, email_attachment_batch_id
