@@ -1,6 +1,7 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import get_db_context
 from family_assistant.tools import ToolExecutionContext
@@ -114,7 +115,7 @@ async def test_reply_with_different_profile_includes_history(
         service_config=profile_a_config,
         context_providers=[],
         server_url="http://testserver",
-        app_config={},
+        app_config=AppConfig(),
     )
 
     profile_b_config = ProcessingServiceConfig(
@@ -132,7 +133,7 @@ async def test_reply_with_different_profile_includes_history(
         service_config=profile_b_config,
         context_providers=[],
         server_url="http://testserver",
-        app_config={},
+        app_config=AppConfig(),
     )
     # --- 1. Simulate initial message from Profile A ---
     async with get_db_context(db_engine) as db_context:

@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -135,7 +136,7 @@ if temp > 25.0:
             tools_config={},
             delegation_security_level="blocked",
         ),
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
     )
@@ -320,7 +321,7 @@ if air_quality < 50:
             tools_config={},
             delegation_security_level="blocked",
         ),
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
     )
@@ -478,7 +479,7 @@ if temp > 30 or temp < 10:
             tools_config={},
             delegation_security_level="blocked",
         ),
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
     )

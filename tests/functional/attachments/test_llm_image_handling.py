@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.llm.messages import LLMMessage, UserMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -120,7 +121,7 @@ async def test_image_handling_with_real_db(
             service_config=config,
             context_providers=[],
             server_url="http://localhost:8000",
-            app_config={},
+            app_config=AppConfig(),
             attachment_registry=registry,  # Provide the real registry
         )
 

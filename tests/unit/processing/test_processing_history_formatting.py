@@ -15,6 +15,7 @@ from PIL import Image
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment
 
+from family_assistant.config_models import AppConfig
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -118,7 +119,7 @@ def processing_service() -> ProcessingService:
         service_config=mock_service_config,  # Use the config object
         context_providers=[],
         server_url="http://test.com",  # Not used
-        app_config={},  # Add dummy app_config
+        app_config=AppConfig(),  # Add dummy app_config
     )
 
 
@@ -339,7 +340,7 @@ def test_web_specific_history_configuration() -> None:
         service_config=mock_service_config,
         context_providers=[],
         server_url="http://test.com",
-        app_config={},
+        app_config=AppConfig(),
     )
 
     # Test regular (non-web) history limits
@@ -382,7 +383,7 @@ def test_web_history_configuration_fallback() -> None:
         service_config=mock_service_config,
         context_providers=[],
         server_url="http://test.com",
-        app_config={},
+        app_config=AppConfig(),
     )
 
     # Test that web-specific properties fall back to default values
@@ -415,7 +416,7 @@ def test_web_history_configuration_with_zero_values() -> None:
         service_config=mock_service_config,
         context_providers=[],
         server_url="http://test.com",
-        app_config={},
+        app_config=AppConfig(),
     )
 
     # Test that zero values are respected, not treated as falsy and replaced with defaults

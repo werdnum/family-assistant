@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import (
     ToolCallFunction,
@@ -150,7 +151,7 @@ async def test_delegate_to_service_with_attachments(
             tools_config={},
             delegation_security_level="unrestricted",
         ),
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
         attachment_registry=attachment_registry,
@@ -168,7 +169,7 @@ async def test_delegate_to_service_with_attachments(
             tools_config={},
             delegation_security_level="unrestricted",
         ),
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
         attachment_registry=attachment_registry,
@@ -354,7 +355,7 @@ async def test_delegate_to_service_cross_conversation_attachment_denied(
             tools_config={},
             delegation_security_level="unrestricted",
         ),
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
         attachment_registry=attachment_registry,  # Pass attachment registry
@@ -372,7 +373,7 @@ async def test_delegate_to_service_cross_conversation_attachment_denied(
             tools_config={},
             delegation_security_level="unrestricted",
         ),
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
         attachment_registry=attachment_registry,  # Pass attachment registry
@@ -540,7 +541,7 @@ async def test_delegate_to_service_propagates_generated_attachments(
             tools_config={},
             delegation_security_level="unrestricted",
         ),
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
         attachment_registry=attachment_registry,
@@ -560,7 +561,7 @@ async def test_delegate_to_service_propagates_generated_attachments(
             tools_config={},
             delegation_security_level="unrestricted",
         ),
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
         attachment_registry=attachment_registry,

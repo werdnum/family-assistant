@@ -10,8 +10,6 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from family_assistant.config_models import AppConfig
-
 # Note: CalendarConfig TypedDict kept here for backward compatibility with tool functions
 # The Pydantic CalendarConfig in config_models.py is used for config file validation
 
@@ -42,6 +40,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from datetime import date, datetime
 
+    from family_assistant.config_models import AppConfig
     from family_assistant.embeddings import EmbeddingGenerator
     from family_assistant.events.indexing_source import IndexingSource
     from family_assistant.events.sources import EventSource
@@ -259,30 +258,17 @@ def get_attachment_limits(exec_context: ToolExecutionContext) -> tuple[int, int]
     default_max_file_size = 100 * 1024 * 1024  # 100MB
     default_max_multimodal_size = 20 * 1024 * 1024  # 20MB
 
-    # Try to get from processing service config (supports both AppConfig and dict)
+    # Try to get from processing service config
     if exec_context.processing_service and hasattr(
         exec_context.processing_service, "app_config"
     ):
-        app_config = exec_context.processing_service.app_config
+        app_config: AppConfig | None = exec_context.processing_service.app_config
         if app_config:
-            # Handle both AppConfig (Pydantic model) and dict types
-            if isinstance(app_config, AppConfig):
-                # AppConfig - use attribute access
-                attachment_config = app_config.attachment_config
-                return (
-                    attachment_config.max_file_size,
-                    attachment_config.max_multimodal_size,
-                )
-            elif isinstance(app_config, dict):
-                # Legacy dict config
-                attachment_config = app_config.get("attachment_config", {})
-                max_file_size = attachment_config.get(
-                    "max_file_size", default_max_file_size
-                )
-                max_multimodal_size = attachment_config.get(
-                    "max_multimodal_size", default_max_multimodal_size
-                )
-                return max_file_size, max_multimodal_size
+            attachment_config = app_config.attachment_config
+            return (
+                attachment_config.max_file_size,
+                attachment_config.max_multimodal_size,
+            )
 
     # Fallback to defaults
     return default_max_file_size, default_max_multimodal_size

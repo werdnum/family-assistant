@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from family_assistant.config_models import AppConfig
 from family_assistant.tools.image_backends import (
     ImageGenerationBackend,
     MockImageBackend,
@@ -21,16 +22,18 @@ from family_assistant.tools.types import ToolAttachment, ToolResult
 class MockProcessingService:
     """Mock processing service for testing."""
 
-    app_config: dict
+    app_config: AppConfig
 
 
 class MockExecutionContext:
     """Mock execution context for testing."""
 
     def __init__(
-        self, config: dict, backend: ImageGenerationBackend | None = None
+        self,
+        app_config: AppConfig | None = None,
+        backend: ImageGenerationBackend | None = None,
     ) -> None:
-        self.processing_service = MockProcessingService(config)
+        self.processing_service = MockProcessingService(app_config or AppConfig())
         if backend:
             self.image_backend = backend
 
@@ -51,8 +54,7 @@ async def test_generate_image_with_real_api() -> None:
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
     # Create mock context with real API configuration
-    config = {"use_mock_images": False, "google_api_key": api_key}
-    mock_context = MockExecutionContext(config)
+    mock_context = MockExecutionContext(AppConfig(gemini_api_key=api_key))
 
     # Test image generation
     result = await generate_image_tool(
@@ -78,9 +80,8 @@ async def test_generate_image_with_real_api() -> None:
 async def test_generate_image_mock_mode() -> None:
     """Test image generation in mock mode (always works)."""
     # Create mock context with injected mock backend
-    config = {}
     mock_backend = MockImageBackend()
-    mock_context = MockExecutionContext(config, backend=mock_backend)
+    mock_context = MockExecutionContext(backend=mock_backend)
 
     # Test image generation
     result = await generate_image_tool(
@@ -102,8 +103,7 @@ async def test_generate_image_mock_mode() -> None:
 async def test_generate_image_no_api_key() -> None:
     """Test image generation without API key (should fall back to mock)."""
     # Create mock context without API key - should auto-create mock backend
-    config = {}
-    mock_context = MockExecutionContext(config)
+    mock_context = MockExecutionContext()
 
     # Test image generation
     result = await generate_image_tool(
@@ -123,9 +123,8 @@ async def test_transform_image_mock_mode() -> None:
     """Test image transformation in mock mode."""
 
     # Create mock context with injected mock backend
-    config = {}
     mock_backend = MockImageBackend()
-    mock_context = MockExecutionContext(config, backend=mock_backend)
+    mock_context = MockExecutionContext(backend=mock_backend)
 
     # Create mock attachment with test image
     mock_attachment = AsyncMock()
@@ -159,9 +158,8 @@ async def test_transform_image_mock_mode() -> None:
 @pytest.mark.asyncio
 async def test_various_styles() -> None:
     """Test different image generation styles."""
-    config = {}
     mock_backend = MockImageBackend()
-    mock_context = MockExecutionContext(config, backend=mock_backend)
+    mock_context = MockExecutionContext(backend=mock_backend)
 
     styles = ["auto", "photorealistic", "artistic"]
     prompts = [
@@ -185,9 +183,8 @@ async def test_various_styles() -> None:
 @pytest.mark.asyncio
 async def test_error_handling() -> None:
     """Test error handling scenarios."""
-    config = {}
     mock_backend = MockImageBackend()
-    mock_context = MockExecutionContext(config, backend=mock_backend)
+    mock_context = MockExecutionContext(backend=mock_backend)
 
     # Test with very long prompt
     long_prompt = "a" * 1000  # Very long prompt

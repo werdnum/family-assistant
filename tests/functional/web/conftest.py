@@ -1089,7 +1089,7 @@ def api_test_processing_service(
         service_config=api_mock_processing_service_config,
         context_providers=context_providers,
         server_url="http://testserver",
-        app_config={},  # Minimal app_config for this test
+        app_config=AppConfig(),  # Minimal app_config for this test
         attachment_registry=attachment_registry_fixture,
     )
 

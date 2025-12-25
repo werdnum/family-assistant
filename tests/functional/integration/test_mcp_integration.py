@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface
 
 # Import necessary components from the application
+from family_assistant.config_models import AppConfig
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import ContentPartDict, text_content
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -270,7 +271,7 @@ async def test_mcp_time_conversion_stdio(db_engine: AsyncEngine) -> None:
     dummy_timezone_str = "UTC"
     dummy_max_history = 5
     dummy_history_age = 24
-    dummy_app_config = {}  # Add dummy app_config
+    dummy_app_config = AppConfig()  # Typed app_config
 
     test_service_config_obj_stdio = ProcessingServiceConfig(
         prompts=dummy_prompts,
@@ -467,7 +468,7 @@ async def test_mcp_time_conversion_sse(
     dummy_timezone_str = "UTC"
     dummy_max_history = 5
     dummy_history_age = 24
-    dummy_app_config = {}  # Add dummy app_config
+    dummy_app_config = AppConfig()  # Typed app_config
 
     test_service_config_obj_sse = ProcessingServiceConfig(
         prompts=dummy_prompts,

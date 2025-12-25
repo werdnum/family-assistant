@@ -11,6 +11,7 @@ import telegramify_markdown
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.context_providers import KnownUsersContextProvider
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import (
@@ -370,7 +371,7 @@ async def primary_processing_service(
         service_config=primary_service_config,
         context_providers=[known_users_provider],
         server_url="http://test.server",
-        app_config={},
+        app_config=AppConfig(),
     )
 
 
@@ -396,7 +397,7 @@ async def specialized_processing_service(
             service_config=config,
             context_providers=[known_users_provider],
             server_url="http://test.server",
-            app_config={},
+            app_config=AppConfig(),
         )
 
     return _factory

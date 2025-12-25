@@ -13,6 +13,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.context_providers import (
     CalendarContextProvider,
     KnownUsersContextProvider,
@@ -102,7 +103,7 @@ async def llm_integration_processing_service(
         service_config=config,
         context_providers=context_providers,
         server_url="http://test",
-        app_config={},
+        app_config=AppConfig(),
     )
 
     yield processing_service

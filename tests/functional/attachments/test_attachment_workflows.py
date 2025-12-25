@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from family_assistant.config_models import AppConfig
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -528,7 +529,7 @@ else:
                 tools_config={},
                 delegation_security_level="blocked",
             ),
-            app_config={},
+            app_config=AppConfig(),
             context_providers=[],
             server_url=None,
         )

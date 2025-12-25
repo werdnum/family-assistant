@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -137,7 +138,7 @@ print("Script executed - note created: " + str(result))
             delegation_security_level="confirm",
             id="test_profile",
         ),
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
         clock=mock_clock,
@@ -304,7 +305,7 @@ print("Recurring script executed - note created")
             delegation_security_level="confirm",
             id="test_profile",
         ),
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
         clock=mock_clock,
@@ -470,7 +471,7 @@ if True  # Missing colon
             delegation_security_level="confirm",
             id="test_profile",
         ),
-        app_config={},
+        app_config=AppConfig(),
         context_providers=[],
         server_url=None,
         clock=mock_clock,
