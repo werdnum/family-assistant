@@ -19,7 +19,17 @@ async def get_client_config(
     Returns:
         Dictionary containing client configuration like VAPID public key
     """
-    pwa_config = getattr(request.app.state, "config", {}).get("pwa_config", {})
+    vapid_public_key: str | None = None
+    app_config = getattr(request.app.state, "config", None)
+    if app_config:
+        if hasattr(app_config, "pwa_config") and hasattr(
+            app_config.pwa_config, "vapid_public_key"
+        ):
+            vapid_public_key = app_config.pwa_config.vapid_public_key
+        elif isinstance(app_config, dict):
+            pwa_config = app_config.get("pwa_config", {})
+            if isinstance(pwa_config, dict):
+                vapid_public_key = pwa_config.get("vapid_public_key")
     return {
-        "vapidPublicKey": pwa_config.get("vapid_public_key"),
+        "vapidPublicKey": vapid_public_key,
     }
