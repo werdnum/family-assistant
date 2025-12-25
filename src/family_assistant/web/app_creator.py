@@ -318,8 +318,10 @@ app = create_app()
 # --- Configure template helpers ---
 def get_dev_mode_from_request(request: Request) -> bool:
     """Get dev_mode from app config if available, otherwise from environment."""
-    if hasattr(request.app.state, "config") and "dev_mode" in request.app.state.config:
-        return request.app.state.config.get("dev_mode", False)
+    if hasattr(request.app.state, "config") and hasattr(
+        request.app.state.config, "dev_mode"
+    ):
+        return request.app.state.config.dev_mode
     # Fallback to environment variable
     return os.getenv("DEV_MODE", "false").lower() == "true"
 
@@ -479,10 +481,11 @@ def configure_app_auth(
         This handler runs after all other routes, acting as a fallback.
         """
         # Check if we're in dev mode at runtime
-        config = getattr(request.app.state, "config", {})
-        dev_mode = config.get(
-            "dev_mode", os.getenv("DEV_MODE", "false").lower() == "true"
-        )
+        config = getattr(request.app.state, "config", None)
+        if config and hasattr(config, "dev_mode"):
+            dev_mode = config.dev_mode
+        else:
+            dev_mode = os.getenv("DEV_MODE", "false").lower() == "true"
 
         if dev_mode:
             # In dev mode, let the default 404 handler run (Vite will serve the files)
