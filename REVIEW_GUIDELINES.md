@@ -109,9 +109,12 @@ Incorrect program logic that produces wrong results:
 - Race conditions in concurrent code
 - Incorrect state transitions
 - Wrong algorithm implementation
+- Silent failures (catch-all blocks that swallow errors)
+- Graceful fallbacks that mask underlying issues (returning None/empty on error)
 
 Examples:
 
+- `try: ... except: return None` (swallowing errors)
 - `if x > 10 and x < 5:` (impossible condition)
 - `for i in range(len(items) + 1):` (will go out of bounds)
 - Missing handling for empty lists or None values
@@ -169,6 +172,8 @@ Examples:
 
 - A migration to support multiple items finds another area that needs to be updated, but the code is
   updated to just take the first item from a list for now.
+- Including "backwards compatibility" code for internal refactorings instead of updating all call
+  sites (this prevents the type checker from finding broken usage).
 - A linter warning is disabled without a good reason, simply to make the linter pass.
 - A TODO comment is added for something that should be handled in the current change.
 
