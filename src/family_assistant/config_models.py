@@ -437,7 +437,9 @@ class AppConfig(BaseModel):
     server_url: str = "http://localhost:8000"
     document_storage_path: str = "/mnt/data/files"
     attachment_storage_path: str = "/mnt/data/mailbox/attachments"
-    chat_attachment_storage_path: str = "/tmp/chat_attachments"
+    chat_attachment_storage_path: str | None = (
+        None  # Falls back to attachment_config.storage_path
+    )
 
     # Weather integration
     willyweather_api_key: str | None = None
