@@ -24,9 +24,14 @@ import os
 import tempfile
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 import aiohttp
+import cv2
+import numpy as np
+from reolink_aio.api import Host
+from reolink_aio.enums import VodRequestType
+from reolink_aio.typings import VOD_trigger
 
 from family_assistant.camera.protocol import (
     CameraEvent,
@@ -38,33 +43,7 @@ from family_assistant.camera.protocol import (
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from reolink_aio.api import (  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]  # reolink_aio is optional dependency, not installed in all environments
-        Host,
-    )
-    from reolink_aio.enums import (  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]  # reolink_aio is optional dependency, not installed in all environments
-        VodRequestType,
-    )
-    from reolink_aio.typings import (  # type: ignore[import-not-found]  # pyright: ignore[reportMissingImports]  # reolink_aio is optional dependency, not installed in all environments
-        VOD_trigger,
-    )
-
     from family_assistant.config_models import ReolinkCameraItemConfig
-
-try:
-    import cv2  # pyright: ignore[reportMissingImports]
-    import numpy as np  # pyright: ignore[reportMissingImports]
-    from reolink_aio.api import Host  # type: ignore[import-not-found]
-    from reolink_aio.enums import VodRequestType  # type: ignore[import-not-found]
-    from reolink_aio.typings import VOD_trigger  # type: ignore[import-not-found]
-
-    REOLINK_AVAILABLE = True
-except ImportError:
-    REOLINK_AVAILABLE = False
-
-# Type alias for Host - use actual type when available, Any otherwise
-_AnyType = Any  # Keep reference for type alias
-# pylint: disable-next=using-generic-type-syntax-in-unsupported-version  # Python 3.12+ type syntax, project requires 3.12+
-type HostType = Host if REOLINK_AVAILABLE else _AnyType  # type: ignore[possibly-undefined]  # Host only defined when reolink_aio available
 
 logger = logging.getLogger(__name__)
 
@@ -142,16 +121,9 @@ class ReolinkBackend:
 
         Args:
             cameras: Mapping of camera_id to ReolinkCameraConfig.
-
-        Raises:
-            ImportError: If reolink_aio or cv2 is not available.
         """
-        if not REOLINK_AVAILABLE:
-            msg = "reolink_aio and opencv-python are required for Reolink backend"
-            raise ImportError(msg)
-
         self._cameras = cameras
-        self._hosts: dict[str, HostType] = {}
+        self._hosts: dict[str, Host] = {}
         self._locks: dict[str, asyncio.Lock] = {
             camera_id: asyncio.Lock() for camera_id in cameras
         }
@@ -170,7 +142,7 @@ class ReolinkBackend:
             msg = f"Unknown camera ID: '{camera_id}'. Available cameras: {available}"
             raise ValueError(msg)
 
-    async def _get_or_create_host(self, camera_id: str) -> HostType:
+    async def _get_or_create_host(self, camera_id: str) -> Host:
         """Get or create Host instance for camera.
 
         Args:
@@ -190,10 +162,6 @@ class ReolinkBackend:
 
         # Create new Host instance
         config = self._cameras[camera_id]
-        if Host is None:
-            msg = "reolink_aio not available"
-            raise RuntimeError(msg)
-
         host = Host(
             host=config.host,
             username=config.username,
@@ -650,10 +618,6 @@ def create_reolink_backend(
         >>> # export REOLINK_CAMERAS='{"cam1": {"host": "...", ...}}'
         >>> backend = create_reolink_backend()
     """
-    if not REOLINK_AVAILABLE:
-        logger.warning("reolink_aio not available, cannot create Reolink backend")
-        return None
-
     cameras: dict[str, ReolinkCameraConfig] = {}
 
     # Use provided typed config
