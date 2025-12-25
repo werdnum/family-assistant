@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig, PWAConfig
 from family_assistant.storage.push_subscription import push_subscriptions_table
 from family_assistant.web.app_creator import app as fastapi_app
 
@@ -16,11 +17,9 @@ async def test_client_config_returns_vapid_key(
     """Test that client config endpoint returns VAPID public key."""
     # Set up app.state.config with pwa_config
     original_config = getattr(fastapi_app.state, "config", None)
-    fastapi_app.state.config = {
-        "pwa_config": {
-            "vapid_public_key": "test-public-key-123",
-        }
-    }
+    fastapi_app.state.config = AppConfig(
+        pwa_config=PWAConfig(vapid_public_key="test-public-key-123")
+    )
 
     try:
         response = await api_client.get("/api/client_config")
@@ -41,9 +40,9 @@ async def test_client_config_when_no_vapid_key(
     api_client: httpx.AsyncClient,
 ) -> None:
     """Test client config returns None when VAPID key not configured."""
-    # Set up app.state.config with empty pwa_config
+    # Set up app.state.config with empty pwa_config (no VAPID key)
     original_config = getattr(fastapi_app.state, "config", None)
-    fastapi_app.state.config = {"pwa_config": {}}
+    fastapi_app.state.config = AppConfig()
 
     try:
         response = await api_client.get("/api/client_config")
