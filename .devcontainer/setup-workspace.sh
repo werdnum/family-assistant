@@ -315,14 +315,17 @@ $CLAUDE_BIN mcp add --scope user playwright $(which npx) -- -y -q @playwright/mc
 
 # Configure Claude plugin marketplace from local clone
 # Note: Using local path because Claude Code's git auth handler doesn't work with GitHub URLs
-PLUGINS_DIR="/home/claude/claude-code-plugins"
+# Use /home/claude explicitly since this script runs as root (not as claude user)
+CLAUDE_HOME="/home/claude"
+PLUGINS_DIR="$CLAUDE_HOME/claude-code-plugins"
 echo "Setting up Claude plugin marketplace..."
 if [ ! -d "$PLUGINS_DIR" ]; then
     echo "Cloning claude-code-plugins repository..."
+    # GIT_TERMINAL_PROMPT=0 prevents hanging if credentials are needed
     if [ -n "$GITHUB_TOKEN" ]; then
-        git clone "https://${GITHUB_TOKEN}@github.com/werdnum/claude-code-plugins.git" "$PLUGINS_DIR"
+        GIT_TERMINAL_PROMPT=0 git clone "https://${GITHUB_TOKEN}@github.com/werdnum/claude-code-plugins.git" "$PLUGINS_DIR"
     else
-        git clone "https://github.com/werdnum/claude-code-plugins.git" "$PLUGINS_DIR"
+        GIT_TERMINAL_PROMPT=0 git clone "https://github.com/werdnum/claude-code-plugins.git" "$PLUGINS_DIR"
     fi
     if [ "$RUNNING_AS_ROOT" = "true" ]; then
         chown -R claude:claude "$PLUGINS_DIR"
