@@ -45,14 +45,14 @@ jobs:
         id: 'read_review_guidelines'
         run: |-
           {
-            echo "REVIEW_GUIDELINES<<EOF"
+            echo "REVIEW_GUIDELINES<<GEMINI_REVIEW_GUIDELINES_EOF"
             if [ -f REVIEW_GUIDELINES.md ]; then
               cat REVIEW_GUIDELINES.md
               echo ""
             else
               echo "No project-specific review guidelines found."
             fi
-            echo "EOF"
+            echo "GEMINI_REVIEW_GUIDELINES_EOF"
           } >> "${GITHUB_ENV}"
 
       - name: 'Run Gemini pull request review'
