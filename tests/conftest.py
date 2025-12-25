@@ -42,6 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 import family_assistant.storage.tasks as tasks_module
 
 # Import for task_worker_manager fixture
+from family_assistant.config_models import AppConfig
 from family_assistant.processing import ProcessingService  # Import ProcessingService
 from family_assistant.services.attachment_registry import AttachmentRegistry
 
@@ -1257,18 +1258,13 @@ def setup_fastapi_test_config() -> Generator[None]:
         mailbox_dir = pathlib.Path(attach_dir) / "raw_mailbox_dumps"
         mailbox_dir.mkdir(exist_ok=True)
 
-        # Create a test config with writable paths
-        test_config = {
-            "document_storage_path": doc_dir,
-            "attachment_storage_path": attach_dir,
-            "mailbox_raw_dir": str(mailbox_dir),  # Convert back to string for config
-            "auth_enabled": False,  # Disable auth for tests
-            "dev_mode": False,  # Use production mode for tests
-        }
-
-        # If there's an existing config, preserve other values
-        if original_config:
-            test_config = {**original_config, **test_config}
+        # Create a test config with writable paths using AppConfig
+        test_config = AppConfig(
+            document_storage_path=doc_dir,
+            attachment_storage_path=attach_dir,
+            mailbox_raw_dir=str(mailbox_dir),
+            dev_mode=False,  # Use production mode for tests
+        )
 
         # Set the test config
         fastapi_app.state.config = test_config
