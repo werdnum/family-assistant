@@ -82,8 +82,10 @@ async def serve_pwa_manifest(request: Request) -> FileResponse:
 
 def _get_dev_mode_from_request(request: Request) -> bool:
     """Get dev_mode from app config if available, otherwise from environment."""
-    if hasattr(request.app.state, "config") and "dev_mode" in request.app.state.config:
-        return request.app.state.config.get("dev_mode", False)
+    if hasattr(request.app.state, "config") and hasattr(
+        request.app.state.config, "dev_mode"
+    ):
+        return request.app.state.config.dev_mode
     # Fallback to environment variable
     return os.getenv("DEV_MODE", "false").lower() == "true"
 

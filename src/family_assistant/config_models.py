@@ -63,6 +63,7 @@ class ProcessingConfig(BaseModel):
     home_assistant_verify_ssl: bool = True
     include_system_docs: list[str] | None = None
     max_iterations: int = 5
+    calendar_config: CalendarConfig | None = None  # Per-profile calendar config
 
 
 class ToolsConfig(BaseModel):
@@ -408,6 +409,16 @@ class MCPConfig(BaseModel):
     mcpServers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
+class OIDCConfig(BaseModel):
+    """OpenID Connect authentication configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    client_id: str = ""
+    client_secret: str = ""
+    discovery_url: str = ""
+
+
 class AppConfig(BaseModel):
     """Main application configuration.
 
@@ -437,6 +448,7 @@ class AppConfig(BaseModel):
     server_url: str = "http://localhost:8000"
     document_storage_path: str = "/mnt/data/files"
     attachment_storage_path: str = "/mnt/data/mailbox/attachments"
+    mailbox_raw_dir: str | None = None  # Directory for saving raw email requests
     chat_attachment_storage_path: str | None = (
         None  # Falls back to attachment_config.storage_path
     )
@@ -448,6 +460,10 @@ class AppConfig(BaseModel):
     # Debug flags
     litellm_debug: bool = False
     debug_llm_messages: bool = False
+    dev_mode: bool = False
+
+    # Authentication
+    oidc: OIDCConfig = Field(default_factory=OIDCConfig)
 
     # Service profiles
     default_service_profile_id: str = "default_assistant"
