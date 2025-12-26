@@ -28,7 +28,6 @@ from typing import TYPE_CHECKING, TypedDict
 
 import aiohttp
 import cv2
-import numpy as np
 from reolink_aio.api import Host
 from reolink_aio.enums import VodRequestType
 from reolink_aio.typings import VOD_trigger
@@ -156,9 +155,20 @@ class ReolinkBackend:
         """
         self._validate_camera_id(camera_id)
 
-        # Check if we already have a host connection
+        # Check if we already have a host connection with active session
         if camera_id in self._hosts:
-            return self._hosts[camera_id]
+            host = self._hosts[camera_id]
+            if host.session_active:
+                return host
+            # Session expired, clean up and reconnect
+            logger.debug("Session expired for camera %s, reconnecting", camera_id)
+            try:
+                await host.logout()
+            except Exception:
+                logger.debug(
+                    "Error during logout for camera %s", camera_id, exc_info=True
+                )
+            del self._hosts[camera_id]
 
         # Create new Host instance
         config = self._cameras[camera_id]
@@ -359,6 +369,21 @@ class ReolinkBackend:
 
             return recordings
 
+    async def _invalidate_host(self, camera_id: str) -> None:
+        """Invalidate cached host connection for camera.
+
+        Args:
+            camera_id: ID of the camera.
+        """
+        if camera_id in self._hosts:
+            try:
+                await self._hosts[camera_id].logout()
+            except Exception:
+                logger.debug(
+                    "Error during logout for camera %s", camera_id, exc_info=True
+                )
+            del self._hosts[camera_id]
+
     async def get_frame(
         self,
         camera_id: str,
@@ -381,121 +406,152 @@ class ReolinkBackend:
             RuntimeError: If frame extraction fails.
         """
         self._validate_camera_id(camera_id)
-        async with self._locks[camera_id]:
-            host = await self._get_or_create_host(camera_id)
-            config = self._cameras[camera_id]
-            channel = config.channel
 
-            # First, find the recording that contains this timestamp
-            search_start = timestamp - timedelta(minutes=1)
-            search_end = timestamp + timedelta(minutes=1)
+        # Retry logic for handling session disconnections
+        max_retries = 2
+        last_error: Exception | None = None
+
+        for attempt in range(max_retries):
+            async with self._locks[camera_id]:
+                try:
+                    return await self._get_frame_impl(camera_id, timestamp)
+                except (aiohttp.ServerDisconnectedError, aiohttp.ClientError) as e:
+                    last_error = e
+                    logger.warning(
+                        "Connection error on attempt %d/%d for camera %s: %s",
+                        attempt + 1,
+                        max_retries,
+                        camera_id,
+                        e,
+                    )
+                    # Invalidate the cached host so next attempt gets fresh session
+                    await self._invalidate_host(camera_id)
+                    if attempt < max_retries - 1:
+                        # Wait a bit before retrying
+                        await asyncio.sleep(1)
+                except ValueError:
+                    raise
+                except Exception as e:
+                    logger.exception("Error extracting frame for camera %s", camera_id)
+                    msg = f"Frame extraction failed: {e}"
+                    raise RuntimeError(msg) from e
+
+        # All retries exhausted
+        msg = f"Frame extraction failed after {max_retries} attempts: {last_error}"
+        raise RuntimeError(msg) from last_error
+
+    async def _get_frame_impl(
+        self,
+        camera_id: str,
+        timestamp: datetime,
+    ) -> bytes:
+        """Internal implementation of frame extraction.
+
+        Args:
+            camera_id: ID of the camera.
+            timestamp: Exact time to extract frame (UTC).
+
+        Returns:
+            JPEG bytes of the frame.
+        """
+        host = await self._get_or_create_host(camera_id)
+        config = self._cameras[camera_id]
+        channel = config.channel
+
+        # First, find the recording that contains this timestamp
+        search_start = timestamp - timedelta(minutes=1)
+        search_end = timestamp + timedelta(minutes=1)
+
+        _statuses, vod_files = await host.request_vod_files(
+            channel,
+            search_start,
+            search_end,
+            stream="sub",  # Use sub stream for faster extraction
+            split_time=VOD_SPLIT_TIME,
+        )
+
+        if not vod_files:
+            msg = f"No recording found at timestamp {timestamp}"
+            raise ValueError(msg)
+
+        # Find the VOD file that contains our timestamp
+        target_file = None
+        for vod_file in vod_files:
+            file_start = vod_file.start_time
+            file_end = getattr(vod_file, "end_time", file_start + VOD_SPLIT_TIME)
+            if file_start <= timestamp <= file_end:
+                target_file = vod_file
+                break
+
+        if target_file is None:
+            target_file = vod_files[0]  # Use first available
+
+        # Get download URL for this file (DOWNLOAD works better than FLV)
+        _mime_type, download_url = await host.get_vod_source(
+            channel,
+            target_file.file_name,
+            "sub",
+            VodRequestType.DOWNLOAD,
+        )
+
+        # Download the video file
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(
+                download_url,
+                ssl=False,
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as resp,
+        ):
+            if resp.status != 200:
+                msg = f"Failed to download video: HTTP {resp.status}"
+                raise RuntimeError(msg)
+
+            video_data = await resp.read()
+
+        # Save to temp file and extract frame
+        file_start = target_file.start_time
+
+        def _extract_frame() -> bytes:
+            # Write to temp file for OpenCV to read
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+                tmp.write(video_data)
+                tmp_path = tmp.name
 
             try:
-                _statuses, vod_files = await host.request_vod_files(
-                    channel,
-                    search_start,
-                    search_end,
-                    stream="sub",  # Use sub stream for faster extraction
-                    split_time=VOD_SPLIT_TIME,
-                )
-
-                if not vod_files:
-                    msg = f"No recording found at timestamp {timestamp}"
-                    raise ValueError(msg)
-
-                # Find the VOD file that contains our timestamp
-                target_file = None
-                for vod_file in vod_files:
-                    file_start = vod_file.start_time
-                    file_end = getattr(
-                        vod_file, "end_time", file_start + VOD_SPLIT_TIME
-                    )
-                    if file_start <= timestamp <= file_end:
-                        target_file = vod_file
-                        break
-
-                if target_file is None:
-                    target_file = vod_files[0]  # Use first available
-
-                # Get download URL for this file (DOWNLOAD works better than FLV)
-                _mime_type, download_url = await host.get_vod_source(
-                    channel,
-                    target_file.file_name,
-                    "sub",
-                    VodRequestType.DOWNLOAD,
-                )
-
-                # Download the video file
-                async with (
-                    aiohttp.ClientSession() as session,
-                    session.get(
-                        download_url,
-                        ssl=False,
-                        timeout=aiohttp.ClientTimeout(total=60),
-                    ) as resp,
-                ):
-                    if resp.status != 200:
-                        msg = f"Failed to download video: HTTP {resp.status}"
+                cap = cv2.VideoCapture(tmp_path)
+                try:
+                    if not cap.isOpened():
+                        msg = "Failed to open video file"
                         raise RuntimeError(msg)
 
-                    video_data = await resp.read()
+                    # Calculate offset into video
+                    fps = cap.get(cv2.CAP_PROP_FPS) or 15
+                    offset_seconds = (timestamp - file_start).total_seconds()
+                    frame_number = int(offset_seconds * fps)
 
-                # Save to temp file and extract frame
-                file_start = target_file.start_time
+                    # Seek to frame
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
 
-                def _extract_frame() -> bytes:
-                    if cv2 is None or np is None:
-                        msg = "OpenCV not available"
+                    ret, frame = cap.read()
+                    if not ret:
+                        msg = "Failed to read frame from video"
                         raise RuntimeError(msg)
 
-                    # Write to temp file for OpenCV to read
-                    with tempfile.NamedTemporaryFile(
-                        suffix=".mp4", delete=False
-                    ) as tmp:
-                        tmp.write(video_data)
-                        tmp_path = tmp.name
+                    # Encode to JPEG
+                    encode_params = [cv2.IMWRITE_JPEG_QUALITY, 85]
+                    success, buffer = cv2.imencode(".jpg", frame, encode_params)
+                    if not success:
+                        msg = "Failed to encode frame to JPEG"
+                        raise RuntimeError(msg)
 
-                    try:
-                        cap = cv2.VideoCapture(tmp_path)
-                        try:
-                            if not cap.isOpened():
-                                msg = "Failed to open video file"
-                                raise RuntimeError(msg)
+                    return buffer.tobytes()
+                finally:
+                    cap.release()
+            finally:
+                os.unlink(tmp_path)
 
-                            # Calculate offset into video
-                            fps = cap.get(cv2.CAP_PROP_FPS) or 15
-                            offset_seconds = (timestamp - file_start).total_seconds()
-                            frame_number = int(offset_seconds * fps)
-
-                            # Seek to frame
-                            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-
-                            ret, frame = cap.read()
-                            if not ret:
-                                msg = "Failed to read frame from video"
-                                raise RuntimeError(msg)
-
-                            # Encode to JPEG
-                            encode_params = [cv2.IMWRITE_JPEG_QUALITY, 85]
-                            success, buffer = cv2.imencode(".jpg", frame, encode_params)
-                            if not success:
-                                msg = "Failed to encode frame to JPEG"
-                                raise RuntimeError(msg)
-
-                            return buffer.tobytes()
-                        finally:
-                            cap.release()
-                    finally:
-                        os.unlink(tmp_path)
-
-                return await asyncio.to_thread(_extract_frame)
-
-            except ValueError:
-                raise
-            except Exception as e:
-                logger.exception("Error extracting frame for camera %s", camera_id)
-                msg = f"Frame extraction failed: {e}"
-                raise RuntimeError(msg) from e
+        return await asyncio.to_thread(_extract_frame)
 
     async def get_frames_batch(
         self,
