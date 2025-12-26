@@ -126,7 +126,7 @@ COPY --chown=appuser:appuser pyproject.toml uv.lock* ./
 
 # Install Python dependencies (without installing the project itself yet)
 USER appuser
-RUN uv sync --no-install-project --extra local-embeddings --extra reolink
+RUN uv sync --no-install-project --extra local-embeddings
 
 # --- Frontend Build Stage ---
 # Copy frontend package files first for layer caching
@@ -154,7 +154,7 @@ COPY --chown=appuser:appuser . .
 # Install the package using uv sync to ensure uv.lock continues to apply.
 # This completes the installation by adding the project itself.
 USER appuser
-RUN uv sync --extra local-embeddings --extra reolink
+RUN uv sync --extra local-embeddings
 
 # --- Runtime Configuration ---
 # Expose the port the web server listens on
