@@ -3692,6 +3692,532 @@ export const GetAutomationStatsToolUI = ({ result, status }) => {
   );
 };
 
+// ============================================
+// Camera Tool UIs
+// ============================================
+
+// Tool UI for list_cameras
+export const ListCamerasToolUI = ({ result, status }) => {
+  let statusIcon = null;
+  let statusClass = '';
+
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  let parsed = null;
+  try {
+    if (typeof result === 'string') {
+      parsed = JSON.parse(result);
+    } else if (result && typeof result === 'object') {
+      parsed = result;
+    }
+  } catch (_e) {
+    // Unable to parse result
+  }
+
+  const cameras = parsed?.cameras || [];
+  const hasError = parsed?.error || (status?.type === 'incomplete' && status?.reason === 'error');
+
+  return (
+    <div className={`tool-call-container tool-camera ${statusClass}`} data-ui="tool-call-content">
+      <div className="tool-call-header">
+        <span className="tool-name">📹 List Cameras</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+
+      {hasError && (
+        <div className="tool-error-message">❌ {parsed?.error || 'Failed to list cameras'}</div>
+      )}
+
+      {!hasError && cameras.length > 0 && (
+        <div className="tool-camera-list">
+          <div className="tool-results-count">
+            Found {cameras.length} camera{cameras.length !== 1 ? 's' : ''}:
+          </div>
+          {cameras.map((camera, index) => (
+            <div key={index} className="tool-camera-item">
+              <div className="tool-camera-name">
+                <span
+                  className={`tool-camera-status-dot ${camera.status === 'online' ? 'online' : 'offline'}`}
+                />
+                <strong>{camera.name || camera.id}</strong>
+              </div>
+              <div className="tool-camera-details">
+                <span className="tool-camera-id">ID: {camera.id}</span>
+                <span className={`tool-badge tool-badge-${camera.status}`}>{camera.status}</span>
+                <span className="tool-camera-backend">{camera.backend}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!hasError && cameras.length === 0 && result && (
+        <div className="tool-no-results">No cameras configured</div>
+      )}
+
+      {status?.type === 'running' && <div className="tool-running-message">Listing cameras...</div>}
+    </div>
+  );
+};
+
+// Tool UI for search_camera_events
+export const SearchCameraEventsToolUI = ({ args, result, status }) => {
+  let statusIcon = null;
+  let statusClass = '';
+
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  let parsed = null;
+  try {
+    if (typeof result === 'string') {
+      parsed = JSON.parse(result);
+    } else if (result && typeof result === 'object') {
+      parsed = result;
+    }
+  } catch (_e) {
+    // Unable to parse result
+  }
+
+  const events = parsed?.events || [];
+  const hasError = parsed?.error || (status?.type === 'incomplete' && status?.reason === 'error');
+
+  const getEventIcon = (eventType) => {
+    switch (eventType?.toLowerCase()) {
+      case 'person':
+        return '🚶';
+      case 'vehicle':
+        return '🚗';
+      case 'pet':
+        return '🐕';
+      case 'motion':
+        return '💨';
+      default:
+        return '📷';
+    }
+  };
+
+  const formatTimestamp = (timestamp) => {
+    if (!timestamp) {
+      return 'Unknown time';
+    }
+    try {
+      const date = new Date(timestamp);
+      return date.toLocaleString(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+    } catch (_e) {
+      return timestamp;
+    }
+  };
+
+  return (
+    <div
+      className={`tool-call-container tool-camera-events ${statusClass}`}
+      data-ui="tool-call-content"
+    >
+      <div className="tool-call-header">
+        <span className="tool-name">🔍 Search Camera Events</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+
+      <div className="tool-camera-search-params">
+        {args?.camera_id && (
+          <div className="tool-filter-indicator">
+            📹 Camera: <strong>{args.camera_id}</strong>
+          </div>
+        )}
+        {args?.start_time && (
+          <div className="tool-filter-indicator">
+            🕐 From: <strong>{args.start_time}</strong>
+          </div>
+        )}
+        {args?.end_time && (
+          <div className="tool-filter-indicator">
+            🕐 To: <strong>{args.end_time}</strong>
+          </div>
+        )}
+        {args?.event_types && args.event_types.length > 0 && (
+          <div className="tool-filter-indicator">
+            🏷️ Types: <strong>{args.event_types.join(', ')}</strong>
+          </div>
+        )}
+      </div>
+
+      {hasError && (
+        <div className="tool-error-message">❌ {parsed?.error || 'Failed to search events'}</div>
+      )}
+
+      {!hasError && events.length > 0 && (
+        <div className="tool-events-list">
+          <div className="tool-results-count">
+            Found {parsed?.count || events.length} event{events.length !== 1 ? 's' : ''}:
+          </div>
+          {events.map((event, index) => (
+            <div key={index} className="tool-event-item">
+              <div className="tool-event-header">
+                <span className="tool-event-type">
+                  {getEventIcon(event.event_type)} <strong>{event.event_type}</strong>
+                </span>
+                {event.confidence !== null && (
+                  <span className="tool-event-confidence">
+                    {Math.round(event.confidence * 100)}% confidence
+                  </span>
+                )}
+              </div>
+              <div className="tool-event-timestamp">🕐 {formatTimestamp(event.start_time)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!hasError && events.length === 0 && result && (
+        <div className="tool-no-results">No events found in the specified time range.</div>
+      )}
+
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Searching camera events...</div>
+      )}
+    </div>
+  );
+};
+
+// Tool UI for get_camera_frame
+export const GetCameraFrameToolUI = ({ args, result, status, attachments }) => {
+  let statusIcon = null;
+  let statusClass = '';
+
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  let parsed = null;
+  try {
+    if (typeof result === 'string') {
+      parsed = JSON.parse(result);
+    } else if (result && typeof result === 'object') {
+      parsed = result;
+    }
+  } catch (_e) {
+    // Result might be just text
+  }
+
+  const hasError = parsed?.error || (status?.type === 'incomplete' && status?.reason === 'error');
+
+  return (
+    <div
+      className={`tool-call-container tool-camera-frame ${statusClass}`}
+      data-ui="tool-call-content"
+    >
+      <div className="tool-call-header">
+        <span className="tool-name">📸 Camera Frame</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+
+      <div className="tool-camera-frame-params">
+        {args?.camera_id && (
+          <div className="tool-filter-indicator">
+            📹 Camera: <strong>{args.camera_id}</strong>
+          </div>
+        )}
+        {args?.timestamp && (
+          <div className="tool-filter-indicator">
+            🕐 Timestamp: <strong>{args.timestamp}</strong>
+          </div>
+        )}
+      </div>
+
+      {hasError && (
+        <div className="tool-error-message">❌ {parsed?.error || 'Failed to get frame'}</div>
+      )}
+
+      {attachments && attachments.length > 0 && (
+        <div className="tool-camera-frames">
+          {attachments.map((attachment, index) => (
+            <ToolAttachmentDisplay
+              key={getAttachmentKey(attachment, index)}
+              attachment={attachment}
+            />
+          ))}
+        </div>
+      )}
+
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Extracting frame...</div>
+      )}
+    </div>
+  );
+};
+
+// Tool UI for get_camera_frames_batch
+export const GetCameraFramesBatchToolUI = ({ args, result, status, attachments }) => {
+  let statusIcon = null;
+  let statusClass = '';
+
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  let parsed = null;
+  try {
+    if (typeof result === 'string') {
+      parsed = JSON.parse(result);
+    } else if (result && typeof result === 'object') {
+      parsed = result;
+    }
+  } catch (_e) {
+    // Result might be just text
+  }
+
+  const hasError = parsed?.error || (status?.type === 'incomplete' && status?.reason === 'error');
+  const frameCount = parsed?.count || attachments?.length || 0;
+
+  return (
+    <div
+      className={`tool-call-container tool-camera-batch ${statusClass}`}
+      data-ui="tool-call-content"
+    >
+      <div className="tool-call-header">
+        <span className="tool-name">🎞️ Camera Frames Batch</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+
+      <div className="tool-camera-batch-params">
+        {args?.camera_id && (
+          <div className="tool-filter-indicator">
+            📹 Camera: <strong>{args.camera_id}</strong>
+          </div>
+        )}
+        {args?.start_time && (
+          <div className="tool-filter-indicator">
+            🕐 From: <strong>{args.start_time}</strong>
+          </div>
+        )}
+        {args?.end_time && (
+          <div className="tool-filter-indicator">
+            🕐 To: <strong>{args.end_time}</strong>
+          </div>
+        )}
+        {args?.interval_minutes && (
+          <div className="tool-filter-indicator">
+            ⏱️ Interval: <strong>{args.interval_minutes} min</strong>
+          </div>
+        )}
+        {args?.max_frames && (
+          <div className="tool-filter-indicator">
+            📊 Max frames: <strong>{args.max_frames}</strong>
+          </div>
+        )}
+      </div>
+
+      {hasError && (
+        <div className="tool-error-message">❌ {parsed?.error || 'Failed to get frames'}</div>
+      )}
+
+      {!hasError && frameCount > 0 && (
+        <div className="tool-results-count">
+          Retrieved {frameCount} frame{frameCount !== 1 ? 's' : ''}
+        </div>
+      )}
+
+      {attachments && attachments.length > 0 && (
+        <div className="tool-camera-frames-grid">
+          {attachments.map((attachment, index) => (
+            <ToolAttachmentDisplay
+              key={getAttachmentKey(attachment, index)}
+              attachment={attachment}
+            />
+          ))}
+        </div>
+      )}
+
+      {!hasError && frameCount === 0 && result && (
+        <div className="tool-no-results">No frames available in the specified time range.</div>
+      )}
+
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Extracting frames...</div>
+      )}
+    </div>
+  );
+};
+
+// Tool UI for get_camera_recordings
+export const GetCameraRecordingsToolUI = ({ args, result, status }) => {
+  let statusIcon = null;
+  let statusClass = '';
+
+  if (status?.type === 'running') {
+    statusIcon = <ClockIcon size={16} className="animate-spin" />;
+    statusClass = 'tool-running';
+  } else if (status?.type === 'complete') {
+    statusIcon = <CheckCircleIcon size={16} className="tool-success" />;
+    statusClass = 'tool-complete';
+  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
+    statusIcon = <AlertCircleIcon size={16} />;
+    statusClass = 'tool-error';
+  }
+
+  let parsed = null;
+  try {
+    if (typeof result === 'string') {
+      parsed = JSON.parse(result);
+    } else if (result && typeof result === 'object') {
+      parsed = result;
+    }
+  } catch (_e) {
+    // Unable to parse result
+  }
+
+  const recordings = parsed?.recordings || [];
+  const hasError = parsed?.error || (status?.type === 'incomplete' && status?.reason === 'error');
+
+  const formatTimestamp = (timestamp) => {
+    if (!timestamp) {
+      return 'Unknown time';
+    }
+    try {
+      const date = new Date(timestamp);
+      return date.toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch (_e) {
+      return timestamp;
+    }
+  };
+
+  const formatDuration = (seconds) => {
+    if (!seconds) {
+      return '';
+    }
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.round(seconds % 60);
+    if (mins === 0) {
+      return `${secs}s`;
+    }
+    return `${mins}m ${secs}s`;
+  };
+
+  const formatSize = (bytes) => {
+    if (!bytes) {
+      return '';
+    }
+    if (bytes < 1024) {
+      return `${bytes} B`;
+    }
+    if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB`;
+    }
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  return (
+    <div
+      className={`tool-call-container tool-camera-recordings ${statusClass}`}
+      data-ui="tool-call-content"
+    >
+      <div className="tool-call-header">
+        <span className="tool-name">🎬 Camera Recordings</span>
+        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+      </div>
+
+      <div className="tool-camera-recordings-params">
+        {args?.camera_id && (
+          <div className="tool-filter-indicator">
+            📹 Camera: <strong>{args.camera_id}</strong>
+          </div>
+        )}
+        {args?.start_time && (
+          <div className="tool-filter-indicator">
+            🕐 From: <strong>{args.start_time}</strong>
+          </div>
+        )}
+        {args?.end_time && (
+          <div className="tool-filter-indicator">
+            🕐 To: <strong>{args.end_time}</strong>
+          </div>
+        )}
+      </div>
+
+      {hasError && (
+        <div className="tool-error-message">❌ {parsed?.error || 'Failed to get recordings'}</div>
+      )}
+
+      {!hasError && recordings.length > 0 && (
+        <div className="tool-recordings-list">
+          <div className="tool-results-count">
+            Found {parsed?.count || recordings.length} recording{recordings.length !== 1 ? 's' : ''}
+          </div>
+          {recordings.map((rec, index) => (
+            <div key={index} className="tool-recording-item">
+              <div className="tool-recording-time">
+                📼 {formatTimestamp(rec.start_time)} → {formatTimestamp(rec.end_time)}
+              </div>
+              <div className="tool-recording-details">
+                {rec.duration_seconds && (
+                  <span className="tool-recording-duration">
+                    ⏱️ {formatDuration(rec.duration_seconds)}
+                  </span>
+                )}
+                {rec.size_bytes && (
+                  <span className="tool-recording-size">💾 {formatSize(rec.size_bytes)}</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!hasError && recordings.length === 0 && result && (
+        <div className="tool-no-results">No recordings found in the specified time range.</div>
+      )}
+
+      {status?.type === 'running' && (
+        <div className="tool-running-message">Fetching recordings...</div>
+      )}
+    </div>
+  );
+};
+
 // Create a map of tool UIs by name for easier access
 export const toolUIsByName = {
   // Implemented tool UIs
@@ -3733,6 +4259,13 @@ export const toolUIsByName = {
   disable_automation: DisableAutomationToolUI,
   delete_automation: DeleteAutomationToolUI,
   get_automation_stats: GetAutomationStatsToolUI,
+
+  // Camera tool UIs
+  list_cameras: ListCamerasToolUI,
+  search_camera_events: SearchCameraEventsToolUI,
+  get_camera_frame: GetCameraFrameToolUI,
+  get_camera_frames_batch: GetCameraFramesBatchToolUI,
+  get_camera_recordings: GetCameraRecordingsToolUI,
 };
 
 // Export ToolFallback separately
