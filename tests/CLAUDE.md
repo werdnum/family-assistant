@@ -323,6 +323,25 @@ The project includes `tests/mocks/mock_llm.py` with:
 
 ## Testing Chat API Endpoints
 
+### Waiting for Server Startup
+
+When the server is starting up (e.g., in CI, Docker containers, or local development), use the
+wait-for-server script to ensure the server is ready before making requests:
+
+```bash
+# Wait for server with default 120 second timeout
+scripts/wait-for-server.sh
+
+# Wait with custom timeout (e.g., 60 seconds)
+scripts/wait-for-server.sh 60
+```
+
+The script polls `http://devcontainer-backend-1:8000/api/health` every 2 seconds until the server
+responds or the timeout is reached. Exit codes:
+
+- `0` - Server is ready
+- `1` - Timeout waiting for server
+
 To test the chat API functionality manually, you can use curl to make requests to both streaming and
 non-streaming endpoints:
 
@@ -345,6 +364,28 @@ curl -X POST http://devcontainer-backend-1:8000/api/v1/chat/send_message_stream 
 **Debug Logging:** To see detailed LLM request/response debugging, set the `DEBUG_LLM_MESSAGES=true`
 environment variable when running the application. This will log the exact messages being sent to
 the LLM, including system prompts, user messages, tool calls, and tool responses.
+
+**API Discovery:** To discover available API endpoints, use jq to parse the OpenAPI spec:
+
+```bash
+# List all available endpoints
+curl -s 'http://devcontainer-backend-1:8000/openapi.json' | jq '.paths | keys'
+
+# Find specific endpoints (e.g., tools-related)
+curl -s 'http://devcontainer-backend-1:8000/openapi.json' | jq '.paths | keys | map(select(contains("tool")))'
+```
+
+**Testing Tools API directly:**
+
+```bash
+# Execute a tool directly (bypasses LLM, saves tokens for testing)
+curl -X POST "http://devcontainer-backend-1:8000/api/tools/execute/get_camera_frame" \
+  -H "Content-Type: application/json" \
+  -d '{"arguments": {"camera_id": "chickens", "timestamp": "2025-12-27T09:30:00"}}'
+
+# Get tool definitions
+curl -s 'http://devcontainer-backend-1:8000/api/tools/definitions' | jq
+```
 
 ## Playwright Tests
 
