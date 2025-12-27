@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -493,17 +494,17 @@ class ReolinkBackend:
 
         file_start = target_file.start_time
 
-        # Try FFmpeg with RTMP streaming first (better for seeking)
-        logger.info("FRAME_EXTRACT_V2: Trying FFmpeg/RTMP for %s", camera_id)
+        # Try FFmpeg with FLV streaming first (uses username/password auth, more reliable)
+        logger.info("FRAME_EXTRACT_V2: Trying FFmpeg/FLV for %s", camera_id)
         try:
             return await self._extract_frame_ffmpeg(
                 host, channel, target_file, timestamp, file_start
             )
         except Exception as e:
-            logger.warning("FFmpeg/RTMP failed: %s, trying HTTP download", e)
-            # Invalidate host after RTMP failure to get fresh connection
+            logger.warning("FFmpeg/FLV failed: %s, trying HTTP download", e)
+            # Invalidate host after FLV failure to get fresh connection
             await self._invalidate_host(camera_id)
-            # Give camera time to recover from RTMP attempt
+            # Give camera time to recover from FLV attempt
             await asyncio.sleep(2)
 
         # Fall back to HTTP download approach
@@ -520,18 +521,28 @@ class ReolinkBackend:
         timestamp: datetime,
         file_start: datetime,
     ) -> bytes:
-        """Extract frame using FFmpeg with RTMP streaming.
+        """Extract frame using FFmpeg with FLV streaming.
 
-        Uses RTMP for better seeking support. For small offsets (<30s), this is
-        faster than downloading the entire file.
+        Uses FLV streaming (HTTP-based with username/password auth) which is
+        more reliable than token-based download. FLV supports seeking.
         """
-        # Get RTMP streaming URL (better seeking support than FLV)
+        # Get FLV streaming URL (uses username/password auth, more reliable)
         _mime_type, stream_url = await host.get_vod_source(
             channel,
             target_file.file_name,  # type: ignore[attr-defined]
             "sub",
-            VodRequestType.RTMP,
+            VodRequestType.FLV,
         )
+
+        # Convert HTTPS to HTTP to avoid TLS connection issues
+        # The camera's TLS implementation seems to have issues with long-running downloads
+        # Also replace port 443 with port 80 (or remove the port since 80 is HTTP default)
+        stream_url = stream_url.replace("https://", "http://")
+        stream_url = re.sub(r":443/", "/", stream_url)  # Remove :443 or change to :80
+
+        # Log URL without credentials
+        safe_url = re.sub(r"password=[^&]+", "password=REDACTED", stream_url)
+        logger.info("FFmpeg extracting frame from FLV stream (HTTP): %s", safe_url)
 
         # Calculate seek offset
         offset_seconds = max(0, (timestamp - file_start).total_seconds())
@@ -541,7 +552,7 @@ class ReolinkBackend:
                 tmp_path = tmp.name
 
             try:
-                # Use FFmpeg to extract a single frame
+                # Use FFmpeg to extract a single frame from FLV stream
                 # -ss before -i enables input seeking (faster)
                 # -vframes 1 extracts only one frame
                 cmd = [
@@ -550,7 +561,7 @@ class ReolinkBackend:
                     "-ss",
                     str(offset_seconds),  # Seek position (before -i for input seeking)
                     "-i",
-                    stream_url,  # Input stream
+                    stream_url,  # Input stream (FLV over HTTP)
                     "-vframes",
                     "1",  # Extract one frame
                     "-q:v",
@@ -563,13 +574,14 @@ class ReolinkBackend:
                 result = subprocess.run(
                     cmd,
                     capture_output=True,
-                    timeout=30,  # 30 second timeout
+                    timeout=60,  # 60 second timeout
                     check=False,
                 )
 
                 if result.returncode != 0:
                     stderr = result.stderr.decode("utf-8", errors="replace")
-                    msg = f"FFmpeg failed: {stderr[:500]}"
+                    # Get the last 1000 chars where the actual error usually is
+                    msg = f"FFmpeg failed: {stderr[-1000:]}"
                     raise RuntimeError(msg)
 
                 # Read the extracted frame
@@ -751,6 +763,49 @@ class ReolinkBackend:
                 continue
 
         return frames
+
+    async def get_live_snapshot(self, camera_id: str) -> bytes:
+        """Get a live snapshot (current frame) from the camera.
+
+        This uses a simpler HTTP endpoint than VOD playback and is useful for:
+        1. Testing basic camera connectivity
+        2. Getting current state of a camera
+        3. Quick checks without needing to search recordings
+
+        Args:
+            camera_id: Configured camera identifier.
+
+        Returns:
+            JPEG image bytes.
+
+        Raises:
+            ValueError: If camera_id is not configured.
+            RuntimeError: If snapshot could not be retrieved.
+        """
+        self._validate_camera_id(camera_id)
+        config = self._cameras[camera_id]
+        channel = config.channel
+
+        host = await self._get_or_create_host(camera_id)
+        logger.info(
+            "Getting live snapshot from camera %s channel %d", camera_id, channel
+        )
+
+        try:
+            snapshot = await host.get_snapshot(channel)
+            if snapshot is None:
+                msg = f"Camera {camera_id}: get_snapshot returned None"
+                raise RuntimeError(msg)
+
+            logger.info(
+                "Got live snapshot from camera %s: %d bytes", camera_id, len(snapshot)
+            )
+            return snapshot
+
+        except Exception as e:
+            logger.exception("Error getting live snapshot from camera %s", camera_id)
+            msg = f"Failed to get live snapshot: {e}"
+            raise RuntimeError(msg) from e
 
     async def close(self) -> None:
         """Cleanup connections and resources."""
