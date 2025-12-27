@@ -231,18 +231,7 @@ async def list_cameras_tool(
             }
             for cam in cameras
         ]
-        # Include camera IDs in text so LLM knows what IDs to use
-        if cameras:
-            camera_summary = ", ".join(
-                f"'{cam.id}' ({cam.name}, {cam.status})" for cam in cameras
-            )
-            text = f"Found {len(cameras)} camera(s): {camera_summary}"
-        else:
-            text = "No cameras configured"
-        return ToolResult(
-            text=text,
-            data={"cameras": camera_list, "count": len(cameras)},
-        )
+        return ToolResult(data={"cameras": camera_list, "count": len(cameras)})
     except Exception as e:
         logger.exception("Error listing cameras")
         return ToolResult(data={"error": f"Failed to list cameras: {e}"})
@@ -297,10 +286,12 @@ async def search_camera_events_tool(
             }
             for evt in events
         ]
-        result_text = f"Found {len(events)} event(s) on camera '{camera_id}' between {start_time} and {end_time}"
         return ToolResult(
-            text=result_text + date_warning,
-            data={"events": event_list, "count": len(events)},
+            data={
+                "events": event_list,
+                "count": len(events),
+                "warning": date_warning.strip() if date_warning else None,
+            }
         )
     except ValueError as e:
         # Expected errors (invalid camera ID, etc.) - return cleanly without traceback
@@ -334,7 +325,7 @@ async def get_camera_frame_tool(
             timestamp=ts,
         )
         return ToolResult(
-            text=f"Frame from camera '{camera_id}' at {timestamp}",
+            data={"camera_id": camera_id, "timestamp": timestamp},
             attachments=[
                 ToolAttachment(
                     mime_type="image/jpeg",
@@ -384,8 +375,7 @@ async def get_camera_frames_batch_tool(
 
         if not frames:
             return ToolResult(
-                text=f"No frames available for camera '{camera_id}' in the specified time range",
-                data={"frames": [], "count": 0},
+                data={"camera_id": camera_id, "timestamps": [], "count": 0}
             )
 
         attachments = [
@@ -398,12 +388,12 @@ async def get_camera_frames_batch_tool(
         ]
 
         return ToolResult(
-            text=f"Retrieved {len(frames)} frame(s) from camera '{camera_id}' ({interval_minutes}min intervals)",
-            attachments=attachments,
             data={
+                "camera_id": camera_id,
                 "timestamps": [f.timestamp.isoformat() for f in frames],
                 "count": len(frames),
             },
+            attachments=attachments,
         )
     except ValueError as e:
         # Expected errors (invalid camera ID, etc.) - return cleanly
@@ -452,8 +442,11 @@ async def get_camera_recordings_tool(
         ]
         total_duration = sum(r["duration_seconds"] for r in recording_list)
         return ToolResult(
-            text=f"Found {len(recordings)} recording segment(s) on camera '{camera_id}' ({total_duration / 3600:.1f} hours total)",
-            data={"recordings": recording_list, "count": len(recordings)},
+            data={
+                "recordings": recording_list,
+                "count": len(recordings),
+                "total_duration_hours": round(total_duration / 3600, 1),
+            }
         )
     except ValueError as e:
         # Expected errors (invalid camera ID, etc.) - return cleanly
