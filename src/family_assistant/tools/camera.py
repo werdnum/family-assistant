@@ -178,6 +178,31 @@ CAMERA_TOOLS_DEFINITION: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_live_camera_snapshot",
+            "description": (
+                "Get a LIVE snapshot showing the CURRENT state of the camera. "
+                "Returns a real-time JPEG image of what the camera sees RIGHT NOW.\n\n"
+                "Use this for:\n"
+                "1. Checking the current state of a camera\n"
+                "2. Testing camera connectivity\n"
+                "3. Quick views without needing to search recordings\n\n"
+                "NOTE: This shows what's happening NOW, not a historical recording."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "camera_id": {
+                        "type": "string",
+                        "description": "Camera ID from list_cameras",
+                    },
+                },
+                "required": ["camera_id"],
+            },
+        },
+    },
 ]
 
 
@@ -454,3 +479,37 @@ async def get_camera_recordings_tool(
     except Exception as e:
         logger.exception("Error getting camera recordings")
         return ToolResult(data={"error": f"Failed to get recordings: {e}"})
+
+
+async def get_live_camera_snapshot_tool(
+    exec_context: ToolExecutionContext,
+    camera_id: str,
+) -> ToolResult:
+    """Get a live snapshot showing the current state of the camera."""
+    if not exec_context.camera_backend:
+        return ToolResult(
+            data={
+                "error": "Camera backend not configured. Check camera_config in profile."
+            }
+        )
+
+    try:
+        snapshot_bytes = await exec_context.camera_backend.get_live_snapshot(
+            camera_id=camera_id,
+        )
+        return ToolResult(
+            data={"camera_id": camera_id, "type": "live_snapshot"},
+            attachments=[
+                ToolAttachment(
+                    mime_type="image/jpeg",
+                    content=snapshot_bytes,
+                    description=f"Live snapshot from {camera_id}",
+                )
+            ],
+        )
+    except ValueError as e:
+        # Expected errors (invalid camera ID, etc.) - return cleanly
+        return ToolResult(data={"error": str(e)})
+    except Exception as e:
+        logger.exception("Error getting live camera snapshot")
+        return ToolResult(data={"error": f"Failed to get live snapshot: {e}"})
