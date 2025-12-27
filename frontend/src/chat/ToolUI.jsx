@@ -3870,6 +3870,8 @@ export const SearchCameraEventsToolUI = ({ args, result, status }) => {
         <div className="tool-error-message">❌ {parsed?.error || 'Failed to search events'}</div>
       )}
 
+      {parsed?.warning && <div className="tool-warning-message">⚠️ {parsed.warning}</div>}
+
       {!hasError && events.length > 0 && (
         <div className="tool-events-list">
           <div className="tool-results-count">
@@ -4185,7 +4187,15 @@ export const GetCameraRecordingsToolUI = ({ args, result, status }) => {
       {!hasError && recordings.length > 0 && (
         <div className="tool-recordings-list">
           <div className="tool-results-count">
-            Found {parsed?.count || recordings.length} recording{recordings.length !== 1 ? 's' : ''}
+            Found {parsed?.count || recordings.length} recording
+            {recordings.length !== 1 ? 's' : ''}
+            {parsed?.total_duration_hours !== null &&
+              parsed?.total_duration_hours !== undefined && (
+                <span className="tool-total-duration">
+                  {' '}
+                  ({parsed.total_duration_hours} hours total)
+                </span>
+              )}
           </div>
           {recordings.map((rec, index) => (
             <div key={index} className="tool-recording-item">

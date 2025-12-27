@@ -14,6 +14,7 @@ from family_assistant.tools import (
     ToolNotFoundError,
     ToolsProvider,
 )
+from family_assistant.tools.types import ToolResult
 from family_assistant.web.dependencies import (
     get_db,
     get_tools_provider_dependency,
@@ -60,6 +61,14 @@ async def execute_tool_api(
     attachment_registry = getattr(request.app.state, "attachment_registry", None)
     root_tools_provider = getattr(request.app.state, "tools_provider", None)
 
+    # Find camera backend from any profile that has one configured
+    camera_backend = None
+    processing_services = getattr(request.app.state, "processing_services", {})
+    for service in processing_services.values():
+        if hasattr(service, "camera_backend") and service.camera_backend is not None:
+            camera_backend = service.camera_backend
+            break
+
     # --- Create Execution Context ---
     # We need some context, minimum placeholders for now
     # Generate a unique ID for this specific API call context
@@ -79,7 +88,7 @@ async def execute_tool_api(
         else None,
         event_sources=event_sources,
         attachment_registry=attachment_registry,
-        camera_backend=None,
+        camera_backend=camera_backend,
         # Optional fields (with defaults)
         chat_interface=None,  # No direct chat interface for API calls
         timezone_str=timezone_str,  # Pass fetched timezone string
@@ -93,11 +102,33 @@ async def execute_tool_api(
         )
         logger.info(f"Tool '{tool_name}' executed successfully.")
 
-        # Attempt to parse result if it's a JSON string
-        final_result = result
-        if isinstance(result, str):
+        # Convert ToolResult to serializable format
+        final_result: Any
+        if isinstance(result, ToolResult):
+            final_result = {}
+            if result.text is not None:
+                final_result["text"] = result.text
+            if result.data is not None:
+                final_result["data"] = result.data
+            if result.attachments:
+                # Include attachment metadata but not binary content
+                final_result["attachments"] = [
+                    {
+                        "mime_type": att.mime_type,
+                        "description": att.description,
+                        "has_content": att.content is not None,
+                        "content_length": len(att.content) if att.content else 0,
+                    }
+                    for att in result.attachments
+                ]
+        elif isinstance(result, str):
+            # Attempt to parse result if it's a JSON string
+            final_result = result
             with contextlib.suppress(json.JSONDecodeError):
                 final_result = json.loads(result)
+        else:
+            final_result = result
+
         return JSONResponse(
             content={"success": True, "result": final_result}, status_code=200
         )

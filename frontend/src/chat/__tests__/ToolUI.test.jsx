@@ -245,6 +245,286 @@ describe('ToolUI Component', () => {
     });
   });
 
+  describe('Camera Tool UIs', () => {
+    it('renders list_cameras with cameras array', () => {
+      const toolCall = {
+        id: 'test-list-cameras',
+        type: 'function',
+        function: {
+          name: 'list_cameras',
+          arguments: '{}',
+        },
+      };
+
+      const toolResponse = {
+        tool_call_id: 'test-list-cameras',
+        content: JSON.stringify({
+          cameras: [
+            { id: 'cam1', name: 'Front Door', status: 'online', backend: 'reolink' },
+            { id: 'cam2', name: 'Backyard', status: 'offline', backend: 'reolink' },
+          ],
+          count: 2,
+        }),
+      };
+
+      render(<ToolUI toolCall={toolCall} toolResponse={toolResponse} />);
+
+      expect(screen.getByText(/📹 List Cameras/)).toBeInTheDocument();
+      expect(screen.getByText('Front Door')).toBeInTheDocument();
+      expect(screen.getByText('Backyard')).toBeInTheDocument();
+      expect(screen.getByText('online')).toBeInTheDocument();
+      expect(screen.getByText('offline')).toBeInTheDocument();
+    });
+
+    it('renders list_cameras with no cameras', () => {
+      const toolCall = {
+        id: 'test-list-cameras-empty',
+        type: 'function',
+        function: {
+          name: 'list_cameras',
+          arguments: '{}',
+        },
+      };
+
+      const toolResponse = {
+        tool_call_id: 'test-list-cameras-empty',
+        content: JSON.stringify({
+          cameras: [],
+          count: 0,
+        }),
+      };
+
+      render(<ToolUI toolCall={toolCall} toolResponse={toolResponse} />);
+
+      expect(screen.getByText(/📹 List Cameras/)).toBeInTheDocument();
+      expect(screen.getByText(/No cameras configured/)).toBeInTheDocument();
+    });
+
+    it('renders search_camera_events with events', () => {
+      const toolCall = {
+        id: 'test-search-events',
+        type: 'function',
+        function: {
+          name: 'search_camera_events',
+          arguments: JSON.stringify({
+            camera_id: 'chickens',
+            start_time: '2025-12-26T06:00:00',
+            end_time: '2025-12-26T06:10:00',
+          }),
+        },
+      };
+
+      const toolResponse = {
+        tool_call_id: 'test-search-events',
+        content: JSON.stringify({
+          events: [
+            {
+              camera_id: 'chickens',
+              start_time: '2025-12-26T06:01:00+11:00',
+              end_time: '2025-12-26T06:02:00+11:00',
+              event_type: 'pet',
+              confidence: 0.95,
+            },
+            {
+              camera_id: 'chickens',
+              start_time: '2025-12-26T06:05:00+11:00',
+              end_time: null,
+              event_type: 'motion',
+              confidence: 0.8,
+            },
+          ],
+          count: 2,
+          warning: null,
+        }),
+      };
+
+      render(<ToolUI toolCall={toolCall} toolResponse={toolResponse} />);
+
+      expect(screen.getByText(/🔍 Search Camera Events/)).toBeInTheDocument();
+      expect(screen.getByText(/Camera:/)).toBeInTheDocument();
+      expect(screen.getByText('chickens')).toBeInTheDocument();
+      expect(screen.getByText(/Found 2 events/)).toBeInTheDocument();
+      expect(screen.getByText(/pet/)).toBeInTheDocument();
+      expect(screen.getByText(/motion/)).toBeInTheDocument();
+      expect(screen.getByText(/95% confidence/)).toBeInTheDocument();
+    });
+
+    it('renders search_camera_events with no events', () => {
+      const toolCall = {
+        id: 'test-search-events-empty',
+        type: 'function',
+        function: {
+          name: 'search_camera_events',
+          arguments: JSON.stringify({
+            camera_id: 'cam1',
+            start_time: '2025-12-26T00:00:00',
+            end_time: '2025-12-26T01:00:00',
+          }),
+        },
+      };
+
+      const toolResponse = {
+        tool_call_id: 'test-search-events-empty',
+        content: JSON.stringify({
+          events: [],
+          count: 0,
+          warning: null,
+        }),
+      };
+
+      render(<ToolUI toolCall={toolCall} toolResponse={toolResponse} />);
+
+      expect(screen.getByText(/🔍 Search Camera Events/)).toBeInTheDocument();
+      expect(screen.getByText(/No events found/)).toBeInTheDocument();
+    });
+
+    it('renders search_camera_events with warning about old dates', () => {
+      const toolCall = {
+        id: 'test-search-events-warning',
+        type: 'function',
+        function: {
+          name: 'search_camera_events',
+          arguments: JSON.stringify({
+            camera_id: 'cam1',
+            start_time: '2024-01-01T00:00:00',
+            end_time: '2024-01-01T01:00:00',
+          }),
+        },
+      };
+
+      const toolResponse = {
+        tool_call_id: 'test-search-events-warning',
+        content: JSON.stringify({
+          events: [],
+          count: 0,
+          warning: 'These dates are more than 30 days in the past.',
+        }),
+      };
+
+      render(<ToolUI toolCall={toolCall} toolResponse={toolResponse} />);
+
+      expect(screen.getByText(/⚠️/)).toBeInTheDocument();
+      expect(screen.getByText(/30 days in the past/)).toBeInTheDocument();
+    });
+
+    it('renders get_camera_recordings with recordings', () => {
+      const toolCall = {
+        id: 'test-recordings',
+        type: 'function',
+        function: {
+          name: 'get_camera_recordings',
+          arguments: JSON.stringify({
+            camera_id: 'cam1',
+            start_time: '2025-12-26T00:00:00',
+            end_time: '2025-12-26T06:00:00',
+          }),
+        },
+      };
+
+      const toolResponse = {
+        tool_call_id: 'test-recordings',
+        content: JSON.stringify({
+          recordings: [
+            {
+              camera_id: 'cam1',
+              start_time: '2025-12-26T00:00:00+11:00',
+              end_time: '2025-12-26T02:00:00+11:00',
+              filename: 'recording1.mp4',
+              size_bytes: 104857600,
+              duration_seconds: 7200,
+            },
+          ],
+          count: 1,
+          total_duration_hours: 2.0,
+        }),
+      };
+
+      render(<ToolUI toolCall={toolCall} toolResponse={toolResponse} />);
+
+      expect(screen.getByText(/🎬 Camera Recordings/)).toBeInTheDocument();
+      expect(screen.getByText(/Found 1 recording/)).toBeInTheDocument();
+      expect(screen.getByText(/2 hours total/)).toBeInTheDocument();
+    });
+
+    it('renders get_camera_frame while running', () => {
+      const toolCall = {
+        id: 'test-frame',
+        type: 'function',
+        function: {
+          name: 'get_camera_frame',
+          arguments: JSON.stringify({
+            camera_id: 'cam1',
+            timestamp: '2025-12-26T06:05:00',
+          }),
+        },
+      };
+
+      render(<ToolUI toolCall={toolCall} />);
+
+      expect(screen.getByText(/📸 Camera Frame/)).toBeInTheDocument();
+      expect(screen.getByText(/cam1/)).toBeInTheDocument();
+      expect(screen.getByText(/Extracting frame/)).toBeInTheDocument();
+    });
+
+    it('renders get_camera_frames_batch with timestamps', () => {
+      const toolCall = {
+        id: 'test-batch',
+        type: 'function',
+        function: {
+          name: 'get_camera_frames_batch',
+          arguments: JSON.stringify({
+            camera_id: 'cam1',
+            start_time: '2025-12-26T00:00:00',
+            end_time: '2025-12-26T01:00:00',
+            interval_minutes: 15,
+          }),
+        },
+      };
+
+      const toolResponse = {
+        tool_call_id: 'test-batch',
+        content: JSON.stringify({
+          camera_id: 'cam1',
+          timestamps: [
+            '2025-12-26T00:00:00+11:00',
+            '2025-12-26T00:15:00+11:00',
+            '2025-12-26T00:30:00+11:00',
+            '2025-12-26T00:45:00+11:00',
+          ],
+          count: 4,
+        }),
+      };
+
+      render(<ToolUI toolCall={toolCall} toolResponse={toolResponse} />);
+
+      expect(screen.getByText(/🎞️ Camera Frames Batch/)).toBeInTheDocument();
+      expect(screen.getByText(/4 frames/)).toBeInTheDocument();
+    });
+
+    it('renders camera tool with error', () => {
+      const toolCall = {
+        id: 'test-error',
+        type: 'function',
+        function: {
+          name: 'list_cameras',
+          arguments: '{}',
+        },
+      };
+
+      const toolResponse = {
+        tool_call_id: 'test-error',
+        content: JSON.stringify({
+          error: 'Camera backend not configured',
+        }),
+      };
+
+      render(<ToolUI toolCall={toolCall} toolResponse={toolResponse} />);
+
+      expect(screen.getByText(/📹 List Cameras/)).toBeInTheDocument();
+      expect(screen.getByText(/Camera backend not configured/)).toBeInTheDocument();
+    });
+  });
+
   describe('Attachment Key Generation', () => {
     it('generates stable keys for attachments using getAttachmentKey', () => {
       // Test with valid attachment
