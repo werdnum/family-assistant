@@ -180,6 +180,7 @@ class ReolinkBackend:
             password=config.password,
             port=config.port,
             use_https=config.use_https,
+            timeout=120,  # Increase timeout from 30s default for VOD operations
         )
 
         # Initialize connection
@@ -494,17 +495,17 @@ class ReolinkBackend:
 
         file_start = target_file.start_time
 
-        # Try FFmpeg with FLV streaming first (uses username/password auth, more reliable)
-        logger.info("FRAME_EXTRACT_V2: Trying FFmpeg/FLV for %s", camera_id)
+        # Try FFmpeg with RTMP streaming first (avoids TLS issues)
+        logger.info("FRAME_EXTRACT: Trying FFmpeg/RTMP for %s", camera_id)
         try:
             return await self._extract_frame_ffmpeg(
                 host, channel, target_file, timestamp, file_start
             )
         except Exception as e:
-            logger.warning("FFmpeg/FLV failed: %s, trying HTTP download", e)
-            # Invalidate host after FLV failure to get fresh connection
+            logger.warning("FFmpeg/RTMP failed: %s, trying HTTP download", e)
+            # Invalidate host after RTMP failure to get fresh connection
             await self._invalidate_host(camera_id)
-            # Give camera time to recover from FLV attempt
+            # Give camera time to recover from RTMP attempt
             await asyncio.sleep(2)
 
         # Fall back to HTTP download approach
@@ -521,28 +522,23 @@ class ReolinkBackend:
         timestamp: datetime,
         file_start: datetime,
     ) -> bytes:
-        """Extract frame using FFmpeg with FLV streaming.
+        """Extract frame using FFmpeg with RTMP streaming.
 
-        Uses FLV streaming (HTTP-based with username/password auth) which is
-        more reliable than token-based download. FLV supports seeking.
+        Uses RTMP streaming which avoids HTTP/TLS connection issues.
+        RTMP is a separate protocol (typically port 1935) designed for streaming.
+        Falls back to FLV over HTTP if RTMP fails.
         """
-        # Get FLV streaming URL (uses username/password auth, more reliable)
+        # Try RTMP first (avoids TLS issues entirely)
         _mime_type, stream_url = await host.get_vod_source(
             channel,
             target_file.file_name,  # type: ignore[attr-defined]
             "sub",
-            VodRequestType.FLV,
+            VodRequestType.RTMP,
         )
-
-        # Convert HTTPS to HTTP to avoid TLS connection issues
-        # The camera's TLS implementation seems to have issues with long-running downloads
-        # Also replace port 443 with port 80 (or remove the port since 80 is HTTP default)
-        stream_url = stream_url.replace("https://", "http://")
-        stream_url = re.sub(r":443/", "/", stream_url)  # Remove :443 or change to :80
 
         # Log URL without credentials
         safe_url = re.sub(r"password=[^&]+", "password=REDACTED", stream_url)
-        logger.info("FFmpeg extracting frame from FLV stream (HTTP): %s", safe_url)
+        logger.info("FFmpeg extracting frame from RTMP stream: %s", safe_url)
 
         # Calculate seek offset
         offset_seconds = max(0, (timestamp - file_start).total_seconds())
