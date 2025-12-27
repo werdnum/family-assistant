@@ -21,15 +21,16 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import tempfile
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, TypedDict
 
 import aiohttp
-import cv2
 from reolink_aio.api import Host
 from reolink_aio.enums import VodRequestType
+from reolink_aio.exceptions import ReolinkConnectionError
 from reolink_aio.typings import VOD_trigger
 
 from family_assistant.camera.protocol import (
@@ -392,7 +393,8 @@ class ReolinkBackend:
         """Extract single frame at timestamp.
 
         For historical timestamps, this extracts a frame from the recorded video.
-        Uses OpenCV to decode the video stream and extract the frame.
+        Uses FFmpeg with FLV streaming for efficient extraction, falling back to
+        downloading the video file and using OpenCV if streaming fails.
 
         Args:
             camera_id: ID of the camera.
@@ -408,7 +410,7 @@ class ReolinkBackend:
         self._validate_camera_id(camera_id)
 
         # Retry logic for handling session disconnections
-        max_retries = 2
+        max_retries = 3
         last_error: Exception | None = None
 
         for attempt in range(max_retries):
@@ -427,8 +429,8 @@ class ReolinkBackend:
                     # Invalidate the cached host so next attempt gets fresh session
                     await self._invalidate_host(camera_id)
                     if attempt < max_retries - 1:
-                        # Wait a bit before retrying
-                        await asyncio.sleep(1)
+                        # Exponential backoff: 1s, 2s, 4s...
+                        await asyncio.sleep(2**attempt)
                 except ValueError:
                     raise
                 except Exception as e:
@@ -446,6 +448,9 @@ class ReolinkBackend:
         timestamp: datetime,
     ) -> bytes:
         """Internal implementation of frame extraction.
+
+        Tries FFmpeg with RTMP streaming first (faster for seeking), then falls
+        back to HTTP download + OpenCV if streaming fails.
 
         Args:
             camera_id: ID of the camera.
@@ -486,72 +491,220 @@ class ReolinkBackend:
         if target_file is None:
             target_file = vod_files[0]  # Use first available
 
-        # Get download URL for this file (DOWNLOAD works better than FLV)
-        _mime_type, download_url = await host.get_vod_source(
-            channel,
-            target_file.file_name,
-            "sub",
-            VodRequestType.DOWNLOAD,
-        )
-
-        # Download the video file
-        async with (
-            aiohttp.ClientSession() as session,
-            session.get(
-                download_url,
-                ssl=False,
-                timeout=aiohttp.ClientTimeout(total=60),
-            ) as resp,
-        ):
-            if resp.status != 200:
-                msg = f"Failed to download video: HTTP {resp.status}"
-                raise RuntimeError(msg)
-
-            video_data = await resp.read()
-
-        # Save to temp file and extract frame
         file_start = target_file.start_time
 
-        def _extract_frame() -> bytes:
-            # Write to temp file for OpenCV to read
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-                tmp.write(video_data)
+        # Try FFmpeg with RTMP streaming first (better for seeking)
+        logger.info("FRAME_EXTRACT_V2: Trying FFmpeg/RTMP for %s", camera_id)
+        try:
+            return await self._extract_frame_ffmpeg(
+                host, channel, target_file, timestamp, file_start
+            )
+        except Exception as e:
+            logger.warning("FFmpeg/RTMP failed: %s, trying HTTP download", e)
+            # Invalidate host after RTMP failure to get fresh connection
+            await self._invalidate_host(camera_id)
+            # Give camera time to recover from RTMP attempt
+            await asyncio.sleep(2)
+
+        # Fall back to HTTP download approach
+        logger.info("FRAME_EXTRACT_V2: Trying HTTP download for %s", camera_id)
+        return await self._extract_frame_download(
+            camera_id, channel, target_file, timestamp, file_start
+        )
+
+    async def _extract_frame_ffmpeg(
+        self,
+        host: Host,
+        channel: int,
+        target_file: object,
+        timestamp: datetime,
+        file_start: datetime,
+    ) -> bytes:
+        """Extract frame using FFmpeg with RTMP streaming.
+
+        Uses RTMP for better seeking support. For small offsets (<30s), this is
+        faster than downloading the entire file.
+        """
+        # Get RTMP streaming URL (better seeking support than FLV)
+        _mime_type, stream_url = await host.get_vod_source(
+            channel,
+            target_file.file_name,  # type: ignore[attr-defined]
+            "sub",
+            VodRequestType.RTMP,
+        )
+
+        # Calculate seek offset
+        offset_seconds = max(0, (timestamp - file_start).total_seconds())
+
+        def _run_ffmpeg() -> bytes:
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
                 tmp_path = tmp.name
 
             try:
-                cap = cv2.VideoCapture(tmp_path)
-                try:
-                    if not cap.isOpened():
-                        msg = "Failed to open video file"
-                        raise RuntimeError(msg)
+                # Use FFmpeg to extract a single frame
+                # -ss before -i enables input seeking (faster)
+                # -vframes 1 extracts only one frame
+                cmd = [
+                    "ffmpeg",
+                    "-y",  # Overwrite output
+                    "-ss",
+                    str(offset_seconds),  # Seek position (before -i for input seeking)
+                    "-i",
+                    stream_url,  # Input stream
+                    "-vframes",
+                    "1",  # Extract one frame
+                    "-q:v",
+                    "2",  # JPEG quality (2 = high quality)
+                    "-f",
+                    "image2",  # Output format
+                    tmp_path,
+                ]
 
-                    # Calculate offset into video
-                    fps = cap.get(cv2.CAP_PROP_FPS) or 15
-                    offset_seconds = (timestamp - file_start).total_seconds()
-                    frame_number = int(offset_seconds * fps)
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    timeout=30,  # 30 second timeout
+                    check=False,
+                )
 
-                    # Seek to frame
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+                if result.returncode != 0:
+                    stderr = result.stderr.decode("utf-8", errors="replace")
+                    msg = f"FFmpeg failed: {stderr[:500]}"
+                    raise RuntimeError(msg)
 
-                    ret, frame = cap.read()
-                    if not ret:
-                        msg = "Failed to read frame from video"
-                        raise RuntimeError(msg)
-
-                    # Encode to JPEG
-                    encode_params = [cv2.IMWRITE_JPEG_QUALITY, 85]
-                    success, buffer = cv2.imencode(".jpg", frame, encode_params)
-                    if not success:
-                        msg = "Failed to encode frame to JPEG"
-                        raise RuntimeError(msg)
-
-                    return buffer.tobytes()
-                finally:
-                    cap.release()
+                # Read the extracted frame
+                with open(tmp_path, "rb") as f:
+                    return f.read()
             finally:
-                os.unlink(tmp_path)
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
 
-        return await asyncio.to_thread(_extract_frame)
+        return await asyncio.to_thread(_run_ffmpeg)
+
+    async def _extract_frame_download(
+        self,
+        camera_id: str,
+        channel: int,
+        target_file: object,
+        timestamp: datetime,
+        file_start: datetime,
+    ) -> bytes:
+        """Extract frame by downloading the video file and using FFmpeg.
+
+        Downloads the VOD file using the reolink_aio library's authenticated session
+        (more reliable than external curl/aiohttp) and extracts a single frame
+        using FFmpeg from the downloaded file.
+        """
+        file_name = target_file.file_name  # type: ignore[attr-defined]
+        offset_seconds = max(0, (timestamp - file_start).total_seconds())
+
+        # Retry logic for downloading
+        last_error: Exception | None = None
+
+        for attempt in range(3):
+            try:
+                # Get fresh host connection on each attempt
+                logger.info("Attempt %d/3: Getting host for %s", attempt + 1, camera_id)
+                host = await self._get_or_create_host(camera_id)
+                logger.info(
+                    "Attempt %d/3: Downloading VOD file %s", attempt + 1, file_name
+                )
+
+                # Use the library's built-in download method (uses authenticated session)
+                vod_download = await host.download_vod(file_name)
+
+                logger.info(
+                    "Attempt %d/3: Downloading %d bytes, extracting frame",
+                    attempt + 1,
+                    vod_download.length,
+                )
+
+                # Read the video data from the StreamReader
+                video_data = await vod_download.stream.read()
+                vod_download.close()
+
+                logger.info("Downloaded video: %d bytes", len(video_data))
+
+                # Extract frame with FFmpeg from downloaded video
+                def _extract_frame(data: bytes = video_data) -> bytes:
+                    with tempfile.NamedTemporaryFile(
+                        suffix=".mp4", delete=False
+                    ) as video_tmp:
+                        video_path = video_tmp.name
+                        video_tmp.write(data)
+
+                    with tempfile.NamedTemporaryFile(
+                        suffix=".jpg", delete=False
+                    ) as frame_tmp:
+                        frame_path = frame_tmp.name
+
+                    try:
+                        ffmpeg_cmd = [
+                            "ffmpeg",
+                            "-y",
+                            "-ss",
+                            str(offset_seconds),
+                            "-i",
+                            video_path,
+                            "-vframes",
+                            "1",
+                            "-q:v",
+                            "2",
+                            "-f",
+                            "image2",
+                            frame_path,
+                        ]
+                        ffmpeg_result = subprocess.run(
+                            ffmpeg_cmd,
+                            capture_output=True,
+                            timeout=60,
+                            check=False,
+                        )
+                        if ffmpeg_result.returncode != 0:
+                            stderr = ffmpeg_result.stderr.decode(
+                                "utf-8", errors="replace"
+                            )
+                            msg = f"FFmpeg failed: {stderr[-500:]}"
+                            raise RuntimeError(msg)
+
+                        # Read extracted frame
+                        if (
+                            not os.path.exists(frame_path)
+                            or os.path.getsize(frame_path) == 0
+                        ):
+                            msg = "FFmpeg produced no output"
+                            raise RuntimeError(msg)
+
+                        with open(frame_path, "rb") as f:
+                            return f.read()
+                    finally:
+                        if os.path.exists(video_path):
+                            os.unlink(video_path)
+                        if os.path.exists(frame_path):
+                            os.unlink(frame_path)
+
+                frame_data = await asyncio.to_thread(_extract_frame)
+                logger.info("Successfully extracted frame: %d bytes", len(frame_data))
+                return frame_data
+
+            except (
+                aiohttp.ServerDisconnectedError,
+                aiohttp.ClientError,
+                ReolinkConnectionError,
+                RuntimeError,
+            ) as e:
+                last_error = e
+                logger.warning(
+                    "Frame extraction failed on attempt %d/3: %s",
+                    attempt + 1,
+                    e,
+                )
+                await self._invalidate_host(camera_id)
+                if attempt < 2:
+                    await asyncio.sleep(5)  # Give camera more time to recover
+
+        msg = f"Frame extraction failed after 3 download attempts: {last_error}"
+        raise RuntimeError(msg) from last_error
 
     async def get_frames_batch(
         self,

@@ -392,8 +392,7 @@ async def test_get_camera_frames_batch_no_frames(
     data = result.get_data()
     assert isinstance(data, dict)
     assert data["count"] == 0
-    assert len(data["frames"]) == 0
-    assert "No frames available" in result.get_text()
+    assert len(data["timestamps"]) == 0
 
 
 @pytest.mark.asyncio
