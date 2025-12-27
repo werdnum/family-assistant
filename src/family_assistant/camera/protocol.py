@@ -155,6 +155,24 @@ class CameraBackend(Protocol):
         """
         ...
 
+    async def get_live_snapshot(self, camera_id: str) -> bytes:
+        """Get a live snapshot (current frame) from the camera.
+
+        This returns the current live image from the camera, not from recordings.
+        Useful for quick status checks and testing camera connectivity.
+
+        Args:
+            camera_id: ID of the camera.
+
+        Returns:
+            JPEG bytes of the current frame.
+
+        Raises:
+            ValueError: If camera_id is not configured.
+            RuntimeError: If snapshot could not be retrieved.
+        """
+        ...
+
     async def close(self) -> None:
         """Cleanup connections and resources."""
         ...

@@ -263,6 +263,27 @@ class FakeCameraBackend:
         )
         return results
 
+    async def get_live_snapshot(self, camera_id: str) -> bytes:
+        """Get a live snapshot (current frame) from the camera.
+
+        For the fake backend, this returns a predefined test image.
+
+        Args:
+            camera_id: ID of the camera.
+
+        Returns:
+            JPEG bytes of a test frame.
+
+        Raises:
+            ValueError: If camera_id is not configured.
+        """
+        if camera_id not in self._cameras:
+            msg = f"Unknown camera: {camera_id}"
+            raise ValueError(msg)
+        # Return minimal JPEG bytes for testing (start + end markers)
+        # Real cameras return full images, this is just for protocol compliance
+        return b"\xff\xd8\xff\xd9"
+
     async def close(self) -> None:
         """Cleanup connections and resources."""
         logger.debug("Closing fake camera backend")
