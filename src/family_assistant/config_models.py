@@ -50,6 +50,9 @@ class ReolinkCameraItemConfig(BaseModel):
     use_https: bool = True
     channel: int = 0
     name: str | None = None
+    prefer_download: bool = (
+        False  # Skip FLV streaming, use direct download (faster for TLS issues)
+    )
 
 
 class CameraConfig(BaseModel):
