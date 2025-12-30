@@ -402,9 +402,8 @@ async def test_delete_schedule_automation(
     # Should navigate back to list
     await page.wait_for_url("**/automations", timeout=10000)
 
-    # TODO(#TBD-replace-playwright-timeouts): replace wait_for_timeout with explicit wait
-    # ast-grep-ignore: no-playwright-wait-for-timeout
-    await page.wait_for_timeout(1000)
+    # Wait for the list to load (look for the summary text which appears after loading)
+    await page.wait_for_selector("text=/Found \\d+ automation(s)?/", timeout=10000)
     assert not await page.locator("text=/Delete Test Automation/").is_visible()
 
 
@@ -467,34 +466,28 @@ async def test_filter_schedule_automations(
     type_select = page.locator("select[name='type']")
     await type_select.select_option("schedule")
 
-    # TODO(#TBD-replace-playwright-timeouts): replace wait_for_timeout with explicit wait
-    # ast-grep-ignore: no-playwright-wait-for-timeout
-    await page.wait_for_timeout(1000)
+    # Wait for Event Filter Test to be hidden
+    await page.locator("text=/Event Filter Test/").wait_for(state="hidden")
+    # Wait for Schedule Filter Test to be visible (in case of re-render)
+    await page.locator("text=/Schedule Filter Test/").wait_for(state="visible")
 
     # Schedule automation should be visible
     assert await page.locator("text=/Schedule Filter Test/").is_visible()
 
-    # Event automation should not be visible
-    assert not await page.locator("text=/Event Filter Test/").is_visible()
-
     # Filter to show only event automations
     await type_select.select_option("event")
-    # TODO(#TBD-replace-playwright-timeouts): replace wait_for_timeout with explicit wait
-    # ast-grep-ignore: no-playwright-wait-for-timeout
-    await page.wait_for_timeout(1000)
+
+    # Wait for Schedule Filter Test to be hidden
+    await page.locator("text=/Schedule Filter Test/").wait_for(state="hidden")
+    # Wait for Event Filter Test to be visible
+    await page.locator("text=/Event Filter Test/").wait_for(state="visible")
 
     # Event automation should be visible
     assert await page.locator("text=/Event Filter Test/").is_visible()
 
-    # Schedule automation should not be visible
-    assert not await page.locator("text=/Schedule Filter Test/").is_visible()
-
     # Show all automations
     await type_select.select_option("all")
-    # TODO(#TBD-replace-playwright-timeouts): replace wait_for_timeout with explicit wait
-    # ast-grep-ignore: no-playwright-wait-for-timeout
-    await page.wait_for_timeout(1000)
 
     # Both should be visible again
-    assert await page.locator("text=/Schedule Filter Test/").is_visible()
-    assert await page.locator("text=/Event Filter Test/").is_visible()
+    await page.locator("text=/Schedule Filter Test/").wait_for(state="visible")
+    await page.locator("text=/Event Filter Test/").wait_for(state="visible")
