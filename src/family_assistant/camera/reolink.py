@@ -495,17 +495,17 @@ class ReolinkBackend:
 
         file_start = target_file.start_time
 
-        # Try FFmpeg with RTMP streaming first (avoids TLS issues)
-        logger.info("FRAME_EXTRACT: Trying FFmpeg/RTMP for %s", camera_id)
+        # Try FFmpeg with FLV streaming first (with reconnection for TLS issues)
+        logger.info("FRAME_EXTRACT: Trying FFmpeg/FLV for %s", camera_id)
         try:
             return await self._extract_frame_ffmpeg(
                 host, channel, target_file, timestamp, file_start
             )
         except Exception as e:
-            logger.warning("FFmpeg/RTMP failed: %s, trying HTTP download", e)
-            # Invalidate host after RTMP failure to get fresh connection
+            logger.warning("FFmpeg/FLV failed: %s, trying HTTP download", e)
+            # Invalidate host after FLV failure to get fresh connection
             await self._invalidate_host(camera_id)
-            # Give camera time to recover from RTMP attempt
+            # Give camera time to recover from FLV attempt
             await asyncio.sleep(2)
 
         # Fall back to HTTP download approach
@@ -522,23 +522,22 @@ class ReolinkBackend:
         timestamp: datetime,
         file_start: datetime,
     ) -> bytes:
-        """Extract frame using FFmpeg with RTMP streaming.
+        """Extract frame using FFmpeg with FLV streaming.
 
-        Uses RTMP streaming which avoids HTTP/TLS connection issues.
-        RTMP is a separate protocol (typically port 1935) designed for streaming.
-        Falls back to FLV over HTTP if RTMP fails.
+        Uses FLV streaming which is HTTP-based with username/password auth.
+        Adds reconnection options to handle the camera's TLS issues.
         """
-        # Try RTMP first (avoids TLS issues entirely)
+        # Get FLV streaming URL
         _mime_type, stream_url = await host.get_vod_source(
             channel,
             target_file.file_name,  # type: ignore[attr-defined]
             "sub",
-            VodRequestType.RTMP,
+            VodRequestType.FLV,
         )
 
         # Log URL without credentials
         safe_url = re.sub(r"password=[^&]+", "password=REDACTED", stream_url)
-        logger.info("FFmpeg extracting frame from RTMP stream: %s", safe_url)
+        logger.info("FFmpeg extracting frame from FLV stream: %s", safe_url)
 
         # Calculate seek offset
         offset_seconds = max(0, (timestamp - file_start).total_seconds())
@@ -549,15 +548,29 @@ class ReolinkBackend:
 
             try:
                 # Use FFmpeg to extract a single frame from FLV stream
+                # Reconnection options help with the camera's TLS issues
                 # -ss before -i enables input seeking (faster)
                 # -vframes 1 extracts only one frame
                 cmd = [
                     "ffmpeg",
                     "-y",  # Overwrite output
+                    # TLS options for camera with problematic certificates
+                    "-tls_verify",
+                    "0",  # Don't verify TLS certificate
+                    # Reconnection options for flaky connections
+                    "-reconnect",
+                    "1",
+                    "-reconnect_streamed",
+                    "1",
+                    "-reconnect_delay_max",
+                    "5",
+                    # Longer timeout for slow camera responses
+                    "-timeout",
+                    "30000000",  # 30 seconds in microseconds
                     "-ss",
                     str(offset_seconds),  # Seek position (before -i for input seeking)
                     "-i",
-                    stream_url,  # Input stream (FLV over HTTP)
+                    stream_url,  # Input stream
                     "-vframes",
                     "1",  # Extract one frame
                     "-q:v",
@@ -576,8 +589,20 @@ class ReolinkBackend:
 
                 if result.returncode != 0:
                     stderr = result.stderr.decode("utf-8", errors="replace")
-                    # Get the last 1000 chars where the actual error usually is
-                    msg = f"FFmpeg failed: {stderr[-1000:]}"
+                    # Get error-related lines (filter out build config spam)
+                    error_lines = [
+                        line
+                        for line in stderr.split("\n")
+                        if any(
+                            kw in line.lower()
+                            for kw in ["error", "failed", "cannot", "no such", "rtmp"]
+                        )
+                    ]
+                    if error_lines:
+                        msg = f"FFmpeg failed: {'; '.join(error_lines[:5])}"
+                    else:
+                        # Fallback: show first 500 chars (actual error usually there)
+                        msg = f"FFmpeg failed: {stderr[:500]}"
                     raise RuntimeError(msg)
 
                 # Read the extracted frame
@@ -599,38 +624,61 @@ class ReolinkBackend:
     ) -> bytes:
         """Extract frame by downloading the video file and using FFmpeg.
 
-        Downloads the VOD file using the reolink_aio library's authenticated session
-        (more reliable than external curl/aiohttp) and extracts a single frame
-        using FFmpeg from the downloaded file.
+        Uses the direct CGI Download API with curl, which is more reliable
+        than the library's streaming approach that has TLS timeout issues.
         """
         file_name = target_file.file_name  # type: ignore[attr-defined]
         offset_seconds = max(0, (timestamp - file_start).total_seconds())
+        config = self._cameras[camera_id]
 
         # Retry logic for downloading
         last_error: Exception | None = None
 
         for attempt in range(3):
             try:
-                # Get fresh host connection on each attempt
-                logger.info("Attempt %d/3: Getting host for %s", attempt + 1, camera_id)
+                logger.info(
+                    "Attempt %d/3: Getting token for %s", attempt + 1, camera_id
+                )
+
+                # Get authentication token via Login API
                 host = await self._get_or_create_host(camera_id)
-                logger.info(
-                    "Attempt %d/3: Downloading VOD file %s", attempt + 1, file_name
+                token = host._token  # noqa: SLF001 - accessing private for direct API
+
+                if not token:
+                    raise RuntimeError("Failed to get authentication token")
+
+                # Build download URL
+                protocol = "https" if config.use_https else "http"
+                port = config.port or (443 if config.use_https else 80)
+                download_url = (
+                    f"{protocol}://{config.host}:{port}/cgi-bin/api.cgi"
+                    f"?cmd=Download&source={file_name}&token={token}"
                 )
 
-                # Use the library's built-in download method (uses authenticated session)
-                vod_download = await host.download_vod(file_name)
-
                 logger.info(
-                    "Attempt %d/3: Downloading %d bytes, extracting frame",
-                    attempt + 1,
-                    vod_download.length,
+                    "Attempt %d/3: Downloading VOD file via CGI API", attempt + 1
                 )
 
-                # Read the video data from the StreamReader
-                video_data = await vod_download.stream.read()
-                vod_download.close()
+                # Download using subprocess curl (more reliable for camera's TLS)
+                def _download_with_curl(url: str = download_url) -> bytes:
+                    result = subprocess.run(
+                        [
+                            "curl",
+                            "-sk",  # Silent, insecure (skip cert verify)
+                            "--max-time",
+                            "60",  # 60 second timeout
+                            url,
+                        ],
+                        capture_output=True,
+                        timeout=90,
+                        check=False,
+                    )
+                    if result.returncode != 0:
+                        stderr = result.stderr.decode("utf-8", errors="replace")
+                        raise RuntimeError(f"curl failed: {stderr[:500]}")
+                    return result.stdout
 
+                video_data = await asyncio.to_thread(_download_with_curl)
                 logger.info("Downloaded video: %d bytes", len(video_data))
 
                 # Extract frame with FFmpeg from downloaded video
