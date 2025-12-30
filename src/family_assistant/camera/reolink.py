@@ -96,6 +96,8 @@ class ReolinkCameraConfig:
         use_https: Whether to use HTTPS (default True).
         channel: Channel number for NVR (default 0 for standalone cameras).
         name: Human-readable name (optional, will use device name if not provided).
+        prefer_download: Skip FLV streaming and use direct download (faster for cameras
+            with TLS issues that cause FLV to fail).
     """
 
     host: str
@@ -105,6 +107,7 @@ class ReolinkCameraConfig:
     use_https: bool = True
     channel: int = 0
     name: str | None = None
+    prefer_download: bool = False
 
 
 class ReolinkBackend:
@@ -495,21 +498,23 @@ class ReolinkBackend:
 
         file_start = target_file.start_time
 
-        # Try FFmpeg with FLV streaming first (with reconnection for TLS issues)
-        logger.info("FRAME_EXTRACT: Trying FFmpeg/FLV for %s", camera_id)
-        try:
-            return await self._extract_frame_ffmpeg(
-                host, channel, target_file, timestamp, file_start
-            )
-        except Exception as e:
-            logger.warning("FFmpeg/FLV failed: %s, trying HTTP download", e)
-            # Invalidate host after FLV failure to get fresh connection
-            await self._invalidate_host(camera_id)
-            # Give camera time to recover from FLV attempt
-            await asyncio.sleep(2)
+        # Skip FLV if prefer_download is enabled (for cameras with TLS issues)
+        if not config.prefer_download:
+            # Try FFmpeg with FLV streaming first (with reconnection for TLS issues)
+            logger.info("FRAME_EXTRACT: Trying FFmpeg/FLV for %s", camera_id)
+            try:
+                return await self._extract_frame_ffmpeg(
+                    host, channel, target_file, timestamp, file_start
+                )
+            except Exception as e:
+                logger.warning("FFmpeg/FLV failed: %s, trying HTTP download", e)
+                # Invalidate host after FLV failure to get fresh connection
+                await self._invalidate_host(camera_id)
+                # Give camera time to recover from FLV attempt
+                await asyncio.sleep(2)
 
-        # Fall back to HTTP download approach
-        logger.info("FRAME_EXTRACT_V2: Trying HTTP download for %s", camera_id)
+        # Use HTTP download approach (always used if prefer_download is True)
+        logger.info("FRAME_EXTRACT: Using HTTP download for %s", camera_id)
         return await self._extract_frame_download(
             camera_id, channel, target_file, timestamp, file_start
         )
@@ -666,11 +671,11 @@ class ReolinkBackend:
                             "curl",
                             "-sk",  # Silent, insecure (skip cert verify)
                             "--max-time",
-                            "60",  # 60 second timeout
+                            "30",  # 30 second timeout (fail fast for slow downloads)
                             url,
                         ],
                         capture_output=True,
-                        timeout=90,
+                        timeout=45,
                         check=False,
                     )
                     if result.returncode != 0:
@@ -772,6 +777,9 @@ class ReolinkBackend:
     ) -> list[FrameWithTimestamp]:
         """Extract frames at regular intervals for binary search.
 
+        Frames are extracted in parallel for better performance, with a limit
+        on concurrent extractions to avoid overwhelming the camera.
+
         Args:
             camera_id: ID of the camera.
             start_time: Start of the time range (UTC).
@@ -783,7 +791,6 @@ class ReolinkBackend:
             List of FrameWithTimestamp objects with timestamps and JPEG bytes.
         """
         self._validate_camera_id(camera_id)
-        frames: list[FrameWithTimestamp] = []
 
         # Calculate timestamps
         current = start_time
@@ -792,21 +799,31 @@ class ReolinkBackend:
             timestamps.append(current)
             current += timedelta(seconds=interval_seconds)
 
-        # Extract frames (releasing lock between each to avoid blocking too long)
-        for ts in timestamps:
-            try:
-                jpeg_bytes = await self.get_frame(camera_id, ts)
-                frames.append(
-                    FrameWithTimestamp(
+        # Limit concurrent extractions to avoid overwhelming the camera
+        # Using 3 concurrent downloads balances speed vs camera load
+        semaphore = asyncio.Semaphore(3)
+
+        async def extract_with_semaphore(
+            ts: datetime,
+        ) -> FrameWithTimestamp | None:
+            async with semaphore:
+                try:
+                    jpeg_bytes = await self.get_frame(camera_id, ts)
+                    return FrameWithTimestamp(
                         timestamp=ts, jpeg_bytes=jpeg_bytes, camera_id=camera_id
                     )
-                )
-            except (ValueError, RuntimeError) as e:
-                # Skip timestamps where no recording exists or extraction fails
-                logger.warning("Could not extract frame at %s: %s", ts, e)
-                continue
+                except (ValueError, RuntimeError) as e:
+                    # Skip timestamps where no recording exists or extraction fails
+                    logger.warning("Could not extract frame at %s: %s", ts, e)
+                    return None
 
-        return frames
+        # Extract frames in parallel
+        results = await asyncio.gather(
+            *(extract_with_semaphore(ts) for ts in timestamps)
+        )
+
+        # Filter out failed extractions and maintain timestamp order
+        return [frame for frame in results if frame is not None]
 
     async def get_live_snapshot(self, camera_id: str) -> bytes:
         """Get a live snapshot (current frame) from the camera.
@@ -939,6 +956,7 @@ def create_reolink_backend(
                 use_https=config.use_https,
                 channel=config.channel,
                 name=config.name,
+                prefer_download=getattr(config, "prefer_download", False),
             )
     else:
         # Fall back to environment variable (returns untyped dicts)
@@ -958,6 +976,7 @@ def create_reolink_backend(
                     use_https=config.get("use_https", True),
                     channel=config.get("channel", 0),
                     name=config.get("name"),
+                    prefer_download=config.get("prefer_download", False),
                 )
 
     if not cameras:
