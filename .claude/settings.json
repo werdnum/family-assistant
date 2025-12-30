@@ -1,6 +1,6 @@
 {
   "extraKnownMarketplaces": {
-    "claude-code-plugins": {
+    "werdnum-plugins": {
       "source": {
         "source": "github",
         "repo": "werdnum/claude-code-plugins"
@@ -8,11 +8,11 @@
     }
   },
   "enabledPlugins": {
-    "bash-guard@claude-code-plugins": true,
-    "format-and-lint@claude-code-plugins": true,
-    "guardian@claude-code-plugins": true,
-    "development-agents@claude-code-plugins": true,
-    "python-utils@claude-code-plugins": true
+    "bash-guard@werdnum-plugins": true,
+    "format-and-lint@werdnum-plugins": true,
+    "guardian@werdnum-plugins": true,
+    "development-agents@werdnum-plugins": true,
+    "python-utils@werdnum-plugins": true
   },
   "hooks": {
     "SessionStart": [

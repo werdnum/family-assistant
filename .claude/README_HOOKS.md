@@ -1,7 +1,7 @@
 # Claude Code Plugins Configuration
 
 This directory contains plugin configuration files for Claude Code. The project uses plugins from
-the [claude-code-plugins](https://github.com/werdnum/claude-code-plugins) marketplace.
+the [werdnum-plugins](https://github.com/werdnum/claude-code-plugins) marketplace.
 
 ## Installed Plugins
 
@@ -169,7 +169,7 @@ The plugins are automatically installed from the configured marketplace in `sett
 ```json
 {
   "extraKnownMarketplaces": {
-    "claude-code-plugins": {
+    "werdnum-plugins": {
       "source": {
         "source": "github",
         "repo": "werdnum/claude-code-plugins"
@@ -177,10 +177,10 @@ The plugins are automatically installed from the configured marketplace in `sett
     }
   },
   "enabledPlugins": {
-    "bash-guard@claude-code-plugins": true,
-    "format-and-lint@claude-code-plugins": true,
-    "guardian@claude-code-plugins": true,
-    "development-agents@claude-code-plugins": true
+    "bash-guard@werdnum-plugins": true,
+    "format-and-lint@werdnum-plugins": true,
+    "guardian@werdnum-plugins": true,
+    "development-agents@werdnum-plugins": true
   }
 }
 ```
