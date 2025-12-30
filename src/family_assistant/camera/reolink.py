@@ -92,7 +92,7 @@ class ReolinkCameraConfig:
         host: IP address or hostname of the camera/NVR.
         username: Authentication username.
         password: Authentication password.
-        port: HTTPS port (default 443).
+        port: Port number (default: 443 for HTTPS, 80 for HTTP).
         use_https: Whether to use HTTPS (default True).
         channel: Channel number for NVR (default 0 for standalone cameras).
         name: Human-readable name (optional, will use device name if not provided).
@@ -103,11 +103,18 @@ class ReolinkCameraConfig:
     host: str
     username: str
     password: str
-    port: int = 443
+    port: int | None = None  # None means auto-detect based on use_https
     use_https: bool = True
     channel: int = 0
     name: str | None = None
     prefer_download: bool = False
+
+    @property
+    def effective_port(self) -> int:
+        """Get the effective port, defaulting based on use_https if not set."""
+        if self.port is not None:
+            return self.port
+        return 443 if self.use_https else 80
 
 
 class ReolinkBackend:
@@ -181,7 +188,7 @@ class ReolinkBackend:
             host=config.host,
             username=config.username,
             password=config.password,
-            port=config.port,
+            port=config.effective_port,
             use_https=config.use_https,
             timeout=120,  # Increase timeout from 30s default for VOD operations
         )
@@ -454,8 +461,8 @@ class ReolinkBackend:
     ) -> bytes:
         """Internal implementation of frame extraction.
 
-        Tries FFmpeg with RTMP streaming first (faster for seeking), then falls
-        back to HTTP download + OpenCV if streaming fails.
+        Tries FFmpeg with PLAYBACK streaming first (faster for seeking), then falls
+        back to HTTP download + FFmpeg if streaming fails.
 
         Args:
             camera_id: ID of the camera.
@@ -485,32 +492,56 @@ class ReolinkBackend:
             raise ValueError(msg)
 
         # Find the VOD file that contains our timestamp
+        # Use naive timestamps to avoid DST timezone mismatches - the camera
+        # may report times in a different timezone offset than the user's request
+        ts_naive = timestamp.replace(tzinfo=None)
         target_file = None
         for vod_file in vod_files:
-            file_start = vod_file.start_time
-            file_end = getattr(vod_file, "end_time", file_start + VOD_SPLIT_TIME)
-            if file_start <= timestamp <= file_end:
+            file_start = vod_file.start_time.replace(tzinfo=None)
+            file_end_raw = getattr(vod_file, "end_time", None)
+            if file_end_raw:
+                file_end = file_end_raw.replace(tzinfo=None)
+            else:
+                file_end = file_start + VOD_SPLIT_TIME
+            if file_start <= ts_naive <= file_end:
                 target_file = vod_file
                 break
 
         if target_file is None:
-            target_file = vod_files[0]  # Use first available
+            # If no exact match, find the closest file that starts before the timestamp
+            closest_file = None
+            closest_diff = None
+            for vod_file in vod_files:
+                file_start = vod_file.start_time.replace(tzinfo=None)
+                if file_start <= ts_naive:
+                    diff = ts_naive - file_start
+                    if closest_diff is None or diff < closest_diff:
+                        closest_diff = diff
+                        closest_file = vod_file
+            if closest_file:
+                target_file = closest_file
+                logger.debug(
+                    "No exact file match, using closest file starting %s before timestamp",
+                    closest_diff,
+                )
+            else:
+                target_file = vod_files[0]  # Fallback to first available
 
         file_start = target_file.start_time
 
-        # Skip FLV if prefer_download is enabled (for cameras with TLS issues)
+        # Skip PLAYBACK if prefer_download is enabled (for cameras with TLS issues)
         if not config.prefer_download:
-            # Try FFmpeg with FLV streaming first (with reconnection for TLS issues)
-            logger.info("FRAME_EXTRACT: Trying FFmpeg/FLV for %s", camera_id)
+            # Try FFmpeg with PLAYBACK streaming first (with reconnection for TLS issues)
+            logger.info("FRAME_EXTRACT: Trying FFmpeg/PLAYBACK for %s", camera_id)
             try:
                 return await self._extract_frame_ffmpeg(
                     host, channel, target_file, timestamp, file_start
                 )
             except Exception as e:
-                logger.warning("FFmpeg/FLV failed: %s, trying HTTP download", e)
-                # Invalidate host after FLV failure to get fresh connection
+                logger.warning("FFmpeg/PLAYBACK failed: %s, trying HTTP download", e)
+                # Invalidate host after failure to get fresh connection
                 await self._invalidate_host(camera_id)
-                # Give camera time to recover from FLV attempt
+                # Give camera time to recover
                 await asyncio.sleep(2)
 
         # Use HTTP download approach (always used if prefer_download is True)
@@ -527,68 +558,80 @@ class ReolinkBackend:
         timestamp: datetime,
         file_start: datetime,
     ) -> bytes:
-        """Extract frame using FFmpeg with FLV streaming.
+        """Extract frame using FFmpeg with PLAYBACK streaming.
 
-        Uses FLV streaming which is HTTP-based with username/password auth.
-        Adds reconnection options to handle the camera's TLS issues.
+        Uses the Playback API which supports server-side seeking via the
+        'start' parameter. The start parameter is a timestamp in YYYYMMDDHHmmss
+        format that tells the camera where to begin streaming from.
+
+        This is much faster than FFmpeg seeking because the camera handles it
+        server-side, typically completing in 2-3 seconds.
         """
-        # Get FLV streaming URL
+        # Calculate target time for camera-side seeking
+        # Use naive timestamps to avoid DST timezone mismatches
+        ts_naive = timestamp.replace(tzinfo=None)
+        fs_naive = file_start.replace(tzinfo=None)
+        offset_seconds = int(max(0, (ts_naive - fs_naive).total_seconds()))
+
+        # Calculate the target timestamp for seeking
+        target_time = fs_naive + timedelta(seconds=offset_seconds)
+
+        # Get PLAYBACK streaming URL (uses token-based auth)
         _mime_type, stream_url = await host.get_vod_source(
             channel,
             target_file.file_name,  # type: ignore[attr-defined]
             "sub",
-            VodRequestType.FLV,
+            VodRequestType.PLAYBACK,
         )
 
-        # Log URL without credentials
-        safe_url = re.sub(r"password=[^&]+", "password=REDACTED", stream_url)
-        logger.info("FFmpeg extracting frame from FLV stream: %s", safe_url)
+        # Update the 'start' parameter to seek to target time
+        # The library generates: start=YYYYMMDDHHmmss (file start time)
+        # We need to replace it with our target time
+        target_start = target_time.strftime("%Y%m%d%H%M%S")
+        stream_url = re.sub(r"start=\d+", f"start={target_start}", stream_url)
 
-        # Calculate seek offset
-        offset_seconds = max(0, (timestamp - file_start).total_seconds())
+        # Log URL without token
+        safe_url = re.sub(r"token=[^&]+", "token=REDACTED", stream_url)
+        logger.info("FFmpeg extracting frame from PLAYBACK stream: %s", safe_url)
 
         def _run_ffmpeg() -> bytes:
             with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
                 tmp_path = tmp.name
 
             try:
-                # Use FFmpeg to extract a single frame from FLV stream
-                # Reconnection options help with the camera's TLS issues
-                # -ss before -i enables input seeking (faster)
-                # -vframes 1 extracts only one frame
+                # Use FFmpeg to extract a single frame from PLAYBACK stream
+                # The camera handles seeking via 'start' in the URL, so FFmpeg
+                # just needs to grab the first frame from the stream.
                 cmd = [
                     "ffmpeg",
                     "-y",  # Overwrite output
-                    # TLS options for camera with problematic certificates
-                    "-tls_verify",
-                    "0",  # Don't verify TLS certificate
                     # Reconnection options for flaky connections
                     "-reconnect",
                     "1",
                     "-reconnect_streamed",
                     "1",
                     "-reconnect_delay_max",
-                    "5",
-                    # Longer timeout for slow camera responses
+                    "2",
+                    # Timeout for initial connection
                     "-timeout",
-                    "30000000",  # 30 seconds in microseconds
-                    "-ss",
-                    str(offset_seconds),  # Seek position (before -i for input seeking)
+                    "15000000",  # 15 seconds in microseconds
                     "-i",
-                    stream_url,  # Input stream
+                    stream_url,  # Input stream (already seeked by camera)
                     "-vframes",
                     "1",  # Extract one frame
                     "-q:v",
                     "2",  # JPEG quality (2 = high quality)
                     "-f",
                     "image2",  # Output format
+                    "-update",
+                    "1",  # Required for single image output
                     tmp_path,
                 ]
 
                 result = subprocess.run(
                     cmd,
                     capture_output=True,
-                    timeout=60,  # 60 second timeout
+                    timeout=30,  # 30 second timeout
                     check=False,
                 )
 
@@ -600,7 +643,15 @@ class ReolinkBackend:
                         for line in stderr.split("\n")
                         if any(
                             kw in line.lower()
-                            for kw in ["error", "failed", "cannot", "no such", "rtmp"]
+                            for kw in [
+                                "error",
+                                "failed",
+                                "cannot",
+                                "no such",
+                                "rtmp",
+                                "tls",
+                                "ssl",
+                            ]
                         )
                     ]
                     if error_lines:
@@ -633,7 +684,10 @@ class ReolinkBackend:
         than the library's streaming approach that has TLS timeout issues.
         """
         file_name = target_file.file_name  # type: ignore[attr-defined]
-        offset_seconds = max(0, (timestamp - file_start).total_seconds())
+        # Use naive timestamps to avoid DST timezone mismatches (same fix as FFmpeg)
+        ts_naive = timestamp.replace(tzinfo=None)
+        fs_naive = file_start.replace(tzinfo=None)
+        offset_seconds = max(0, (ts_naive - fs_naive).total_seconds())
         config = self._cameras[camera_id]
 
         # Retry logic for downloading
@@ -654,14 +708,25 @@ class ReolinkBackend:
 
                 # Build download URL
                 protocol = "https" if config.use_https else "http"
-                port = config.port or (443 if config.use_https else 80)
+                logger.debug(
+                    "Config: use_https=%s, port=%s, effective_port=%s",
+                    config.use_https,
+                    config.port,
+                    config.effective_port,
+                )
                 download_url = (
-                    f"{protocol}://{config.host}:{port}/cgi-bin/api.cgi"
+                    f"{protocol}://{config.host}:{config.effective_port}/cgi-bin/api.cgi"
                     f"?cmd=Download&source={file_name}&token={token}"
                 )
 
+                # Log the download URL (without token for security)
+                safe_download_url = (
+                    download_url.split("&token=", maxsplit=1)[0] + "&token=REDACTED"
+                )
                 logger.info(
-                    "Attempt %d/3: Downloading VOD file via CGI API", attempt + 1
+                    "Attempt %d/3: Downloading VOD via CGI: %s",
+                    attempt + 1,
+                    safe_download_url,
                 )
 
                 # Download using subprocess curl (more reliable for camera's TLS)
@@ -671,11 +736,11 @@ class ReolinkBackend:
                             "curl",
                             "-sk",  # Silent, insecure (skip cert verify)
                             "--max-time",
-                            "30",  # 30 second timeout (fail fast for slow downloads)
+                            "60",  # 60 second timeout (some cameras are slow)
                             url,
                         ],
                         capture_output=True,
-                        timeout=45,
+                        timeout=90,
                         check=False,
                     )
                     if result.returncode != 0:
@@ -685,6 +750,12 @@ class ReolinkBackend:
 
                 video_data = await asyncio.to_thread(_download_with_curl)
                 logger.info("Downloaded video: %d bytes", len(video_data))
+                # Debug: Check if we got actual video data or an error response
+                if len(video_data) < 1000:
+                    logger.warning(
+                        "Downloaded data seems too small, first 200 bytes: %s",
+                        video_data[:200],
+                    )
 
                 # Extract frame with FFmpeg from downloaded video
                 def _extract_frame(data: bytes = video_data) -> bytes:
@@ -952,7 +1023,7 @@ def create_reolink_backend(
                 host=config.host,
                 username=config.username,
                 password=config.password,
-                port=config.port,
+                port=config.effective_port,
                 use_https=config.use_https,
                 channel=config.channel,
                 name=config.name,
@@ -972,7 +1043,7 @@ def create_reolink_backend(
                     host=config["host"],
                     username=config["username"],
                     password=config["password"],
-                    port=config.get("port", 443),
+                    port=config.get("port"),  # None = auto (443 for HTTPS, 80 for HTTP)
                     use_https=config.get("use_https", True),
                     channel=config.get("channel", 0),
                     name=config.get("name"),

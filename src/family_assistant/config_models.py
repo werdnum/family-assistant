@@ -46,13 +46,20 @@ class ReolinkCameraItemConfig(BaseModel):
     host: str
     username: str
     password: str
-    port: int = 443
+    port: int | None = None  # None means auto-detect based on use_https
     use_https: bool = True
     channel: int = 0
     name: str | None = None
     prefer_download: bool = (
         False  # Skip FLV streaming, use direct download (faster for TLS issues)
     )
+
+    @property
+    def effective_port(self) -> int:
+        """Get the effective port, defaulting based on use_https if not set."""
+        if self.port is not None:
+            return self.port
+        return 443 if self.use_https else 80
 
 
 class CameraConfig(BaseModel):
