@@ -379,6 +379,33 @@ class TasksRepository(BaseRepository):
         if next_scheduled_at.tzinfo is None:
             raise ValueError("next_scheduled_at must be timezone-aware")
 
+        # First fetch the task to get current payload and scheduled_at
+        # This allows us to preserve the original scheduled time for recurrence calculations
+        select_stmt = select(tasks_table).where(tasks_table.c.task_id == task_id)
+        task_row = await self._db.fetch_one(select_stmt)
+
+        if not task_row:
+            logger.error(
+                f"RESCHEDULE FAILED: Task {task_id} not found for retry scheduling"
+            )
+            return False
+
+        # Prepare payload update if needed
+        # We want to preserve the ORIGINAL scheduled_at before it's overwritten by the retry schedule
+        payload = dict(task_row["payload"]) if task_row["payload"] else {}
+        original_scheduled_at_str = payload.get("_original_scheduled_at")
+
+        # If _original_scheduled_at is not already set, set it to the CURRENT scheduled_at
+        # This captures the schedule BEFORE the first retry/reschedule
+        if not original_scheduled_at_str and task_row["scheduled_at"]:
+            current_scheduled_at = task_row["scheduled_at"]
+            if current_scheduled_at.tzinfo is None:
+                current_scheduled_at = current_scheduled_at.replace(tzinfo=UTC)
+            payload["_original_scheduled_at"] = current_scheduled_at.isoformat()
+            logger.info(
+                f"Preserving original scheduled time for task {task_id}: {payload['_original_scheduled_at']}"
+            )
+
         # Update the task for retry
         update_stmt = (
             update(tasks_table)
@@ -388,6 +415,7 @@ class TasksRepository(BaseRepository):
                 scheduled_at=next_scheduled_at,
                 retry_count=new_retry_count,
                 error=error,
+                payload=payload,  # Save the preserved time
             )
         )
 
@@ -527,6 +555,20 @@ class TasksRepository(BaseRepository):
             f"retry_count: {task['retry_count']}, max_retries: {task['max_retries']})"
         )
 
+        # Prepare payload update to preserve original scheduled time
+        payload = dict(task["payload"]) if task["payload"] else {}
+        original_scheduled_at_str = payload.get("_original_scheduled_at")
+
+        # If _original_scheduled_at is not already set, set it to the CURRENT scheduled_at
+        if not original_scheduled_at_str and task["scheduled_at"]:
+            current_scheduled_at = task["scheduled_at"]
+            if current_scheduled_at.tzinfo is None:
+                current_scheduled_at = current_scheduled_at.replace(tzinfo=UTC)
+            payload["_original_scheduled_at"] = current_scheduled_at.isoformat()
+            logger.info(
+                f"Preserving original scheduled time for task {task['task_id']}: {payload['_original_scheduled_at']}"
+            )
+
         # Update the task to be retryable
         # We increment max_retries to allow the retry and reset to pending
         new_max_retries = max(task["max_retries"], task["retry_count"]) + 1
@@ -539,6 +581,7 @@ class TasksRepository(BaseRepository):
                 max_retries=new_max_retries,
                 scheduled_at=current_time,  # Schedule for immediate execution
                 error=None,  # Clear the error to give it a fresh start
+                payload=payload,  # Save the preserved time
             )
         )
 

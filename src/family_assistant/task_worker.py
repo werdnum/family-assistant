@@ -577,9 +577,32 @@ class TaskWorker:
         logger.info(
             f"RECURRENCE PROCESSING: Task {task_id} has recurrence rule: {recurrence_rule_str}. Scheduling next instance."
         )
+
+        # Ensure payload is a dict (handle potential None from DB)
+        if payload is None:
+            payload = {}
+
         try:
-            # Use the *scheduled_at* time of the completed task as the base for the next occurrence
-            last_scheduled_at = task.get("scheduled_at")
+            # Check if the original scheduled time was preserved (e.g. from retries)
+            # Use this as the base for the next occurrence to prevent schedule shifting
+            original_scheduled_at_str = payload.get("_original_scheduled_at")
+            last_scheduled_at = None
+
+            if original_scheduled_at_str:
+                try:
+                    last_scheduled_at = isoparse(original_scheduled_at_str)
+                    logger.debug(
+                        f"RECURRENCE DEBUG: Using preserved original scheduled time {last_scheduled_at} as base."
+                    )
+                except ValueError:
+                    logger.warning(
+                        f"RECURRENCE WARNING: Failed to parse _original_scheduled_at ({original_scheduled_at_str}) for task {task_id}"
+                    )
+
+            # Fallback: Use the *scheduled_at* time of the completed task
+            if not last_scheduled_at:
+                last_scheduled_at = task.get("scheduled_at")
+
             if not last_scheduled_at:
                 # If somehow scheduled_at is missing, use created_at as fallback
                 last_scheduled_at = task.get("created_at", datetime.now(UTC))
@@ -589,9 +612,11 @@ class TaskWorker:
             # Ensure the base time is timezone-aware for rrule
             if last_scheduled_at.tzinfo is None:
                 last_scheduled_at = last_scheduled_at.replace(tzinfo=UTC)
-                logger.warning(
-                    f"RECURRENCE WARNING: Made recurrence base time timezone-aware (UTC): {last_scheduled_at}"
-                )
+                # Only warn if it wasn't a freshly parsed iso string which might lack timezone info if naive
+                if not original_scheduled_at_str:
+                    logger.warning(
+                        f"RECURRENCE WARNING: Made recurrence base time timezone-aware (UTC): {last_scheduled_at}"
+                    )
 
             # Convert UTC time to user's timezone before calculating recurrence
             # This ensures BYHOUR and other time-based rules work in the user's timezone
