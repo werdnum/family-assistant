@@ -98,7 +98,7 @@ fi
 # Update Claude plugin marketplaces
 echo "🔄 Updating Claude plugin marketplaces..."
 # Pull latest changes from local plugin marketplace clone
-PLUGINS_DIR="$HOME/claude-code-plugins"
+PLUGINS_DIR="$HOME/werdnum-plugins"
 if [ -d "$PLUGINS_DIR/.git" ]; then
     # GIT_TERMINAL_PROMPT=0 prevents hanging if credentials are needed
     (cd "$PLUGINS_DIR" && GIT_TERMINAL_PROMPT=0 git pull --quiet 2>/dev/null) || {

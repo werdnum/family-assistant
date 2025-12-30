@@ -317,7 +317,7 @@ $CLAUDE_BIN mcp add --scope user playwright $(which npx) -- -y -q @playwright/mc
 # Note: Using local path because Claude Code's git auth handler doesn't work with GitHub URLs
 # Use /home/claude explicitly since this script runs as root (not as claude user)
 CLAUDE_HOME="/home/claude"
-PLUGINS_DIR="$CLAUDE_HOME/claude-code-plugins"
+PLUGINS_DIR="$CLAUDE_HOME/werdnum-plugins"
 echo "Setting up Claude plugin marketplace..."
 if [ ! -d "$PLUGINS_DIR" ]; then
     echo "Cloning claude-code-plugins repository..."
@@ -334,6 +334,7 @@ fi
 
 # Add the marketplace by file path (remove first to avoid duplicates)
 $CLAUDE_BIN plugin marketplace remove claude-code-plugins 2>/dev/null || true
+$CLAUDE_BIN plugin marketplace remove werdnum-plugins 2>/dev/null || true
 $CLAUDE_BIN plugin marketplace add "$PLUGINS_DIR"
 echo "Claude plugin marketplace configured from local path"
 
