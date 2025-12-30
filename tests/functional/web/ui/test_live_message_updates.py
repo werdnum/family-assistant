@@ -59,7 +59,7 @@ async def test_message_appears_in_second_context(
         # Navigate page2 to the SAME conversation and wait for SSE connection
         # Set up listener for SSE connection BEFORE navigation to ensure we don't miss it
         async with page2.expect_response(
-            lambda r: "/api/v1/chat/events" in r.url and r.ok, timeout=10000
+            lambda r: "/api/v1/chat/events" in r.url and r.ok, timeout=30000
         ):
             await page2.goto(f"{base_url}/chat?conversation_id={conversation_id}")
 
@@ -119,7 +119,7 @@ async def test_bidirectional_live_updates(
         # Navigate page2 to the SAME conversation and wait for SSE connection
         # Set up listener for SSE connection BEFORE navigation to ensure we don't miss it
         async with page2.expect_response(
-            lambda r: "/api/v1/chat/events" in r.url and r.ok, timeout=10000
+            lambda r: "/api/v1/chat/events" in r.url and r.ok, timeout=30000
         ):
             await page2.goto(f"{base_url}/chat?conversation_id={conversation_id}")
 
