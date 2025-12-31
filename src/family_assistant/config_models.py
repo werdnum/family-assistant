@@ -495,3 +495,7 @@ class AppConfig(BaseModel):
 
     # Server port (optional, defaults to 8000)
     server_port: int = 8000
+
+    # Attachment selection thresholds (global)
+    attachment_selection_threshold: int = 3  # Trigger selection when > this many
+    max_response_attachments: int = 6  # Max attachments per response

@@ -593,6 +593,39 @@ class ProcessingService:
 
             # Yield a synthetic "done" event with the complete assistant message
             # Include attachment IDs if any were captured from attach_to_response calls
+            # Automatically select attachments if too many accumulated
+            if (
+                len(pending_attachment_ids)
+                > self.app_config.attachment_selection_threshold
+            ):
+                # Extract original user query from messages
+                original_query = ""
+                for msg in messages:
+                    if isinstance(msg, UserMessage):
+                        if isinstance(msg.content, str):
+                            original_query = msg.content
+                        elif isinstance(msg.content, list) and msg.content:
+                            for part in msg.content:
+                                if (
+                                    isinstance(part, dict)
+                                    and part.get("type") == "text"
+                                ):
+                                    original_query = part.get("text", "")
+                                    break
+                        if original_query:
+                            break
+
+                if original_query:
+                    pending_attachment_ids = (
+                        await self._select_attachments_for_response(
+                            pending_attachment_ids=pending_attachment_ids,
+                            original_query=original_query,
+                        )
+                    )
+                    logger.info(
+                        f"Attachment selection reduced from auto-queued to {len(pending_attachment_ids)} based on query relevance"
+                    )
+
             # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
             done_metadata: dict[str, Any] = {"message": assistant_message_for_turn}
             if pending_attachment_ids:
@@ -1519,6 +1552,119 @@ class ProcessingService:
             f"Formatted {len(history_messages)} DB history messages into {len(messages)} LLM messages."
         )
         return messages
+
+    async def _select_attachments_for_response(
+        self,
+        pending_attachment_ids: list[str],
+        original_query: str,
+    ) -> list[str]:
+        """
+        Select the most relevant attachments to include in the response.
+
+        Uses LLM to intelligently select which attachments are most relevant
+        to the user's original query, respecting the max_response_attachments limit.
+
+        Args:
+            pending_attachment_ids: List of available attachment IDs to choose from
+            original_query: The original user query to evaluate relevance
+
+        Returns:
+            List of selected attachment IDs (up to max_response_attachments)
+        """
+        if not pending_attachment_ids or not self.attachment_registry:
+            return pending_attachment_ids
+
+        try:
+            attachment_descriptions: list[str] = []
+            for att_id in pending_attachment_ids:
+                metadata = await self.attachment_registry.get_attachment_with_context(
+                    att_id
+                )
+                if metadata:
+                    attachment_descriptions.append(
+                        f"- {att_id}: {metadata.description or 'Attachment'} ({metadata.mime_type})"
+                    )
+                else:
+                    attachment_descriptions.append(
+                        f"- {att_id}: (metadata unavailable)"
+                    )
+
+            selection_prompt = f"""You have {len(pending_attachment_ids)} attachments from tool results that could be sent to the user.
+The user's original query was: "{original_query}"
+
+Select up to {self.app_config.max_response_attachments} attachments that best answer the user's question.
+Prioritize:
+- Images that directly answer the query
+- Representative samples if many are similar
+- Key findings or highlights
+
+Available attachments:
+{chr(10).join(attachment_descriptions)}
+
+Call attach_to_response with your selected attachment IDs."""
+
+            selection_tools = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "attach_to_response",
+                        "description": "Select the most relevant attachments to include in the response to the user",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "attachment_ids": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "List of attachment IDs to include",
+                                }
+                            },
+                            "required": ["attachment_ids"],
+                        },
+                    },
+                }
+            ]
+
+            selection_messages: list[LLMMessage] = [
+                UserMessage(content=selection_prompt),
+            ]
+
+            logger.debug(
+                f"Selecting attachments from {len(pending_attachment_ids)} candidates using LLM"
+            )
+
+            response = await self.llm_client.generate_response(
+                messages=selection_messages,
+                tools=selection_tools,
+                tool_choice="required",
+            )
+
+            if response.tool_calls:
+                tool_call = response.tool_calls[0]
+                if tool_call.function.name == "attach_to_response":
+                    arguments = tool_call.function.arguments
+                    if isinstance(arguments, str):
+                        arguments = json.loads(arguments)
+                    selected_ids_raw = arguments.get("attachment_ids", [])
+                    # Ensure selected_ids is a list of strings
+                    selected_ids: list[str] = (
+                        selected_ids_raw if isinstance(selected_ids_raw, list) else []
+                    )
+                    selected_ids = selected_ids[
+                        : self.app_config.max_response_attachments
+                    ]
+                    logger.info(
+                        f"LLM selected {len(selected_ids)} attachments from {len(pending_attachment_ids)} candidates"
+                    )
+                    return selected_ids
+
+            logger.warning(
+                "LLM did not return attach_to_response tool call, falling back to first N attachments"
+            )
+            return pending_attachment_ids[: self.app_config.max_response_attachments]
+
+        except Exception as e:
+            logger.error(f"Error selecting attachments: {e}", exc_info=True)
+            return pending_attachment_ids[: self.app_config.max_response_attachments]
 
     async def handle_chat_interaction(
         self,

@@ -735,3 +735,75 @@ see them.
 - [ ] Update tool descriptions for clarity
 - [ ] Update system prompt in prompts.yaml
 - [ ] Update and create tests for new behavior
+
+## Attachment Selection for High-Volume Results (Addendum)
+
+### Problem Statement
+
+When tools like camera_analyst retrieve many images (e.g., reviewing camera footage throughout a
+morning), the auto-attachment mechanism would send ALL thumbnails with the response. This causes:
+
+1. **Telegram limits**: Media groups max out at 10 items
+2. **Poor UX**: User overwhelmed with thumbnails when they want curated highlights
+3. **Bandwidth waste**: Sending redundant/similar images
+
+### Solution: Automatic Attachment Selection
+
+When an agent turn ends with more attachments than a configurable threshold, the system
+automatically re-prompts the LLM to select the most relevant attachments.
+
+#### Configuration
+
+In `AppConfig`:
+
+- `attachment_selection_threshold: int = 3` - Trigger selection when > this many attachments
+- `max_response_attachments: int = 6` - Maximum attachments per response
+
+#### Mechanism
+
+```
+[Normal processing completes]
+    ↓
+[Check: len(pending_attachment_ids) > threshold?]
+    ↓ Yes
+[Create selection prompt with attachment metadata]
+    ↓
+[Call LLM with tool_choice="required" and only attach_to_response tool]
+    ↓
+[LLM returns attach_to_response call with selected IDs]
+    ↓
+[Update pending_attachment_ids with selection]
+    ↓
+[Yield "done" event with curated attachments]
+```
+
+#### Selection Prompt
+
+The LLM receives:
+
+- Count of available attachments
+- The user's original query
+- List of attachment metadata (ID, description, MIME type)
+- Instruction to prioritize: direct answers, representative samples, key findings
+
+#### Fallback Behavior
+
+If selection fails (LLM error, no tool call returned), falls back to first N attachments where N =
+`max_response_attachments`.
+
+#### Implementation Status
+
+- [x] Add Gemini forced function call support (`tool_choice="required"`)
+- [x] Add `attachment_selection_threshold` and `max_response_attachments` to AppConfig
+- [x] Implement `_select_attachments_for_response()` in ProcessingService
+- [x] Add selection logic before "done" event in `process_message_stream()`
+- [x] Unit tests for Gemini tool_choice modes
+- [x] Unit tests for attachment selection logic
+
+#### Files Modified
+
+- `src/family_assistant/llm/providers/google_genai_client.py` - Gemini forced function calls
+- `src/family_assistant/config_models.py` - New config fields
+- `src/family_assistant/processing.py` - Selection logic (~lines 596-627, 1556-1667)
+- `tests/unit/llm/providers/test_google_genai_tool_choice.py` - New tests
+- `tests/unit/processing/test_attachment_selection.py` - New tests
