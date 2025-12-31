@@ -598,9 +598,9 @@ class ProcessingService:
                 len(pending_attachment_ids)
                 > self.app_config.attachment_selection_threshold
             ):
-                # Extract original user query from messages
+                # Extract original user query from messages (most recent first)
                 original_query = ""
-                for msg in messages:
+                for msg in reversed(messages):
                     if isinstance(msg, UserMessage):
                         if isinstance(msg.content, str):
                             original_query = msg.content
