@@ -1658,13 +1658,13 @@ Call attach_to_response with your selected attachment IDs."""
                     return selected_ids
 
             logger.warning(
-                "LLM did not return attach_to_response tool call, falling back to first N attachments"
+                "LLM did not return attach_to_response tool call, falling back to last N attachments"
             )
-            return pending_attachment_ids[: self.app_config.max_response_attachments]
+            return pending_attachment_ids[-self.app_config.max_response_attachments :]
 
         except Exception as e:
             logger.error(f"Error selecting attachments: {e}", exc_info=True)
-            return pending_attachment_ids[: self.app_config.max_response_attachments]
+            return pending_attachment_ids[-self.app_config.max_response_attachments :]
 
     async def handle_chat_interaction(
         self,
