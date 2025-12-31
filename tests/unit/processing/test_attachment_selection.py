@@ -320,7 +320,7 @@ class TestSelectAttachmentsForResponse:
             original_query="Select images",
         )
 
-        # Should fall back to first N attachments where N = max_response_attachments
+        # Should fall back to last N attachments where N = max_response_attachments
         assert len(result) == 4  # max_response_attachments is 6, so all 4 are returned
         assert result == ["att1", "att2", "att3", "att4"]
 
@@ -363,7 +363,7 @@ class TestSelectAttachmentsForResponse:
             original_query="Select images",
         )
 
-        # Should fall back to first N
+        # Should fall back to last N
         assert len(result) == 4
         assert result == ["att1", "att2", "att3", "att4"]
 
@@ -444,9 +444,9 @@ class TestSelectAttachmentsForResponse:
             original_query="Select images",
         )
 
-        # Should be limited to max (6) even in fallback
+        # Should be limited to last max (6) even in fallback - last 6 are att5-att10
         assert len(result) == 6
-        assert result == [f"att{i}" for i in range(1, 7)]
+        assert result == [f"att{i}" for i in range(5, 11)]
 
     @pytest.mark.asyncio
     async def test_select_attachments_graceful_error_handling(
