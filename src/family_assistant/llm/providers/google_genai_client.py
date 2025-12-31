@@ -637,7 +637,7 @@ class GoogleGenAIClient(BaseLLMClient):
 
         Args:
             tools: List of tool definitions in OpenAI format
-            tool_choice: Tool choice mode - "auto", "none", or specific tool name.
+            tool_choice: Tool choice mode - "auto", "none", "required", or specific tool name.
                         When "none", returns empty list to prevent any tool calls.
         """
         # When tool_choice is "none", don't include any tools at all
@@ -749,12 +749,28 @@ class GoogleGenAIClient(BaseLLMClient):
                     types.AutomaticFunctionCallingConfig(disable=True)
                 )
 
-            # When tool_choice is "none", explicitly configure the model to not call functions
-            # This ensures the model returns text even if tools were provided earlier in conversation
+            # Configure tool behavior based on tool_choice setting
             if tool_choice == "none":
+                # Explicitly configure the model to not call functions
+                # This ensures the model returns text even if tools were provided earlier in conversation
                 generation_config.tool_config = types.ToolConfig(
                     function_calling_config=types.FunctionCallingConfig(
                         mode=types.FunctionCallingConfigMode.NONE
+                    )
+                )
+            elif tool_choice == "required":
+                # Force the model to call any available tool
+                generation_config.tool_config = types.ToolConfig(
+                    function_calling_config=types.FunctionCallingConfig(
+                        mode=types.FunctionCallingConfigMode.ANY
+                    )
+                )
+            elif tool_choice and tool_choice not in {"auto", "required"}:
+                # Specific tool name: restrict to calling only this tool
+                generation_config.tool_config = types.ToolConfig(
+                    function_calling_config=types.FunctionCallingConfig(
+                        mode=types.FunctionCallingConfigMode.ANY,
+                        allowed_function_names=[tool_choice],
                     )
                 )
 
@@ -1217,12 +1233,28 @@ class GoogleGenAIClient(BaseLLMClient):
                     types.AutomaticFunctionCallingConfig(disable=True)
                 )
 
-            # When tool_choice is "none", explicitly configure the model to not call functions
-            # This ensures the model returns text even if tools were provided earlier in conversation
+            # Configure tool behavior based on tool_choice setting
             if tool_choice == "none":
+                # Explicitly configure the model to not call functions
+                # This ensures the model returns text even if tools were provided earlier in conversation
                 generation_config.tool_config = types.ToolConfig(
                     function_calling_config=types.FunctionCallingConfig(
                         mode=types.FunctionCallingConfigMode.NONE
+                    )
+                )
+            elif tool_choice == "required":
+                # Force the model to call any available tool
+                generation_config.tool_config = types.ToolConfig(
+                    function_calling_config=types.FunctionCallingConfig(
+                        mode=types.FunctionCallingConfigMode.ANY
+                    )
+                )
+            elif tool_choice and tool_choice not in {"auto", "required"}:
+                # Specific tool name: restrict to calling only this tool
+                generation_config.tool_config = types.ToolConfig(
+                    function_calling_config=types.FunctionCallingConfig(
+                        mode=types.FunctionCallingConfigMode.ANY,
+                        allowed_function_names=[tool_choice],
                     )
                 )
 
