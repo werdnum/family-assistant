@@ -3,7 +3,7 @@
 This module implements the CameraBackend protocol for Reolink cameras using the
 reolink_aio library. It provides:
 - Connection pooling and session management
-- Frame extraction from RTSP streams via OpenCV
+- Frame extraction from recorded video via FFmpeg
 - AI detection event retrieval via VOD trigger filtering
 - Recording metadata access
 
@@ -32,7 +32,7 @@ import aiohttp
 from reolink_aio.api import Host
 from reolink_aio.enums import VodRequestType
 from reolink_aio.exceptions import ReolinkConnectionError
-from reolink_aio.typings import VOD_trigger
+from reolink_aio.typings import VOD_file, VOD_trigger
 
 from family_assistant.camera.protocol import (
     CameraEvent,
@@ -554,7 +554,7 @@ class ReolinkBackend:
         self,
         host: Host,
         channel: int,
-        target_file: object,
+        target_file: VOD_file,
         timestamp: datetime,
         file_start: datetime,
     ) -> bytes:
@@ -579,7 +579,7 @@ class ReolinkBackend:
         # Get PLAYBACK streaming URL (uses token-based auth)
         _mime_type, stream_url = await host.get_vod_source(
             channel,
-            target_file.file_name,  # type: ignore[attr-defined]
+            target_file.file_name,
             "sub",
             VodRequestType.PLAYBACK,
         )
@@ -674,7 +674,7 @@ class ReolinkBackend:
         self,
         camera_id: str,
         channel: int,
-        target_file: object,
+        target_file: VOD_file,
         timestamp: datetime,
         file_start: datetime,
     ) -> bytes:
@@ -683,7 +683,7 @@ class ReolinkBackend:
         Uses the direct CGI Download API with curl, which is more reliable
         than the library's streaming approach that has TLS timeout issues.
         """
-        file_name = target_file.file_name  # type: ignore[attr-defined]
+        file_name = target_file.file_name
         # Use naive timestamps to avoid DST timezone mismatches (same fix as FFmpeg)
         ts_naive = timestamp.replace(tzinfo=None)
         fs_naive = file_start.replace(tzinfo=None)

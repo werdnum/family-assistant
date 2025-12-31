@@ -107,7 +107,6 @@ dependencies = [
     "anyio>=4.9.0",
     # Reolink camera support
     "reolink-aio>=0.16.0",
-    "opencv-python-headless>=4.8.0",
 ]
 
 [project.optional-dependencies]
@@ -410,3 +409,4 @@ explicit = true
 
 [tool.uv.sources]
 torch = { index = "torch-cpu" }
+
