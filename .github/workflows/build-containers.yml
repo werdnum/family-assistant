@@ -57,7 +57,7 @@ jobs:
           echo "After cleanup:"
           df -h
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.1
       - name: Set up QEMU
         if: needs.prepare.outputs.platforms != 'linux/amd64'
         uses: docker/setup-qemu-action@v3
@@ -103,7 +103,7 @@ jobs:
           echo "After cleanup:"
           df -h
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.1
       - name: Set up QEMU
         if: needs.prepare.outputs.platforms != 'linux/amd64'
         uses: docker/setup-qemu-action@v3
@@ -140,7 +140,7 @@ jobs:
       - name: Generate GitHub App token
         if: needs.prepare.outputs.should-push == 'true'
         id: app-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.IMAGE_UPDATER_APP_ID }}
           private-key: ${{ secrets.IMAGE_UPDATER_PRIVATE_KEY }}
