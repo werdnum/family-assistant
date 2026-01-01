@@ -44,7 +44,7 @@ jobs:
       gemini_client: ${{ steps.filter.outputs.gemini_client }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.1
       - name: Detect changed paths
         uses: dorny/paths-filter@v3
         id: filter
@@ -122,7 +122,7 @@ jobs:
           echo "After cleanup:"
           df -h
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.1
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Log in to Container Registry
@@ -163,7 +163,7 @@ jobs:
           echo "After cleanup:"
           df -h
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.1
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Build main application image (verification only)
@@ -190,7 +190,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.1
       - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
@@ -227,7 +227,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.1
       - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
@@ -252,7 +252,7 @@ jobs:
               mkdir -p test-results && \
               npm test --prefix frontend -- --run --reporter=json --reporter=verbose --outputFile=test-results/frontend-report.json'
       - name: Upload frontend test results
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         if: always()
         with:
           name: frontend-test-results-${{ github.run_id }}
@@ -270,7 +270,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.1
       - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
@@ -305,7 +305,7 @@ jobs:
               .venv/bin/pytest -q --timeout=300 --db sqlite -m "not postgres and not playwright" \
                 --json-report --json-report-file=test-results/backend-sqlite-report.json'
       - name: Upload backend test results (SQLite)
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         if: always()
         with:
           name: backend-test-artifacts-sqlite-${{ github.run_id }}
@@ -334,7 +334,7 @@ jobs:
           - 5432:5432
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.1
       - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
@@ -371,7 +371,7 @@ jobs:
               .venv/bin/pytest --postgres -q --timeout=300 -m "not playwright" \
                 --json-report --json-report-file=test-results/backend-postgres-report.json'
       - name: Upload backend test results (PostgreSQL)
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         if: always()
         with:
           name: backend-test-artifacts-postgres-${{ github.run_id }}
@@ -392,7 +392,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.1
       - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
@@ -429,7 +429,7 @@ jobs:
                 --json-report --json-report-file=test-results/playwright-sqlite-report.json \
                 --output=test-results'
       - name: Upload Playwright test artifacts (SQLite)
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         if: always()
         with:
           name: playwright-artifacts-sqlite-${{ github.run_id }}
@@ -473,7 +473,7 @@ jobs:
           - 5432:5432
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.1
       - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
@@ -512,7 +512,7 @@ jobs:
                 --json-report --json-report-file=test-results/playwright-postgres-report.json \
                 --output=test-results'
       - name: Upload Playwright test artifacts (PostgreSQL)
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         if: always()
         with:
           name: playwright-artifacts-postgres-${{ github.run_id }}
@@ -541,7 +541,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.1
       - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
@@ -568,7 +568,7 @@ jobs:
               .venv/bin/pytest -q --timeout=300 -m "gemini_live" \
                 --json-report --json-report-file=test-results/gemini-live-report.json'
       - name: Upload Gemini live test results
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         if: always()
         with:
           name: gemini-live-test-results-${{ github.run_id }}
