@@ -4,12 +4,13 @@ This module implements the tools required by the Gemini Computer Use model
 to interact with a web browser.
 """
 
+import contextlib
 import logging
 import time
 
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 
-from family_assistant.tools.attachments import ToolAttachment
+from family_assistant.tools.types import ToolAttachment
 
 logger = logging.getLogger(__name__)
 
@@ -83,10 +84,8 @@ def computer_use_click_at(x: int, y: int) -> ToolAttachment:
     page.mouse.click(actual_x, actual_y)
 
     # Wait for potential navigations/renders
-    try:
+    with contextlib.suppress(Exception):
         page.wait_for_load_state(timeout=2000)
-    except Exception:
-        pass
 
     return _take_screenshot(page)
 
@@ -126,10 +125,8 @@ def computer_use_type_text_at(
         page.keyboard.press("Enter")
 
     # Wait for potential navigations/renders
-    try:
+    with contextlib.suppress(Exception):
         page.wait_for_load_state(timeout=2000)
-    except Exception:
-        pass
 
     return _take_screenshot(page)
 
@@ -207,11 +204,7 @@ def computer_use_navigate(url: str) -> ToolAttachment:
     return _take_screenshot(page)
 
 
-def computer_use_search(query: str) -> ToolAttachment:  # Note: Docs say 'search' takes NO args?
-    # Checking docs again: "search: Navigates to the default search engine's homepage. None"
-    # Wait, the docs in the prompt trace say:
-    # "search Navigates to the default search engine's homepage (e.g., Google). Useful for starting a new search task. None"
-    # So it takes no args.
+def computer_use_search() -> ToolAttachment:
     """Navigate to the default search engine.
 
     Returns:
@@ -294,7 +287,9 @@ def computer_use_hover_at(x: int, y: int) -> ToolAttachment:
     return _take_screenshot(page)
 
 
-def computer_use_drag_and_drop(x: int, y: int, destination_x: int, destination_y: int) -> ToolAttachment:
+def computer_use_drag_and_drop(
+    x: int, y: int, destination_x: int, destination_y: int
+) -> ToolAttachment:
     """Drag an element from one coordinate to another.
 
     Args:
@@ -376,7 +371,11 @@ COMPUTER_USE_TOOLS_DEFINITION = [
                     "x": {"type": "integer", "description": "X coordinate (0-1000)"},
                     "y": {"type": "integer", "description": "Y coordinate (0-1000)"},
                     "text": {"type": "string", "description": "Text to type"},
-                    "press_enter": {"type": "boolean", "description": "Press Enter after typing", "default": True},
+                    "press_enter": {
+                        "type": "boolean",
+                        "description": "Press Enter after typing",
+                        "default": True,
+                    },
                 },
                 "required": ["x", "y", "text"],
             },
@@ -392,8 +391,15 @@ COMPUTER_USE_TOOLS_DEFINITION = [
                 "properties": {
                     "x": {"type": "integer", "description": "X coordinate (0-1000)"},
                     "y": {"type": "integer", "description": "Y coordinate (0-1000)"},
-                    "direction": {"type": "string", "description": "Direction (up, down, left, right)"},
-                    "magnitude": {"type": "integer", "description": "Scroll amount", "default": 800},
+                    "direction": {
+                        "type": "string",
+                        "description": "Direction (up, down, left, right)",
+                    },
+                    "magnitude": {
+                        "type": "integer",
+                        "description": "Scroll amount",
+                        "default": 800,
+                    },
                 },
                 "required": ["x", "y", "direction"],
             },
@@ -469,7 +475,10 @@ COMPUTER_USE_TOOLS_DEFINITION = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "keys": {"type": "string", "description": "Key combination (e.g. 'Control+C')"},
+                    "keys": {
+                        "type": "string",
+                        "description": "Key combination (e.g. 'Control+C')",
+                    },
                 },
                 "required": ["keys"],
             },
@@ -512,8 +521,14 @@ COMPUTER_USE_TOOLS_DEFINITION = [
                 "properties": {
                     "x": {"type": "integer", "description": "Start X (0-1000)"},
                     "y": {"type": "integer", "description": "Start Y (0-1000)"},
-                    "destination_x": {"type": "integer", "description": "End X (0-1000)"},
-                    "destination_y": {"type": "integer", "description": "End Y (0-1000)"},
+                    "destination_x": {
+                        "type": "integer",
+                        "description": "End X (0-1000)",
+                    },
+                    "destination_y": {
+                        "type": "integer",
+                        "description": "End Y (0-1000)",
+                    },
                 },
                 "required": ["x", "y", "destination_x", "destination_y"],
             },
@@ -527,7 +542,10 @@ COMPUTER_USE_TOOLS_DEFINITION = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "direction": {"type": "string", "description": "Direction (up, down, left, right)"},
+                    "direction": {
+                        "type": "string",
+                        "description": "Direction (up, down, left, right)",
+                    },
                 },
                 "required": ["direction"],
             },

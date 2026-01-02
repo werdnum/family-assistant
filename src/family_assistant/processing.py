@@ -1974,7 +1974,8 @@ Call attach_to_response with your selected attachment IDs."""
                 local_tz = pytz.timezone(self.timezone_str)
                 # Use the injected clock's now() method
                 current_time_str = (
-                    self.clock.now()
+                    self.clock
+                    .now()
                     .astimezone(local_tz)
                     .strftime("%Y-%m-%d %H:%M:%S %Z")
                 )
@@ -2392,7 +2393,8 @@ Call attach_to_response with your selected attachment IDs."""
             try:
                 local_tz = pytz.timezone(self.timezone_str)
                 current_time_str = (
-                    self.clock.now()
+                    self.clock
+                    .now()
                     .astimezone(local_tz)
                     .strftime("%Y-%m-%d %H:%M:%S %Z")
                 )

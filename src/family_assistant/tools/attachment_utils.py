@@ -122,7 +122,8 @@ async def process_attachment_arguments(
 
         # Get the parameter definition from the tool schema
         properties = (
-            tool_definition.get("function", {})
+            tool_definition
+            .get("function", {})
             .get("parameters", {})
             .get("properties", {})
         )
