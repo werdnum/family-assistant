@@ -147,8 +147,7 @@ class EmailRepository(BaseRepository):
             stmt = stmt.where(received_emails_table.c.received_at >= since)
 
         stmt = (
-            stmt
-            .order_by(received_emails_table.c.received_at.desc())
+            stmt.order_by(received_emails_table.c.received_at.desc())
             .limit(limit)
             .offset(offset)
         )

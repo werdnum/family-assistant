@@ -312,8 +312,7 @@ async def handle_llm_callback(
         f"Handling LLM callback for conversation {interface_type}:{conversation_id} (scheduled at {scheduling_timestamp_str})"
     )
     current_time_str = (
-        clock
-        .now()
+        clock.now()
         .astimezone(zoneinfo.ZoneInfo(exec_context.timezone_str))
         .strftime("%Y-%m-%d %H:%M:%S %Z")
     )  # Use timezone from context
