@@ -25,7 +25,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import SQLAlchemyError
 
 from family_assistant.storage.base import metadata
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.context import DatabaseContext, sanitize_text_for_postgres
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Result
@@ -119,6 +119,10 @@ async def add_message_to_history(
 ) -> dict[str, Any] | None:  # Changed to return Optional[Dict]
     """Adds a message to the history table, including optional fields."""
     # Note: The return type was previously Optional[int], changed to Optional[Dict] to return ID in a dict
+
+    # Sanitize text fields for PostgreSQL (removes null bytes, etc.)
+    content = sanitize_text_for_postgres(content)
+    error_traceback = sanitize_text_for_postgres(error_traceback)
 
     # Pre-serialization check for JSON fields
     json_fields_to_check = {

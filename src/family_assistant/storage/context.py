@@ -18,11 +18,13 @@ from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.sql import Delete, Insert, Select, Update
 
-try:
-    from asyncpg.exceptions import InFailedSQLTransactionError
-except ImportError:
-    # asyncpg not available (e.g., when using SQLite)
-    InFailedSQLTransactionError = None
+# PostgreSQL SQLSTATE codes - the authoritative way to identify error types
+# See: https://www.postgresql.org/docs/current/errcodes-appendix.html
+PGCODE_IN_FAILED_SQL_TRANSACTION = "25P02"  # Transaction is aborted
+PGCODE_CHARACTER_NOT_IN_REPERTOIRE = "22021"  # Invalid byte sequence for encoding
+# Retryable codes (for reference, not currently used for auto-retry)
+PGCODE_SERIALIZATION_FAILURE = "40001"  # Concurrent transaction conflict
+PGCODE_DEADLOCK_DETECTED = "40P01"  # Two processes blocked each other
 
 if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
@@ -48,6 +50,79 @@ logger = logging.getLogger(__name__)
 
 # Type variable for query result type
 T = TypeVar("T")
+
+
+def sanitize_text_for_postgres(text: str | None) -> str | None:
+    """
+    Sanitize text content for storage in PostgreSQL TEXT columns.
+
+    PostgreSQL TEXT columns don't allow null bytes (\\x00) which can appear in:
+    - Browser console output from Playwright
+    - Binary data accidentally treated as text
+    - External API responses with embedded null bytes
+
+    This function:
+    1. Removes null bytes (PostgreSQL doesn't allow them in TEXT)
+    2. Handles invalid UTF-8 surrogate characters by replacing them
+    3. Preserves valid control characters (tabs, newlines, ANSI escapes)
+
+    Args:
+        text: The text to sanitize, or None
+
+    Returns:
+        Sanitized text safe for PostgreSQL, or None if input was None
+    """
+    if text is None:
+        return None
+
+    # Remove null bytes - PostgreSQL doesn't allow them in TEXT columns
+    text = text.replace("\x00", "")
+
+    # Handle potential surrogate characters or other encoding issues
+    # by round-tripping through UTF-8 with error replacement
+    # This catches lone surrogates (U+D800-U+DFFF) and replaces them
+    try:
+        text = text.encode("utf-8", errors="surrogatepass").decode(
+            "utf-8", errors="replace"
+        )
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        # If encoding fails completely, replace all problematic chars
+        text = text.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+
+    return text
+
+
+def _is_non_retryable_postgres_error(exc: BaseException | None) -> tuple[bool, str]:
+    """
+    Check if an exception is a non-retryable PostgreSQL error using SQLSTATE codes.
+
+    Some PostgreSQL errors should not be retried because:
+    - They're data errors (bad encoding, constraint violations)
+    - The transaction is already aborted
+
+    Uses pgcode (SQLSTATE) which is the authoritative way to identify PostgreSQL
+    error types, rather than isinstance checks which can fail with SQLAlchemy's
+    exception wrapping.
+
+    Returns:
+        Tuple of (is_non_retryable, error_type_description)
+    """
+    if exc is None:
+        return False, ""
+
+    # asyncpg exceptions have a 'pgcode' attribute with the SQLSTATE code
+    # This is the gold standard for identifying PostgreSQL error types
+    pgcode = getattr(exc, "pgcode", None)
+    if pgcode is None:
+        return False, ""
+
+    # Check for specific non-retryable SQLSTATE codes
+    if pgcode == PGCODE_IN_FAILED_SQL_TRANSACTION:
+        return True, "transaction_aborted"
+    if pgcode == PGCODE_CHARACTER_NOT_IN_REPERTOIRE:
+        return True, "encoding_error"
+
+    return False, ""
 
 
 class DatabaseContext:
@@ -183,14 +258,26 @@ class DatabaseContext:
                         exc_info=True,
                     )
                     raise  # Re-raise immediately, do not retry
-                # Check if this is a PostgreSQL transaction abort error
-                if InFailedSQLTransactionError and isinstance(
-                    e.orig, InFailedSQLTransactionError
-                ):
-                    logger.error(
-                        "PostgreSQL transaction is aborted. Cannot retry within same transaction.",
-                        exc_info=True,
-                    )
+
+                # Check for PostgreSQL-specific non-retryable errors
+                # (transaction aborted, encoding errors, etc.)
+                is_non_retryable, error_type = _is_non_retryable_postgres_error(e.orig)
+                if is_non_retryable:
+                    if error_type == "transaction_aborted":
+                        logger.error(
+                            "PostgreSQL transaction is aborted. Cannot retry within same transaction.",
+                            exc_info=True,
+                        )
+                    elif error_type == "encoding_error":
+                        logger.error(
+                            f"Non-retryable encoding error (invalid characters in data): {e}",
+                            exc_info=True,
+                        )
+                    else:
+                        logger.error(
+                            f"Non-retryable PostgreSQL error ({error_type}): {e}",
+                            exc_info=True,
+                        )
                     raise  # Re-raise immediately, retrying won't help
 
                 # Log other DBAPI errors and proceed with retry logic
