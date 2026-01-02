@@ -288,11 +288,9 @@ class GoogleGenAIClient(BaseLLMClient):
         elif attachment.content:
             # Other binary content with data - describe what we have
             size_mb = len(attachment.content) / (1024 * 1024)
-            parts.append(
-                {
-                    "text": f"[File content: {attachment.mime_type}, {size_mb:.1f}MB - {attachment.description}. Note: Binary content not accessible to model, text extraction may be needed]"
-                }
-            )
+            parts.append({
+                "text": f"[File content: {attachment.mime_type}, {size_mb:.1f}MB - {attachment.description}. Note: Binary content not accessible to model, text extraction may be needed]"
+            })
         elif attachment.file_path:
             # Try to read file content for supported types
             try:
@@ -304,13 +302,11 @@ class GoogleGenAIClient(BaseLLMClient):
 
                     if file_size > MAX_FILE_SIZE:
                         size_mb = file_size / (1024 * 1024)
-                        parts.append(
-                            {
-                                "text": f"[File: {file_path.name} ({size_mb:.1f}MB) - Too large to process "
-                                f"(exceeds {MAX_FILE_SIZE // (1024 * 1024)}MB limit). "
-                                f"{attachment.description or 'No description'}]"
-                            }
-                        )
+                        parts.append({
+                            "text": f"[File: {file_path.name} ({size_mb:.1f}MB) - Too large to process "
+                            f"(exceeds {MAX_FILE_SIZE // (1024 * 1024)}MB limit). "
+                            f"{attachment.description or 'No description'}]"
+                        })
                     else:
                         # Read file content
                         file_content = file_path.read_bytes()
@@ -334,26 +330,20 @@ class GoogleGenAIClient(BaseLLMClient):
                         else:
                             # Unsupported type - describe the file
                             size_mb = len(file_content) / (1024 * 1024)
-                            parts.append(
-                                {
-                                    "text": f"[File: {file_path.name} ({effective_mime_type or 'unknown type'}, "
-                                    f"{size_mb:.1f}MB) - {attachment.description or 'No description'}. "
-                                    f"Binary content not accessible to model]"
-                                }
-                            )
+                            parts.append({
+                                "text": f"[File: {file_path.name} ({effective_mime_type or 'unknown type'}, "
+                                f"{size_mb:.1f}MB) - {attachment.description or 'No description'}. "
+                                f"Binary content not accessible to model]"
+                            })
                 else:
-                    parts.append(
-                        {
-                            "text": f"[File: {attachment.file_path} - File not found or inaccessible]"
-                        }
-                    )
+                    parts.append({
+                        "text": f"[File: {attachment.file_path} - File not found or inaccessible]"
+                    })
             except Exception as e:
                 # Error reading file - fall back to description
-                parts.append(
-                    {
-                        "text": f"[File: {attachment.file_path} - Error reading file: {str(e)}]"
-                    }
-                )
+                parts.append({
+                    "text": f"[File: {attachment.file_path} - Error reading file: {str(e)}]"
+                })
 
         # Return UserMessage with parts for provider-specific handling
         return UserMessage(
@@ -637,7 +627,8 @@ class GoogleGenAIClient(BaseLLMClient):
             filtered_tools = [
                 tool
                 for tool in tools
-                if tool.get("function", {}).get("name") not in computer_use_function_names
+                if tool.get("function", {}).get("name")
+                not in computer_use_function_names
             ]
             return convert_tools_to_genai_format(filtered_tools)
 
@@ -862,12 +853,10 @@ class GoogleGenAIClient(BaseLLMClient):
                         if hasattr(part, "thought") and part.thought:
                             # When part.thought is True, the thought text is in part.text
                             thought_text = getattr(part, "text", "")
-                            thought_summaries.append(
-                                {
-                                    "part_index": part_index,
-                                    "summary": thought_text,
-                                }
-                            )
+                            thought_summaries.append({
+                                "part_index": part_index,
+                                "summary": thought_text,
+                            })
 
                         if hasattr(part, "function_call") and part.function_call:
                             # Convert Google function call to our format
@@ -1332,12 +1321,10 @@ class GoogleGenAIClient(BaseLLMClient):
                                 if is_thought:
                                     # When part.thought is True, the thought text is in part.text
                                     thought_text = getattr(part, "text", "")
-                                    thought_summaries.append(
-                                        {
-                                            "part_index": part_index,
-                                            "summary": thought_text,
-                                        }
-                                    )
+                                    thought_summaries.append({
+                                        "part_index": part_index,
+                                        "summary": thought_text,
+                                    })
 
                                 # Handle text parts - but skip thought parts (they're for debugging only)
                                 if (
@@ -1389,13 +1376,11 @@ class GoogleGenAIClient(BaseLLMClient):
                                             )
 
                                         # Store func_call with its signature for later emission
-                                        accumulated_tool_calls.append(
-                                            (
-                                                tool_call_id,
-                                                func_call,
-                                                thought_sig,
-                                            )
-                                        )
+                                        accumulated_tool_calls.append((
+                                            tool_call_id,
+                                            func_call,
+                                            thought_sig,
+                                        ))
 
                                 part_index += 1
 

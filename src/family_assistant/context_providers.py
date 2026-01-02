@@ -587,7 +587,8 @@ class WeatherContextProvider(ContextProvider):
         current_temp = obs.get("temperature", {}).get("temperature", "N/A")
         apparent_temp = obs.get("temperature", {}).get("apparentTemperature", "N/A")
         current_precis = (
-            forecasts.get("weather", {})
+            forecasts
+            .get("weather", {})
             .get("days", [{}])[0]
             .get("entries", [{}])[0]
             .get("precis", "N/A")
@@ -635,7 +636,8 @@ class WeatherContextProvider(ContextProvider):
 
         # Rain Timing
         rain_prob_graph = (
-            graphs.get("rainfallprobability", {})
+            graphs
+            .get("rainfallprobability", {})
             .get("dataConfig", {})
             .get("series", {})
         )
