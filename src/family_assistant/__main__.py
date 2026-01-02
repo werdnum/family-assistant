@@ -976,8 +976,9 @@ def main() -> int:
     for sig_num, sig_name in signal_map.items():
         loop.add_signal_handler(
             sig_num,
-            lambda name=sig_name,
-            app_instance=assistant_app: app_instance.initiate_shutdown(name),
+            lambda name=sig_name, app_instance=assistant_app: (
+                app_instance.initiate_shutdown(name)
+            ),
         )
 
     if hasattr(signal, "SIGHUP"):
