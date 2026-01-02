@@ -266,8 +266,7 @@ async def add_document(
                 doc_id = existing_doc_row["id"]
                 # 2. If exists, update it
                 update_stmt = (
-                    sa
-                    .update(DocumentRecord)
+                    sa.update(DocumentRecord)
                     .where(DocumentRecord.id == doc_id)
                     .values(**values_to_insert)
                 )
@@ -516,8 +515,7 @@ async def add_embedding(
                     if k not in {"document_id", "chunk_index", "embedding_type"}
                 }
                 update_stmt = (
-                    sa
-                    .update(DocumentEmbeddingRecord)
+                    sa.update(DocumentEmbeddingRecord)
                     .where(DocumentEmbeddingRecord.id == embedding_id)
                     .values(**update_values_for_embedding)
                 )
@@ -694,8 +692,7 @@ async def query_vectors(
         vector_subquery.c.embedding_id,
         vector_subquery.c.document_id,
         vector_subquery.c.distance,
-        func
-        .row_number()
+        func.row_number()
         .over(order_by=vector_subquery.c.distance.asc())
         .label("vec_rank"),
     ).cte("vector_results")
@@ -725,8 +722,7 @@ async def query_vectors(
             fts_subquery.c.embedding_id,
             fts_subquery.c.document_id,
             fts_subquery.c.score,
-            func
-            .row_number()
+            func.row_number()
             .over(order_by=fts_subquery.c.score.desc())
             .label("fts_rank"),
         ).cte("fts_results")
@@ -831,8 +827,7 @@ async def update_document_title_in_db(
         return
 
     stmt = (
-        sa
-        .update(DocumentRecord)
+        sa.update(DocumentRecord)
         .where(DocumentRecord.id == document_id)
         .values(title=new_title.strip())
     )
