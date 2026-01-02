@@ -616,6 +616,31 @@ class GoogleGenAIClient(BaseLLMClient):
     # ast-grep-ignore: no-dict-any - Provider tool schema mirrors OpenAI format
     def _convert_tools_to_genai_format(self, tools: list[dict[str, Any]]) -> list[Any]:
         """Convert OpenAI-style tools to Gemini format."""
+        # If using Computer Use, filter out the manually defined computer use tools
+        # because we use types.Tool(computer_use=...) instead
+        if self._is_computer_use_model(self.model_name):
+            computer_use_function_names = {
+                "click_at",
+                "type_text_at",
+                "scroll_at",
+                "open_web_browser",
+                "navigate",
+                "search",
+                "go_back",
+                "go_forward",
+                "key_combination",
+                "wait_5_seconds",
+                "hover_at",
+                "drag_and_drop",
+                "scroll_document",
+            }
+            filtered_tools = [
+                tool
+                for tool in tools
+                if tool.get("function", {}).get("name") not in computer_use_function_names
+            ]
+            return convert_tools_to_genai_format(filtered_tools)
+
         return convert_tools_to_genai_format(tools)
 
     def _create_grounding_tools(self) -> list[Any]:

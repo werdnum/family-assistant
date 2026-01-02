@@ -47,6 +47,22 @@ from family_assistant.tools.communication import (
     get_message_history_tool,
     send_message_to_user_tool,
 )
+from family_assistant.tools.computer_use import (
+    COMPUTER_USE_TOOLS_DEFINITION,
+    computer_use_click_at,
+    computer_use_drag_and_drop,
+    computer_use_go_back,
+    computer_use_go_forward,
+    computer_use_hover_at,
+    computer_use_key_combination,
+    computer_use_navigate,
+    computer_use_open_web_browser,
+    computer_use_scroll_at,
+    computer_use_scroll_document,
+    computer_use_search,
+    computer_use_type_text_at,
+    computer_use_wait_5_seconds,
+)
 from family_assistant.tools.confirmation import (
     TOOL_CONFIRMATION_RENDERERS,
     _format_event_details_for_confirmation,
@@ -224,6 +240,20 @@ __all__ = [
     "jq_query_tool",
     "VIDEO_GENERATION_TOOLS_DEFINITION",
     "generate_video_tool",
+    "COMPUTER_USE_TOOLS_DEFINITION",
+    "click_at",
+    "drag_and_drop",
+    "go_back",
+    "go_forward",
+    "hover_at",
+    "key_combination",
+    "navigate",
+    "open_web_browser",
+    "scroll_at",
+    "scroll_document",
+    "search",
+    "type_text_at",
+    "wait_5_seconds",
 ]
 
 
@@ -316,6 +346,20 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "disable_automation": disable_automation_tool,
     "delete_automation": delete_automation_tool,
     "get_automation_stats": get_automation_stats_tool,
+    # Computer Use tools
+    "click_at": computer_use_click_at,
+    "drag_and_drop": computer_use_drag_and_drop,
+    "go_back": computer_use_go_back,
+    "go_forward": computer_use_go_forward,
+    "hover_at": computer_use_hover_at,
+    "key_combination": computer_use_key_combination,
+    "navigate": computer_use_navigate,
+    "open_web_browser": computer_use_open_web_browser,
+    "scroll_at": computer_use_scroll_at,
+    "scroll_document": computer_use_scroll_document,
+    "search": computer_use_search,
+    "type_text_at": computer_use_type_text_at,
+    "wait_5_seconds": computer_use_wait_5_seconds,
 }
 
 
@@ -340,4 +384,5 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
     + DATA_MANIPULATION_TOOLS_DEFINITION
     + VIDEO_GENERATION_TOOLS_DEFINITION
     + MOCK_IMAGE_TOOLS_DEFINITION
+    + COMPUTER_USE_TOOLS_DEFINITION
 )

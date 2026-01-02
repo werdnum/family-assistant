@@ -311,11 +311,22 @@ service_profiles:
         system_prompt: "You are an assistant with web browsing capabilities interacting with {user_name}. After any tool calls you make, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users. Current time is {current_time}."
       delegation_security_level: "unrestricted" # This profile can be delegated to without forced confirmation
     tools_config: # REPLACES default_profile_settings.tools_config entirely for this profile
-      # enable_local_tools: [] # Example: if you want NO local tools for this profile
-      enable_mcp_server_ids:
-        - "browser" # Only enable the browser MCP server
-      confirm_tools: # Define tools requiring confirmation specifically for this profile
-        - "browse_url" # Assuming 'browse_url' is a tool from the browser MCP server
+      enable_local_tools:
+        - "click_at"
+        - "type_text_at"
+        - "scroll_at"
+        - "open_web_browser"
+        - "navigate"
+        - "search"
+        - "go_back"
+        - "go_forward"
+        - "key_combination"
+        - "wait_5_seconds"
+        - "hover_at"
+        - "drag_and_drop"
+        - "scroll_document"
+      enable_mcp_server_ids: []
+      confirm_tools: [] # No tools to confirm
     slash_commands:
       - "/browse"
   - id: "research"
