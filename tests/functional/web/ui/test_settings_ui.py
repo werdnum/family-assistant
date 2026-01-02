@@ -27,7 +27,8 @@ async def test_token_management_page_loads(
 
     # Check for token list or empty state using more specific selectors
     token_cards = (
-        page.locator("div")
+        page
+        .locator("div")
         .filter(has=page.locator("h3"))
         .filter(has=page.locator("code"))
     )  # Token cards have h3 and code elements
@@ -108,7 +109,8 @@ async def test_token_list_display(
 
     # Check for token items or empty state
     token_cards = (
-        page.locator("div")
+        page
+        .locator("div")
         .filter(has=page.locator("h3"))
         .filter(has=page.locator("code"))
     )  # Token cards have h3 and code elements
