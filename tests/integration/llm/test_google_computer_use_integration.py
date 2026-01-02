@@ -7,12 +7,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from google.genai import types
 
-from family_assistant.llm.messages import AssistantMessage, UserMessage
+from family_assistant.llm.messages import UserMessage
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 
 
 @pytest.fixture
-async def gemini_client() -> AsyncGenerator[GoogleGenAIClient, None]:
+async def gemini_client() -> AsyncGenerator[GoogleGenAIClient]:
     """Create a GoogleGenAIClient instance for testing."""
     api_key = os.getenv("GEMINI_API_KEY", "dummy_key")
     # Use the computer use model to trigger the specific logic
@@ -142,7 +142,7 @@ async def test_computer_use_end_to_end_flow(gemini_client: GoogleGenAIClient) ->
         function_call_part.function_call.name = "click_at"
         function_call_part.function_call.args = {"x": 500, "y": 300}
         function_call_part.function_call.id = "call_123"
-        function_call_part.thought_signature = None # Optional thought signature
+        function_call_part.thought_signature = None  # Optional thought signature
 
         # Mock Candidate
         candidate = MagicMock()
