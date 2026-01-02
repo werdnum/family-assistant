@@ -582,11 +582,8 @@ async def test_telegram_photo_persistence_and_llm_context(
         ),
         # Second message - LLM should still have access to historical image
         (
-            lambda args: (
-                has_image_content(args)
-                and "remember"
-                in get_last_message_text(args.get("messages", [])).lower()
-            ),
+            lambda args: has_image_content(args)
+            and "remember" in get_last_message_text(args.get("messages", [])).lower(),
             LLMOutput(
                 content="Yes, I still have access to the image you sent earlier. It's a test image."
             ),
