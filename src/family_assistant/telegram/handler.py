@@ -41,7 +41,7 @@ from family_assistant.storage.message_history import (
     message_history_table,  # For error handling db update
 )
 from family_assistant.telegram.markdown_utils import convert_to_telegram_markdown
-from family_assistant.telegram.types import AttachmentData
+from family_assistant.telegram.types import AttachmentData, TriggerAttachment
 from family_assistant.tools.confirmation import TOOL_CONFIRMATION_RENDERERS
 
 if TYPE_CHECKING:
@@ -336,10 +336,10 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         ]
 
         # Initialize trigger_attachments as None, will convert to list if successful attachments exist
-        trigger_attachments: list[dict[str, Any]] | None = None
+        trigger_attachments: list[TriggerAttachment] | None = None
 
         if all_attachments:
-            valid_attachments: list[dict[str, Any]] = []
+            valid_attachments: list[TriggerAttachment] = []
 
             # Register user attachments with database record for cross-turn access
             async with self.get_db_context() as db_context:
@@ -565,7 +565,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         chat_interface=self.telegram_service.chat_interface,
                         chat_interfaces=chat_interfaces,
                         request_confirmation_callback=confirmation_callback_wrapper,
-                        trigger_attachments=trigger_attachments,
+                        trigger_attachments=trigger_attachments,  # type: ignore
                     )
 
                     final_llm_content_to_send = result.text_reply
