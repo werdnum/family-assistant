@@ -1,12 +1,14 @@
 """End-to-end tests for PDF upload functionality in the chat UI using Playwright."""
 
 import tempfile
+
 import anyio
 import pytest
 
 from tests.functional.web.conftest import WebTestFixture
 from tests.functional.web.pages.chat_page import ChatPage
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
+
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
@@ -18,14 +20,18 @@ async def test_pdf_upload_functionality(
     chat_page = ChatPage(page, web_test_fixture.base_url)
 
     # Configure mock LLM to recognize PDF content
-    mock_llm_client.default_response = LLMOutput(content="I received your PDF document.")
+    mock_llm_client.default_response = LLMOutput(
+        content="I received your PDF document."
+    )
 
     # Navigate to chat
     await chat_page.navigate_to_chat()
 
     # Create a test PDF file
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_file:
-        temp_file.write(b"%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n2 0 obj\n<<\n/Kids [3 0 R]\n/Count 1\n/Type /Pages\n>>\nendobj\n3 0 obj\n<<\n/Parent 2 0 R\n/MediaBox [0 0 612 792]\n/Resources <<\n/ProcSet [/PDF /Text /ImageB /ImageC /ImageI]\n>>\n/Type /Page\n>>\nendobj\ntrailer\n<<\n/Root 1 0 R\n>>\n%%EOF")
+        temp_file.write(
+            b"%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n2 0 obj\n<<\n/Kids [3 0 R]\n/Count 1\n/Type /Pages\n>>\nendobj\n3 0 obj\n<<\n/Parent 2 0 R\n/MediaBox [0 0 612 792]\n/Resources <<\n/ProcSet [/PDF /Text /ImageB /ImageC /ImageI]\n>>\n/Type /Page\n>>\nendobj\ntrailer\n<<\n/Root 1 0 R\n>>\n%%EOF"
+        )
         temp_path = temp_file.name
 
     try:
