@@ -207,6 +207,14 @@ poe test-postgres-verbose  # Verbose mode with -xvs
 pytest tests/functional/test_specific.py -xq
 ```
 
+**Test Results Summary:** When `poe test` completes, it writes a summary to `.poe-test-summary.txt`.
+This is useful when the full output is truncated (e.g., in LLM tool contexts):
+
+```bash
+cat .poe-test-summary.txt
+# Shows: RESULT: PASSED/FAILED, duration, and which checks passed/failed
+```
+
 See [tests/CLAUDE.md](tests/CLAUDE.md) for comprehensive testing guidance including:
 
 - Testing principles and patterns
