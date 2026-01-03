@@ -41,6 +41,7 @@ from family_assistant.storage.message_history import (
     message_history_table,  # For error handling db update
 )
 from family_assistant.telegram.markdown_utils import convert_to_telegram_markdown
+from family_assistant.telegram.types import AttachmentData
 from family_assistant.tools.confirmation import TOOL_CONFIRMATION_RENDERERS
 
 if TYPE_CHECKING:
@@ -265,7 +266,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
     async def process_batch(
         self,
         chat_id: int,
-        batch: list[tuple[Update, bytes | None]],
+        batch: list[tuple[Update, list[AttachmentData] | None]],
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Processes the message buffer for a given chat."""
@@ -295,19 +296,21 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             )
 
         all_texts = []
-        first_photo_bytes = None
+        all_attachments: list[AttachmentData] = []
         forward_context = ""
 
-        for update_item, photo_bytes in batch:
+        for update_item, attachments in batch:
             if update_item.message:
                 text = update_item.message.caption or update_item.message.text or ""
                 if text:
                     all_texts.append(text)
-                if photo_bytes and first_photo_bytes is None:
-                    first_photo_bytes = photo_bytes
+
+                if attachments:
+                    all_attachments.extend(attachments)
                     logger.debug(
-                        f"Found first photo in batch from message {update_item.message.message_id}"
+                        f"Found {len(attachments)} attachment(s) in batch from message {update_item.message.message_id}"
                     )
+
                 if update_item.message.forward_origin:
                     origin = update_item.message.forward_origin
                     original_sender_name = "Unknown Sender"
@@ -334,49 +337,58 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         trigger_attachments: list[dict[str, Any]] | None = None
 
-        if first_photo_bytes:
+        if all_attachments:
+            trigger_attachments = []
             try:
-                # Register user attachment with database record for cross-turn access
+                # Register user attachments with database record for cross-turn access
                 async with self.get_db_context() as db_context:
                     user_id_str = str(user.id) if user else "unknown"
-                    attachment_metadata = await self.telegram_service.attachment_registry.register_user_attachment(
-                        db_context=db_context,
-                        content=first_photo_bytes,
-                        filename=f"telegram_photo_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.jpg",
-                        mime_type="image/jpeg",
-                        conversation_id=str(chat_id),
-                        message_id=reply_target_message_id,
-                        user_id=user_id_str,
-                        description=f"Telegram photo from {user_name}",
-                    )
 
-                if attachment_metadata.content_url:
-                    trigger_content_parts.append(
-                        image_url_content(attachment_metadata.content_url)
-                    )
+                    for attachment in all_attachments:
+                        attachment_metadata = await self.telegram_service.attachment_registry.register_user_attachment(
+                            db_context=db_context,
+                            content=attachment.content,
+                            filename=attachment.filename,
+                            mime_type=attachment.mime_type,
+                            conversation_id=str(chat_id),
+                            message_id=reply_target_message_id,
+                            user_id=user_id_str,
+                            description=attachment.description
+                            or f"Telegram attachment from {user_name}",
+                        )
 
-                trigger_attachments = [
-                    {
-                        "type": "image",
-                        "content_url": attachment_metadata.content_url,
-                        "name": attachment_metadata.description,
-                        "size": attachment_metadata.size,
-                        "content_type": attachment_metadata.mime_type,
-                        "attachment_id": attachment_metadata.attachment_id,
-                    }
-                ]
+                        if (
+                            attachment_metadata.content_url
+                            and attachment_metadata.mime_type.startswith("image/")
+                        ):
+                            trigger_content_parts.append(
+                                image_url_content(attachment_metadata.content_url)
+                            )
 
-                logger.info(
-                    f"Stored Telegram photo as attachment: {attachment_metadata.attachment_id}"
-                )
-            except Exception as img_err:
+                        trigger_attachments.append({
+                            "type": "image"
+                            if attachment_metadata.mime_type.startswith("image/")
+                            else "file",
+                            "content_url": attachment_metadata.content_url,
+                            "name": attachment_metadata.description,
+                            "size": attachment_metadata.size,
+                            "content_type": attachment_metadata.mime_type,
+                            "attachment_id": attachment_metadata.attachment_id,
+                        })
+
+                        logger.info(
+                            f"Stored Telegram attachment: {attachment_metadata.attachment_id} ({attachment_metadata.filename})"
+                        )
+            except Exception as attach_err:
                 logger.error(
-                    f"Error storing photo from batch: {img_err}", exc_info=True
+                    f"Error storing attachments from batch: {attach_err}", exc_info=True
                 )
                 await context.bot.send_message(
-                    chat_id, "Error processing image in batch."
+                    chat_id, "Error processing attachments in batch."
                 )
+                # Fallback to just text content if attachments fail
                 trigger_content_parts = [text_content(formatted_user_text_content)]
+                trigger_attachments = None
 
         sent_assistant_message: Message | None = None
         processing_error_traceback: str | None = None
@@ -462,8 +474,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
                 trigger_interface_message_id: str | None = None
                 history_user_content = combined_text.strip()
-                if first_photo_bytes:
-                    history_user_content += " [Image(s) Attached]"
+                if all_attachments:
+                    history_user_content += f" [{len(all_attachments)} Attachment(s)]"
 
                 user_message_id = (
                     last_update.message.message_id if last_update.message else None
@@ -803,7 +815,15 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         application.add_handler(
             MessageHandler(
-                (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, self.message_handler
+                (
+                    filters.TEXT
+                    | filters.PHOTO
+                    | filters.Document.ALL
+                    | filters.VIDEO
+                    | filters.AUDIO
+                )
+                & ~filters.COMMAND,
+                self.message_handler,
             )
         )
 
@@ -1147,35 +1167,110 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             logger.warning("Message handler: Update has no message.")
             return
 
-        photo_bytes = None
+        attachments: list[AttachmentData] = []
 
         if self.allowed_user_ids and user_id not in self.allowed_user_ids:
             logger.warning(f"Ignoring message from unauthorized user {user_id}")
             return
 
-        if update.message.photo:
-            logger.info(
-                f"Message {update.message.message_id} from chat {chat_id} contains photo."
-            )
-            try:
+        try:
+            # Handle Photos
+            if update.message.photo:
+                logger.info(
+                    f"Message {update.message.message_id} from chat {chat_id} contains photo."
+                )
                 photo_size = update.message.photo[-1]
                 photo_file = await photo_size.get_file()
                 with io.BytesIO() as buf:
                     await photo_file.download_to_memory(out=buf)
                     buf.seek(0)
                     photo_bytes = buf.read()
+                    attachments.append(
+                        AttachmentData(
+                            content=photo_bytes,
+                            filename=f"photo_{photo_size.file_id}.jpg",
+                            mime_type="image/jpeg",
+                            description=update.message.caption or "Telegram Photo",
+                        )
+                    )
                 logger.debug(
                     f"Photo from message {update.message.message_id} loaded into bytes."
                 )
-            except Exception as img_err:
-                logger.error(
-                    f"Failed to process photo bytes for message {update.message.message_id}: {img_err}",
-                    exc_info=True,
+
+            # Handle Documents (Files)
+            if update.message.document:
+                logger.info(
+                    f"Message {update.message.message_id} from chat {chat_id} contains document."
                 )
-                await update.message.reply_text(
-                    "Sorry, error processing attached image."
+                doc = update.message.document
+                doc_file = await doc.get_file()
+                with io.BytesIO() as buf:
+                    await doc_file.download_to_memory(out=buf)
+                    buf.seek(0)
+                    doc_bytes = buf.read()
+                    attachments.append(
+                        AttachmentData(
+                            content=doc_bytes,
+                            filename=doc.file_name or f"document_{doc.file_id}",
+                            mime_type=doc.mime_type or "application/octet-stream",
+                            description=update.message.caption
+                            or f"Telegram Document: {doc.file_name}",
+                        )
+                    )
+                logger.debug(
+                    f"Document from message {update.message.message_id} loaded."
                 )
-                return
+
+            # Handle Audio
+            if update.message.audio:
+                logger.info(
+                    f"Message {update.message.message_id} from chat {chat_id} contains audio."
+                )
+                audio = update.message.audio
+                audio_file = await audio.get_file()
+                with io.BytesIO() as buf:
+                    await audio_file.download_to_memory(out=buf)
+                    buf.seek(0)
+                    audio_bytes = buf.read()
+                    attachments.append(
+                        AttachmentData(
+                            content=audio_bytes,
+                            filename=audio.file_name or f"audio_{audio.file_id}.mp3",
+                            mime_type=audio.mime_type or "audio/mpeg",
+                            description=update.message.caption
+                            or f"Telegram Audio: {audio.title or 'Unknown Track'}",
+                        )
+                    )
+                logger.debug(f"Audio from message {update.message.message_id} loaded.")
+
+            # Handle Video
+            if update.message.video:
+                logger.info(
+                    f"Message {update.message.message_id} from chat {chat_id} contains video."
+                )
+                video = update.message.video
+                video_file = await video.get_file()
+                with io.BytesIO() as buf:
+                    await video_file.download_to_memory(out=buf)
+                    buf.seek(0)
+                    video_bytes = buf.read()
+                    attachments.append(
+                        AttachmentData(
+                            content=video_bytes,
+                            filename=video.file_name or f"video_{video.file_id}.mp4",
+                            mime_type=video.mime_type or "video/mp4",
+                            description=update.message.caption or "Telegram Video",
+                        )
+                    )
+                logger.debug(f"Video from message {update.message.message_id} loaded.")
+
+        except Exception as img_err:
+            logger.error(
+                f"Failed to process attachments for message {update.message.message_id}: {img_err}",
+                exc_info=True,
+            )
+            await update.message.reply_text("Sorry, error processing attached media.")
+            return
 
         if self.message_batcher is None:
             logger.critical(
@@ -1191,4 +1286,5 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 except Exception as e_reply:
                     logger.error(f"Failed to send error reply to user: {e_reply}")
             return
-        await self.message_batcher.add_to_batch(update, context, photo_bytes)
+
+        await self.message_batcher.add_to_batch(update, context, attachments or None)
