@@ -6,8 +6,9 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
-NC='\033[0m' # No Color
-GREEN='\033[0;32m'
+
+# Summary file for easy result checking (useful when output is truncated)
+SUMMARY_FILE=".poe-test-summary.txt"
 # Track all background processes for cleanup
 BACKGROUND_PIDS=()
 CLEANUP_RUNNING=0
@@ -401,32 +402,100 @@ fi
 OVERALL_END=$(date +%s)
 TOTAL_TIME=$((OVERALL_END - OVERALL_START))
 
+# Build status summary
+FAILED_CHECKS=()
+PASSED_CHECKS=()
+
+if [ $TEST_EXIT -ne 0 ]; then
+    FAILED_CHECKS+=("pytest")
+else
+    PASSED_CHECKS+=("pytest")
+fi
+
+if [ $FRONTEND_TEST_EXIT -ne 0 ]; then
+    FAILED_CHECKS+=("frontend-tests")
+else
+    PASSED_CHECKS+=("frontend-tests")
+fi
+
+if [ $SKIP_LINT -eq 0 ]; then
+    if [ $PYRIGHT_EXIT -ne 0 ]; then
+        FAILED_CHECKS+=("basedpyright")
+    else
+        PASSED_CHECKS+=("basedpyright")
+    fi
+
+    if [ $PYLINT_EXIT -ne 0 ]; then
+        FAILED_CHECKS+=("pylint")
+    else
+        PASSED_CHECKS+=("pylint")
+    fi
+
+    if [ $FRONTEND_EXIT -ne 0 ]; then
+        FAILED_CHECKS+=("frontend-lint")
+    else
+        PASSED_CHECKS+=("frontend-lint")
+    fi
+
+    if [ $FRONTEND_TS_EXIT -ne 0 ]; then
+        FAILED_CHECKS+=("frontend-typecheck")
+    else
+        PASSED_CHECKS+=("frontend-typecheck")
+    fi
+fi
+
 echo ""
-echo "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo "${BLUE}Total time: ${TOTAL_TIME}s${NC}"
+echo ""
+
+# Write summary to file for easy checking when output is truncated
+write_summary() {
+    {
+        echo "=== poe test summary ==="
+        echo "Time: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "Duration: ${TOTAL_TIME}s"
+        echo ""
+        if [ ${#FAILED_CHECKS[@]} -gt 0 ]; then
+            echo "RESULT: FAILED"
+            echo "Failed (${#FAILED_CHECKS[@]}): ${FAILED_CHECKS[*]}"
+        else
+            echo "RESULT: PASSED"
+        fi
+        if [ ${#PASSED_CHECKS[@]} -gt 0 ]; then
+            echo "Passed (${#PASSED_CHECKS[@]}): ${PASSED_CHECKS[*]}"
+        fi
+    } > "$SUMMARY_FILE"
+}
 
 # Exit with appropriate code
-if [ $PYRIGHT_EXIT -ne 0 ] || [ $TEST_EXIT -ne 0 ] || [ $PYLINT_EXIT -ne 0 ] || [ $FRONTEND_EXIT -ne 0 ] || [ $FRONTEND_TS_EXIT -ne 0 ] || [ $FRONTEND_TEST_EXIT -ne 0 ]; then
-    echo "${RED}Some checks failed!${NC}"
+if [ ${#FAILED_CHECKS[@]} -gt 0 ]; then
+    write_summary
+    echo "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo "${RED}║                      ❌ FAILED                             ║${NC}"
+    echo "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo "${RED}Failed (${#FAILED_CHECKS[@]}): ${FAILED_CHECKS[*]}${NC}"
+    if [ ${#PASSED_CHECKS[@]} -gt 0 ]; then
+        echo "${GREEN}Passed (${#PASSED_CHECKS[@]}): ${PASSED_CHECKS[*]}${NC}"
+    fi
+    echo "${BLUE}Total time: ${TOTAL_TIME}s${NC}"
     if [ -f .report.json ]; then
         echo ""
-        echo "${YELLOW}📊 Test results saved to .report.json${NC}"
-        echo "${YELLOW}   Use jq to query results:${NC}"
-        echo "${YELLOW}   - Failed tests: jq '.tests | map(select(.outcome == \"failed\"))' .report.json${NC}"
-        echo "${YELLOW}   - Test summary: jq '.summary' .report.json${NC}"
-        echo "${YELLOW}   - Slow tests: jq '.tests | sort_by(.duration) | reverse | .[0:5]' .report.json${NC}"
+        echo "${YELLOW}📊 Test report: .report.json${NC}"
+        echo "${YELLOW}   Failed tests: jq '.tests | map(select(.outcome == \"failed\"))' .report.json${NC}"
     fi
+    echo ""
+    echo "${YELLOW}Summary written to: $SUMMARY_FILE${NC}"
     exit 1
 else
-    echo "${GREEN}All checks passed! 🎉${NC}"
-    if [ -f .report.json ]; then
-        echo ""
-        echo "${GREEN}📊 Test results saved to .report.json${NC}"
-        echo "${GREEN}   Use jq to query results:${NC}"
-        echo "${GREEN}   - Test summary: jq '.summary' .report.json${NC}"
-        echo "${GREEN}   - Slow tests: jq '.tests | sort_by(.duration) | reverse | .[0:5]' .report.json${NC}"
-        echo "${GREEN}   - Test count by file: jq '.tests | group_by(.nodeid | split(\":\")[0]) | map({file: .[0].nodeid | split(\":\")[0], count: length})' .report.json${NC}"
-    fi
+    write_summary
+    echo "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo "${GREEN}║                    ✅ ALL PASSED                           ║${NC}"
+    echo "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo "${GREEN}Passed (${#PASSED_CHECKS[@]}): ${PASSED_CHECKS[*]}${NC}"
+    echo "${BLUE}Total time: ${TOTAL_TIME}s${NC}"
+    echo ""
+    echo "${GREEN}Summary written to: $SUMMARY_FILE${NC}"
     exit 0
 fi
 
