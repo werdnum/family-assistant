@@ -247,8 +247,32 @@ class GoogleGenAIClient(BaseLLMClient):
         return params
 
     def _supports_multimodal_tools(self) -> bool:
-        """Check if model supports multimodal tool responses (Gemini 3+)."""
-        return "gemini-3" in self.model_name.lower()
+        """Check if model supports multimodal tool responses.
+
+        This includes Gemini 3+ and Computer Use models which need
+        screenshots in function responses.
+        """
+        model_lower = self.model_name.lower()
+        return "gemini-3" in model_lower or self._is_computer_use_model(self.model_name)
+
+    def _process_tool_messages(
+        self,
+        messages: list[LLMMessage],
+    ) -> list[LLMMessage]:
+        """Process tool messages, preserving attachments for multimodal-capable models.
+
+        When multimodal tools are supported (Gemini 3+, Computer Use), we keep
+        transient_attachments on ToolMessages so they can be included in the
+        FunctionResponse as inline data blobs. Otherwise, we use the base class
+        behavior which extracts attachments for injection as user messages.
+        """
+        if not self._supports_multimodal_tools():
+            return super()._process_tool_messages(messages)
+
+        # For multimodal-capable models, just return messages as-is
+        # The attachments will be included in the FunctionResponse in
+        # _convert_messages_to_genai_format
+        return list(messages)
 
     def create_attachment_injection(
         self,
@@ -671,7 +695,17 @@ class GoogleGenAIClient(BaseLLMClient):
         if tool_choice == "none":
             return []
 
-        all_tools = []
+        all_tools: list[Any] = []
+
+        # Add Computer Use tool for computer use models
+        if self._is_computer_use_model(self.model_name):
+            computer_use_tool = types.Tool(
+                computer_use=types.ComputerUse(
+                    environment=types.Environment.ENVIRONMENT_BROWSER
+                )
+            )
+            all_tools.append(computer_use_tool)
+            logger.debug("Added Computer Use tool for browser environment")
 
         # Add function tools if provided
         if tools:
