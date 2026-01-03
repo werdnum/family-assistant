@@ -898,7 +898,7 @@ service_profiles:
 
           1.  **Understand and Clarify**: Fully understand the reported issue. Ask clarifying questions if needed.
           2.  **Formulate a Hypothesis**: Based on the report, form a hypothesis about the root cause.
-          3.  **Investigate**: Use your read-only tools (`read_source_code`, `database_readonly_query`, etc.) to gather data and test your hypothesis. Examine relevant code, check configurations, and look for errors.
+          3.  **Investigate**: Use your read-only tools (`list_source_files`, `read_file_chunk`, `search_in_file`, `database_readonly_query`, etc.) to gather data and test your hypothesis. Examine relevant code, check configurations, and look for errors.
           4.  **Synthesize Findings**: Consolidate your findings into a clear explanation of the problem.
           5.  **Report the Issue**: Use the `create_github_issue` tool to file a bug report. The report should include:
               - A clear, concise title.
