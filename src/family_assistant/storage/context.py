@@ -10,7 +10,7 @@ import logging
 import random
 from collections.abc import Callable
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from sqlalchemy import TextClause, event  # Result removed
 from sqlalchemy.engine import CursorResult  # CursorResult added
@@ -92,7 +92,9 @@ def sanitize_text_for_postgres(text: str | None) -> str | None:
     return text
 
 
-def _is_non_retryable_postgres_error(exc: BaseException | None) -> tuple[bool, str]:
+def _is_non_retryable_postgres_error(
+    exc: BaseException | None,
+) -> tuple[bool, Literal["transaction_aborted", "encoding_error", ""]]:
     """
     Check if an exception is a non-retryable PostgreSQL error using SQLSTATE codes.
 
