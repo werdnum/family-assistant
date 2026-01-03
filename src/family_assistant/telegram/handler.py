@@ -334,17 +334,19 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         trigger_content_parts: list[ContentPartDict] = [
             text_content(formatted_user_text_content)
         ]
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+
+        # Initialize trigger_attachments as None, will convert to list if successful attachments exist
         trigger_attachments: list[dict[str, Any]] | None = None
 
         if all_attachments:
-            trigger_attachments = []
-            try:
-                # Register user attachments with database record for cross-turn access
-                async with self.get_db_context() as db_context:
-                    user_id_str = str(user.id) if user else "unknown"
+            valid_attachments: list[dict[str, Any]] = []
 
-                    for attachment in all_attachments:
+            # Register user attachments with database record for cross-turn access
+            async with self.get_db_context() as db_context:
+                user_id_str = str(user.id) if user else "unknown"
+
+                for attachment in all_attachments:
+                    try:
                         attachment_metadata = await self.telegram_service.attachment_registry.register_user_attachment(
                             db_context=db_context,
                             content=attachment.content,
@@ -365,7 +367,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                 image_url_content(attachment_metadata.content_url)
                             )
 
-                        trigger_attachments.append({
+                        valid_attachments.append({
                             "type": "image"
                             if attachment_metadata.mime_type.startswith("image/")
                             else "file",
@@ -376,19 +378,29 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             "attachment_id": attachment_metadata.attachment_id,
                         })
 
-                        logger.info(
-                            f"Stored Telegram attachment: {attachment_metadata.attachment_id} ({attachment_metadata.filename})"
+                        # Use metadata dictionary to access original_filename safely if needed
+                        # Or access the attribute we know AttachmentMetadata has
+                        filename_log = attachment_metadata.metadata.get(
+                            "original_filename", "unknown_filename"
                         )
-            except Exception as attach_err:
-                logger.error(
-                    f"Error storing attachments from batch: {attach_err}", exc_info=True
-                )
+                        logger.info(
+                            f"Stored Telegram attachment: {attachment_metadata.attachment_id} ({filename_log})"
+                        )
+                    except Exception as attach_err:
+                        logger.error(
+                            f"Error storing individual attachment '{attachment.filename}' from batch: {attach_err}",
+                            exc_info=True,
+                        )
+                        # Continue to process other attachments
+                        continue
+
+            if valid_attachments:
+                trigger_attachments = valid_attachments
+            elif all_attachments:
+                # All failed
                 await context.bot.send_message(
-                    chat_id, "Error processing attachments in batch."
+                    chat_id, "Error: Could not process any of the attached files."
                 )
-                # Fallback to just text content if attachments fail
-                trigger_content_parts = [text_content(formatted_user_text_content)]
-                trigger_attachments = None
 
         sent_assistant_message: Message | None = None
         processing_error_traceback: str | None = None
@@ -1168,6 +1180,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             return
 
         attachments: list[AttachmentData] = []
+        max_file_size = self.telegram_service.attachment_registry.max_file_size
 
         if self.allowed_user_ids and user_id not in self.allowed_user_ids:
             logger.warning(f"Ignoring message from unauthorized user {user_id}")
@@ -1180,89 +1193,169 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     f"Message {update.message.message_id} from chat {chat_id} contains photo."
                 )
                 photo_size = update.message.photo[-1]
-                photo_file = await photo_size.get_file()
-                with io.BytesIO() as buf:
-                    await photo_file.download_to_memory(out=buf)
-                    buf.seek(0)
-                    photo_bytes = buf.read()
-                    attachments.append(
-                        AttachmentData(
-                            content=photo_bytes,
-                            filename=f"photo_{photo_size.file_id}.jpg",
-                            mime_type="image/jpeg",
-                            description=update.message.caption or "Telegram Photo",
-                        )
+                # Photos in Telegram usually don't have file_size in the Update object immediately available
+                # or it's reliable. However, get_file() will return an object with file_size.
+                # But to avoid network call if possible, we check photo_size.file_size
+                if photo_size.file_size and photo_size.file_size > max_file_size:
+                    logger.warning(
+                        f"Photo size {photo_size.file_size} exceeds limit {max_file_size}. Skipping."
                     )
-                logger.debug(
-                    f"Photo from message {update.message.message_id} loaded into bytes."
-                )
+                    await update.message.reply_text(
+                        f"Skipping photo: File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                    )
+                else:
+                    photo_file = await photo_size.get_file()
+                    # Double check size from get_file() result
+                    if photo_file.file_size and photo_file.file_size > max_file_size:
+                        logger.warning(
+                            f"Photo size {photo_file.file_size} exceeds limit {max_file_size}. Skipping."
+                        )
+                        await update.message.reply_text(
+                            f"Skipping photo: File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                        )
+                    else:
+                        with io.BytesIO() as buf:
+                            await photo_file.download_to_memory(out=buf)
+                            buf.seek(0)
+                            photo_bytes = buf.read()
+                            attachments.append(
+                                AttachmentData(
+                                    content=photo_bytes,
+                                    filename=f"photo_{photo_size.file_id}.jpg",
+                                    mime_type="image/jpeg",
+                                    description=update.message.caption
+                                    or "Telegram Photo",
+                                )
+                            )
+                        logger.debug(
+                            f"Photo from message {update.message.message_id} loaded into bytes."
+                        )
 
             # Handle Documents (Files)
             if update.message.document:
-                logger.info(
-                    f"Message {update.message.message_id} from chat {chat_id} contains document."
-                )
                 doc = update.message.document
-                doc_file = await doc.get_file()
-                with io.BytesIO() as buf:
-                    await doc_file.download_to_memory(out=buf)
-                    buf.seek(0)
-                    doc_bytes = buf.read()
-                    attachments.append(
-                        AttachmentData(
-                            content=doc_bytes,
-                            filename=doc.file_name or f"document_{doc.file_id}",
-                            mime_type=doc.mime_type or "application/octet-stream",
-                            description=update.message.caption
-                            or f"Telegram Document: {doc.file_name}",
-                        )
-                    )
-                logger.debug(
-                    f"Document from message {update.message.message_id} loaded."
+                logger.info(
+                    f"Message {update.message.message_id} from chat {chat_id} contains document: {doc.file_name} ({doc.file_size} bytes)."
                 )
+
+                if doc.file_size and doc.file_size > max_file_size:
+                    logger.warning(
+                        f"Document size {doc.file_size} exceeds limit {max_file_size}. Skipping."
+                    )
+                    await update.message.reply_text(
+                        f"Skipping document '{doc.file_name}': File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                    )
+                else:
+                    doc_file = await doc.get_file()
+                    if doc_file.file_size and doc_file.file_size > max_file_size:
+                        logger.warning(
+                            f"Document size {doc_file.file_size} exceeds limit {max_file_size}. Skipping."
+                        )
+                        await update.message.reply_text(
+                            f"Skipping document '{doc.file_name}': File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                        )
+                    else:
+                        with io.BytesIO() as buf:
+                            await doc_file.download_to_memory(out=buf)
+                            buf.seek(0)
+                            doc_bytes = buf.read()
+                            attachments.append(
+                                AttachmentData(
+                                    content=doc_bytes,
+                                    filename=doc.file_name or f"document_{doc.file_id}",
+                                    mime_type=doc.mime_type
+                                    or "application/octet-stream",
+                                    description=update.message.caption
+                                    or f"Telegram Document: {doc.file_name}",
+                                )
+                            )
+                        logger.debug(
+                            f"Document from message {update.message.message_id} loaded."
+                        )
 
             # Handle Audio
             if update.message.audio:
-                logger.info(
-                    f"Message {update.message.message_id} from chat {chat_id} contains audio."
-                )
                 audio = update.message.audio
-                audio_file = await audio.get_file()
-                with io.BytesIO() as buf:
-                    await audio_file.download_to_memory(out=buf)
-                    buf.seek(0)
-                    audio_bytes = buf.read()
-                    attachments.append(
-                        AttachmentData(
-                            content=audio_bytes,
-                            filename=audio.file_name or f"audio_{audio.file_id}.mp3",
-                            mime_type=audio.mime_type or "audio/mpeg",
-                            description=update.message.caption
-                            or f"Telegram Audio: {audio.title or 'Unknown Track'}",
-                        )
+                logger.info(
+                    f"Message {update.message.message_id} from chat {chat_id} contains audio ({audio.file_size} bytes)."
+                )
+
+                if audio.file_size and audio.file_size > max_file_size:
+                    logger.warning(
+                        f"Audio size {audio.file_size} exceeds limit {max_file_size}. Skipping."
                     )
-                logger.debug(f"Audio from message {update.message.message_id} loaded.")
+                    await update.message.reply_text(
+                        f"Skipping audio: File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                    )
+                else:
+                    audio_file = await audio.get_file()
+                    if audio_file.file_size and audio_file.file_size > max_file_size:
+                        logger.warning(
+                            f"Audio size {audio_file.file_size} exceeds limit {max_file_size}. Skipping."
+                        )
+                        await update.message.reply_text(
+                            f"Skipping audio: File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                        )
+                    else:
+                        with io.BytesIO() as buf:
+                            await audio_file.download_to_memory(out=buf)
+                            buf.seek(0)
+                            audio_bytes = buf.read()
+                            attachments.append(
+                                AttachmentData(
+                                    content=audio_bytes,
+                                    filename=audio.file_name
+                                    or f"audio_{audio.file_id}.mp3",
+                                    mime_type=audio.mime_type or "audio/mpeg",
+                                    description=update.message.caption
+                                    or f"Telegram Audio: {audio.title or 'Unknown Track'}",
+                                )
+                            )
+                        logger.debug(
+                            f"Audio from message {update.message.message_id} loaded."
+                        )
 
             # Handle Video
             if update.message.video:
-                logger.info(
-                    f"Message {update.message.message_id} from chat {chat_id} contains video."
-                )
                 video = update.message.video
-                video_file = await video.get_file()
-                with io.BytesIO() as buf:
-                    await video_file.download_to_memory(out=buf)
-                    buf.seek(0)
-                    video_bytes = buf.read()
-                    attachments.append(
-                        AttachmentData(
-                            content=video_bytes,
-                            filename=video.file_name or f"video_{video.file_id}.mp4",
-                            mime_type=video.mime_type or "video/mp4",
-                            description=update.message.caption or "Telegram Video",
-                        )
+                logger.info(
+                    f"Message {update.message.message_id} from chat {chat_id} contains video ({video.file_size} bytes)."
+                )
+
+                if video.file_size and video.file_size > max_file_size:
+                    logger.warning(
+                        f"Video size {video.file_size} exceeds limit {max_file_size}. Skipping."
                     )
-                logger.debug(f"Video from message {update.message.message_id} loaded.")
+                    await update.message.reply_text(
+                        f"Skipping video: File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                    )
+                else:
+                    video_file = await video.get_file()
+                    if video_file.file_size and video_file.file_size > max_file_size:
+                        logger.warning(
+                            f"Video size {video_file.file_size} exceeds limit {max_file_size}. Skipping."
+                        )
+                        await update.message.reply_text(
+                            f"Skipping video: File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                        )
+                    else:
+                        with io.BytesIO() as buf:
+                            await video_file.download_to_memory(out=buf)
+                            buf.seek(0)
+                            video_bytes = buf.read()
+                            attachments.append(
+                                AttachmentData(
+                                    content=video_bytes,
+                                    filename=video.file_name
+                                    or f"video_{video.file_id}.mp4",
+                                    mime_type=video.mime_type or "video/mp4",
+                                    description=update.message.caption
+                                    or "Telegram Video",
+                                )
+                            )
+                        logger.debug(
+                            f"Video from message {update.message.message_id} loaded."
+                        )
 
         except Exception as img_err:
             logger.error(
