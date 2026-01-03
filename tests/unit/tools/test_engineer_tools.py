@@ -65,7 +65,7 @@ def test_list_source_files_outside_project_directory() -> None:
 
 def test_read_file_chunk_success() -> None:
     """Test reading a range of lines from a file."""
-    dummy_filepath = "dummy_test_file.txt"
+    dummy_filepath = "dummy_test_read_chunk.txt"
     with open(dummy_filepath, "w", encoding="utf-8") as f:
         f.write("line 1\nline 2\nline 3\n")
 
@@ -89,7 +89,7 @@ def test_read_file_chunk_outside_project_directory() -> None:
 
 def test_read_file_chunk_invalid_line_numbers() -> None:
     """Test validation of line numbers."""
-    dummy_filepath = "dummy_test_file.txt"
+    dummy_filepath = "dummy_test_read_invalid.txt"
     with open(dummy_filepath, "w", encoding="utf-8") as f:
         f.write("line 1\nline 2\nline 3\n")
 
@@ -106,7 +106,7 @@ def test_read_file_chunk_invalid_line_numbers() -> None:
 
 def test_search_in_file_success() -> None:
     """Test searching for a string in a file."""
-    dummy_filepath = "dummy_test_file.txt"
+    dummy_filepath = "dummy_test_search_success.txt"
     with open(dummy_filepath, "w", encoding="utf-8") as f:
         f.write("line 1\nline 2 with search string\nline 3\n")
 
@@ -118,7 +118,7 @@ def test_search_in_file_success() -> None:
 
 def test_search_in_file_no_matches() -> None:
     """Test searching for a string that doesn't exist."""
-    dummy_filepath = "dummy_test_file.txt"
+    dummy_filepath = "dummy_test_search_no_match.txt"
     with open(dummy_filepath, "w", encoding="utf-8") as f:
         f.write("line 1\nline 2\nline 3\n")
 
@@ -178,7 +178,7 @@ async def test_create_github_issue_missing_env_vars() -> None:
 # --- Database Query Tests ---
 
 
-def testis_select_only_valid_select() -> None:
+def test_is_select_only_valid_select() -> None:
     """Test that valid SELECT queries are accepted."""
     assert is_select_only("SELECT * FROM users")
     assert is_select_only("SELECT id, name FROM users WHERE id = 1")
@@ -186,7 +186,7 @@ def testis_select_only_valid_select() -> None:
     assert is_select_only("  SELECT * FROM users  ")  # Whitespace
 
 
-def testis_select_only_invalid_queries() -> None:
+def test_is_select_only_invalid_queries() -> None:
     """Test that non-SELECT queries are rejected."""
     assert not is_select_only("DELETE FROM users")
     assert not is_select_only("INSERT INTO users VALUES (1)")
@@ -196,13 +196,13 @@ def testis_select_only_invalid_queries() -> None:
     assert not is_select_only("ALTER TABLE users ADD COLUMN email TEXT")
 
 
-def testis_select_only_multiple_statements() -> None:
+def test_is_select_only_multiple_statements() -> None:
     """Test that multiple statements are rejected if any is not SELECT."""
     assert not is_select_only("SELECT * FROM users; DELETE FROM users")
     assert not is_select_only("SELECT 1; UPDATE users SET name = 'x'")
 
 
-def testis_select_only_column_names_with_keywords() -> None:
+def test_is_select_only_column_names_with_keywords() -> None:
     """Test that column names containing keywords are allowed."""
     # This is why we use sqlparse instead of keyword matching
     assert is_select_only("SELECT update_time FROM logs")

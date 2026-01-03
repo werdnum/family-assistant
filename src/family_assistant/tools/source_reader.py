@@ -153,7 +153,10 @@ def search_in_file(file_path: str, search_string: str) -> str:
         with open(absolute_file_path, encoding="utf-8") as f:
             for i, line in enumerate(f, start=1):
                 if search_string in line:
-                    results.append(f"{i}: {line.rstrip()}")
+                    content = line.rstrip()
+                    if len(content) > 500:
+                        content = content[:500] + "... (truncated)"
+                    results.append(f"{i}: {content}")
         return "\n".join(results) if results else "No matches found."
 
     except UnicodeDecodeError:
