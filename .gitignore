@@ -47,3 +47,4 @@ frontend/dev-dist
 .venv
 .cache
 .python-versions
+.poe-test-summary.txt
