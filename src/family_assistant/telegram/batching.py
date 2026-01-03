@@ -11,6 +11,8 @@ if TYPE_CHECKING:
     from telegram import Update
     from telegram.ext import ContextTypes
 
+    from family_assistant.telegram.types import AttachmentData
+
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +26,9 @@ class DefaultMessageBatcher(MessageBatcher):
         self.batch_processor = batch_processor
         self.batch_delay_seconds = batch_delay_seconds
         self.chat_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self.message_buffers: dict[int, list[tuple[Update, bytes | None]]] = (
-            defaultdict(list)
-        )
+        self.message_buffers: dict[
+            int, list[tuple[Update, list[AttachmentData] | None]]
+        ] = defaultdict(list)
         self.processing_tasks: dict[int, asyncio.Task] = {}
         self.batch_timers: dict[
             int, asyncio.TimerHandle
@@ -36,7 +38,7 @@ class DefaultMessageBatcher(MessageBatcher):
         self,
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
-        photo_bytes: bytes | None,
+        attachments: list[AttachmentData] | None,
     ) -> None:
         if not update.effective_chat:
             logger.warning(
@@ -45,7 +47,7 @@ class DefaultMessageBatcher(MessageBatcher):
             return
         chat_id = update.effective_chat.id
         async with self.chat_locks[chat_id]:
-            self.message_buffers[chat_id].append((update, photo_bytes))
+            self.message_buffers[chat_id].append((update, attachments))
             buffer_size = len(self.message_buffers[chat_id])
             logger.info(
                 f"Buffered update {update.update_id} (message {update.message.message_id if update.message else 'N/A'}) for chat {chat_id}. Buffer size: {buffer_size}"
@@ -141,7 +143,7 @@ class NoBatchMessageBatcher(MessageBatcher):
         self,
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
-        photo_bytes: bytes | None,
+        attachments: list[AttachmentData] | None,
     ) -> None:
         if not update.effective_chat:
             logger.warning("NoBatchMessageBatcher: Update has no effective_chat.")
@@ -150,5 +152,5 @@ class NoBatchMessageBatcher(MessageBatcher):
         logger.info(
             f"NoBatchMessageBatcher: Immediately processing update {update.update_id} for chat {chat_id}"
         )
-        batch = [(update, photo_bytes)]
+        batch = [(update, attachments)]
         await self.batch_processor.process_batch(chat_id, batch, context)
