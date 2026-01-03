@@ -220,6 +220,13 @@ echo "${GREEN}✓ Lock acquired${NC}"
 # Overall timer
 OVERALL_START=$(date +%s)
 
+# Show summary file location at start (helpful when output is truncated)
+echo ""
+echo "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo "${BLUE}  Results will be written to: ${SUMMARY_FILE}${NC}"
+echo "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+
 if [ $SKIP_LINT -eq 0 ]; then
     echo "${BLUE}🚀 Running quick checks...${NC}"
     echo ""
@@ -261,8 +268,21 @@ else
 fi
 
 # Force a rebuild of the frontend
-echo "${BLUE}  ▸ Building frontend...${NC}"
-(cd frontend && npm run build)
+echo -n "${BLUE}  ▸ Building frontend...${NC}"
+FRONTEND_BUILD_LOG=$(mktemp)
+timer_start
+if (cd frontend && npm run build > "$FRONTEND_BUILD_LOG" 2>&1); then
+    echo -n "${GREEN} ✓${NC}"
+    timer_end
+    rm -f "$FRONTEND_BUILD_LOG"
+else
+    timer_end
+    echo ""
+    echo "${RED}❌ Frontend build failed:${NC}"
+    cat "$FRONTEND_BUILD_LOG"
+    rm -f "$FRONTEND_BUILD_LOG"
+    exit 1
+fi
 
 # Phase 2: Parallel execution of tests and analysis
 
@@ -270,9 +290,9 @@ echo "${BLUE}  ▸ Building frontend...${NC}"
 echo "${BLUE}  ▸ Starting pytest...${NC}"
 TEST_START=$(date +%s)
 if [ "${USE_MEMORY_LIMIT:-0}" = "1" ]; then
-    scripts/run_with_memory_limit.sh "${VIRTUAL_ENV:-.venv}"/bin/pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch "$PARALLELISM" "${PYTEST_ARGS[@]}" &
+    scripts/run_with_memory_limit.sh "${VIRTUAL_ENV:-.venv}"/bin/pytest --json-report --json-report-file=.report.json --disable-warnings --tb=short -q --ignore=scratch "$PARALLELISM" "${PYTEST_ARGS[@]}" &
 else
-    "${VIRTUAL_ENV:-.venv}"/bin/pytest --json-report --json-report-file=.report.json --disable-warnings -q --ignore=scratch "$PARALLELISM" "${PYTEST_ARGS[@]}" &
+    "${VIRTUAL_ENV:-.venv}"/bin/pytest --json-report --json-report-file=.report.json --disable-warnings --tb=short -q --ignore=scratch "$PARALLELISM" "${PYTEST_ARGS[@]}" &
 fi
 TEST_PID=$!
 BACKGROUND_PIDS+=("$TEST_PID")
@@ -280,7 +300,8 @@ BACKGROUND_PIDS+=("$TEST_PID")
 # Start frontend unit tests (always runs)
 echo "${BLUE}  ▸ Starting frontend unit tests...${NC}"
 FRONTEND_TEST_START=$(date +%s)
-(cd frontend && exec npm run test -- --run) &
+FRONTEND_TEST_LOG=$(mktemp)
+(cd frontend && npm run test -- --run > "$FRONTEND_TEST_LOG" 2>&1) &
 FRONTEND_TEST_PID=$!
 BACKGROUND_PIDS+=("$FRONTEND_TEST_PID")
 
@@ -340,11 +361,16 @@ if wait $FRONTEND_TEST_PID; then
     END_TIME=$(date +%s)
     ELAPSED=$((END_TIME - FRONTEND_TEST_START))
     echo "${GREEN}  ✓ Frontend unit tests complete (${ELAPSED}s)${NC}"
+    rm -f "$FRONTEND_TEST_LOG"
 else
     FRONTEND_TEST_EXIT=$?
     END_TIME=$(date +%s)
     ELAPSED=$((END_TIME - FRONTEND_TEST_START))
     echo "${RED}  ❌ Frontend unit tests failed (${ELAPSED}s)${NC}"
+    echo ""
+    echo "${RED}Frontend test output:${NC}"
+    cat "$FRONTEND_TEST_LOG"
+    rm -f "$FRONTEND_TEST_LOG"
 fi
 
 # Wait for linting/type checking only if they were started
@@ -484,7 +510,9 @@ if [ ${#FAILED_CHECKS[@]} -gt 0 ]; then
         echo "${YELLOW}   Failed tests: jq '.tests | map(select(.outcome == \"failed\"))' .report.json${NC}"
     fi
     echo ""
-    echo "${YELLOW}Summary written to: $SUMMARY_FILE${NC}"
+    echo "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo "${YELLOW}Summary: cat $SUMMARY_FILE${NC}"
+    echo "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     exit 1
 else
     write_summary
@@ -495,7 +523,9 @@ else
     echo "${GREEN}Passed (${#PASSED_CHECKS[@]}): ${PASSED_CHECKS[*]}${NC}"
     echo "${BLUE}Total time: ${TOTAL_TIME}s${NC}"
     echo ""
-    echo "${GREEN}Summary written to: $SUMMARY_FILE${NC}"
+    echo "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo "${GREEN}Summary: cat $SUMMARY_FILE${NC}"
+    echo "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     exit 0
 fi
 
