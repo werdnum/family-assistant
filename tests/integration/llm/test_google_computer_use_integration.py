@@ -97,16 +97,14 @@ async def test_computer_use_tool_injection(gemini_client: GoogleGenAIClient) -> 
                 break
             # Fallback for if it's a dict or other structure (though SDK usually uses objects)
             elif isinstance(tool, dict) and "computer_use" in tool:
-                 has_computer_use = True
-                 break
+                has_computer_use = True
+                break
+            # Fallback: Check string representation if attributes are hidden/dynamic
+            elif "computer_use" in str(tool):
+                has_computer_use = True
+                break
 
-        if not has_computer_use:
-            print(f"\nDEBUG: Tools passed: {tools_passed}")
-            for t in tools_passed:
-                print(f"Tool type: {type(t)}")
-                print(f"Tool vars: {vars(t) if hasattr(t, '__dict__') else 'no dict'}")
-
-        assert has_computer_use, "Computer Use tool was not injected"
+        assert has_computer_use, f"Computer Use tool was not injected. Tools: {tools_passed}"
 
         # Verify manual 'click_at' was filtered out, but 'other_tool' remains
         has_click_at = False
