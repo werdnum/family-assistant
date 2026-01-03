@@ -9,7 +9,7 @@ import logging
 import os
 import traceback
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import update as sqlalchemy_update
 from telegram import (
@@ -367,7 +367,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                 image_url_content(attachment_metadata.content_url)
                             )
 
-                        valid_attachments.append({
+                        attachment_dict = {
                             "type": "image"
                             if attachment_metadata.mime_type.startswith("image/")
                             else "file",
@@ -376,7 +376,14 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             "size": attachment_metadata.size,
                             "content_type": attachment_metadata.mime_type,
                             "attachment_id": attachment_metadata.attachment_id,
-                        })
+                        }
+
+                        # Explicitly cast to satisfy basedpyright strict type checking
+                        # because TypedDict assignment from dict literal with optional/union types
+                        # can sometimes be inferred too broadly.
+                        valid_attachments.append(
+                            cast("TriggerAttachment", attachment_dict)
+                        )
 
                         # Use metadata dictionary to access original_filename safely if needed
                         # Or access the attribute we know AttachmentMetadata has
