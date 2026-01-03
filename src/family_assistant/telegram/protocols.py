@@ -6,6 +6,8 @@ if TYPE_CHECKING:
     from telegram import Update
     from telegram.ext import ContextTypes
 
+    from family_assistant.telegram.types import AttachmentData
+
 
 @runtime_checkable
 class BatchProcessor(Protocol):
@@ -14,7 +16,7 @@ class BatchProcessor(Protocol):
     async def process_batch(
         self,
         chat_id: int,
-        batch: list[tuple[Update, bytes | None]],
+        batch: list[tuple[Update, list[AttachmentData] | None]],
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         """Processes a given batch of updates for a specific chat."""
@@ -29,7 +31,7 @@ class MessageBatcher(Protocol):
         self,
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
-        photo_bytes: bytes | None,
+        attachments: list[AttachmentData] | None,
     ) -> None:
         """Adds an update to the batch and triggers processing if necessary."""
         ...
