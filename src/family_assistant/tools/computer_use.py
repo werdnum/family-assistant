@@ -70,11 +70,14 @@ class BrowserSession:
 
     async def close(self) -> None:
         """Close all browser resources."""
+        if self.context is not None:
+            await self.context.close()
+            self.context = None
+            self.page = None
+
         if self.browser is not None:
             await self.browser.close()
             self.browser = None
-            self.context = None
-            self.page = None
 
         if self.playwright is not None:
             await self.playwright.stop()
@@ -220,7 +223,16 @@ async def computer_use_scroll_at(
 
     Returns:
         A screenshot of the screen after scrolling.
+
+    Raises:
+        ValueError: If direction is not one of "up", "down", "left", "right".
     """
+    valid_directions = ("up", "down", "left", "right")
+    if direction not in valid_directions:
+        raise ValueError(
+            f"Invalid scroll direction '{direction}'. Must be one of: {valid_directions}"
+        )
+
     session = await get_browser_session(exec_context)
     page = await session.ensure_page()
 
@@ -461,7 +473,16 @@ async def computer_use_scroll_document(
 
     Returns:
         A screenshot of the screen after scrolling.
+
+    Raises:
+        ValueError: If direction is not one of "up", "down", "left", "right".
     """
+    valid_directions = ("up", "down", "left", "right")
+    if direction not in valid_directions:
+        raise ValueError(
+            f"Invalid scroll direction '{direction}'. Must be one of: {valid_directions}"
+        )
+
     session = await get_browser_session(exec_context)
     page = await session.ensure_page()
 
