@@ -569,12 +569,23 @@ class GoogleGenAIClient(BaseLLMClient):
                     continue
 
                 tool_content = msg.content
+
+                # For Computer Use, we need to extract the URL from the response
+                # The content may have attachment IDs appended (e.g., "[Attachment ID(s): ...]")
+                # which breaks JSON parsing, so we strip that suffix first
+                json_content = tool_content
+                if isinstance(json_content, str):
+                    # Strip attachment ID suffix if present
+                    attachment_marker = "\n[Attachment ID(s):"
+                    if attachment_marker in json_content:
+                        json_content = json_content.split(attachment_marker)[0]
+
                 # Try to parse the content as JSON
                 try:
                     response_data = (
-                        json.loads(tool_content)
-                        if isinstance(tool_content, str)
-                        else tool_content
+                        json.loads(json_content)
+                        if isinstance(json_content, str)
+                        else json_content
                     )
                 except json.JSONDecodeError:
                     response_data = {"result": tool_content}
@@ -589,6 +600,13 @@ class GoogleGenAIClient(BaseLLMClient):
                     "name": msg.name,
                     "response": response_data,
                 }
+
+                # Debug logging for Computer Use
+                logger.debug(
+                    f"Building FunctionResponse for '{msg.name}': "
+                    f"response_data={response_data}, "
+                    f"has_attachments={msg.transient_attachments is not None}"
+                )
 
                 # Handle multimodal attachments for Gemini 3+
                 if self._supports_multimodal_tools() and msg.transient_attachments:

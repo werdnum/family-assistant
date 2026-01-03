@@ -1,25 +1,28 @@
 """Integration tests for the Gemini Computer Use profile."""
 
-import asyncio
-import json
 import logging
 import os
 from collections.abc import AsyncGenerator
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from google.genai import types
-from playwright.async_api import Page as AsyncPage
-from playwright.async_api import async_playwright
+from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.llm.messages import (
-    AssistantMessage,
-    ToolMessage,
-    UserMessage,
-)
+from family_assistant.assistant import Assistant
+from family_assistant.config_models import AppConfig
+from family_assistant.llm.messages import UserMessage
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
-from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
-from family_assistant.tools.types import ToolAttachment
+from family_assistant.storage.context import get_db_context
+from family_assistant.tools.computer_use import (
+    BrowserSession,
+    close_browser_session,
+    computer_use_click_at,
+    computer_use_navigate,
+    get_browser_session,
+)
+from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +40,22 @@ async def gemini_client() -> AsyncGenerator[GoogleGenAIClient]:
     )
     yield client
     await client.close()
+
+
+@pytest.fixture
+def mock_exec_context() -> ToolExecutionContext:
+    """Create a mock ToolExecutionContext for testing."""
+    return MagicMock(spec=ToolExecutionContext, conversation_id="test-conversation")
+
+
+@pytest.fixture
+async def browser_session(
+    mock_exec_context: ToolExecutionContext,
+) -> AsyncGenerator[BrowserSession]:
+    """Create and cleanup a browser session for testing."""
+    session = await get_browser_session(mock_exec_context)
+    yield session
+    await close_browser_session(mock_exec_context)
 
 
 @pytest.mark.asyncio
@@ -105,20 +124,13 @@ async def test_computer_use_tool_injection(gemini_client: GoogleGenAIClient) -> 
         # Verify ComputerUse tool is present
         has_computer_use = False
         for tool in tools_passed:
-            # Check if tool has computer_use attribute (SDK object) or key (dict)
-            # Use getattr to avoid type checker issues with dynamic SDK attributes
-            computer_use = getattr(tool, "computer_use", None)
-            if computer_use:
+            # Use isinstance for proper type narrowing
+            if isinstance(tool, types.Tool) and tool.computer_use:
                 has_computer_use = True
-                assert computer_use.environment == types.Environment.ENVIRONMENT_BROWSER
-                break
-            # Fallback for if it's a dict or other structure (though SDK usually uses objects)
-            elif (
-                isinstance(tool, dict)
-                and "computer_use" in tool
-                or "computer_use" in str(tool)
-            ):
-                has_computer_use = True
+                assert (
+                    tool.computer_use.environment
+                    == types.Environment.ENVIRONMENT_BROWSER
+                )
                 break
 
         assert has_computer_use, (
@@ -130,10 +142,9 @@ async def test_computer_use_tool_injection(gemini_client: GoogleGenAIClient) -> 
         has_other_tool = False
 
         for tool in tools_passed:
-            # Use getattr to avoid type checker issues with dynamic SDK attributes
-            function_declarations = getattr(tool, "function_declarations", None)
-            if function_declarations:
-                for func in function_declarations:
+            # Use isinstance for proper type narrowing
+            if isinstance(tool, types.Tool) and tool.function_declarations:
+                for func in tool.function_declarations:
                     if func.name == "click_at":
                         has_click_at = True
                     if func.name == "other_tool":
@@ -222,15 +233,111 @@ async def test_real_gemini_computer_use_protocol() -> None:
         await client.close()
 
 
-# Screen dimensions matching the computer_use.py constants
-_SCREEN_WIDTH = 1024
-_SCREEN_HEIGHT = 768
-_MAX_ITERATIONS = 15
+# --- Integration tests that test the actual tool code ---
 
 
-def _denormalize_coordinate(value: int, max_value: int) -> int:
-    """Convert normalized coordinate (0-1000) to pixel value."""
-    return int(value / 1000 * max_value)
+class TestComputerUseTools:
+    """Integration tests for Computer Use tool functions with real Playwright."""
+
+    @pytest.mark.asyncio
+    async def test_browser_session_lifecycle(
+        self, mock_exec_context: ToolExecutionContext
+    ) -> None:
+        """Test that browser sessions are properly created and cleaned up."""
+        # Get a session
+        session1 = await get_browser_session(mock_exec_context)
+        assert session1 is not None
+        assert session1.page is None  # Not initialized until ensure_page()
+
+        # Same context should return same session
+        session2 = await get_browser_session(mock_exec_context)
+        assert session1 is session2
+
+        # Ensure page creates browser resources
+        page = await session1.ensure_page()
+        assert page is not None
+        assert session1.browser is not None
+        assert session1.context is not None
+        assert session1.playwright is not None
+
+        # Cleanup
+        await close_browser_session(mock_exec_context)
+
+        # Session should be removed
+        session3 = await get_browser_session(mock_exec_context)
+        assert session3 is not session1
+
+        # Cleanup the new session
+        await close_browser_session(mock_exec_context)
+
+    @pytest.mark.asyncio
+    async def test_navigate_tool(
+        self, mock_exec_context: ToolExecutionContext, browser_session: BrowserSession
+    ) -> None:
+        """Test navigation to a URL using the actual tool function."""
+        # Navigate to example.com
+        result = await computer_use_navigate(mock_exec_context, "https://example.com")
+
+        # Verify we got a ToolResult with URL and screenshot
+        assert result is not None
+        assert result.data is not None
+        assert isinstance(result.data, dict)
+        assert "url" in result.data
+        assert "example.com" in result.data["url"]
+
+        # Verify we got a screenshot attachment
+        assert result.attachments is not None
+        assert len(result.attachments) == 1
+        attachment = result.attachments[0]
+        assert attachment.mime_type == "image/png"
+        assert attachment.content is not None
+        assert len(attachment.content) > 0
+
+        # Verify we're on the right page
+        page = await browser_session.ensure_page()
+        assert "example.com" in page.url
+
+    @pytest.mark.asyncio
+    async def test_navigate_adds_protocol(
+        self, mock_exec_context: ToolExecutionContext, browser_session: BrowserSession
+    ) -> None:
+        """Test that navigate adds https:// if protocol is missing."""
+        # Navigate without protocol
+        result = await computer_use_navigate(mock_exec_context, "example.com")
+
+        assert result is not None
+        assert result.data is not None
+        assert isinstance(result.data, dict)
+        assert result.data["url"].startswith("https://")
+
+        # Verify the URL has https
+        page = await browser_session.ensure_page()
+        assert page.url.startswith("https://")
+
+    @pytest.mark.asyncio
+    async def test_click_at_tool(
+        self, mock_exec_context: ToolExecutionContext, browser_session: BrowserSession
+    ) -> None:
+        """Test clicking at coordinates using the actual tool function."""
+        # First navigate to a page
+        await computer_use_navigate(mock_exec_context, "https://example.com")
+
+        # Click at the center of the screen (normalized coordinates)
+        result = await computer_use_click_at(mock_exec_context, x=500, y=500)
+
+        # Verify we got a ToolResult with URL and screenshot
+        assert result is not None
+        assert result.data is not None
+        assert isinstance(result.data, dict)
+        assert "url" in result.data
+
+        # Verify we got a screenshot attachment
+        assert result.attachments is not None
+        assert len(result.attachments) == 1
+        attachment = result.attachments[0]
+        assert attachment.mime_type == "image/png"
+        assert attachment.content is not None
+        assert len(attachment.content) > 0
 
 
 @pytest.mark.integration
@@ -238,257 +345,295 @@ def _denormalize_coordinate(value: int, max_value: int) -> int:
     os.getenv("GEMINI_API_KEY") is None, reason="Requires GEMINI_API_KEY"
 )
 @pytest.mark.asyncio
-async def test_computer_use_browser_navigation_e2e() -> None:
+async def test_computer_use_browser_navigation_e2e(db_engine: AsyncEngine) -> None:
     """
-    End-to-end test of browser automation with Gemini Computer Use.
+    End-to-end integration test of browser automation with Gemini Computer Use.
 
-    This test verifies the complete loop:
-    1. Send a task to the model with an initial screenshot
-    2. Model returns browser actions (navigate, click, etc.)
-    3. Execute actions with Playwright
-    4. Send result screenshot back to model
-    5. Continue until task is complete or max iterations reached
+    This test uses the full Assistant/ProcessingService stack to verify:
+    1. LLM receives a task and decides what browser actions to take
+    2. ProcessingService executes tools through LocalToolsProvider
+    3. Tool results (screenshots) are sent back to the LLM
+    4. Loop continues until task completion
 
     The task: Navigate to example.com and report the page heading.
     """
     api_key = os.environ["GEMINI_API_KEY"]
-    client = GoogleGenAIClient(
-        api_key=api_key,
-        model="gemini-2.5-computer-use-preview-10-2025",
+
+    # Create a browser profile configuration for testing
+    test_profile_id = "browser_test_profile"
+    # ast-grep-ignore: no-dict-any - Test configuration for AppConfig
+    test_config: dict[str, Any] = {
+        "gemini_api_key": api_key,
+        "database_url": str(db_engine.url),
+        "default_service_profile_id": test_profile_id,
+        "service_profiles": [
+            {
+                "id": test_profile_id,
+                "description": "Browser test profile with computer use",
+                "processing_config": {
+                    "provider": "google",
+                    "llm_model": "gemini-2.5-computer-use-preview-10-2025",
+                    "max_iterations": 15,
+                    "prompts": {
+                        "system_prompt": (
+                            "You are a browser automation assistant. "
+                            "Use the browser tools to navigate and interact with web pages."
+                        )
+                    },
+                    "timezone": "UTC",
+                    "max_history_messages": 10,
+                    "history_max_age_hours": 1,
+                    "delegation_security_level": "unrestricted",
+                },
+                "tools_config": {
+                    "enable_local_tools": [
+                        "click_at",
+                        "type_text_at",
+                        "scroll_at",
+                        "open_web_browser",
+                        "navigate",
+                        "search",
+                        "go_back",
+                        "go_forward",
+                        "key_combination",
+                        "wait_5_seconds",
+                        "hover_at",
+                        "drag_and_drop",
+                        "scroll_document",
+                    ],
+                    "enable_mcp_server_ids": [],
+                    "confirm_tools": [],
+                },
+            }
+        ],
+        "mcp_config": {"mcpServers": {}},
+        # Minimal config for other required fields
+        "telegram_enabled": False,
+        "telegram_token": None,
+        "allowed_user_ids": [],
+        "developer_chat_id": None,
+        "model": "gemini-2.5-computer-use-preview-10-2025",
+        "embedding_model": "mock-deterministic-embedder",
+        "embedding_dimensions": 10,
+        "server_url": "http://localhost:8000",
+        "document_storage_path": "/tmp/test_docs",
+        "attachment_storage_path": "/tmp/test_attachments",
+        "indexing_pipeline_config": {"processors": []},
+        "message_batching_config": {"strategy": "none", "delay_seconds": 0},
+        "llm_parameters": {},
+    }
+
+    # Create Assistant with the test configuration
+    assistant = Assistant(
+        config=AppConfig.model_validate(test_config),
+        database_engine=db_engine,
     )
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            viewport={"width": _SCREEN_WIDTH, "height": _SCREEN_HEIGHT}
+    try:
+        # Setup dependencies (creates ProcessingService, tools_provider, etc.)
+        await assistant.setup_dependencies()
+
+        assert assistant.default_processing_service is not None
+        processing_service = assistant.default_processing_service
+
+        # Create a database context for the test
+        async with get_db_context(engine=db_engine) as db_context:
+            # Process the user's request through the full stack
+            # The ProcessingService will handle the LLM → tool → result loop
+            (
+                turn_messages,
+                reasoning_info,
+                attachment_ids,
+            ) = await processing_service.process_message(
+                db_context=db_context,
+                messages=[
+                    UserMessage(
+                        content=(
+                            "Navigate to https://example.com and tell me what the "
+                            "main heading (h1) on the page says. "
+                            "Use the browser tools to navigate there."
+                        ),
+                    )
+                ],
+                interface_type="test",
+                conversation_id="e2e-browser-test",
+                user_name="TestUser",
+                turn_id="turn-1",
+                chat_interface=None,
+            )
+
+            # Find the final assistant response
+            final_response = None
+            for msg in reversed(turn_messages):
+                if msg.get("role") == "assistant" and msg.get("content"):
+                    final_response = msg["content"]
+                    break
+
+            logger.info(f"Final response: {final_response}")
+            logger.info(f"Total messages in turn: {len(turn_messages)}")
+
+            # Verify the task was completed - response should mention "Example Domain"
+            assert final_response is not None, "No final assistant response received"
+            assert "Example Domain" in final_response, (
+                f"Expected 'Example Domain' in response, got: {final_response}"
+            )
+
+    finally:
+        # Cleanup: close any browser sessions
+        # The conversation_id used by ProcessingService for tool context
+        cleanup_context = MagicMock(
+            spec=ToolExecutionContext, conversation_id="e2e-browser-test"
         )
-        page = await context.new_page()
+        await close_browser_session(cleanup_context)
 
-        # Start with a blank page
-        await page.goto("about:blank")
+        # Shutdown assistant
+        await assistant.stop_services()
 
-        try:
-            # Build initial message with text only (no screenshot)
-            # The model will call navigate first, then we'll send screenshots
-            # with tool responses as per Gemini Computer Use protocol
-            messages: list[UserMessage | AssistantMessage | ToolMessage] = [
-                UserMessage(
-                    content=(
-                        "Navigate to https://example.com and tell me what the "
-                        "main heading (h1) on the page says. "
-                        "Use the browser tools to navigate there."
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    os.getenv("GEMINI_API_KEY") is None, reason="Requires GEMINI_API_KEY"
+)
+@pytest.mark.asyncio
+async def test_grab_screenshot_of_website(db_engine: AsyncEngine) -> None:
+    """
+    Test the 'grab a screenshot of website X' use case.
+
+    This is a core use case for Computer Use: user asks to take a screenshot
+    of a website and the system returns the screenshot in attachments.
+
+    Verifies:
+    1. User can request a screenshot of a website
+    2. ProcessingService correctly executes browser tools
+    3. Screenshot is captured and returned as an attachment
+    """
+    api_key = os.environ["GEMINI_API_KEY"]
+
+    test_profile_id = "screenshot_test_profile"
+    # ast-grep-ignore: no-dict-any - Test configuration for AppConfig
+    test_config: dict[str, Any] = {
+        "gemini_api_key": api_key,
+        "database_url": str(db_engine.url),
+        "default_service_profile_id": test_profile_id,
+        "service_profiles": [
+            {
+                "id": test_profile_id,
+                "description": "Screenshot test profile with computer use",
+                "processing_config": {
+                    "provider": "google",
+                    "llm_model": "gemini-2.5-computer-use-preview-10-2025",
+                    "max_iterations": 10,
+                    "prompts": {
+                        "system_prompt": (
+                            "You are a browser automation assistant. "
+                            "Use the browser tools to navigate and take screenshots."
+                        )
+                    },
+                    "timezone": "UTC",
+                    "max_history_messages": 10,
+                    "history_max_age_hours": 1,
+                    "delegation_security_level": "unrestricted",
+                },
+                "tools_config": {
+                    "enable_local_tools": [
+                        "click_at",
+                        "type_text_at",
+                        "scroll_at",
+                        "open_web_browser",
+                        "navigate",
+                        "search",
+                        "go_back",
+                        "go_forward",
+                        "key_combination",
+                        "wait_5_seconds",
+                        "hover_at",
+                        "drag_and_drop",
+                        "scroll_document",
+                    ],
+                    "enable_mcp_server_ids": [],
+                    "confirm_tools": [],
+                },
+            }
+        ],
+        "mcp_config": {"mcpServers": {}},
+        "telegram_enabled": False,
+        "telegram_token": None,
+        "allowed_user_ids": [],
+        "developer_chat_id": None,
+        "model": "gemini-2.5-computer-use-preview-10-2025",
+        "embedding_model": "mock-deterministic-embedder",
+        "embedding_dimensions": 10,
+        "server_url": "http://localhost:8000",
+        "document_storage_path": "/tmp/test_docs",
+        "attachment_storage_path": "/tmp/test_attachments",
+        "indexing_pipeline_config": {"processors": []},
+        "message_batching_config": {"strategy": "none", "delay_seconds": 0},
+        "llm_parameters": {},
+    }
+
+    assistant = Assistant(
+        config=AppConfig.model_validate(test_config),
+        database_engine=db_engine,
+    )
+
+    try:
+        await assistant.setup_dependencies()
+
+        assert assistant.default_processing_service is not None
+        processing_service = assistant.default_processing_service
+
+        async with get_db_context(engine=db_engine) as db_context:
+            # User asks to take a screenshot of a website
+            (
+                turn_messages,
+                reasoning_info,
+                attachment_ids,
+            ) = await processing_service.process_message(
+                db_context=db_context,
+                messages=[
+                    UserMessage(
+                        content=(
+                            "Please take a screenshot of https://example.com. "
+                            "Navigate to the website and capture what you see."
+                        ),
                     )
-                )
-            ]
-
-            task_completed = False
-            iterations = 0
-            response = None
-
-            while not task_completed and iterations < _MAX_ITERATIONS:
-                iterations += 1
-                logger.info(f"Computer use iteration {iterations}")
-
-                response = await client.generate_response(messages)
-
-                # If we got a text response without tool calls, task might be done
-                if response.content and not response.tool_calls:
-                    logger.info(f"Model response: {response.content}")
-                    # Check if the response mentions "Example Domain" (the h1 on example.com)
-                    if "Example Domain" in response.content:
-                        task_completed = True
-                        logger.info("Task completed successfully!")
-                    break
-
-                # Process tool calls
-                if not response.tool_calls:
-                    logger.warning("No tool calls and no content - unexpected state")
-                    break
-
-                # Add assistant message with tool calls (preserve provider_metadata for thought signatures)
-                messages.append(
-                    AssistantMessage(
-                        content=response.content or "",
-                        tool_calls=[
-                            ToolCallItem(
-                                id=tc.id,
-                                type="function",
-                                function=ToolCallFunction(
-                                    name=tc.function.name,
-                                    arguments=tc.function.arguments,
-                                ),
-                                provider_metadata=tc.provider_metadata,
-                            )
-                            for tc in response.tool_calls
-                        ],
-                    )
-                )
-
-                # Execute each tool call
-                for tool_call in response.tool_calls:
-                    action_name = tool_call.function.name
-                    args = tool_call.function.arguments
-
-                    # Ensure args is a dict
-                    if isinstance(args, str):
-                        args = json.loads(args)
-
-                    logger.info(f"Executing action: {action_name} with args: {args}")
-
-                    # Execute the browser action
-                    await _execute_browser_action(page, action_name, args)
-
-                    # Take screenshot after action
-                    screenshot_bytes = await page.screenshot(type="png")
-
-                    # Create tool message with screenshot attachment
-                    tool_attachment = ToolAttachment(
-                        content=screenshot_bytes,
-                        mime_type="image/png",
-                        description=f"Screenshot after {action_name}",
-                    )
-
-                    # Get current URL - required by Computer Use API
-                    current_url = page.url
-
-                    # Use _attachments (alias for transient_attachments) to pass screenshot
-                    # Content must be JSON with 'url' field as required by Gemini Computer Use
-                    tool_msg = ToolMessage(
-                        tool_call_id=tool_call.id,
-                        name=action_name,
-                        content=json.dumps({"url": current_url}),
-                    )
-                    # Set transient_attachments directly after construction
-                    tool_msg.transient_attachments = [tool_attachment]
-                    messages.append(tool_msg)
-
-            # Verify the task was completed
-            assert task_completed or iterations < _MAX_ITERATIONS, (
-                f"Task did not complete within {_MAX_ITERATIONS} iterations. "
-                f"Last response: {response.content if response else 'None'}"
+                ],
+                interface_type="test",
+                conversation_id="screenshot-test",
+                user_name="TestUser",
+                turn_id="turn-1",
+                chat_interface=None,
             )
 
-            # Verify we actually navigated to example.com
-            current_url = page.url
-            assert "example.com" in current_url, (
-                f"Expected to be on example.com, but URL is: {current_url}"
+            # Find the final assistant response
+            final_response = None
+            for msg in reversed(turn_messages):
+                if msg.get("role") == "assistant" and msg.get("content"):
+                    final_response = msg["content"]
+                    break
+
+            logger.info(f"Final response: {final_response}")
+            logger.info(f"Attachment IDs: {attachment_ids}")
+            logger.info(f"Total messages in turn: {len(turn_messages)}")
+
+            # Verify screenshot was taken
+            # The attachment_ids list should contain the screenshot attachment
+            assert final_response is not None, "No final assistant response received"
+
+            # The response should indicate the screenshot was taken
+            # and there should be at least one attachment (the screenshot)
+            assert attachment_ids is not None and len(attachment_ids) > 0, (
+                f"Expected screenshot attachment(s), got: {attachment_ids}. "
+                f"Response: {final_response}"
             )
 
-        finally:
-            await browser.close()
-            await client.close()
+            logger.info(
+                f"Screenshot test passed: {len(attachment_ids)} attachment(s) captured"
+            )
 
-
-async def _execute_browser_action(
-    page: AsyncPage,
-    action_name: str,
-    args: dict[str, object],
-) -> None:
-    """Execute a browser action based on the Gemini Computer Use action schema."""
-
-    # Helper to safely get typed values from args
-    def get_int(key: str, default: int = 0) -> int:
-        val = args.get(key)
-        if val is None:
-            return default
-        if isinstance(val, int):
-            return val
-        return int(str(val))
-
-    def get_str(key: str, default: str = "") -> str:
-        val = args.get(key)
-        if val is None:
-            return default
-        return str(val)
-
-    def get_bool(key: str, default: bool = False) -> bool:
-        val = args.get(key)
-        if val is None:
-            return default
-        if isinstance(val, bool):
-            return val
-        return bool(val)
-
-    if action_name == "navigate":
-        url = get_str("url", "")
-        if not url.startswith("http"):
-            url = "https://" + url
-        await page.goto(url)
-
-    elif action_name == "click_at":
-        x = _denormalize_coordinate(get_int("x", 0), _SCREEN_WIDTH)
-        y = _denormalize_coordinate(get_int("y", 0), _SCREEN_HEIGHT)
-        await page.mouse.click(x, y)
-
-    elif action_name == "type_text_at":
-        x = _denormalize_coordinate(get_int("x", 0), _SCREEN_WIDTH)
-        y = _denormalize_coordinate(get_int("y", 0), _SCREEN_HEIGHT)
-        text = get_str("text", "")
-        press_enter = get_bool("press_enter", True)
-        clear_before = get_bool("clear_before_typing", False)
-
-        await page.mouse.click(x, y)
-        if clear_before:
-            await page.keyboard.press("Control+A")
-            await page.keyboard.press("Backspace")
-        await page.keyboard.type(text)
-        if press_enter:
-            await page.keyboard.press("Enter")
-
-    elif action_name == "scroll_at":
-        x = _denormalize_coordinate(get_int("x", 0), _SCREEN_WIDTH)
-        y = _denormalize_coordinate(get_int("y", 0), _SCREEN_HEIGHT)
-        direction = get_str("direction", "down")
-        magnitude = get_int("magnitude", 800)
-
-        delta_x, delta_y = 0, 0
-        if direction == "down":
-            delta_y = magnitude
-        elif direction == "up":
-            delta_y = -magnitude
-        elif direction == "right":
-            delta_x = magnitude
-        elif direction == "left":
-            delta_x = -magnitude
-
-        await page.mouse.move(x, y)
-        await page.mouse.wheel(delta_x, delta_y)
-
-    elif action_name == "scroll_document":
-        direction = get_str("direction", "down")
-        if direction == "down":
-            await page.evaluate("window.scrollBy(0, window.innerHeight)")
-        elif direction == "up":
-            await page.evaluate("window.scrollBy(0, -window.innerHeight)")
-        elif direction == "right":
-            await page.evaluate("window.scrollBy(window.innerWidth, 0)")
-        elif direction == "left":
-            await page.evaluate("window.scrollBy(-window.innerWidth, 0)")
-
-    elif action_name == "go_back":
-        await page.go_back()
-
-    elif action_name == "go_forward":
-        await page.go_forward()
-
-    elif action_name == "key_combination":
-        keys = get_str("keys", "")
-        await page.keyboard.press(keys)
-
-    elif action_name == "hover_at":
-        x = _denormalize_coordinate(get_int("x", 0), _SCREEN_WIDTH)
-        y = _denormalize_coordinate(get_int("y", 0), _SCREEN_HEIGHT)
-        await page.mouse.move(x, y)
-
-    elif action_name == "wait_5_seconds":
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Implementing model's wait action
-        await asyncio.sleep(5)
-
-    elif action_name == "open_web_browser":
-        await page.goto("about:blank")
-
-    elif action_name == "search":
-        await page.goto("https://www.google.com")
-
-    else:
-        logger.warning(f"Unknown action: {action_name}")
+    finally:
+        cleanup_context = MagicMock(
+            spec=ToolExecutionContext, conversation_id="screenshot-test"
+        )
+        await close_browser_session(cleanup_context)
+        await assistant.stop_services()
