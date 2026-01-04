@@ -4,6 +4,7 @@
 # 1. Messages SENT by the bot (via mocked Telegram API calls like send_message).
 # 2. Messages RECEIVED by the bot (implicitly verified by mock LLM rules/matchers).
 # Database state changes (message history, notes, tasks) are NOT directly asserted here.
+import io
 import json  # Add import
 import logging
 import typing  # ADDED for cast
@@ -597,12 +598,17 @@ async def test_telegram_photo_persistence_and_llm_context(
         content="I don't see any image in the current context."
     )
 
-    # Mock Telegram bot file download to return test photo bytes
+    # Mock Telegram bot file download to write test photo bytes to buffer
     test_photo_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xdd\x8d\xb4\x1c\x00\x00\x00\x00IEND\xaeB`\x82"
 
     # Mock the file object and its download method
+    # download_to_memory writes bytes to the buffer passed as 'out' kwarg
+    async def mock_download_to_memory(out: io.BytesIO) -> None:
+        out.write(test_photo_bytes)
+
     mock_file = AsyncMock()
-    mock_file.download_to_memory = AsyncMock(return_value=test_photo_bytes)
+    mock_file.download_to_memory = mock_download_to_memory
+    mock_file.file_size = len(test_photo_bytes)
     fix.mock_bot.get_file = AsyncMock(return_value=mock_file)
 
     # === TURN 1: Send photo with text ===
