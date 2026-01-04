@@ -353,7 +353,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             filename=attachment.filename,
                             mime_type=attachment.mime_type,
                             conversation_id=str(chat_id),
-                            message_id=reply_target_message_id,
+                            # Don't pass message_id here - the message_history entry
+                            # doesn't exist yet and we use the internal DB ID, not
+                            # the Telegram message ID
                             user_id=user_id_str,
                             description=attachment.description
                             or f"Telegram attachment from {user_name}",
