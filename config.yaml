@@ -49,7 +49,7 @@ llm_parameters:
 # See: https://ai.google.dev/gemini-api/docs/live
 gemini_live_config:
   # Model to use for Gemini Live voice sessions
-  model: "gemini-2.5-flash-native-audio-preview-09-2025"
+  model: "gemini-2.5-flash-native-audio-preview-12-2025"
 
   # Voice configuration
   voice:
@@ -90,8 +90,8 @@ gemini_live_config:
 
   # Proactivity allows the model to proactively decline irrelevant responses
   proactivity:
-    enabled: false
-    proactive_audio: false
+    enabled: true
+    proactive_audio: true
 
   # Thinking configuration for reasoning
   thinking:
