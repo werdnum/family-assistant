@@ -201,6 +201,17 @@ class AsteriskLiveHandler:
                     automatic_activity_detection=activity_detection
                 )
 
+            # Build proactivity configuration
+            # See: https://ai.google.dev/gemini-api/docs/live-guide#proactive-audio
+            proactivity = None
+            if self.gemini_live_config.proactivity.enabled:
+                proactivity = {
+                    "proactive_audio": self.gemini_live_config.proactivity.proactive_audio
+                }
+                logger.info(
+                    f"Enabling proactivity: proactive_audio={self.gemini_live_config.proactivity.proactive_audio}"
+                )
+
             config = LiveConnectConfig(
                 response_modalities=cast("list[Any]", ["AUDIO"]),
                 speech_config=SpeechConfig(
@@ -217,6 +228,7 @@ class AsteriskLiveHandler:
                 input_audio_transcription=AudioTranscriptionConfig(),
                 output_audio_transcription=AudioTranscriptionConfig(),
                 realtime_input_config=realtime_input_config,
+                proactivity=proactivity,
             )
 
             # Use the injected client to connect
