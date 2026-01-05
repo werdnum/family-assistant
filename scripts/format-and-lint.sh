@@ -218,18 +218,26 @@ if [ ${#JS_TS_FILES[@]} -gt 0 ]; then
 fi
 
 # Phase 3: Markdown files (if any)
-if [ ${#MARKDOWN_FILES[@]} -gt 0 ] && command -v "${VIRTUAL_ENV:-.venv}"/bin/mdformat >/dev/null 2>&1; then
-    echo "${BLUE}📄 Markdown files...${NC}"
-    echo -n "${BLUE}  ▸ Running mdformat...${NC}"
-    timer_start
-    # Run mdformat but don't fail the script if it fails on some files
-    if "${VIRTUAL_ENV:-.venv}"/bin/mdformat --wrap 100 "${MARKDOWN_FILES[@]}" 2>/dev/null; then
-        echo -n "${GREEN} ✓${NC}"
+if [ ${#MARKDOWN_FILES[@]} -gt 0 ]; then
+    if command -v "${VIRTUAL_ENV:-.venv}"/bin/mdformat >/dev/null 2>&1; then
+        echo "${BLUE}📄 Markdown files...${NC}"
+        echo -n "${BLUE}  ▸ Running mdformat...${NC}"
+        timer_start
+        if "${VIRTUAL_ENV:-.venv}"/bin/mdformat --wrap 100 "${MARKDOWN_FILES[@]}" 2>/dev/null; then
+            echo -n "${GREEN} ✓${NC}"
+            timer_end
+        else
+            timer_end
+            echo ""
+            echo "${RED}❌ mdformat failed${NC}"
+            HAS_ERRORS=1
+        fi
+        echo ""
     else
-        echo -n "${YELLOW} ⚠${NC}"
+        echo "${RED}❌ mdformat not found. Please install dependencies.${NC}"
+        HAS_ERRORS=1
+        echo ""
     fi
-    timer_end
-    echo ""
 fi
 
 # Phase 4: Shell scripts and other files
@@ -264,7 +272,8 @@ if [ ${#OTHER_FILES[@]} -gt 0 ]; then
                 # For other files, just check if they're readable
                 if [ ! -r "$file" ]; then
                     echo ""
-                    echo "${YELLOW}⚠ Cannot read file: $file${NC}"
+                    echo "${RED}❌ Cannot read file: $file${NC}"
+                    HAS_ERRORS=1
                 fi
                 ;;
         esac
@@ -323,8 +332,9 @@ if [ ${#SHELL_FILES[@]} -gt 0 ]; then
         fi
         echo ""
     else
-        echo "${YELLOW}⚠ shellcheck not found, skipping shell script linting${NC}"
-        echo "${YELLOW}   Install with: ./scripts/install-shellcheck.sh${NC}"
+        echo "${RED}❌ shellcheck not found, cannot lint shell scripts${NC}"
+        echo "${RED}   Install with: ./scripts/install-shellcheck.sh${NC}"
+        HAS_ERRORS=1
         echo ""
     fi
 fi
