@@ -51,6 +51,7 @@ try:
         LiveConnectConfig,
         Part,
         PrebuiltVoiceConfig,
+        ProactivityConfig,
         RealtimeInputConfig,
         SpeechConfig,
         StartSensitivity,
@@ -205,11 +206,8 @@ class AsteriskLiveHandler:
             # See: https://ai.google.dev/gemini-api/docs/live-guide#proactive-audio
             proactivity = None
             if self.gemini_live_config.proactivity.enabled:
-                proactivity = {
-                    "proactive_audio": self.gemini_live_config.proactivity.proactive_audio
-                }
-                logger.info(
-                    f"Enabling proactivity: proactive_audio={self.gemini_live_config.proactivity.proactive_audio}"
+                proactivity = ProactivityConfig(
+                    proactive_audio=self.gemini_live_config.proactivity.proactive_audio
                 )
 
             config = LiveConnectConfig(
