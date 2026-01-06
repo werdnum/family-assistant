@@ -17,7 +17,7 @@ FROM ubuntu:24.04 AS base
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# System packages and dependencies
+# System packages and dependencies (cache-bust: add shellcheck 2026-01-06)
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y \
