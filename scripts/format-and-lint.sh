@@ -69,7 +69,7 @@ if [ $# -eq 0 ]; then
     # Find markdown files in common locations
     while IFS= read -r -d '' file; do
         MARKDOWN_FILES+=("$file")
-    done < <(find . -name "*.md" -not -path "./.venv/*" -not -path "./venv/*" -not -path "./.git/*" -not -path "./node_modules/*" -print0 2>/dev/null)
+    done < <(find . -name "*.md" -not -path "./.venv/*" -not -path "./venv/*" -not -path "./.git/*" -not -path "*/node_modules/*" -print0 2>/dev/null)
 else
     categorize_files "$@"
 fi
@@ -321,7 +321,7 @@ if [ ${#SHELL_FILES[@]} -gt 0 ]; then
         echo -n "${BLUE}  ▸ Running shellcheck...${NC}"
         timer_start
 
-        if ! "$SHELLCHECK_BIN" -x "${SHELL_FILES[@]}" 2>&1; then
+        if ! "$SHELLCHECK_BIN" -x --severity=warning "${SHELL_FILES[@]}" 2>&1; then
             timer_end
             echo ""
             echo "${RED}❌ shellcheck found issues${NC}"

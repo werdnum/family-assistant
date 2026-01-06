@@ -15,7 +15,6 @@ Output in clean Markdown."
 # This keeps your stdout clean for redirection
 log() {
     local COLOR_BLUE="\033[0;34m"
-    local COLOR_GREEN="\033[0;32m"
     local COLOR_RESET="\033[0m"
     echo -e "${COLOR_BLUE}[PROGRESS]${COLOR_RESET} $1" >&2
 }
@@ -83,11 +82,11 @@ process_section() {
 log "Analyzing commits since $MERGE_BASE..."
 
 # Get commits oldest -> newest
-COMMITS=$(git rev-list --reverse $MERGE_BASE..HEAD)
+COMMITS=$(git rev-list --reverse "$MERGE_BASE"..HEAD)
 
 for commit in $COMMITS; do
-    SUBJECT=$(git log -1 --format="%s" $commit)
-    HASH=$(git log -1 --format="%h" $commit)
+    SUBJECT=$(git log -1 --format="%s" "$commit")
+    HASH=$(git log -1 --format="%h" "$commit")
     
     process_section \
         "Commit $HASH: $SUBJECT" \
@@ -138,3 +137,4 @@ if ! git diff --quiet || [ ! -z "$UNTRACKED_CONTENT" ]; then
 fi
 
 log "Done."
+

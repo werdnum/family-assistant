@@ -24,7 +24,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         curl git wget gnupg ca-certificates lsb-release \
         ripgrep fd-find micro unzip build-essential \
         python3 python3-pip python3-venv \
-        ffmpeg libturbojpeg0-dev \
+        ffmpeg libturbojpeg0-dev shellcheck \
     && mkdir -p -m 755 /etc/apt/keyrings \
     && wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
     && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
