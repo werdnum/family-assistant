@@ -37,7 +37,7 @@ cleanup() {
 
         # Wait up to 3 seconds for graceful shutdown
         local wait_count=0
-        while [ $wait_count -lt 30 ]; do
+        while [ "$wait_count" -lt 30 ]; do
             local any_alive=0
             for pid in "${BACKGROUND_PIDS[@]}"; do
                 if kill -0 "$pid" 2>/dev/null; then
@@ -51,7 +51,7 @@ cleanup() {
                 fi
             done
 
-            if [ $any_alive -eq 0 ]; then
+            if [ "$any_alive" -eq 0 ]; then
                 break
             fi
 
@@ -71,10 +71,10 @@ cleanup() {
     fi
 
     # Exit with appropriate code (130 for SIGINT)
-    if [ $exit_code -eq 0 ] && [ -n "${INTERRUPTED:-}" ]; then
+    if [ "$exit_code" -eq 0 ] && [ -n "${INTERRUPTED:-}" ]; then
         exit 130
     else
-        exit $exit_code
+        exit "$exit_code"
     fi
 }
 

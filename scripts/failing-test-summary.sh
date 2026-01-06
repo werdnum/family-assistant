@@ -1,3 +1,4 @@
+#!/bin/bash
 jq -r '.tests[] | select(.outcome == "failed") |         
 "--------------------------------------------------                                                   
 TEST: \(.nodeid)                                                                                      
@@ -6,3 +7,4 @@ LOGS:
 \(.call.log // [] | map(.msg) | join("\n"))                                                           
       
 "' .report.json
+
