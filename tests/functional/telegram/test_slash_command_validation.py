@@ -1,7 +1,7 @@
 """
 Test validation of Telegram slash commands configured for processing profiles.
 
-This test ensures that all slash commands defined in config.yaml meet Telegram's
+This test ensures that all slash commands defined in defaults.yaml meet Telegram's
 requirements for bot commands:
 - Must start with a forward slash (/)
 - 1-32 characters after the / (33 characters total including /)
@@ -23,8 +23,8 @@ TELEGRAM_COMMAND_PATTERN = re.compile(r"^/[a-z0-9_]{1,32}$")
 
 
 def load_config() -> dict:
-    """Load the config.yaml file from the project root."""
-    config_path = Path(__file__).parent.parent.parent.parent / "config.yaml"
+    """Load the defaults.yaml file from the project root."""
+    config_path = Path(__file__).parent.parent.parent.parent / "defaults.yaml"
     with open(config_path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
@@ -73,7 +73,7 @@ def test_slash_commands_meet_telegram_requirements() -> None:
 
     # If no commands are configured, that's valid (though unusual)
     if not all_commands:
-        logger.warning("No slash commands found in config.yaml")
+        logger.warning("No slash commands found in defaults.yaml")
         return
 
     # Validate each command
