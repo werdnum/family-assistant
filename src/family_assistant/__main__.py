@@ -3,7 +3,6 @@ import asyncio
 import logging
 import signal
 import sys
-import types
 from typing import Any
 
 # Import the FastAPI app (needed for app.state)
@@ -67,14 +66,6 @@ parser.add_argument(
 )
 
 
-def reload_config_handler(signum: int, frame: types.FrameType | None) -> None:
-    """Handles SIGHUP for config reloading (placeholder)."""
-    logger.info(f"Received signal {signum}. Basic config reload triggered.")
-    # This currently only re-calls load_config. A running Assistant instance
-    # would not automatically pick up these changes without further logic.
-    load_config()
-
-
 def main() -> int:
     """Loads config, parses args, sets up event loop, and runs the application."""
     config = load_config()
@@ -119,17 +110,6 @@ def main() -> int:
                 app_instance.initiate_shutdown(name)
             ),
         )
-
-    if hasattr(signal, "SIGHUP"):
-        try:
-            loop.add_signal_handler(
-                signal.SIGHUP, reload_config_handler, signal.SIGHUP, None
-            )
-            logger.info("SIGHUP handler registered for config reload (basic).")
-        except NotImplementedError:
-            logger.warning("SIGHUP signal handler not supported on this platform.")
-        except Exception as e:
-            logger.error(f"Failed to set SIGHUP handler: {e}")
 
     try:
         logger.info("Starting application via Assistant class...")
