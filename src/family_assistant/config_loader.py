@@ -33,6 +33,9 @@ from .config_models import AppConfig
 logger = logging.getLogger(__name__)
 
 # Default paths
+# defaults.yaml: Shipped with the application, contains default configuration
+# config.yaml: Operator-provided, overrides defaults.yaml
+DEFAULT_DEFAULTS_FILE = "defaults.yaml"
 DEFAULT_CONFIG_FILE = "config.yaml"
 DEFAULT_PROMPTS_FILE = "prompts.yaml"
 DEFAULT_MCP_CONFIG_FILE = "mcp_config.json"
@@ -926,6 +929,7 @@ def load_indexing_pipeline_config(
 
 
 def load_config(
+    defaults_file_path: str = DEFAULT_DEFAULTS_FILE,
     config_file_path: str = DEFAULT_CONFIG_FILE,
     prompts_file_path: str = DEFAULT_PROMPTS_FILE,
     load_dotenv_file: bool = True,
@@ -934,14 +938,16 @@ def load_config(
 
     Priority (lowest to highest):
     1. Code defaults (from get_code_defaults())
-    2. config.yaml file
-    3. Environment variables
+    2. defaults.yaml file (shipped with application)
+    3. config.yaml file (operator-provided, optional)
+    4. Environment variables
 
     CLI arguments should be applied after this function returns using
     AppConfig.model_copy(update={...}).
 
     Args:
-        config_file_path: Path to the main YAML configuration file
+        defaults_file_path: Path to the defaults YAML file (shipped with app)
+        config_file_path: Path to the operator config YAML file (optional)
         prompts_file_path: Path to the prompts YAML file
         load_dotenv_file: Whether to load .env file (default True)
 
@@ -955,17 +961,23 @@ def load_config(
     config_data = get_code_defaults()
     logger.info("Initialized config with code defaults.")
 
-    # 2. Load and merge config.yaml
-    yaml_config = load_yaml_file(config_file_path)
-    if yaml_config:
-        merge_yaml_config(config_data, yaml_config)
-        logger.info(f"Merged configuration from {config_file_path}")
+    # 2. Load and merge defaults.yaml (shipped with application)
+    defaults_yaml = load_yaml_file(defaults_file_path)
+    if defaults_yaml:
+        merge_yaml_config(config_data, defaults_yaml)
+        logger.info(f"Merged defaults from {defaults_file_path}")
 
-    # 3. Load environment variables
+    # 3. Load and merge config.yaml (operator-provided, optional)
+    user_config = load_yaml_file(config_file_path)
+    if user_config:
+        merge_yaml_config(config_data, user_config)
+        logger.info(f"Merged operator configuration from {config_file_path}")
+
+    # 4. Load environment variables from .env file
     if load_dotenv_file:
         load_dotenv()
 
-    # 4. Apply environment variable overrides
+    # 5. Apply environment variable overrides
     apply_env_var_overrides(config_data)
     apply_calendar_env_vars(config_data)
 
@@ -978,30 +990,30 @@ def load_config(
     # Validate timezone
     validate_timezone(config_data)
 
-    # 5. Load prompts and resolve service profiles
+    # 6. Load prompts and resolve service profiles
     default_prompts, service_profile_prompts = load_prompts_yaml(prompts_file_path)
     if default_prompts:
         config_data["default_profile_settings"]["processing_config"]["prompts"] = (
             default_prompts
         )
 
-    # 6. Load MCP config
+    # 7. Load MCP config
     mcp_config = load_mcp_config()
     if mcp_config:
         config_data["mcp_config"] = mcp_config
 
-    # 7. Load indexing pipeline config from env if present
+    # 8. Load indexing pipeline config from env if present
     load_indexing_pipeline_config(config_data)
 
-    # 8. Resolve service profiles
+    # 9. Resolve service profiles
     config_data["service_profiles"] = resolve_all_service_profiles(
         config_data, service_profile_prompts
     )
 
-    # 9. Log final config (excluding secrets)
+    # 10. Log final config (excluding secrets)
     _log_config(config_data)
 
-    # 10. Validate through Pydantic model
+    # 11. Validate through Pydantic model
     try:
         validated_config = AppConfig.model_validate(config_data)
         logger.info("Configuration validated successfully through Pydantic model.")
