@@ -560,8 +560,9 @@ class TestResolveAllServiceProfiles:
 class TestLoadConfig:
     """Integration tests for the complete load_config function."""
 
-    def test_loads_defaults_only(self, tmp_path: Path) -> None:
-        """Test loading with no config files."""
+    def test_loads_code_defaults_only(self, tmp_path: Path) -> None:
+        """Test loading with no config files uses code defaults."""
+        defaults_file = tmp_path / "nonexistent_defaults.yaml"
         config_file = tmp_path / "nonexistent.yaml"
         prompts_file = tmp_path / "nonexistent_prompts.yaml"
 
@@ -579,6 +580,7 @@ class TestLoadConfig:
 
         with mock.patch.dict(os.environ, clean_env, clear=True):
             config = load_config(
+                defaults_file_path=str(defaults_file),
                 config_file_path=str(config_file),
                 prompts_file_path=str(prompts_file),
                 load_dotenv_file=False,
@@ -587,17 +589,18 @@ class TestLoadConfig:
         assert config.model == "gemini/gemini-2.5-pro"
         assert config.database_url == "sqlite+aiosqlite:///family_assistant.db"
 
-    def test_yaml_overrides_defaults(self, tmp_path: Path) -> None:
-        """Test that YAML config overrides defaults."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text(
+    def test_defaults_yaml_overrides_code_defaults(self, tmp_path: Path) -> None:
+        """Test that defaults.yaml overrides code defaults."""
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(
             yaml.dump({
-                "model": "custom-model",
-                "server_url": "http://custom.example.com",
+                "model": "defaults-model",
+                "server_url": "http://defaults.example.com",
             })
         )
+        config_file = tmp_path / "nonexistent_config.yaml"
         prompts_file = tmp_path / "prompts.yaml"
-        prompts_file.write_text(yaml.dump({"system_prompt": "Custom prompt"}))
+        prompts_file.write_text(yaml.dump({"system_prompt": "Test prompt"}))
 
         env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
         env_to_clear.extend([
@@ -612,13 +615,60 @@ class TestLoadConfig:
 
         with mock.patch.dict(os.environ, clean_env, clear=True):
             config = load_config(
+                defaults_file_path=str(defaults_file),
                 config_file_path=str(config_file),
                 prompts_file_path=str(prompts_file),
                 load_dotenv_file=False,
             )
 
-        assert config.model == "custom-model"
-        assert config.server_url == "http://custom.example.com"
+        assert config.model == "defaults-model"
+        assert config.server_url == "http://defaults.example.com"
+
+    def test_config_yaml_overrides_defaults_yaml(self, tmp_path: Path) -> None:
+        """Test that config.yaml (operator) overrides defaults.yaml (shipped)."""
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(
+            yaml.dump({
+                "model": "defaults-model",
+                "server_url": "http://defaults.example.com",
+                "database_url": "sqlite:///defaults.db",
+            })
+        )
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            yaml.dump({
+                "model": "operator-model",
+                # server_url not specified - should use defaults.yaml value
+            })
+        )
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(yaml.dump({"system_prompt": "Test prompt"}))
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                defaults_file_path=str(defaults_file),
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        # config.yaml should override defaults.yaml for model
+        assert config.model == "operator-model"
+        # server_url should come from defaults.yaml (not overridden)
+        assert config.server_url == "http://defaults.example.com"
+        # database_url should come from defaults.yaml (not overridden)
+        assert config.database_url == "sqlite:///defaults.db"
 
     def test_env_vars_override_yaml(self, tmp_path: Path) -> None:
         """Test that environment variables override YAML config."""
