@@ -1,0 +1,70 @@
+# Operator Configuration for Family Assistant
+#
+# This file contains operator-specific settings that override the defaults
+# shipped with the application (defaults.yaml).
+#
+# Copy this file to config.yaml and customize as needed.
+# Settings in config.yaml take precedence over defaults.yaml.
+# Environment variables take precedence over both.
+#
+# Configuration Priority (lowest to highest):
+# 1. Code defaults
+# 2. defaults.yaml (shipped with app)
+# 3. config.yaml (this file, operator-provided)
+# 4. Environment variables
+# 5. CLI arguments
+
+# --- Timezone ---
+# Override the default timezone for the application
+# default_profile_settings:
+#   processing_config:
+#     timezone: "America/New_York"
+
+# --- LLM Model ---
+# Override the default LLM model
+# Or use the LLM_MODEL environment variable
+# default_profile_settings:
+#   processing_config:
+#     retry_config:
+#       primary:
+#         provider: "google"
+#         model: "gemini-2.5-pro"
+#       fallback:
+#         provider: "openai"
+#         model: "gpt-4o"
+
+# --- Calendar Configuration ---
+# Configure CalDAV or iCal calendar integration
+# Or use CALDAV_* and ICAL_URLS environment variables
+# calendar_config:
+#   caldav:
+#     username: "your_username"
+#     password: "your_password"
+#     calendar_urls:
+#       - "https://calendar.example.com/dav/calendars/user/calendar1/"
+#   ical:
+#     urls:
+#       - "https://calendar.google.com/calendar/ical/example/basic.ics"
+
+# --- Tools Requiring Confirmation ---
+# Override which tools require explicit user confirmation
+# default_profile_settings:
+#   tools_config:
+#     confirm_tools:
+#       - delete_calendar_event
+#       - modify_calendar_event
+
+# --- Camera Configuration ---
+# Configure Reolink cameras for the camera_analyst profile
+# Or use REOLINK_CAMERAS environment variable (JSON format)
+# service_profiles:
+#   - id: "camera_analyst"
+#     processing_config:
+#       camera_config:
+#         backend: "reolink"
+#         cameras_config:
+#           camera1:
+#             host: "192.168.1.100"
+#             username: "admin"
+#             password: "your_password"
+#             name: "Front Door"
