@@ -167,6 +167,17 @@ class TestParseEnvValue:
         result = parse_env_value("123: Alice , 456: Bob", dict)
         assert result == {123: "Alice", 456: "Bob"}
 
+    def test_parse_dict_string_keys(self) -> None:
+        """Test parsing dict with string keys (fallback when int conversion fails)."""
+        result = parse_env_value("model_a:alias_a,model_b:alias_b", dict)
+        assert result == {"model_a": "alias_a", "model_b": "alias_b"}
+
+    def test_parse_dict_mixed_keys_uses_strings(self) -> None:
+        """Test that mixed int/string keys all become strings."""
+        result = parse_env_value("123:Alice,bob:Bob", dict)
+        # Since "bob" can't be int, all keys become strings
+        assert result == {"123": "Alice", "bob": "Bob"}
+
 
 class TestLoadYamlFile:
     """Tests for load_yaml_file function."""
