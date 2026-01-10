@@ -120,6 +120,21 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
 ]
 
 
+def _merge_dicts_inplace(
+    target: dict[str, Any],  # noqa: ANN401
+    source: dict[str, Any],  # noqa: ANN401
+) -> None:
+    """Recursively merge source into target in place.
+
+    This is an internal helper that modifies target directly.
+    """
+    for key, value in source.items():
+        if isinstance(value, dict) and key in target and isinstance(target[key], dict):
+            _merge_dicts_inplace(target[key], value)
+        else:
+            target[key] = copy.deepcopy(value) if isinstance(value, dict) else value
+
+
 def deep_merge_dicts(
     base_dict: dict[str, Any],
     merge_dict: dict[str, Any],  # noqa: ANN401
@@ -134,11 +149,7 @@ def deep_merge_dicts(
         A new dictionary with deeply merged values
     """
     result = copy.deepcopy(base_dict)
-    for key, value in merge_dict.items():
-        if isinstance(value, dict) and key in result and isinstance(result[key], dict):
-            result[key] = deep_merge_dicts(result[key], value)
-        else:
-            result[key] = copy.deepcopy(value) if isinstance(value, dict) else value
+    _merge_dicts_inplace(result, merge_dict)
     return result
 
 
@@ -225,14 +236,20 @@ def parse_env_value(
             return items
 
     if value_type is dict:
-        # Parse as dict with int keys (for chat_id_to_name_map format: "123:Alice,456:Bob")
-        result: dict[int, str] = {}
+        # Parse as dict from "key:value,key:value" format
+        # Try int keys first (for chat_id_to_name_map), fall back to string keys
         pairs = value.split(list_separator)
+        parsed_pairs: list[tuple[str, str]] = []
         for pair in pairs:
             if dict_separator in pair:
                 key_str, val = pair.split(dict_separator, 1)
-                result[int(key_str.strip())] = val.strip()
-        return result
+                parsed_pairs.append((key_str.strip(), val.strip()))
+
+        # Try to convert all keys to int; if any fails, use string keys
+        try:
+            return {int(k): v for k, v in parsed_pairs}
+        except ValueError:
+            return {k: v for k, v in parsed_pairs}
 
     return value
 
