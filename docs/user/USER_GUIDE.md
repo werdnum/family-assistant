@@ -158,10 +158,11 @@ You can ask the assistant a wide variety of things:
   line graphs, scatter plots, pie charts, area charts, and more complex visualizations.
 
 - **Generate Videos:** *Create short videos from text descriptions using the latest AI models:*
+
   - "Generate a video of a futuristic city with flying cars."
   - "Create a video of a puppy playing in the grass, 16:9 aspect ratio."
-  - "Make a 4-second video of ocean waves crashing on rocks."
-  *The assistant will generate the video and provide a link to view it.*
+  - "Make a 4-second video of ocean waves crashing on rocks." *The assistant will generate the video
+    and provide a link to view it.*
 
 - **Interact with Your Smart Home (Home Assistant):** \*If your family uses Home Assistant and it's
   connected to the assistant, you can control devices with your voice: \*"Turn on the kitchen
@@ -485,5 +486,7 @@ various tasks with dark mode support and mobile optimization.
 - [Scheduling and Task Management Guide](scheduling.md) - Detailed guide on using reminders,
   callbacks, and automated scripts
 - [Scripting Guide](scripting.md) - Learn how to write automation scripts for the assistant
+- [Browser Automation Guide](browser_automation.md) - Guide to using `/browse` for complex web
+  interactions
 
 We hope you find your family assistant helpful!

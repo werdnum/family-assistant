@@ -99,8 +99,8 @@ The following environment variables are the most important for getting started:
 - `ALLOWED_USER_IDS`: A comma-separated list of Telegram user IDs that are allowed to interact with
   the bot.
 
-For a full list of environment variables, see the `load_config` function in
-`src/family_assistant/__main__.py`.
+For a full list of environment variables, see the
+[Configuration Reference](docs/operations/CONFIGURATION_REFERENCE.md).
 
 ## Usage
 
@@ -178,3 +178,33 @@ The project uses Alembic for database migrations.
   ```bash
   alembic upgrade head
   ```
+
+## Documentation
+
+### For Users
+
+- **[Quick Start Guide](docs/user/QUICK_START.md)** - Get started in 5 minutes
+- **[Features Overview](docs/user/FEATURES.md)** - Complete feature catalog
+- **[User Guide](docs/user/USER_GUIDE.md)** - Comprehensive usage documentation
+- **[FAQ](docs/user/FAQ.md)** - Frequently asked questions
+- **[Scheduling](docs/user/scheduling.md)** - Reminders and scheduled tasks
+- **[Scripting](docs/user/scripting.md)** - Automation with scripts
+- **[Camera Integration](docs/user/camera_integration.md)** - Security camera features
+- **[Browser Automation](docs/user/browser_automation.md)** - Web browsing and automation
+- **[Image Tools](docs/user/image_tools.md)** - Image generation and editing
+
+### For Developers
+
+- **[AGENTS.md](AGENTS.md)** - Development setup and guidelines
+- **[Contributing](CONTRIBUTING.md)** - How to contribute
+- **[Architecture](docs/architecture-diagram.md)** - System architecture
+- **[Style Guide](docs/STYLE_GUIDE.md)** - Code style and conventions
+- **[API Documentation](docs/api/README.md)** - REST API reference
+
+### For Operators
+
+- **[Production Deployment](docs/deployment/PRODUCTION_DEPLOYMENT.md)** - Deploy to production
+- **[Configuration Reference](docs/operations/CONFIGURATION_REFERENCE.md)** - All config options
+- **[Monitoring](docs/operations/MONITORING.md)** - Logging and observability
+- **[Backup & Recovery](docs/operations/BACKUP_RECOVERY.md)** - Data protection
+- **[Runbooks](docs/operations/RUNBOOKS.md)** - Operational procedures
