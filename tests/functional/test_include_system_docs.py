@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from family_assistant.__main__ import load_user_documentation  # noqa: PLC2701
+from family_assistant.config_loader import load_user_documentation
 
 
 def test_load_user_documentation_success(
