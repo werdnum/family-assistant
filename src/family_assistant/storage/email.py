@@ -7,7 +7,7 @@ import uuid  # Add uuid import
 from datetime import datetime  # Added for Pydantic models
 
 import sqlalchemy as sa
-from pydantic import BaseModel, Field  # Added for Pydantic models
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import JSON  # Import generic JSON type
 from sqlalchemy.dialects.postgresql import JSONB  # Import PostgreSQL specific JSONB
 from sqlalchemy.exc import SQLAlchemyError  # Use broader exception
@@ -51,8 +51,7 @@ class ParsedEmailData(BaseModel):
     mailgun_timestamp: str | None = Field(default=None, alias="timestamp")
     mailgun_token: str | None = Field(default=None, alias="token")
 
-    class Config:
-        allow_population_by_field_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 logger = logging.getLogger(__name__)

@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Automation(BaseModel):
@@ -41,7 +41,4 @@ class Automation(BaseModel):
     next_scheduled_at: datetime | None = None
     execution_count: int | None = None
 
-    class Config:
-        """Pydantic model configuration."""
-
-        frozen = True
+    model_config = ConfigDict(frozen=True)

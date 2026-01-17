@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:
     from starlette.datastructures import State
@@ -174,8 +174,7 @@ class SearchResultItem(BaseModel):
     fts_score: float | None = None
     rrf_score: float | None = None
 
-    class Config:
-        orm_mode = True  # Allows creating from ORM-like objects (dict-like rows)
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- Pydantic model for API response ---
