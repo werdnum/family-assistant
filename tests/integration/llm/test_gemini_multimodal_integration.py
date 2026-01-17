@@ -39,55 +39,61 @@ async def test_multimodal_function_response_integration(
     client = GoogleGenAIClient(api_key=api_key, model=model_name)
 
     # We'll simulate a conversation where the assistant "called" a tool
-    # and we provide the result (image).
+    # and we provide the result (image). The color is NOT mentioned anywhere
+    # in the text - the model must see the actual image to know it's red.
 
     attachment = ToolAttachment(
         mime_type="image/png",
         content=RED_DOT_PNG,
-        description="A red dot",
+        description="An image",  # No color hint
         attachment_id="img_1",
     )
 
-    # 1. User asks for image
-    # 2. Assistant calls function (simulated)
-    # 3. Tool returns image
+    # Conversation flow:
+    # 1. User asks for an image and to describe what it shows
+    # 2. Assistant calls get_image function (simulated)
+    # 3. Tool returns image with attachment
+    # 4. Model must describe the color by actually seeing the image
     messages = [
-        UserMessage(content="Generate a red dot image"),
+        UserMessage(
+            content="Use the get_image tool to fetch an image, then describe what "
+            "color the image shows. Be very brief - just state the color."
+        ),
         AssistantMessage(
             tool_calls=[
                 ToolCallItem(
                     id="call_1",
                     type="function",
-                    function=ToolCallFunction(
-                        name="generate_image", arguments='{"prompt": "red dot"}'
-                    ),
+                    function=ToolCallFunction(name="get_image", arguments="{}"),
                 )
             ]
         ),
         ToolMessage(
             tool_call_id="call_1",
-            content="Image created successfully",  # Text fallback
-            name="generate_image",
+            content="Here is the image.",  # No color hint - must come from image
+            name="get_image",
             _attachments=[attachment],
         ),
     ]
 
     try:
-        # We are testing that the API accepts the format we send.
-        # For V2, it should strip the attachment and just send the text result.
-        # For V3, it should send the attachment as inline_data.
-        response = await client.generate_response(messages=messages)
+        # Use tool_choice="none" to force a text response instead of function calls
+        response = await client.generate_response(messages=messages, tool_choice="none")
 
-        # Verify we got a valid response
+        # Verify we got a valid text response
         assert response is not None
-        assert response.content is not None
+        assert response.content is not None, (
+            f"Expected text content but got None. tool_calls={response.tool_calls!r}"
+        )
         assert len(response.content) > 0
 
-        # Optionally check if the model acknowledges the image (only for V3)
-        if should_support_multimodal:
-            # We can't strictly assert the model "sees" it without a flaky LLM check,
-            # but getting a 200 OK response means the API accepted the format.
-            pass
+        # Both V2 and V3 models should see the image and mention "red":
+        # - V3 models receive it as inline_data in the FunctionResponse
+        # - V2 models receive it as an injected user message with the image
+        response_lower = response.content.lower()
+        assert "red" in response_lower, (
+            f"Expected model to mention 'red' color but got: {response.content!r}"
+        )
 
     except Exception as e:
         # If the model doesn't exist or other API error, we might want to know.
