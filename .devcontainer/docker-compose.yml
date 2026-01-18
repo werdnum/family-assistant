@@ -98,7 +98,7 @@ services:
       - HOME=/home/claude
       - UV_CACHE_DIR=/workspace/.cache/uv
       - UV_PYTHON_INSTALL_DIR=/workspace/.python-versions
-      - PYTEST_PARALLELISM=auto
+      - PYTEST_PARALLELISM=${PYTEST_PARALLELISM:-4}
       # Oneshot mode environment variables
       - ONESHOT_MODE=${ONESHOT_MODE:-}
       - ONESHOT_STRICT_EXIT=${ONESHOT_STRICT_EXIT:-}
