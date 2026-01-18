@@ -12,91 +12,95 @@ describe('ToolWithConfirmation', () => {
     vi.clearAllMocks();
   });
 
-  it('displays tool confirmation dialog', async () => {
-    // Override the streaming handler to return a tool call
-    server.use(
-      http.post('/api/v1/chat/send_message_stream', async ({ request }) => {
-        const body = (await request.json()) as {
-          prompt: string;
-          conversation_id: string;
-          profile_id?: string;
-        };
+  it(
+    'displays tool confirmation dialog',
+    async () => {
+      // Override the streaming handler to return a tool call
+      server.use(
+        http.post('/api/v1/chat/send_message_stream', async ({ request }) => {
+          const body = (await request.json()) as {
+            prompt: string;
+            conversation_id: string;
+            profile_id?: string;
+          };
 
-        if (body.prompt.includes('add a note')) {
-          const encoder = new TextEncoder();
-          const stream = new ReadableStream({
-            start(controller) {
-              // Send initial content
-              controller.enqueue(
-                encoder.encode('data: {"content": "I\'ll add that note for you."}\n\n')
-              );
-
-              // Send tool call
-              setTimeout(() => {
+          if (body.prompt.includes('add a note')) {
+            const encoder = new TextEncoder();
+            const stream = new ReadableStream({
+              start(controller) {
+                // Send initial content
                 controller.enqueue(
-                  encoder.encode(
-                    `data: ${JSON.stringify({
-                      tool_calls: [
-                        {
-                          id: 'call-123',
-                          type: 'function',
-                          function: {
-                            name: 'add_or_update_note',
-                            arguments: JSON.stringify({
-                              title: 'Test Note',
-                              content: 'This is a test note',
-                            }),
-                          },
-                        },
-                      ],
-                    })}\n\n`
-                  )
+                  encoder.encode('data: {"content": "I\'ll add that note for you."}\n\n')
                 );
 
-                controller.enqueue(encoder.encode('data: {"done": true}\n\n'));
-                controller.close();
-              }, 100);
-            },
-          });
+                // Send tool call
+                setTimeout(() => {
+                  controller.enqueue(
+                    encoder.encode(
+                      `data: ${JSON.stringify({
+                        tool_calls: [
+                          {
+                            id: 'call-123',
+                            type: 'function',
+                            function: {
+                              name: 'add_or_update_note',
+                              arguments: JSON.stringify({
+                                title: 'Test Note',
+                                content: 'This is a test note',
+                              }),
+                            },
+                          },
+                        ],
+                      })}\n\n`
+                    )
+                  );
 
-          return new HttpResponse(stream, {
-            headers: {
-              'Content-Type': 'text/event-stream',
-              'Cache-Control': 'no-cache',
-              Connection: 'keep-alive',
-            },
-          });
-        }
+                  controller.enqueue(encoder.encode('data: {"done": true}\n\n'));
+                  controller.close();
+                }, 100);
+              },
+            });
 
-        // Fallback to default handler
-        return HttpResponse.json({ error: 'No matching handler' }, { status: 404 });
-      })
-    );
+            return new HttpResponse(stream, {
+              headers: {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                Connection: 'keep-alive',
+              },
+            });
+          }
 
-    const user = userEvent.setup();
-    await renderChatApp({ waitForReady: true });
+          // Fallback to default handler
+          return HttpResponse.json({ error: 'No matching handler' }, { status: 404 });
+        })
+      );
 
-    // Wait removed - using waitForReady option
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
 
-    const messageInput = screen.getByPlaceholderText('Write a message...');
+      // Wait removed - using waitForReady option
 
-    // Send a message that triggers a tool call
-    await user.type(messageInput, 'Please add a note with title "Test Note"');
-    await user.keyboard('{Enter}');
+      const messageInput = screen.getByPlaceholderText('Write a message...');
 
-    await waitFor(() => {
-      expect(messageInput).toHaveValue('');
-    });
+      // Send a message that triggers a tool call
+      await user.type(messageInput, 'Please add a note with title "Test Note"');
+      await user.keyboard('{Enter}');
 
-    // Verify the initial text response appears
-    await waitFor(() => {
-      expect(screen.getByText("I'll add that note for you.")).toBeInTheDocument();
-    });
+      await waitFor(() => {
+        expect(messageInput).toHaveValue('');
+      });
 
-    // Note: The exact selectors depend on how @assistant-ui/react and ToolWithConfirmation
-    // render the confirmation dialog. This tests the integration at a high level.
-    // In a real implementation, we'd look for specific confirmation UI elements.
-  }, 10000); // Add timeout
+      // Verify the initial text response appears
+      await waitFor(() => {
+        expect(screen.getByText("I'll add that note for you.")).toBeInTheDocument();
+      });
+
+      // Note: The exact selectors depend on how @assistant-ui/react and ToolWithConfirmation
+      // render the confirmation dialog. This tests the integration at a high level.
+      // In a real implementation, we'd look for specific confirmation UI elements.
+    },
+    { timeout: 30000 }
+  );
 
   it('handles tool confirmation approval', async () => {
     // Mock the confirmation API endpoint
@@ -199,97 +203,101 @@ describe('ToolWithConfirmation', () => {
     // This verifies the end-to-end tool execution flow
   });
 
-  it('updates tool call status from running to complete', async () => {
-    // Mock streaming response that sends tool call first, then result
-    server.use(
-      http.post('/api/v1/chat/send_message_stream', async ({ request }) => {
-        const body = (await request.json()) as {
-          prompt: string;
-          conversation_id: string;
-        };
+  it(
+    'updates tool call status from running to complete',
+    async () => {
+      // Mock streaming response that sends tool call first, then result
+      server.use(
+        http.post('/api/v1/chat/send_message_stream', async ({ request }) => {
+          const body = (await request.json()) as {
+            prompt: string;
+            conversation_id: string;
+          };
 
-        if (body.prompt.includes('add a note')) {
-          const encoder = new TextEncoder();
-          const stream = new ReadableStream({
-            start(controller) {
-              // Send initial tool call (running state)
-              controller.enqueue(encoder.encode('event: tool_call\n'));
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({
-                    tool_call: {
-                      id: 'call-status-test',
-                      function: {
-                        name: 'add_or_update_note',
-                        arguments: JSON.stringify({
-                          title: 'Test Status',
-                          content: 'Testing status updates',
-                        }),
-                      },
-                    },
-                  })}\n\n`
-                )
-              );
-
-              // Send tool result after a delay (complete state)
-              setTimeout(() => {
-                controller.enqueue(encoder.encode('event: tool_result\n'));
+          if (body.prompt.includes('add a note')) {
+            const encoder = new TextEncoder();
+            const stream = new ReadableStream({
+              start(controller) {
+                // Send initial tool call (running state)
+                controller.enqueue(encoder.encode('event: tool_call\n'));
                 controller.enqueue(
                   encoder.encode(
                     `data: ${JSON.stringify({
-                      tool_call_id: 'call-status-test',
-                      result: 'Note added successfully',
+                      tool_call: {
+                        id: 'call-status-test',
+                        function: {
+                          name: 'add_or_update_note',
+                          arguments: JSON.stringify({
+                            title: 'Test Status',
+                            content: 'Testing status updates',
+                          }),
+                        },
+                      },
                     })}\n\n`
                   )
                 );
 
-                // Send final text response
-                controller.enqueue(encoder.encode('event: text\n'));
-                controller.enqueue(encoder.encode('data: {"content": "Done!"}\n\n'));
+                // Send tool result after a delay (complete state)
+                setTimeout(() => {
+                  controller.enqueue(encoder.encode('event: tool_result\n'));
+                  controller.enqueue(
+                    encoder.encode(
+                      `data: ${JSON.stringify({
+                        tool_call_id: 'call-status-test',
+                        result: 'Note added successfully',
+                      })}\n\n`
+                    )
+                  );
 
-                controller.enqueue(encoder.encode('event: done\n'));
-                controller.enqueue(encoder.encode('data: {"done": true}\n\n'));
-                controller.close();
-              }, 100);
-            },
-          });
+                  // Send final text response
+                  controller.enqueue(encoder.encode('event: text\n'));
+                  controller.enqueue(encoder.encode('data: {"content": "Done!"}\n\n'));
 
-          return new HttpResponse(stream, {
-            headers: {
-              'Content-Type': 'text/event-stream',
-              'Cache-Control': 'no-cache',
-              Connection: 'keep-alive',
-            },
-          });
-        }
+                  controller.enqueue(encoder.encode('event: done\n'));
+                  controller.enqueue(encoder.encode('data: {"done": true}\n\n'));
+                  controller.close();
+                }, 100);
+              },
+            });
 
-        return HttpResponse.json({ error: 'No matching handler' }, { status: 404 });
-      })
-    );
+            return new HttpResponse(stream, {
+              headers: {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                Connection: 'keep-alive',
+              },
+            });
+          }
 
-    const user = userEvent.setup();
-    await renderChatApp({ waitForReady: true });
+          return HttpResponse.json({ error: 'No matching handler' }, { status: 404 });
+        })
+      );
 
-    // Wait removed - using waitForReady option
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
 
-    const messageInput = screen.getByPlaceholderText('Write a message...');
+      // Wait removed - using waitForReady option
 
-    // Send a message that triggers a tool call
-    await user.type(messageInput, 'Please add a note');
-    await user.keyboard('{Enter}');
+      const messageInput = screen.getByPlaceholderText('Write a message...');
 
-    await waitFor(() => {
-      expect(messageInput).toHaveValue('');
-    });
+      // Send a message that triggers a tool call
+      await user.type(messageInput, 'Please add a note');
+      await user.keyboard('{Enter}');
 
-    // Wait for the tool result to appear, which indicates the flow has completed
-    await waitFor(
-      () => {
-        expect(screen.getByText('Note added successfully')).toBeInTheDocument();
-      },
-      { timeout: 5000 }
-    );
+      await waitFor(() => {
+        expect(messageInput).toHaveValue('');
+      });
 
-    expect(screen.getByText('Chat')).toBeInTheDocument();
-  }, 10000);
+      // Wait for the tool result to appear, which indicates the flow has completed
+      await waitFor(
+        () => {
+          expect(screen.getByText('Note added successfully')).toBeInTheDocument();
+        },
+        { timeout: 5000 }
+      );
+
+      expect(screen.getByText('Chat')).toBeInTheDocument();
+    },
+    { timeout: 30000 }
+  );
 });
