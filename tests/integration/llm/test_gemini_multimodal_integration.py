@@ -54,10 +54,13 @@ async def test_multimodal_function_response_integration(
     # 2. Assistant calls get_image function (simulated)
     # 3. Tool returns image with attachment
     # 4. Model must describe the color by actually seeing the image
+    # Use constrained prompt to get deterministic output
     messages = [
         UserMessage(
-            content="Use the get_image tool to fetch an image, then describe what "
-            "color the image shows. Be very brief - just state the color."
+            content="Use the get_image tool to fetch an image, then identify the "
+            "primary color. Reply with ONLY one word from this list: "
+            "red, blue, green, yellow, orange, purple, black, white, pink, brown. "
+            "Nothing else, just the single color word."
         ),
         AssistantMessage(
             tool_calls=[
@@ -87,22 +90,26 @@ async def test_multimodal_function_response_integration(
         )
         assert len(response.content) > 0
 
-        # Both V2 and V3 models should see the image and mention "red":
+        # Both V2 and V3 models should see the image and respond with "red":
         # - V3 models receive it as inline_data in the FunctionResponse
         # - V2 models receive it as an injected user message with the image
-        response_lower = response.content.lower()
+        # The constrained prompt should ensure the model picks from the allowed list
+        response_lower = response.content.lower().strip()
         assert "red" in response_lower, (
-            f"Expected model to mention 'red' color but got: {response.content!r}"
+            f"Expected model to respond with 'red' but got: {response.content!r}"
         )
 
     except Exception as e:
         # If the model doesn't exist or other API error, we might want to know.
         # But specifically we are looking for 400 Bad Request due to malformed payload.
-        if "400" in str(e) or "invalid" in str(e).lower():
+        error_str = str(e).lower()
+        if "400" in str(e) or "invalid" in error_str:
             pytest.fail(f"API rejected the payload for model {model_name}: {e}")
         elif "404" in str(e):
             pytest.skip(
                 f"Model {model_name} not found or not available to this API key"
             )
+        elif "429" in str(e) or "quota" in error_str or "rate" in error_str:
+            pytest.skip(f"API quota exhausted for model {model_name}: {e}")
         else:
             raise e
