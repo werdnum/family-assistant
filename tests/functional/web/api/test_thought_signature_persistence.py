@@ -137,12 +137,6 @@ async def llm_integration_client(
         yield client
 
 
-def _check_quota_error(response_text: str) -> None:
-    """Skip test if response indicates Gemini quota exhaustion."""
-    if "429" in response_text and "quota" in response_text.lower():
-        pytest.skip("Skipping test - Gemini API quota exhausted")
-
-
 @pytest.mark.llm_integration
 async def test_multiturn_conversation_with_tool_calls_preserves_thought_signatures(
     llm_integration_client: AsyncClient,
@@ -165,7 +159,6 @@ async def test_multiturn_conversation_with_tool_calls_preserves_thought_signatur
         "/api/v1/chat/send_message",
         json={"prompt": "Use Python to calculate 5 + 5. Use the execute_script tool."},
     )
-    _check_quota_error(response1.text)
     assert response1.status_code == 200, f"Turn 1 failed: {response1.text}"
     data1 = response1.json()
     assert "tool_calls" in data1, "Expected tool_calls in Turn 1"
@@ -175,7 +168,6 @@ async def test_multiturn_conversation_with_tool_calls_preserves_thought_signatur
         "/api/v1/chat/send_message",
         json={"prompt": "Now calculate 10 + 10, also using Python."},
     )
-    _check_quota_error(response2.text)
     assert response2.status_code == 200, f"Turn 2 failed: {response2.text}"
 
 
@@ -200,11 +192,9 @@ async def test_streaming_multiturn_with_tool_calls_reproduces_bug(
         "/api/v1/chat/send_message_stream",
         json={"prompt": "Use Python to calculate 5 + 5. Use the execute_script tool."},
     ) as response1:
-        response1_body = await response1.aread()
-        _check_quota_error(response1_body.decode())
-        assert response1.status_code == 200, f"Turn 1 failed: {response1_body.decode()}"
+        assert response1.status_code == 200, f"Turn 1 failed: {await response1.aread()}"
 
-        for line in response1_body.decode().split("\n"):
+        async for line in response1.aiter_lines():
             if line.startswith("data: "):
                 data_str = line[6:]
                 if data_str.strip() and data_str != "[DONE]":
@@ -225,12 +215,10 @@ async def test_streaming_multiturn_with_tool_calls_reproduces_bug(
         "/api/v1/chat/send_message_stream",
         json={"prompt": "Now calculate 10 + 10 using Python."},
     ) as response2:
-        response2_body = await response2.aread()
-        _check_quota_error(response2_body.decode())
         # This is where the bug manifests
         assert response2.status_code == 200, (
             f"Turn 2 failed (BUG REPRODUCED - corrupted thought signature): "
-            f"{response2_body.decode()}"
+            f"{await response2.aread()}"
         )
 
 
@@ -258,7 +246,6 @@ async def test_multiturn_conversation_non_streaming_preserves_thought_signatures
         "/api/v1/chat/send_message",
         json={"prompt": "use Python to calculate 1 + 1"},
     )
-    _check_quota_error(response1.text)
     assert response1.status_code == 200
 
     # Turn 2: Continue conversation - would fail without provider_metadata fix
@@ -267,5 +254,4 @@ async def test_multiturn_conversation_non_streaming_preserves_thought_signatures
         "/api/v1/chat/send_message",
         json={"prompt": "thanks!"},
     )
-    _check_quota_error(response2.text)
     assert response2.status_code == 200
