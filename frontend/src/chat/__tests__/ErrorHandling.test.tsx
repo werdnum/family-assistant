@@ -1,12 +1,13 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
-import { vi } from 'vitest';
+import { describe, it, beforeEach, expect, vi } from 'vitest';
 import { resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
 
-describe('ErrorHandling', () => {
+// Run sequentially to avoid MSW handler conflicts with parallel tests
+describe.sequential('ErrorHandling', () => {
   beforeEach(() => {
     resetLocalStorageMock();
     vi.clearAllMocks();
@@ -23,22 +24,22 @@ describe('ErrorHandling', () => {
     const user = userEvent.setup();
     await renderChatApp({ waitForReady: true });
 
-    // Wait removed - using waitForReady option
-
     const messageInput = screen.getByPlaceholderText('Write a message...');
 
     // Try to send a message that will fail
     await user.type(messageInput, 'This should fail');
     await user.keyboard('{Enter}');
 
-    // The @assistant-ui/react runtime should handle the error gracefully
-    // We can't predict the exact error UI, but the app shouldn't crash
-    // Wait removed - using waitForReady option
-
-    // Chat interface should still be present and functional
-    expect(screen.getByText('Chat')).toBeInTheDocument();
-    expect(messageInput).toBeInTheDocument();
-  }, 10000); // Add timeout
+    // Give the runtime time to process the error
+    await waitFor(
+      () => {
+        // Chat interface should still be present and functional after error
+        expect(screen.getByText('Chat')).toBeInTheDocument();
+        expect(messageInput).toBeInTheDocument();
+      },
+      { timeout: 5000 }
+    );
+  }, 30000); // Increased timeout for parallel test runs
 
   it('handles API server errors', async () => {
     // Mock 500 server error
