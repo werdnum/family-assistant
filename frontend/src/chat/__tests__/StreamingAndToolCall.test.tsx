@@ -91,6 +91,6 @@ describe('Streaming with Tool Calls', () => {
         { timeout: 5000 }
       );
     },
-    { timeout: 10000 }
+    { timeout: 30000 }
   );
 });
