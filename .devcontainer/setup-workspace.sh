@@ -15,9 +15,9 @@ if [ "$CONTAINER_ROLE" = "backend" ]; then
     WAITED=0
 
     echo "Backend mode: waiting for workspace setup by claude container..."
-    while [ ! -f "$WORKTREE_DIR/.venv/bin/python" ]; do
+    while [ ! -f "$WORKTREE_DIR/.venv/.ready" ]; do
         if [ $WAITED -ge $MAX_WAIT ]; then
-            echo "ERROR: Timeout waiting for workspace at $WORKTREE_DIR/.venv/bin/python"
+            echo "ERROR: Timeout waiting for workspace at $WORKTREE_DIR/.venv/.ready"
             echo "       Start the claude container first to set up the workspace."
             exit 1
         fi
@@ -215,7 +215,7 @@ if [ -f "pyproject.toml" ]; then
     
     # Install dependencies using uv sync to respect lock file
     echo "Installing Python dependencies..."
-    uv sync --extra dev
+    uv sync --extra dev && touch .venv/.ready
 
     uv pip install poethepoet pytest-xdist pre-commit
     
@@ -246,6 +246,8 @@ fi
 if [ -f "pyproject.toml" ] && grep -q "playwright" pyproject.toml; then
     # Ensure playwright cache directory has correct permissions
     # The volume mount may have created it with wrong ownership
+    # Note: This block requires running as root to work.
+    # Current docker-compose configuration runs as user 1001.
     PLAYWRIGHT_CACHE="${PLAYWRIGHT_BROWSERS_PATH:-/home/claude/.cache/playwright-browsers}"
     if [ "$RUNNING_AS_ROOT" = "true" ]; then
         mkdir -p "$PLAYWRIGHT_CACHE"
