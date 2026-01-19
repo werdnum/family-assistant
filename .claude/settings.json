@@ -1,12 +1,4 @@
 {
-  "extraKnownMarketplaces": {
-    "werdnum-plugins": {
-      "source": {
-        "source": "github",
-        "repo": "werdnum/claude-code-plugins"
-      }
-    }
-  },
   "hooks": {
     "SessionStart": [
       {
@@ -28,6 +20,13 @@
     "development-agents@werdnum-plugins": true,
     "python-utils@werdnum-plugins": true,
     "pyright-lsp@werdnum-plugins": true
+  },
+  "extraKnownMarketplaces": {
+    "werdnum-plugins": {
+      "source": {
+        "source": "github",
+        "repo": "werdnum/claude-code-plugins"
+      }
+    }
   }
 }
-

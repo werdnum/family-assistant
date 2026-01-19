@@ -82,9 +82,16 @@ def _format_duration(duration_seconds: int | None) -> str:
     return f"{seconds}s"
 
 
-# Fixed 720p quality - good compromise between file size and quality
-# Works well for both LLM analysis and human viewing
-VIDEO_FORMAT = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]"
+# Format selection with generous fallbacks for various sites
+# Prefers 720p mp4 but falls back to best available for sites like Instagram
+# that don't provide separate streams or standard formats
+VIDEO_FORMAT = (
+    "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/"  # Best: separate streams, mp4
+    "bestvideo[height<=720]+bestaudio/"  # Fallback: any format separate streams
+    "best[height<=720][ext=mp4]/"  # Combined stream mp4
+    "best[height<=720]/"  # Combined stream any format
+    "best"  # Ultimate fallback: best available
+)
 AUDIO_FORMAT = "bestaudio[ext=m4a]/bestaudio/best"
 
 
