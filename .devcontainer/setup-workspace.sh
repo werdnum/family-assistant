@@ -4,6 +4,40 @@ set -e
 # Ensure uv is in PATH and include user paths and PostgreSQL binaries
 export PATH="/workspace/main/.venv/bin:/home/claude/.npm-global/bin:/home/claude/.deno/bin:/home/claude/.local/bin:/root/.local/bin:/usr/lib/postgresql/17/bin:$PATH"
 
+# Role detection: defaults to claude for full setup
+CONTAINER_ROLE="${CONTAINER_ROLE:-claude}"
+echo "Container role: $CONTAINER_ROLE"
+
+# Backend: wait for workspace, skip Claude-specific setup
+if [ "$CONTAINER_ROLE" = "backend" ]; then
+    WORKTREE_DIR="/workspace/${WORKTREE_NAME:-main}"
+    MAX_WAIT=300
+    WAITED=0
+
+    echo "Backend mode: waiting for workspace setup by claude container..."
+    while [ ! -f "$WORKTREE_DIR/.venv/bin/python" ]; do
+        if [ $WAITED -ge $MAX_WAIT ]; then
+            echo "ERROR: Timeout waiting for workspace at $WORKTREE_DIR/.venv/bin/python"
+            echo "       Start the claude container first to set up the workspace."
+            exit 1
+        fi
+        echo "Waiting for workspace setup... ($WAITED/$MAX_WAIT sec)"
+        sleep 5
+        WAITED=$((WAITED + 5))
+    done
+
+    # Verify the venv is usable
+    if ! "$WORKTREE_DIR/.venv/bin/python" --version >/dev/null 2>&1; then
+        echo "ERROR: Virtual environment exists but is not usable"
+        exit 1
+    fi
+
+    echo "Workspace ready, starting backend..."
+    cd "$WORKTREE_DIR"
+    source .venv/bin/activate
+    exec "$@"
+fi
+
 echo "Starting workspace setup..."
 
 # Create claude user with UID 1001 if needed
@@ -181,7 +215,7 @@ if [ -f "pyproject.toml" ]; then
     
     # Install dependencies using uv sync to respect lock file
     echo "Installing Python dependencies..."
-    uv sync --extra dev --extra reolink
+    uv sync --extra dev
 
     uv pip install poethepoet pytest-xdist pre-commit
     
@@ -210,13 +244,25 @@ fi
 # Install Playwright browsers if needed
 # In CI, they should already be pre-installed, but ensure they're available
 if [ -f "pyproject.toml" ] && grep -q "playwright" pyproject.toml; then
+    # Ensure playwright cache directory has correct permissions
+    # The volume mount may have created it with wrong ownership
+    PLAYWRIGHT_CACHE="${PLAYWRIGHT_BROWSERS_PATH:-/home/claude/.cache/playwright-browsers}"
+    if [ "$RUNNING_AS_ROOT" = "true" ]; then
+        mkdir -p "$PLAYWRIGHT_CACHE"
+        chown -R claude:claude "$(dirname "$PLAYWRIGHT_CACHE")"
+    fi
+
     if [ "$IS_CI_CONTAINER" = "true" ]; then
         echo "Verifying Playwright browsers are installed..."
         # Just verify they exist, don't re-download
         .venv/bin/playwright install chromium --dry-run || .venv/bin/playwright install chromium || true
     else
         echo "Installing Playwright browsers for Python environment..."
-        .venv/bin/playwright install chromium || true
+        if [ "$RUNNING_AS_ROOT" = "true" ]; then
+            runuser -u claude -- .venv/bin/playwright install chromium || echo "Failed to install browsers"
+        else
+            .venv/bin/playwright install chromium || echo "Failed to install browsers"
+        fi
     fi
 fi
 
@@ -302,8 +348,11 @@ NPX_PATH=$(which npx 2>/dev/null || echo "npx")
 # Configure MCP servers with full paths (bypass wrapper to avoid git pull)
 CLAUDE_BIN="/home/claude/.npm-global/bin/claude"
 # Remove existing servers if any exist
-if $CLAUDE_BIN mcp list 2>/dev/null | grep -q ":"; then
-    for server in $($CLAUDE_BIN mcp list | cut -d: -f1); do
+# Filter out status messages like "Checking MCP server health..." by only matching lines
+# that look like server entries (start with alphanumeric, no spaces before colon)
+MCP_SERVERS=$($CLAUDE_BIN mcp list 2>/dev/null | grep -E '^[a-zA-Z0-9_-]+:' | cut -d: -f1 || true)
+if [ -n "$MCP_SERVERS" ]; then
+    for server in $MCP_SERVERS; do
         $CLAUDE_BIN mcp remove --scope user "$server" || true
     done
 fi
