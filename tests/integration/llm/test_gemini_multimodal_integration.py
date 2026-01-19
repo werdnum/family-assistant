@@ -1,19 +1,27 @@
 """Integration tests for multimodal function responses with Gemini."""
 
-import base64
+import io
 import os
 
 import pytest
+from PIL import Image
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import AssistantMessage, ToolMessage, UserMessage
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.tools.types import ToolAttachment
 
-# A simple 1x1 red pixel PNG
-RED_DOT_PNG = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
-)
+
+def create_solid_color_png(color: tuple[int, int, int], size: int = 100) -> bytes:
+    """Create a solid color PNG image."""
+    img = Image.new("RGB", (size, size), color)
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+# A solid red square image (100x100 pixels)
+RED_IMAGE_PNG = create_solid_color_png((255, 0, 0))
 
 
 @pytest.mark.llm_integration
@@ -44,7 +52,7 @@ async def test_multimodal_function_response_integration(
 
     attachment = ToolAttachment(
         mime_type="image/png",
-        content=RED_DOT_PNG,
+        content=RED_IMAGE_PNG,
         description="An image",  # No color hint
         attachment_id="img_1",
     )
