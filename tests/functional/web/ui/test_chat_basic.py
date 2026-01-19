@@ -238,11 +238,11 @@ async def test_multiple_messages_in_conversation(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_empty_conversation_state(
-    web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
+    web_test_fixture_readonly: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
 ) -> None:
     """Test the chat UI in empty state with no conversations."""
-    page = web_test_fixture.page
-    chat_page = ChatPage(page, web_test_fixture.base_url)
+    page = web_test_fixture_readonly.page
+    chat_page = ChatPage(page, web_test_fixture_readonly.base_url)
 
     # Navigate to chat
     await chat_page.navigate_to_chat()
@@ -258,11 +258,11 @@ async def test_empty_conversation_state(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_responsive_sidebar_mobile(
-    web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
+    web_test_fixture_readonly: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
 ) -> None:
     """Test sidebar behavior on mobile viewport."""
-    page = web_test_fixture.page
-    chat_page = ChatPage(page, web_test_fixture.base_url)
+    page = web_test_fixture_readonly.page
+    chat_page = ChatPage(page, web_test_fixture_readonly.base_url)
 
     # Set mobile viewport
     await page.set_viewport_size({"width": 375, "height": 667})
@@ -377,11 +377,11 @@ async def test_responsive_sidebar_mobile(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_mobile_chat_input_visibility(
-    web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
+    web_test_fixture_readonly: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
 ) -> None:
     """Test that chat input is visible and accessible on mobile viewport without scrolling."""
-    page = web_test_fixture.page
-    chat_page = ChatPage(page, web_test_fixture.base_url)
+    page = web_test_fixture_readonly.page
+    chat_page = ChatPage(page, web_test_fixture_readonly.base_url)
 
     # Configure mock LLM response
     mock_llm_client.rules = [

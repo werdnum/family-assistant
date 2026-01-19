@@ -198,10 +198,10 @@ async def test_search_notes_flow(web_test_fixture: WebTestFixture) -> None:
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_empty_state_display(web_test_fixture: WebTestFixture) -> None:
+async def test_empty_state_display(web_test_fixture_readonly: WebTestFixture) -> None:
     """Test that empty state is shown when no notes exist."""
-    page = web_test_fixture.page
-    notes_page = NotesPage(page, web_test_fixture.base_url)
+    page = web_test_fixture_readonly.page
+    notes_page = NotesPage(page, web_test_fixture_readonly.base_url)
 
     # Navigate to notes list
     await notes_page.navigate_to_notes_list()

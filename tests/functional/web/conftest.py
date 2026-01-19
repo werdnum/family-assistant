@@ -430,8 +430,7 @@ async def _create_web_assistant(
     print(f"Starting {log_prefix}API services on port {api_port}...")
     start_task = asyncio.create_task(assistant.start_services())
 
-    # Wait for server
-    await asyncio.sleep(2)
+    # Wait for server to be ready (wait_for_server polls the health endpoint)
     print(f"Waiting for {log_prefix}server...")
 
     try:

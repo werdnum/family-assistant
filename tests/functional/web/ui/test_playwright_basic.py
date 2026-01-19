@@ -7,10 +7,12 @@ from tests.functional.web.conftest import WebTestFixture
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_homepage_loads_with_playwright(web_test_fixture: WebTestFixture) -> None:
+async def test_homepage_loads_with_playwright(
+    web_test_fixture_readonly: WebTestFixture,
+) -> None:
     """Test that the homepage loads successfully using Playwright."""
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
 
     # Register console error handler BEFORE navigation to catch all errors
     console_errors = []
@@ -51,10 +53,10 @@ async def test_homepage_loads_with_playwright(web_test_fixture: WebTestFixture) 
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_notes_page_accessible(web_test_fixture: WebTestFixture) -> None:
+async def test_notes_page_accessible(web_test_fixture_readonly: WebTestFixture) -> None:
     """Test that the notes page is accessible and renders correctly."""
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
 
     # Navigate to notes page
     await page.goto(f"{base_url}/notes")
@@ -87,12 +89,14 @@ async def test_notes_page_accessible(web_test_fixture: WebTestFixture) -> None:
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_backend_api_accessible(web_test_fixture: WebTestFixture) -> None:
+async def test_backend_api_accessible(
+    web_test_fixture_readonly: WebTestFixture,
+) -> None:
     """Test that the backend API is accessible from the frontend."""
-    page = web_test_fixture.page
+    page = web_test_fixture_readonly.page
 
     # Get the actual API port from the assistant's configuration
-    api_port = web_test_fixture.assistant.config.server_port
+    api_port = web_test_fixture_readonly.assistant.config.server_port
 
     # Make a direct API request through the page context to the backend directly
     response = await page.request.get(f"http://localhost:{api_port}/health")
@@ -110,7 +114,7 @@ async def test_backend_api_accessible(web_test_fixture: WebTestFixture) -> None:
 
     # Verify the Vite proxy is working by checking a health endpoint through Vite server
     vite_proxied_response = await page.request.get(
-        f"{web_test_fixture.base_url}/health"
+        f"{web_test_fixture_readonly.base_url}/health"
     )
     assert vite_proxied_response.ok, "API should be accessible through Vite proxy"
 
@@ -123,10 +127,12 @@ async def test_backend_api_accessible(web_test_fixture: WebTestFixture) -> None:
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_page_navigation_elements(web_test_fixture: WebTestFixture) -> None:
+async def test_page_navigation_elements(
+    web_test_fixture_readonly: WebTestFixture,
+) -> None:
     """Test that main navigation elements are present and functional."""
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
 
     # Navigate to notes page which has traditional navigation
     await page.goto(f"{base_url}/notes")
@@ -155,10 +161,10 @@ async def test_page_navigation_elements(web_test_fixture: WebTestFixture) -> Non
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_responsive_design(web_test_fixture: WebTestFixture) -> None:
+async def test_responsive_design(web_test_fixture_readonly: WebTestFixture) -> None:
     """Test that the UI is responsive and works on mobile viewport."""
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
 
     # Set mobile viewport
     await page.set_viewport_size({"width": 375, "height": 667})
@@ -231,10 +237,10 @@ async def test_add_note_with_javascript(web_test_fixture: WebTestFixture) -> Non
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_css_and_styling_loads(web_test_fixture: WebTestFixture) -> None:
+async def test_css_and_styling_loads(web_test_fixture_readonly: WebTestFixture) -> None:
     """Test that CSS stylesheets are properly loaded through Vite."""
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
 
     # Navigate to homepage
     await page.goto(base_url)
