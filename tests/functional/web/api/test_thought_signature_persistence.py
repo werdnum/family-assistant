@@ -49,7 +49,7 @@ async def llm_integration_processing_service(
     # Create real LLM client with thinking model
     llm_client = GoogleGenAIClient(
         api_key=os.getenv("GEMINI_API_KEY", "test-key"),
-        model="gemini-3-pro-preview",  # Production model that manifests the bug
+        model="gemini-3-flash-preview",  # V3 model with thought signatures, cheaper than pro
     )
 
     # Set up tools provider
