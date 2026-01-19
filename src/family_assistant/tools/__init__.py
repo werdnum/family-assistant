@@ -121,6 +121,10 @@ from family_assistant.tools.infrastructure import (
     ToolNotFoundError,
     ToolsProvider,
 )
+from family_assistant.tools.media_download import (
+    MEDIA_DOWNLOAD_TOOLS_DEFINITION,
+    download_media_tool,
+)
 from family_assistant.tools.mock_image_tools import (
     MOCK_IMAGE_TOOLS_DEFINITION,
     annotate_image_tool,
@@ -240,6 +244,8 @@ __all__ = [
     "jq_query_tool",
     "VIDEO_GENERATION_TOOLS_DEFINITION",
     "generate_video_tool",
+    "MEDIA_DOWNLOAD_TOOLS_DEFINITION",
+    "download_media_tool",
     "COMPUTER_USE_TOOLS_DEFINITION",
     "computer_use_click_at",
     "computer_use_drag_and_drop",
@@ -335,6 +341,8 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "create_vega_chart": create_vega_chart_tool,
     # Video generation tools
     "generate_video": generate_video_tool,
+    # Media download tools
+    "download_media": download_media_tool,
     # Data manipulation tools
     "jq_query": jq_query_tool,
     # Automation tools (unified event + schedule)
@@ -383,6 +391,7 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
     + DATA_VISUALIZATION_TOOLS_DEFINITION
     + DATA_MANIPULATION_TOOLS_DEFINITION
     + VIDEO_GENERATION_TOOLS_DEFINITION
+    + MEDIA_DOWNLOAD_TOOLS_DEFINITION
     + MOCK_IMAGE_TOOLS_DEFINITION
     + COMPUTER_USE_TOOLS_DEFINITION
 )

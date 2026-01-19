@@ -107,6 +107,8 @@ dependencies = [
     "anyio>=4.9.0",
     # Reolink camera support
     "reolink-aio>=0.16.0",
+    # Media download support
+    "yt-dlp>=2024.0.0",
 ]
 
 [project.optional-dependencies]
