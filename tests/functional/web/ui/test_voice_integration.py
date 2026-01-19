@@ -23,11 +23,11 @@ from tests.functional.web.conftest import WebTestFixture
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_voice_page_loads_with_start_button(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test that the voice page loads correctly with a visible Start button."""
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
 
     await page.goto(f"{base_url}/voice")
 
@@ -39,14 +39,16 @@ async def test_voice_page_loads_with_start_button(
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_tool_execution_api_list_notes(web_test_fixture: WebTestFixture) -> None:
+async def test_tool_execution_api_list_notes(
+    web_test_fixture_readonly: WebTestFixture,
+) -> None:
     """Test the tool execution API endpoint directly.
 
     This tests the backend's /api/tools/execute/{name} endpoint which is
     called by the voice mode frontend when Gemini requests tool execution.
     """
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
 
     # Call the tool execution API directly via page.evaluate
     result = await page.evaluate(
@@ -73,11 +75,11 @@ async def test_tool_execution_api_list_notes(web_test_fixture: WebTestFixture) -
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_tool_execution_api_nonexistent_tool(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test that the tool execution API returns an error for unknown tools."""
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
 
     result = await page.evaluate(
         """async (baseUrl) => {
@@ -133,13 +135,15 @@ async def _setup_mock_token_endpoint(page: Page, base_url: str) -> None:
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_voice_start_fetches_token(web_test_fixture: WebTestFixture) -> None:
+async def test_voice_start_fetches_token(
+    web_test_fixture_readonly: WebTestFixture,
+) -> None:
     """Test that clicking Start fetches an ephemeral token.
 
     Note: This only tests up to the token fetch, not the full WebSocket flow.
     """
-    page = web_test_fixture.page
-    base_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    base_url = web_test_fixture_readonly.base_url
 
     # Set up mock token endpoint
     await _setup_mock_token_endpoint(page, base_url)

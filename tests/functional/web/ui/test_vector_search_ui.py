@@ -29,15 +29,19 @@ TEST_DOC_3_METADATA = {"category": "methodology", "difficulty": "intermediate"}
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_react_vector_search_page_loads(web_test_fixture: WebTestFixture) -> None:
+async def test_react_vector_search_page_loads(
+    web_test_fixture_readonly: WebTestFixture,
+) -> None:
     """Test that the React Vector Search page loads successfully."""
-    page = web_test_fixture.page
+    page = web_test_fixture_readonly.page
 
     # Navigate to the React vector search page
-    await page.goto(f"{web_test_fixture.base_url}/vector-search")
+    await page.goto(f"{web_test_fixture_readonly.base_url}/vector-search")
 
     # Verify we're on the vector search page
-    await expect(page).to_have_url(f"{web_test_fixture.base_url}/vector-search")
+    await expect(page).to_have_url(
+        f"{web_test_fixture_readonly.base_url}/vector-search"
+    )
 
     # Verify page has loaded by checking for key elements
     await page.wait_for_selector("h1", timeout=10000)
@@ -201,13 +205,13 @@ async def test_vector_search_with_filters(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_vector_search_empty_query_handling(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test that empty search queries are handled properly."""
-    page = web_test_fixture.page
+    page = web_test_fixture_readonly.page
 
     # Navigate to vector search
-    await page.goto(f"{web_test_fixture.base_url}/vector-search")
+    await page.goto(f"{web_test_fixture_readonly.base_url}/vector-search")
     await page.wait_for_selector("h1:has-text('Vector Search')", timeout=10000)
 
     # Try to search without entering a query

@@ -32,15 +32,17 @@ TEST_DOC_METADATA_JSON = json.dumps(TEST_DOC_METADATA)
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_react_documents_page_loads(web_test_fixture: WebTestFixture) -> None:
+async def test_react_documents_page_loads(
+    web_test_fixture_readonly: WebTestFixture,
+) -> None:
     """Test that the React Documents page loads successfully."""
-    page = web_test_fixture.page
+    page = web_test_fixture_readonly.page
 
     # Navigate to the React documents page
-    await page.goto(f"{web_test_fixture.base_url}/documents")
+    await page.goto(f"{web_test_fixture_readonly.base_url}/documents")
 
     # Verify we're on the documents page
-    await expect(page).to_have_url(f"{web_test_fixture.base_url}/documents")
+    await expect(page).to_have_url(f"{web_test_fixture_readonly.base_url}/documents")
 
     # Wait for React app to mount - check for our custom attribute
     await page.wait_for_function(

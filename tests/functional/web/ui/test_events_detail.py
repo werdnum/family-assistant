@@ -11,11 +11,11 @@ from tests.functional.web.conftest import WebTestFixture
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_detail_page_loads(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test that events detail page loads with non-existent ID."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to a non-existent event detail page
     test_event_id = "test_event_123"
@@ -40,11 +40,11 @@ async def test_events_detail_page_loads(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_navigation_between_list_and_detail(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test navigation between list and detail views."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Start on events list
     await page.goto(f"{server_url}/events")
@@ -71,11 +71,11 @@ async def test_events_navigation_between_list_and_detail(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_detail_view_structure(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test event detail view structure."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate directly to an event detail (will handle non-existent gracefully)
     await page.goto(f"{server_url}/events/test_event_id")
@@ -161,11 +161,11 @@ async def test_events_with_actual_data(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_404_handling(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test 404 event handling works properly."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to a definitely non-existent event
     await page.goto(f"{server_url}/events/definitely_not_an_event_id_12345")
@@ -191,11 +191,11 @@ async def test_events_404_handling(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_loading_states(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test that loading states display properly."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to events page
     await page.goto(f"{server_url}/events")
