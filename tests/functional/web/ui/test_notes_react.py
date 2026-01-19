@@ -11,16 +11,18 @@ from tests.functional.web.pages.notes_page import NotesPage
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_react_notes_page_loads(web_test_fixture: WebTestFixture) -> None:
+async def test_react_notes_page_loads(
+    web_test_fixture_readonly: WebTestFixture,
+) -> None:
     """Test that the React notes page loads successfully."""
-    page = web_test_fixture.page
-    notes_page = NotesPage(page, web_test_fixture.base_url)
+    page = web_test_fixture_readonly.page
+    notes_page = NotesPage(page, web_test_fixture_readonly.base_url)
 
     # Navigate to the React notes page
     await notes_page.navigate_to_notes_list()
 
     # Verify we're on the notes page
-    await expect(page).to_have_url(f"{web_test_fixture.base_url}/notes")
+    await expect(page).to_have_url(f"{web_test_fixture_readonly.base_url}/notes")
 
     # Verify page has loaded by checking for key elements
     # The page should either show the empty state or notes table
@@ -240,10 +242,12 @@ async def test_react_navigation_between_pages(web_test_fixture: WebTestFixture) 
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_react_empty_state_display(web_test_fixture: WebTestFixture) -> None:
+async def test_react_empty_state_display(
+    web_test_fixture_readonly: WebTestFixture,
+) -> None:
     """Test that React UI shows appropriate empty state when no notes exist."""
-    page = web_test_fixture.page
-    notes_page = NotesPage(page, web_test_fixture.base_url)
+    page = web_test_fixture_readonly.page
+    notes_page = NotesPage(page, web_test_fixture_readonly.base_url)
 
     # Navigate to notes list
     await notes_page.navigate_to_notes_list()
@@ -410,10 +414,12 @@ async def test_react_concurrent_operations(web_test_fixture: WebTestFixture) -> 
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_react_ui_error_handling(web_test_fixture: WebTestFixture) -> None:
+async def test_react_ui_error_handling(
+    web_test_fixture_readonly: WebTestFixture,
+) -> None:
     """Test that the React UI handles errors gracefully."""
-    page = web_test_fixture.page
-    notes_page = NotesPage(page, web_test_fixture.base_url)
+    page = web_test_fixture_readonly.page
+    notes_page = NotesPage(page, web_test_fixture_readonly.base_url)
 
     # Test navigation to non-existent note for editing
     non_existent_title = "This_Note_Does_Not_Exist_12345"

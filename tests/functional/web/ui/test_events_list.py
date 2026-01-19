@@ -14,11 +14,11 @@ from tests.functional.web.pages.events_page import EventsPage
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_page_basic_loading(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test basic functionality of the events page React interface."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Set up console error tracking
     console_errors = []
@@ -73,11 +73,11 @@ async def test_events_page_basic_loading(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_list_page_loads(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test that events list page loads successfully."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to events page
     await page.goto(f"{server_url}/events")
@@ -99,11 +99,11 @@ async def test_events_list_page_loads(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_list_filters_interface(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test filter form interactions on events page."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to events page
     await page.goto(f"{server_url}/events")
@@ -147,11 +147,11 @@ async def test_events_list_filters_interface(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_filters_url_state_management(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test that filter state is preserved in URL parameters."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to events page with query parameters
     await page.goto(
@@ -187,11 +187,11 @@ async def test_events_filters_url_state_management(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_filters_url_state_persistence_after_reload(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test that filter state persists after page reload."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to events page
     await page.goto(f"{server_url}/events")
@@ -236,11 +236,11 @@ async def test_events_filters_url_state_persistence_after_reload(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_list_display_structure(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test events list display and structure."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to events page
     await page.goto(f"{server_url}/events")
@@ -291,11 +291,11 @@ async def test_events_list_display_structure(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_pagination_interface(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test pagination controls when available."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to events page
     await page.goto(f"{server_url}/events")
@@ -329,11 +329,11 @@ async def test_events_pagination_interface(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_responsive_design(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test responsive design of events page."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to events page
     await page.goto(f"{server_url}/events")
@@ -379,11 +379,11 @@ async def test_events_responsive_design(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_api_error_handling(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test handling of API errors in events page."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to events page
     await page.goto(f"{server_url}/events")
@@ -408,11 +408,11 @@ async def test_events_api_error_handling(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_clear_filters_functionality(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test clear filters functionality works properly."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to events page
     await page.goto(f"{server_url}/events")
@@ -475,11 +475,11 @@ async def test_events_clear_filters_functionality(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_page_load_triggers_api_call(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test that page load triggers initial API call."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Monitor API requests
     api_requests = []
@@ -505,11 +505,11 @@ async def test_events_page_load_triggers_api_call(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_filter_changes_trigger_api_calls(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test that filter changes trigger API calls correctly."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Monitor API requests
     api_requests = []
@@ -554,11 +554,11 @@ async def test_events_filter_changes_trigger_api_calls(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_empty_state_handling(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test empty state handling works properly."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to events page (might be empty initially)
     await page.goto(f"{server_url}/events")

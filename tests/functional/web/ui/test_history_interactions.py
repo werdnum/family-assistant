@@ -35,11 +35,11 @@ async def wait_for_history_page_loaded(page: Page, timeout: int = 15000) -> bool
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_history_filters_interface(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test filter form interactions on history page."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to history page
     history_page = HistoryPage(page, server_url)
@@ -130,11 +130,11 @@ async def test_history_filters_interface(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_history_filters_url_state_preservation(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test that filter state is preserved in URL parameters."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to history page with query parameters
     await page.goto(f"{server_url}/history?interface_type=web&page=1")
@@ -160,11 +160,11 @@ async def test_history_filters_url_state_preservation(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_history_interface_filter_functionality(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test interface type filter functionality with real API integration."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to history page with URL parameters to auto-expand filters
     await page.goto(f"{server_url}/history?interface_type=all")
@@ -220,11 +220,11 @@ async def test_history_interface_filter_functionality(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_history_date_range_filtering(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test date range filtering functionality."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to history page
     await page.goto(f"{server_url}/history?interface_type=all")
@@ -277,11 +277,11 @@ async def test_history_date_range_filtering(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_history_conversation_id_filter(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test conversation ID filtering functionality."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to history page with URL parameters to auto-expand filters
     await page.goto(f"{server_url}/history?interface_type=all")
@@ -322,11 +322,11 @@ async def test_history_conversation_id_filter(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_history_combined_filters_interaction(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test interaction of multiple filters applied together."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to history page
     await page.goto(f"{server_url}/history?interface_type=all")
@@ -391,11 +391,11 @@ async def test_history_combined_filters_interaction(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_history_filter_validation_and_error_handling(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test filter validation and error handling."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to history page with invalid date format in URL
     await page.goto(f"{server_url}/history?date_from=invalid-date")
@@ -428,11 +428,11 @@ async def test_history_filter_validation_and_error_handling(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_history_filter_state_management(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test comprehensive filter state management."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to history page with URL parameters to auto-expand filters
     await page.goto(f"{server_url}/history?interface_type=all")

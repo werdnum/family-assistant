@@ -46,11 +46,11 @@ async def wait_for_history_page_loaded(page: Page, timeout: int = 15000) -> bool
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_history_page_basic_loading(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test basic functionality of the history page React interface."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Set up console error tracking
     console_errors = []
@@ -160,11 +160,11 @@ async def test_history_page_basic_loading(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_history_page_css_styling(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test that CSS styling is properly applied to React components."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to history page
     await page.goto(f"{server_url}/history")
@@ -187,11 +187,11 @@ async def test_history_page_css_styling(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_history_conversations_list_display(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test conversations list display and metadata."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to history page
     await page.goto(f"{server_url}/history")
@@ -258,11 +258,11 @@ async def test_history_conversations_list_display(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_history_conversation_navigation(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test navigation to conversation detail view."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to history page
     await page.goto(f"{server_url}/history")
@@ -318,11 +318,11 @@ async def test_history_conversation_navigation(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_history_conversation_detail_view(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test conversation detail view functionality."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Try to navigate directly to a conversation detail (will show error for non-existent ID)
     test_conversation_id = "test_conversation_id"
@@ -358,11 +358,11 @@ async def test_history_conversation_detail_view(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_history_pagination_interface(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test pagination controls when available."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to history page
     await page.goto(f"{server_url}/history")
@@ -391,11 +391,11 @@ async def test_history_pagination_interface(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_history_responsive_design(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test responsive design of history page."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate to history page
     await page.goto(f"{server_url}/history")
@@ -472,11 +472,11 @@ async def test_history_api_error_handling(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_history_message_display_structure(
-    web_test_fixture: WebTestFixture,
+    web_test_fixture_readonly: WebTestFixture,
 ) -> None:
     """Test message display structure in conversation view."""
-    page = web_test_fixture.page
-    server_url = web_test_fixture.base_url
+    page = web_test_fixture_readonly.page
+    server_url = web_test_fixture_readonly.base_url
 
     # Navigate directly to a conversation (will handle non-existent gracefully)
     await page.goto(f"{server_url}/history/test_conv_id")

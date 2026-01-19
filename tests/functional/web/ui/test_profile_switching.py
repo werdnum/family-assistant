@@ -16,11 +16,11 @@ class TestProfileSwitchingUI:
     """Test suite for the profile switching UI functionality."""
 
     async def test_profile_selector_renders(
-        self, web_test_fixture: WebTestFixture
+        self, web_test_fixture_readonly: WebTestFixture
     ) -> None:
         """Test that the profile selector renders in the chat interface."""
-        page = web_test_fixture.page
-        base_url = web_test_fixture.base_url
+        page = web_test_fixture_readonly.page
+        base_url = web_test_fixture_readonly.base_url
 
         await page.goto(f"{base_url}/chat")
 
@@ -35,11 +35,11 @@ class TestProfileSwitchingUI:
         await expect(profile_selector).to_be_visible()
 
     async def test_profile_dropdown_opens(
-        self, web_test_fixture: WebTestFixture
+        self, web_test_fixture_readonly: WebTestFixture
     ) -> None:
         """Test that clicking the profile selector opens the dropdown."""
-        page = web_test_fixture.page
-        base_url = web_test_fixture.base_url
+        page = web_test_fixture_readonly.page
+        base_url = web_test_fixture_readonly.base_url
 
         await page.goto(f"{base_url}/chat")
 
@@ -53,11 +53,11 @@ class TestProfileSwitchingUI:
         await expect(dropdown_content).to_be_visible()
 
     async def test_profile_options_displayed(
-        self, web_test_fixture: WebTestFixture
+        self, web_test_fixture_readonly: WebTestFixture
     ) -> None:
         """Test that profile options are displayed in the dropdown."""
-        page = web_test_fixture.page
-        base_url = web_test_fixture.base_url
+        page = web_test_fixture_readonly.page
+        base_url = web_test_fixture_readonly.base_url
 
         await page.goto(f"{base_url}/chat")
 
@@ -83,11 +83,11 @@ class TestProfileSwitchingUI:
         assert has_assistant, f"Assistant profile not found in options: {option_texts}"
 
     async def test_profile_selection_changes_ui(
-        self, web_test_fixture: WebTestFixture
+        self, web_test_fixture_readonly: WebTestFixture
     ) -> None:
         """Test that selecting a profile updates the UI."""
-        page = web_test_fixture.page
-        base_url = web_test_fixture.base_url
+        page = web_test_fixture_readonly.page
+        base_url = web_test_fixture_readonly.base_url
 
         await page.goto(f"{base_url}/chat")
 
@@ -163,11 +163,11 @@ class TestProfileSwitchingUI:
         )
 
     async def test_profile_persistence_across_refresh(
-        self, web_test_fixture: WebTestFixture
+        self, web_test_fixture_readonly: WebTestFixture
     ) -> None:
         """Test that profile selection persists across page refreshes."""
-        page = web_test_fixture.page
-        base_url = web_test_fixture.base_url
+        page = web_test_fixture_readonly.page
+        base_url = web_test_fixture_readonly.base_url
 
         await page.goto(f"{base_url}/chat")
 
@@ -232,11 +232,11 @@ class TestProfileSwitchingUI:
             assert True  # Profile switching behavior verified
 
     async def test_profile_selector_loading_state(
-        self, web_test_fixture: WebTestFixture
+        self, web_test_fixture_readonly: WebTestFixture
     ) -> None:
         """Test that profile selector handles loading states properly."""
-        page = web_test_fixture.page
-        base_url = web_test_fixture.base_url
+        page = web_test_fixture_readonly.page
+        base_url = web_test_fixture_readonly.base_url
 
         await page.goto(f"{base_url}/chat")
 
@@ -279,11 +279,11 @@ class TestProfileSwitchingUI:
         await expect(dropdown).to_be_visible(timeout=5000)
 
     async def test_profile_selector_error_handling(
-        self, web_test_fixture: WebTestFixture
+        self, web_test_fixture_readonly: WebTestFixture
     ) -> None:
         """Test that profile selector handles API errors gracefully."""
-        page = web_test_fixture.page
-        base_url = web_test_fixture.base_url
+        page = web_test_fixture_readonly.page
+        base_url = web_test_fixture_readonly.base_url
 
         # Intercept API calls and simulate error
         await page.route(
@@ -302,11 +302,11 @@ class TestProfileSwitchingUI:
         await expect(error_indicator).to_be_visible(timeout=5000)
 
     async def test_profile_descriptions_shown(
-        self, web_test_fixture: WebTestFixture
+        self, web_test_fixture_readonly: WebTestFixture
     ) -> None:
         """Test that profile descriptions are shown in the dropdown."""
-        page = web_test_fixture.page
-        base_url = web_test_fixture.base_url
+        page = web_test_fixture_readonly.page
+        base_url = web_test_fixture_readonly.base_url
 
         await page.goto(f"{base_url}/chat")
 
@@ -326,11 +326,11 @@ class TestProfileSwitchingUI:
         assert content_length > 50, "Profile descriptions appear to be missing"
 
     async def test_profile_selector_accessibility(
-        self, web_test_fixture: WebTestFixture
+        self, web_test_fixture_readonly: WebTestFixture
     ) -> None:
         """Test that profile selector is accessible."""
-        page = web_test_fixture.page
-        base_url = web_test_fixture.base_url
+        page = web_test_fixture_readonly.page
+        base_url = web_test_fixture_readonly.base_url
 
         await page.goto(f"{base_url}/chat")
 

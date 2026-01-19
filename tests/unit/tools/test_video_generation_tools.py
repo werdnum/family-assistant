@@ -5,7 +5,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from google.genai import types
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.tools.types import (
@@ -69,6 +68,9 @@ async def test_generate_video_tool_success(
     mock_exec_context: MagicMock, mock_genai_client: MagicMock
 ) -> None:
     """Test successful video generation."""
+    # Lazy import to avoid xdist worker crashes from concurrent genai initialization
+    from google.genai import types  # noqa: PLC0415 - intentional lazy import
+
     with (
         patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
         patch("asyncio.sleep", AsyncMock()),
