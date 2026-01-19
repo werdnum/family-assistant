@@ -250,6 +250,8 @@ default_profile_settings:
       - "transform_image" # Transform existing images based on instructions
       # Video generation tools
       - "generate_video" # Generate videos from text using AI
+      # Media download tools
+      - "download_media" # Download video/audio from URLs using yt-dlp
       # Image manipulation tools
       - "highlight_image" # Highlight or annotate areas in images
     enable_mcp_server_ids: # Explicitly define MCP servers for the default profile

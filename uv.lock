@@ -1590,6 +1590,7 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
     { name = "vl-convert-python" },
     { name = "vobject" },
+    { name = "yt-dlp" },
 ]
 
 [package.optional-dependencies]
@@ -1763,6 +1764,7 @@ requires-dist = [
     { name = "vl-convert-python", specifier = ">=1.6.0" },
     { name = "vobject", specifier = ">=0.9.6" },
     { name = "watchdog", marker = "extra == 'dev'", specifier = ">=3.0.0" },
+    { name = "yt-dlp", specifier = ">=2024.0.0" },
 ]
 provides-extras = ["dev", "local-embeddings", "pgserver"]
 
@@ -4907,6 +4909,7 @@ dependencies = [
     { name = "requests", version = "2.32.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy'" },
     { name = "six" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/2b/e3/75b125ccc4336835a90d055fab8434443354017ebdb8dfe3a27cdd3d9410/pywebpush-2.1.1.tar.gz", hash = "sha256:d548a6346adfe49ba97c94ce1ae9438b45f0dbbfed4bac043a16ea28d8e25901", size = 27191, upload-time = "2026-01-05T19:13:06.504Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9f/b8/7e9a3fb661cfd1e851d721b41c4952fc8edaa0cc657820d19170265b1a93/pywebpush-2.1.1-py3-none-any.whl", hash = "sha256:1012f4e9fae54b63d6039e15e3f3f0eb5ffaffde579bc7d9a6ab5944f2fafe0e", size = 22669, upload-time = "2025-10-14T18:18:30.704Z" },
 ]
@@ -6777,6 +6780,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b0/32/f60d87a99c05a53604c58f20f670c7ea6262b55e0bbeb836ffe4550b248b/youtube_transcript_api-1.0.3.tar.gz", hash = "sha256:902baf90e7840a42e1e148335e09fe5575dbff64c81414957aea7038e8a4db46", size = 2153252, upload-time = "2025-03-25T18:14:21.119Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f0/44/40c03bb0f8bddfb9d2beff2ed31641f52d96c287ba881d20e0c074784ac2/youtube_transcript_api-1.0.3-py3-none-any.whl", hash = "sha256:d1874e57de65cf14c9d7d09b2b37c814d6287fa0e770d4922c4cd32a5b3f6c47", size = 2169911, upload-time = "2025-03-25T18:14:19.416Z" },
+]
+
+[[package]]
+name = "yt-dlp"
+version = "2025.12.8"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/14/77/db924ebbd99d0b2b571c184cb08ed232cf4906c6f9b76eed763cd2c84170/yt_dlp-2025.12.8.tar.gz", hash = "sha256:b773c81bb6b71cb2c111cfb859f453c7a71cf2ef44eff234ff155877184c3e4f", size = 3088947, upload-time = "2025-12-08T00:16:01.649Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6e/2f/98c3596ad923f8efd32c90dca62e241e8ad9efcebf20831173c357042ba0/yt_dlp-2025.12.8-py3-none-any.whl", hash = "sha256:36e2584342e409cfbfa0b5e61448a1c5189e345cf4564294456ee509e7d3e065", size = 3291464, upload-time = "2025-12-08T00:15:58.556Z" },
 ]
 
 [[package]]
