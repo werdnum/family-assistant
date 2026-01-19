@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, TypedDict
+from urllib.parse import urlparse
 
 import yt_dlp
-from yt_dlp.utils import DownloadError
+from yt_dlp.utils import DownloadError, sanitize_filename
 
 from family_assistant.tools.types import (
     ToolAttachment,
@@ -19,6 +21,52 @@ from family_assistant.tools.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Allowed URL schemes - only http(s) to prevent local file access via file:// etc.
+ALLOWED_URL_SCHEMES = {"http", "https"}
+
+
+def _validate_url(url: str) -> str | None:
+    """
+    Validate that a URL is safe to download from.
+
+    Args:
+        url: The URL to validate.
+
+    Returns:
+        None if valid, error message string if invalid.
+    """
+    try:
+        parsed = urlparse(url)
+        if not parsed.scheme:
+            return "URL must include a scheme (e.g., https://)"
+        if parsed.scheme.lower() not in ALLOWED_URL_SCHEMES:
+            return f"URL scheme '{parsed.scheme}' not allowed. Only http/https URLs are supported."
+        if not parsed.netloc:
+            return "URL must include a host"
+        return None
+    except Exception as e:
+        return f"Invalid URL format: {e}"
+
+
+def _sanitize_title(title: str) -> str:
+    """
+    Sanitize a title for use as a filename.
+
+    Uses yt-dlp's sanitize_filename and handles edge cases like
+    leading/trailing dots and consecutive dots.
+    """
+    # Use yt-dlp's sanitization first
+    safe = sanitize_filename(title, restricted=False)
+    # Remove leading/trailing dots and spaces
+    safe = safe.strip(". ")
+    # Collapse multiple dots to single dot
+    safe = re.sub(r"\.{2,}", ".", safe)
+    # If empty or contains no alphanumeric characters (yt-dlp converts some chars
+    # to Unicode look-alikes like ⧸ for /), use fallback
+    if not safe or not any(c.isalnum() for c in safe):
+        return "download"
+    return safe
 
 
 def _format_duration(duration_seconds: int | None) -> str:
@@ -185,22 +233,37 @@ def _download_media(
             ext = "m4a" if audio_only else info.get("ext", "mp4")
             title = info.get("title", "download")
             title_truncated = str(title)[:100] if title else "download"
-            # Sanitize filename
-            safe_title = "".join(
-                c for c in title_truncated if c.isalnum() or c in " -_."
-            )
+            safe_title = _sanitize_title(title_truncated)
             filepath = str(Path(output_dir) / f"{safe_title}.{ext}")
 
+        # Remember expected stem for matching
+        expected_stem = Path(filepath).stem if filepath else None
         file_path = Path(filepath)
 
         # Find the actual file if the exact path doesn't exist
         if not file_path.exists():
+            output_path = Path(output_dir)
+            candidates: list[Path] = []
             # Look for any media file in the output directory
             for ext in ["mp4", "m4a", "webm", "mkv", "mp3", "opus"]:
-                matches = list(Path(output_dir).glob(f"*.{ext}"))
-                if matches:
-                    file_path = matches[0]
-                    break
+                candidates.extend(output_path.glob(f"*.{ext}"))
+
+            # Prefer files whose stem matches the expected stem
+            if expected_stem and candidates:
+                stem_matches = [p for p in candidates if p.stem == expected_stem]
+                if stem_matches:
+                    candidates = stem_matches
+
+            if candidates:
+                if len(candidates) > 1:
+                    logger.warning(
+                        "Multiple downloaded media files found in %s; "
+                        "choosing the most recently modified. Candidates: %s",
+                        output_dir,
+                        [str(p) for p in candidates],
+                    )
+                # Choose the most recently modified candidate
+                file_path = max(candidates, key=lambda p: p.stat().st_mtime)
 
         if not file_path.exists():
             raise FileNotFoundError(f"Downloaded file not found at {filepath}")
@@ -238,6 +301,18 @@ async def download_media_tool(
     logger.info(
         f"download_media_tool called: url={url}, audio_only={audio_only}, metadata_only={metadata_only}"
     )
+
+    # Validate URL scheme to prevent local file access
+    url_error = _validate_url(url)
+    if url_error:
+        return ToolResult(
+            text=f"Invalid URL: {url_error}",
+            data={
+                "error": "invalid_url",
+                "error_type": "validation_failed",
+                "message": url_error,
+            },
+        )
 
     # Get file size limits from config
     max_file_size, _ = get_attachment_limits(exec_context)
@@ -327,11 +402,46 @@ async def download_media_tool(
         logger.warning(f"yt-dlp download error: {error_msg}")
         return ToolResult(
             text=f"Download failed: {error_msg}",
-            data={"error": "download_failed", "message": error_msg},
+            data={
+                "error": "download_failed",
+                "error_type": "yt_dlp_error",
+                "message": error_msg,
+            },
+        )
+    except ValueError as e:
+        error_msg = str(e)
+        logger.warning(f"Value error in download_media_tool: {error_msg}")
+        # Determine specific error type
+        if "metadata" in error_msg.lower():
+            error_type = "metadata_extraction_failed"
+        elif "download" in error_msg.lower():
+            error_type = "download_failed"
+        else:
+            error_type = "validation_error"
+        return ToolResult(
+            text=f"Failed: {error_msg}",
+            data={
+                "error": error_msg,
+                "error_type": error_type,
+            },
+        )
+    except FileNotFoundError as e:
+        error_msg = str(e)
+        logger.warning(f"File not found in download_media_tool: {error_msg}")
+        return ToolResult(
+            text=f"Download failed: {error_msg}",
+            data={
+                "error": "file_not_found",
+                "error_type": "post_download_error",
+                "message": error_msg,
+            },
         )
     except Exception as e:
         logger.error(f"Error in download_media_tool: {e}", exc_info=True)
         return ToolResult(
             text=f"An error occurred: {str(e)}",
-            data={"error": str(e)},
+            data={
+                "error": str(e),
+                "error_type": "unexpected_error",
+            },
         )

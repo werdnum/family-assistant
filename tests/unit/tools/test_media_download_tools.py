@@ -10,6 +10,8 @@ from yt_dlp.utils import DownloadError
 
 from family_assistant.tools.media_download import (
     MEDIA_DOWNLOAD_TOOLS_DEFINITION,
+    _sanitize_title,  # noqa: PLC2701 - unit tests need direct access to internal helpers
+    _validate_url,  # noqa: PLC2701 - unit tests need direct access to internal helpers
     download_media_tool,
 )
 from family_assistant.tools.types import (
@@ -373,3 +375,120 @@ async def test_download_media_various_formats(
 
         # Cleanup for next iteration
         test_file.unlink()
+
+
+# URL validation tests
+
+
+def test_validate_url_valid_https() -> None:
+    """Test that valid HTTPS URLs pass validation."""
+    assert _validate_url("https://example.com/video") is None
+    assert _validate_url("https://youtube.com/watch?v=abc123") is None
+
+
+def test_validate_url_valid_http() -> None:
+    """Test that valid HTTP URLs pass validation."""
+    assert _validate_url("http://example.com/video") is None
+
+
+def test_validate_url_rejects_file_scheme() -> None:
+    """Test that file:// URLs are rejected to prevent local file access."""
+    error = _validate_url("file:///etc/passwd")
+    assert error is not None
+    assert "scheme" in error.lower()
+    assert "not allowed" in error.lower()
+
+
+def test_validate_url_rejects_ftp_scheme() -> None:
+    """Test that ftp:// URLs are rejected."""
+    error = _validate_url("ftp://ftp.example.com/file.mp4")
+    assert error is not None
+    assert "not allowed" in error.lower()
+
+
+def test_validate_url_rejects_missing_scheme() -> None:
+    """Test that URLs without scheme are rejected."""
+    error = _validate_url("example.com/video")
+    assert error is not None
+    assert "scheme" in error.lower()
+
+
+def test_validate_url_rejects_missing_host() -> None:
+    """Test that URLs without host are rejected."""
+    error = _validate_url("https:///path/only")
+    assert error is not None
+    assert "host" in error.lower()
+
+
+# Filename sanitization tests
+
+
+def test_sanitize_title_normal_title() -> None:
+    """Test sanitization of normal titles."""
+    result = _sanitize_title("My Video Title")
+    assert result == "My Video Title"
+
+
+def test_sanitize_title_with_special_chars() -> None:
+    """Test sanitization removes dangerous characters."""
+    result = _sanitize_title("Video: Test / Something")
+    # Should not contain : or /
+    assert "/" not in result
+    assert result  # Should not be empty
+
+
+def test_sanitize_title_consecutive_dots() -> None:
+    """Test that consecutive dots are collapsed."""
+    result = _sanitize_title("Video...Title")
+    assert ".." not in result
+
+
+def test_sanitize_title_leading_trailing_dots() -> None:
+    """Test that leading/trailing dots are removed."""
+    result = _sanitize_title("...hidden")
+    assert not result.startswith(".")
+
+    result = _sanitize_title("file...")
+    assert not result.endswith(".")
+
+
+def test_sanitize_title_empty_after_sanitization() -> None:
+    """Test that empty titles fallback to 'download'."""
+    result = _sanitize_title("///")
+    assert result == "download"
+
+
+@pytest.mark.asyncio
+async def test_download_media_rejects_file_url(mock_exec_context: MagicMock) -> None:
+    """Test that file:// URLs are rejected at the tool level."""
+    result = await download_media_tool(
+        mock_exec_context,
+        url="file:///etc/passwd",
+    )
+
+    assert isinstance(result, ToolResult)
+    assert result.data is not None
+    assert isinstance(result.data, dict)
+    assert result.data.get("error") == "invalid_url"
+    assert result.data.get("error_type") == "validation_failed"
+
+
+@pytest.mark.asyncio
+async def test_download_media_error_categorization_metadata(
+    mock_exec_context: MagicMock, mock_yt_dlp: MagicMock
+) -> None:
+    """Test that metadata extraction errors have proper categorization."""
+    mock_yt_dlp.extract_info.side_effect = ValueError(
+        "Could not extract metadata from URL"
+    )
+
+    result = await download_media_tool(
+        mock_exec_context,
+        url="https://example.com/video",
+        metadata_only=True,
+    )
+
+    assert isinstance(result, ToolResult)
+    assert result.data is not None
+    assert isinstance(result.data, dict)
+    assert result.data.get("error_type") == "metadata_extraction_failed"
