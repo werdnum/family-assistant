@@ -1,4 +1,3 @@
-version: '3.8'
 services:
   # PostgreSQL database service
   postgres:
@@ -36,11 +35,13 @@ services:
         condition: service_healthy
     working_dir: /workspace/${WORKTREE_NAME:-main}
     user: "1001:1001"
-    command: ["/bin/bash", "-c", "cd /workspace/${WORKTREE_NAME:-main} && source .venv/bin/activate && echo 'Waiting for PostgreSQL...' && for i in {1..30}; do if pg_isready -h postgres -U test; then echo 'PostgreSQL is ready!'; break; fi; sleep 1; done && mkdir -p /var/log/family-assistant && exec poe dev 2>&1 | tee /var/log/family-assistant/dev-server.log"]
+    entrypoint: ["/usr/local/bin/setup-workspace.sh"]
+    command: ["/bin/bash", "-c", "echo 'Waiting for PostgreSQL...' && for i in {1..30}; do if pg_isready -h postgres -U test; then echo 'PostgreSQL is ready!'; break; fi; sleep 1; done && mkdir -p /var/log/family-assistant && exec poe dev 2>&1 | tee /var/log/family-assistant/dev-server.log"]
     ports:
       - "8000:8000" # Backend API
       - "5173:5173" # Frontend dev server
     environment:
+      - CONTAINER_ROLE=backend
       - DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
       - TEST_DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
       - DEV_MODE=true
@@ -92,6 +93,7 @@ services:
     tty: true
     user: "1001:1001"
     environment:
+      - CONTAINER_ROLE=claude
       - DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
       - TEST_DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/test
       - DEV_MODE=true
