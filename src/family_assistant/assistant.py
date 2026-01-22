@@ -577,19 +577,21 @@ class Assistant:
                     retry_config_dict = profile_proc_conf.retry_config.model_dump(
                         exclude_none=True
                     )
-                    # Add shared llm_parameters to both primary and fallback if not already specified
+                    # Add shared llm_parameters as model_parameters to both primary and fallback
+                    # if not already specified. model_parameters is used for pattern-based
+                    # parameter matching (e.g., "openrouter/google/gemini-" -> {params})
                     llm_params = self.config.llm_parameters
-                    if "primary" in retry_config_dict:
-                        for k, v in llm_params.items():
-                            if k not in retry_config_dict["primary"]:
-                                retry_config_dict["primary"][k] = v
+                    if (
+                        "primary" in retry_config_dict
+                        and "model_parameters" not in retry_config_dict["primary"]
+                    ):
+                        retry_config_dict["primary"]["model_parameters"] = llm_params
                     if (
                         "fallback" in retry_config_dict
                         and retry_config_dict["fallback"]
+                        and "model_parameters" not in retry_config_dict["fallback"]
                     ):
-                        for k, v in llm_params.items():
-                            if k not in retry_config_dict["fallback"]:
-                                retry_config_dict["fallback"][k] = v
+                        retry_config_dict["fallback"]["model_parameters"] = llm_params
 
                     # Wrap in a config dict with retry_config key
                     # ast-grep-ignore: no-dict-any - Temporary dict passed to RetryingLLMClient
@@ -611,7 +613,7 @@ class Assistant:
                     client_config = {
                         "model": profile_llm_model,
                         "provider": provider,
-                        **self.config.llm_parameters,
+                        "model_parameters": self.config.llm_parameters,
                     }
 
                     logger.info(
