@@ -461,6 +461,79 @@ class MCPConfig(BaseModel):
     mcpServers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
+class WorkerResourceLimits(BaseModel):
+    """Resource limits for AI worker containers."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    memory_request: str = "512Mi"
+    memory_limit: str = "2Gi"
+    cpu_request: str = "500m"
+    cpu_limit: str = "2000m"
+
+
+class KubernetesBackendConfig(BaseModel):
+    """Kubernetes-specific configuration for AI workers."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    namespace: str = "ml-bot"
+    ai_coder_image: str = "ghcr.io/werdnum/ai-coding-base:latest"
+    service_account: str = "ai-worker"
+    runtime_class: str = "gvisor"
+    job_ttl_seconds: int = 3600
+    # Config/auth mounts (read-only) - names of Kubernetes secrets
+    claude_settings_secret: str | None = "ai-coder-claude-settings"
+    gemini_settings_secret: str | None = "ai-coder-gemini-settings"
+
+
+class DockerBackendConfig(BaseModel):
+    """Docker-specific configuration for AI workers (local development)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    image: str = "ghcr.io/werdnum/ai-coding-base:latest"
+    network: str = "bridge"
+    # Local paths to mount for auth
+    claude_config_path: str | None = None
+    gemini_config_path: str | None = None
+
+
+class AIWorkerConfig(BaseModel):
+    """AI Worker Sandbox configuration.
+
+    Enables spawning isolated AI coding agents (Claude Code or Gemini CLI)
+    to handle complex tasks requiring general-purpose computing.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+
+    # Backend selection
+    backend_type: str = "kubernetes"  # "kubernetes", "docker", "mock"
+
+    # Volume settings
+    workspace_mount_path: str = "/workspace"
+
+    # Execution settings
+    default_timeout_minutes: int = 30
+    max_timeout_minutes: int = 120
+    max_concurrent_workers: int = 3
+
+    # Resource limits
+    resources: WorkerResourceLimits = Field(default_factory=WorkerResourceLimits)
+
+    # Cleanup settings
+    task_retention_hours: int = 48
+
+    # Backend-specific configurations
+    kubernetes: KubernetesBackendConfig | None = Field(
+        default_factory=KubernetesBackendConfig
+    )
+    docker: DockerBackendConfig | None = Field(default_factory=DockerBackendConfig)
+
+
 class OIDCConfig(BaseModel):
     """OpenID Connect authentication configuration."""
 
@@ -537,6 +610,7 @@ class AppConfig(BaseModel):
     message_batching_config: MessageBatchingConfig = Field(
         default_factory=MessageBatchingConfig
     )
+    ai_worker_config: AIWorkerConfig = Field(default_factory=AIWorkerConfig)
 
     # LLM parameters (pattern -> parameters mapping)
     # ast-grep-ignore: no-dict-any - LLM params are provider-specific and genuinely arbitrary

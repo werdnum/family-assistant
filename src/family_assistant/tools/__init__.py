@@ -157,6 +157,16 @@ from family_assistant.tools.video_generation import (
     VIDEO_GENERATION_TOOLS_DEFINITION,
     generate_video_tool,
 )
+from family_assistant.tools.workspace_files import (
+    WORKSPACE_TOOLS_DEFINITION,
+    workspace_delete_tool,
+    workspace_export_notes_tool,
+    workspace_glob_tool,
+    workspace_import_note_tool,
+    workspace_mkdir_tool,
+    workspace_read_tool,
+    workspace_write_tool,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -260,6 +270,15 @@ __all__ = [
     "computer_use_search",
     "computer_use_type_text_at",
     "computer_use_wait_5_seconds",
+    # Workspace file tools
+    "WORKSPACE_TOOLS_DEFINITION",
+    "workspace_read_tool",
+    "workspace_write_tool",
+    "workspace_glob_tool",
+    "workspace_delete_tool",
+    "workspace_mkdir_tool",
+    "workspace_export_notes_tool",
+    "workspace_import_note_tool",
 ]
 
 
@@ -368,6 +387,14 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "search": computer_use_search,
     "type_text_at": computer_use_type_text_at,
     "wait_5_seconds": computer_use_wait_5_seconds,
+    # Workspace file tools
+    "workspace_read": workspace_read_tool,
+    "workspace_write": workspace_write_tool,
+    "workspace_glob": workspace_glob_tool,
+    "workspace_delete": workspace_delete_tool,
+    "workspace_mkdir": workspace_mkdir_tool,
+    "workspace_export_notes": workspace_export_notes_tool,
+    "workspace_import_note": workspace_import_note_tool,
 }
 
 
@@ -394,4 +421,5 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
     + MEDIA_DOWNLOAD_TOOLS_DEFINITION
     + MOCK_IMAGE_TOOLS_DEFINITION
     + COMPUTER_USE_TOOLS_DEFINITION
+    + WORKSPACE_TOOLS_DEFINITION
 )
