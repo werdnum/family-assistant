@@ -233,30 +233,24 @@ Current FA:
 3. Cannot actually run code to process it
 4. Could only offer to "write a script for you"
 
-With AI Worker:
-1. PDF stored as attachment (attachment_id: abc123)
-2. LLM: copy_attachment_to_workspace("abc123", "data/bank-statement.pdf")
-   → Copies file to /workspace/shared/data/bank-statement.pdf
-3. LLM: spawn_worker(
-     task="Parse bank-statement.pdf using tabula-py or pdfplumber.
+With AI Worker (unified storage):
+1. PDF stored directly at /workspace/attachments/ab/abc123.pdf
+2. LLM: spawn_worker(
+     task_description="Parse bank-statement.pdf using tabula-py or pdfplumber.
            Categorize transactions. Create matplotlib pie chart.
            Save chart as spending_by_category.png",
-     context_files=["data/bank-statement.pdf"]
+     attachment_ids=["abc123"]  # Automatically symlinked to task/context/
    )
-   → Creates task, copies PDF to task/context/, spawns Job
-4. Worker runs: extracts tables, categorizes, generates chart
-5. Webhook fires → event wakes LLM
-6. LLM: read_task_result("task-xyz")
-   → Gets output files: spending_by_category.png, analysis.md
-7. LLM: create_attachment_from_workspace("task-xyz", "spending_by_category.png")
-   → Creates attachment from output file
-8. LLM sends chart image to user with summary
+   → Creates task, symlinks PDF to task/context/, spawns Job
+3. Worker runs: reads context/bank-statement.pdf, generates chart
+4. Webhook fires → event wakes LLM
+5. LLM: read_task_result("task-xyz")
+   → Gets output files, can include image directly in response
+6. LLM sends chart image to user with summary
 ```
 
-**Required tools**:
-
-- `copy_attachment_to_workspace` - Move user uploads to workspace
-- `create_attachment_from_workspace` - Create sendable attachment from output
+**Key simplification**: No explicit copy step needed. Attachment IDs passed directly to
+spawn_worker, which creates symlinks automatically.
 
 ### Use Case 2: Note Compilation
 
@@ -310,41 +304,39 @@ User: "Create a script to resize images to 800px wide"
 
 Flow:
 1. LLM: spawn_worker(
-     task="Create Python script resize_images.py that:
+     task_description="Create Python script resize_images.py that:
            - Takes input directory and output directory as args
            - Resizes all images to 800px wide (maintaining aspect ratio)
            - Uses Pillow library
            - Include usage examples in docstring",
-     save_to_shared=True  # Copy outputs to shared/ on success
+     save_to_shared=True  # Copy outputs to shared/scripts/ on success
    )
 
 2. Worker creates /task/output/resize_images.py
 
-3. On success, spawn_worker copies to /workspace/shared/scripts/resize_images.py
+3. On success, FA copies to /workspace/shared/scripts/resize_images.py
 
 4. LLM confirms: "Created resize_images.py. It's saved for future use."
 
 --- Later ---
 
-User: [uploads vacation_photos.zip]
+User: [uploads vacation_photos.zip, attachment_id: "zip123"]
 User: "Resize these for the web"
 
 Flow:
-1. LLM: list_workspace("scripts/")
+1. LLM: list_workspace("shared/scripts/")
    → Sees resize_images.py exists
 
-2. LLM: copy_attachment_to_workspace("zip-id", "data/vacation_photos.zip")
-
-3. LLM: spawn_worker(
-     task="Unzip data/vacation_photos.zip to temp/.
-           Run scripts/resize_images.py temp/ output/.
-           Create output.zip with resized images.",
-     context_files=["data/vacation_photos.zip", "scripts/resize_images.py"]
+2. LLM: spawn_worker(
+     task_description="Unzip the photos, run resize_images.py, create output.zip",
+     attachment_ids=["zip123"],
+     shared_files=["scripts/resize_images.py"]  # Include existing script
    )
+   → Symlinks both zip and script to task/context/
 
-4. Worker runs existing script, creates output.zip
+3. Worker runs existing script, creates output.zip
 
-5. LLM creates attachment from output.zip, sends to user
+4. LLM reads output.zip from task result, sends to user
 ```
 
 **Insight**: Scripts accumulate in workspace, becoming reusable "skills".
@@ -436,41 +428,104 @@ Flow:
 
 ## Bridge Tools
 
-These tools move data between FA's existing systems (attachments, documents, notes) and the
-workspace filesystem.
+With unified storage on the workspace volume, bridge tools are simpler filesystem operations.
+Workers have direct read-only access to `/attachments` and `/documents`, so many operations don't
+require explicit copying.
 
-### copy_attachment_to_workspace
+### link_to_task (internal helper)
 
-Copy an uploaded attachment to the workspace for worker access.
+When `spawn_worker` is called with attachment IDs or document references, the implementation creates
+symlinks in the task's context directory:
 
 ```python
-COPY_ATTACHMENT_TO_WORKSPACE_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "copy_attachment_to_workspace",
-        "description": """Copy an attachment (uploaded file) to the workspace so workers can
-access it. Use this before spawning a worker that needs to process user-uploaded files.
+async def prepare_task_context(
+    task_id: str,
+    attachment_ids: list[str],
+    document_ids: list[str],
+    note_query: str | None,
+) -> dict:
+    """Prepare task context directory with symlinks to source files."""
+    task_dir = f"/workspace/tasks/{task_id}/context"
+    os.makedirs(task_dir, exist_ok=True)
 
-The attachment must exist and be accessible to the current conversation.""",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "attachment_id": {
-                    "type": "string",
-                    "description": "The attachment ID (from upload response or message metadata)."
-                },
-                "destination_path": {
-                    "type": "string",
-                    "description": "Path in /workspace/shared/ to copy to. "
-                    "Parent directories will be created. "
-                    "Example: 'data/input.pdf' or 'uploads/receipt.jpg'"
-                }
+    linked_files = []
+
+    # Symlink attachments
+    for att_id in attachment_ids:
+        src = await get_attachment_path(att_id)  # /workspace/attachments/XX/uuid.ext
+        filename = await get_attachment_filename(att_id)
+        dst = f"{task_dir}/{filename}"
+        os.symlink(src, dst)
+        linked_files.append({"type": "attachment", "path": filename})
+
+    # Symlink documents
+    for doc_id in document_ids:
+        src = await get_document_path(doc_id)  # /workspace/documents/uuid_name.ext
+        filename = os.path.basename(src)
+        dst = f"{task_dir}/{filename}"
+        os.symlink(src, dst)
+        linked_files.append({"type": "document", "path": filename})
+
+    # Export notes as files (these are generated, not symlinked)
+    if note_query:
+        notes = await search_notes(note_query)
+        for note in notes:
+            filename = f"{slugify(note.title)}.md"
+            dst = f"{task_dir}/notes/{filename}"
+            await write_note_as_markdown(note, dst)
+            linked_files.append({"type": "note", "path": f"notes/{filename}"})
+
+    return {"task_id": task_id, "context_files": linked_files}
+```
+
+### spawn_worker (enhanced)
+
+The spawn_worker tool now accepts attachment/document IDs directly:
+
+```python
+SPAWN_WORKER_TOOL_DEFINITION = {
+    # ... existing fields ...
+    "parameters": {
+        "properties": {
+            "task_description": { ... },
+            "attachment_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Attachment IDs to make available to the worker. "
+                "These will be symlinked into the task's context directory."
             },
-            "required": ["attachment_id", "destination_path"]
+            "document_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Document IDs (from search results) to include."
+            },
+            "note_query": {
+                "type": "string",
+                "description": "Search query to find notes to export as markdown files."
+            },
+            # ... rest of parameters ...
         }
     }
 }
 ```
+
+**Example usage**:
+
+```
+User: [uploads bank-statement.pdf, attachment_id: "abc123"]
+User: "Analyze my spending"
+
+LLM: spawn_worker(
+    task_description="Parse the bank statement PDF and create a spending analysis...",
+    attachment_ids=["abc123"],
+    note_query="budget categories"  # Include relevant notes for context
+)
+```
+
+### export_notes_to_workspace
+
+Export notes matching a query to workspace files. Still needed because notes are in the database,
+not the filesystem.
 
 ### export_notes_to_workspace
 
@@ -671,25 +726,30 @@ Based on use cases, the recommended workspace structure:
 
 ## Tool Summary
 
-All tools required for the AI Worker Sandbox system:
+With unified storage, fewer explicit bridge tools are needed. Most data movement happens
+automatically via symlinks when spawning workers.
 
-| Tool                               | Purpose                               | Phase |
-| ---------------------------------- | ------------------------------------- | ----- |
-| **Workspace Operations**           |                                       |       |
-| `read_workspace`                   | Read file from shared workspace       | 1     |
-| `write_workspace`                  | Write file to shared workspace        | 1     |
-| `list_workspace`                   | List workspace directory contents     | 1     |
-| **Bridge Tools (Data Movement)**   |                                       |       |
-| `copy_attachment_to_workspace`     | Copy uploaded file to workspace       | 1     |
-| `export_notes_to_workspace`        | Export notes as markdown files        | 1     |
-| `export_documents_to_workspace`    | Export indexed documents to workspace | 1     |
-| `ingest_from_workspace`            | Add workspace file to document index  | 1     |
-| `create_attachment_from_workspace` | Create sendable attachment from file  | 1     |
-| **Worker Management**              |                                       |       |
-| `spawn_worker`                     | Create K8s Job with AI coder          | 2     |
-| `read_task_result`                 | Get completed task output             | 3     |
-| `list_worker_tasks`                | List tasks for conversation           | 3     |
-| `cancel_worker_task`               | Cancel running task                   | 4     |
+| Tool                               | Purpose                                     | Phase |
+| ---------------------------------- | ------------------------------------------- | ----- |
+| **Workspace Operations**           |                                             |       |
+| `read_workspace`                   | Read file from shared workspace             | 1     |
+| `write_workspace`                  | Write file to shared workspace              | 1     |
+| `list_workspace`                   | List workspace directory contents           | 1     |
+| **Worker Management**              |                                             |       |
+| `spawn_worker`                     | Create K8s Job (handles context linking)    | 2     |
+| `read_task_result`                 | Get completed task output                   | 3     |
+| `list_worker_tasks`                | List tasks for conversation                 | 3     |
+| `cancel_worker_task`               | Cancel running task                         | 4     |
+| **Output Handling**                |                                             |       |
+| `ingest_from_workspace`            | Add workspace file to document index        | 3     |
+| `create_attachment_from_workspace` | Create sendable attachment from task output | 3     |
+
+**Note**: `copy_attachment_to_workspace` and `export_documents_to_workspace` are no longer needed as
+separate tools. Attachments and documents already live on the workspace volume, and `spawn_worker`
+handles symlinking them into task context via `attachment_ids` and `document_ids` parameters.
+
+`export_notes_to_workspace` is still useful for ad-hoc note exports to shared/, but `spawn_worker`'s
+`note_query` parameter handles most cases automatically.
 
 ## New Tools
 
@@ -1407,21 +1467,20 @@ class WorkerTasksRepository:
 
 ### Phase 1: Foundation
 
-**Goal**: Basic workspace tools and infrastructure
+**Goal**: Unified storage and basic workspace tools
 
-1. **Workspace tools** (no Kubernetes yet)
+1. **Storage migration**
+
+   - Configure `attachment_storage_path` to `/workspace/attachments`
+   - Configure `document_storage_path` to `/workspace/documents`
+   - Create migration script for existing files
+   - Update AttachmentRegistry paths
+
+2. **Workspace tools** (no Kubernetes yet)
 
    - `read_workspace`, `write_workspace`, `list_workspace`
-   - Mount PVC to FA pod
+   - Mount workspace PVC to FA pod
    - Test file operations
-
-2. **Bridge tools** (data movement)
-
-   - `copy_attachment_to_workspace` - Copy uploads to workspace
-   - `export_notes_to_workspace` - Export notes as files
-   - `export_documents_to_workspace` - Export indexed docs
-   - `ingest_from_workspace` - Add workspace files to index
-   - `create_attachment_from_workspace` - Create sendable attachments
 
 3. **Database schema**
 
@@ -1634,45 +1693,105 @@ volumeMounts:
     mountPath: /mnt/data/files
 ```
 
-### Potential Architecture: Unified Storage
+### Recommended Architecture: Unified Storage
 
-An alternative approach is to **move attachment storage to the workspace volume**:
+Store all persistent data on the workspace volume from the start:
 
 ```
 /workspace/
-├── shared/           # Current design
-├── tasks/            # Current design
-├── attachments/      # NEW: Chat attachments stored here
-│   └── XX/           # Hash-sharded like current design
+├── attachments/      # Chat attachments (replaces /tmp/chat_attachments/)
+│   └── XX/           # Hash-sharded by first 2 chars of UUID
 │       └── uuid.ext
-└── documents/        # NEW: Indexed documents stored here
-    └── uuid_name.ext
+├── documents/        # Indexed documents (replaces /mnt/data/files/)
+│   └── uuid_name.ext
+├── shared/           # Shared workspace for workers
+│   ├── scripts/
+│   ├── data/
+│   └── skills/
+└── tasks/            # Per-task directories
+    └── task-abc123/
+        ├── prompt.md
+        ├── context/  # Symlinks or copies from attachments/documents
+        └── output/
 ```
 
-**Pros**:
+**Benefits**:
 
-- Single volume to manage
-- Workers could directly access attachments (with subPath mount)
-- Simpler bridge tools (just path translation)
+- Single volume to manage and backup
+- No cross-volume copies (symlinks work within same volume)
+- Attachments directly accessible to workers via subPath mount
+- Simpler bridge tools (just symlink/copy within volume)
+- Atomic operations within same filesystem
 
-**Cons**:
+**Migration path**:
 
-- Requires migration of existing attachments
-- Changes to AttachmentRegistry paths
-- Larger PVC size needed
+1. Update `AttachmentConfig.storage_path` to `/workspace/attachments`
+2. Update `document_storage_path` to `/workspace/documents`
+3. Migrate existing files (one-time script)
+4. Workers mount `/workspace` with appropriate subPaths
 
-**Recommendation**: Start with separate volumes and bridge tools. Consider unification later if the
-copy overhead becomes problematic.
+### Simplified Bridge Operations
+
+With unified storage, bridge tools become simple filesystem operations:
+
+```python
+# copy_attachment_to_workspace becomes:
+async def link_attachment_to_task(attachment_id: str, task_id: str) -> str:
+    """Create symlink from task context to attachment file."""
+    src = f"/workspace/attachments/{attachment_id[:2]}/{attachment_id}.ext"
+    dst = f"/workspace/tasks/{task_id}/context/{filename}"
+    os.symlink(src, dst)  # or shutil.copy for isolation
+    return dst
+
+# No cross-volume copy needed!
+```
+
+### Worker Mount Strategy
+
+Workers get read-only access to attachments/documents, read-write to their task:
+
+```yaml
+volumeMounts:
+  # Read-only access to attachments
+  - name: workspace
+    mountPath: /attachments
+    subPath: attachments
+    readOnly: true
+
+  # Read-only access to documents
+  - name: workspace
+    mountPath: /documents
+    subPath: documents
+    readOnly: true
+
+  # Read-only access to shared workspace
+  - name: workspace
+    mountPath: /workspace/shared
+    subPath: shared
+    readOnly: true
+
+  # Read-write access to own task directory
+  - name: workspace
+    mountPath: /task
+    subPath: tasks/${TASK_ID}
+    readOnly: false
+```
+
+Now workers can directly reference `/attachments/XX/uuid.ext` in their prompts without needing FA to
+copy files first.
 
 ## Open Questions
 
 ### Resolved
 
-1. ~~**Workspace directory structure**~~: Defined above with `scripts/`, `data/`, `context/`,
-   `skills/`, `outputs/` categories.
+1. ~~**Workspace directory structure**~~: Defined with `attachments/`, `documents/`, `shared/`,
+   `tasks/` at the workspace root.
 
-2. ~~**File system integration**~~: Bridge tools (`copy_attachment_to_workspace`, etc.) handle data
-   movement between FA's existing storage and the workspace.
+2. ~~**File system integration**~~: Unified storage on workspace volume. Attachments and documents
+   stored there by default. Symlinks used to provide task context.
+
+3. ~~**Attachment unification**~~: Yes. Store attachments and documents on the workspace volume from
+   the start. Simplifies architecture and eliminates cross-volume copies.
 
 ### Remaining Questions
 
@@ -1701,15 +1820,19 @@ copy overhead becomes problematic.
 5. **Multi-step workflows**: Should workers be able to spawn other workers? Current answer: No. FA
    orchestrates all workflows. Workers are single-task.
 
-6. **Attachment unification**: Should attachment storage move to the workspace volume for simpler
-   integration? (See architecture section above)
-
-7. **Context size management**: For `export_notes_to_workspace`, how to handle cases where matching
-   notes exceed reasonable context size?
+6. **Context size management**: For note exports, how to handle cases where matching notes exceed
+   reasonable context size?
 
    - Chunking strategy
    - Summary generation before export
    - Relevance ranking cutoff
+
+7. **Migration strategy**: How to migrate existing attachments/documents to the workspace volume?
+   Options:
+
+   - One-time migration script
+   - Lazy migration (copy on first access)
+   - Symlink from old location during transition
 
 ## Appendix: ClawdBot Feature Comparison
 
