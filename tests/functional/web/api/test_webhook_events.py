@@ -449,3 +449,39 @@ async def test_webhook_alertmanager_style_request(
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_webhook_system_fields_cannot_be_overwritten(
+    db_engine: AsyncEngine,
+) -> None:
+    """Test that system-generated fields cannot be overwritten by payload extra fields."""
+    transport = ASGITransport(app=fastapi_app)
+
+    mock_webhook_source = AsyncMock(spec=WebhookEventSource)
+    mock_webhook_source.emit_event = AsyncMock(return_value="test-event-id")
+
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with patch.object(
+            fastapi_app.state, "webhook_source", mock_webhook_source, create=True
+        ):
+            response = await client.post(
+                "/webhook/event",
+                json={
+                    "event_type": "test",
+                    "source": "test_source",
+                    # Try to inject malicious values via extra fields
+                    "event_id": "malicious-id",
+                },
+            )
+
+            assert response.status_code == 200
+
+            # Check that emit_event was called with system-generated event_id
+            if mock_webhook_source.emit_event.called:
+                call_args = mock_webhook_source.emit_event.call_args
+                event_data = call_args[0][0]
+                # event_id should be a valid UUID, not the malicious value
+                assert event_data["event_id"] != "malicious-id"
+                # Verify it's a valid UUID
+                uuid.UUID(event_data["event_id"])
