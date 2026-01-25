@@ -215,6 +215,482 @@ With AI Worker Sandbox:
    - Optionally copies script to shared/ for reuse
 ```
 
+## End-to-End Use Cases
+
+Understanding concrete user workflows helps identify required tools and integration points.
+
+### Use Case 1: Bank Statement Analysis
+
+**User uploads PDF via Telegram, asks for spending analysis**
+
+```
+User: [uploads bank-statement.pdf]
+User: "Analyze my spending and create a chart by category"
+
+Current FA:
+1. PDF stored as attachment (attachment_id: abc123)
+2. LLM sees attachment, can describe it
+3. Cannot actually run code to process it
+4. Could only offer to "write a script for you"
+
+With AI Worker:
+1. PDF stored as attachment (attachment_id: abc123)
+2. LLM: copy_attachment_to_workspace("abc123", "data/bank-statement.pdf")
+   → Copies file to /workspace/shared/data/bank-statement.pdf
+3. LLM: spawn_worker(
+     task="Parse bank-statement.pdf using tabula-py or pdfplumber.
+           Categorize transactions. Create matplotlib pie chart.
+           Save chart as spending_by_category.png",
+     context_files=["data/bank-statement.pdf"]
+   )
+   → Creates task, copies PDF to task/context/, spawns Job
+4. Worker runs: extracts tables, categorizes, generates chart
+5. Webhook fires → event wakes LLM
+6. LLM: read_task_result("task-xyz")
+   → Gets output files: spending_by_category.png, analysis.md
+7. LLM: create_attachment_from_workspace("task-xyz", "spending_by_category.png")
+   → Creates attachment from output file
+8. LLM sends chart image to user with summary
+```
+
+**Required tools**:
+
+- `copy_attachment_to_workspace` - Move user uploads to workspace
+- `create_attachment_from_workspace` - Create sendable attachment from output
+
+### Use Case 2: Note Compilation
+
+**User wants summary of all notes about a topic**
+
+```
+User: "Compile all my notes about Project Alpha into a summary document"
+
+Flow:
+1. LLM: export_notes_to_workspace(
+     query="Project Alpha",
+     destination="context/project-alpha/"
+   )
+   → Semantic search finds 12 matching notes
+   → Exports as markdown files to /workspace/shared/context/project-alpha/
+   → Returns: {"exported": 12, "path": "context/project-alpha/"}
+
+2. LLM: spawn_worker(
+     task="Read all notes in context/project-alpha/.
+           Create comprehensive summary document.
+           Include timeline, key decisions, open items.
+           Output as project_alpha_summary.md",
+     context_files=["context/project-alpha/"]
+   )
+
+3. Worker reads notes, synthesizes, writes summary
+
+4. Webhook → LLM wakes
+
+5. LLM reads summary, presents to user
+
+6. LLM: ingest_from_workspace(
+     path="tasks/task-xyz/output/project_alpha_summary.md",
+     title="Project Alpha Summary",
+     document_type="note"
+   )
+   → Indexes output as new searchable document
+```
+
+**Required tools**:
+
+- `export_notes_to_workspace` - Materialize notes to files for worker
+- `ingest_from_workspace` - Add worker output to document index
+
+### Use Case 3: Reusable Script Creation
+
+**User asks for a utility that can be reused**
+
+```
+User: "Create a script to resize images to 800px wide"
+
+Flow:
+1. LLM: spawn_worker(
+     task="Create Python script resize_images.py that:
+           - Takes input directory and output directory as args
+           - Resizes all images to 800px wide (maintaining aspect ratio)
+           - Uses Pillow library
+           - Include usage examples in docstring",
+     save_to_shared=True  # Copy outputs to shared/ on success
+   )
+
+2. Worker creates /task/output/resize_images.py
+
+3. On success, spawn_worker copies to /workspace/shared/scripts/resize_images.py
+
+4. LLM confirms: "Created resize_images.py. It's saved for future use."
+
+--- Later ---
+
+User: [uploads vacation_photos.zip]
+User: "Resize these for the web"
+
+Flow:
+1. LLM: list_workspace("scripts/")
+   → Sees resize_images.py exists
+
+2. LLM: copy_attachment_to_workspace("zip-id", "data/vacation_photos.zip")
+
+3. LLM: spawn_worker(
+     task="Unzip data/vacation_photos.zip to temp/.
+           Run scripts/resize_images.py temp/ output/.
+           Create output.zip with resized images.",
+     context_files=["data/vacation_photos.zip", "scripts/resize_images.py"]
+   )
+
+4. Worker runs existing script, creates output.zip
+
+5. LLM creates attachment from output.zip, sends to user
+```
+
+**Insight**: Scripts accumulate in workspace, becoming reusable "skills".
+
+### Use Case 4: Data Transformation
+
+**User wants to clean up and convert a file**
+
+```
+User: [uploads messy_data.xlsx via web UI]
+User: "Clean this up and convert to CSV"
+
+Flow:
+1. File stored as attachment
+
+2. LLM: copy_attachment_to_workspace("xlsx-id", "data/messy_data.xlsx")
+
+3. LLM: spawn_worker(
+     task="Read data/messy_data.xlsx.
+           Clean: remove empty rows, normalize dates, trim whitespace.
+           Output as cleaned_data.csv with summary of changes."
+   )
+
+4. Worker processes, outputs:
+   - cleaned_data.csv
+   - cleaning_report.md (rows removed, columns fixed, etc.)
+
+5. LLM: read_task_result → gets both files
+
+6. LLM could:
+   a. create_attachment_from_workspace → send CSV to user
+   b. ingest_from_workspace → index CSV for semantic search
+   c. write_workspace("data/cleaned_data.csv", ...) → save for later
+```
+
+### Use Case 5: Complex Research Task
+
+**User wants analysis requiring web research + computation**
+
+```
+User: "Research the top 5 electric vehicles and create a comparison spreadsheet"
+
+Flow:
+1. LLM: spawn_worker(
+     task="Research top 5 EVs for 2025.
+           For each: price, range, charging speed, cargo space, safety rating.
+           Create comparison.csv and summary.md with recommendations.
+           Note: Use available web access to fetch current specs."
+   )
+
+2. Worker (with Claude Code's web capabilities):
+   - Searches for current EV specs
+   - Compiles data
+   - Creates spreadsheet and summary
+
+3. LLM retrieves results, presents comparison to user
+```
+
+**Note**: This requires workers to have internet access to AI APIs and potentially web search.
+Network policy would need to allow this.
+
+### Use Case 6: Document Batch Processing
+
+**User has multiple documents to process**
+
+```
+User: "I've uploaded 5 receipts. Extract the totals and create a summary."
+
+Flow:
+1. User uploads: receipt1.pdf through receipt5.pdf (5 attachments)
+
+2. LLM: For each attachment:
+   copy_attachment_to_workspace("att-1", "data/receipts/receipt1.pdf")
+   ... (or batch copy tool)
+
+3. LLM: spawn_worker(
+     task="For each PDF in data/receipts/:
+           - Extract merchant, date, total, items
+           - Output receipts_summary.csv with all data
+           - Output total_spending.md with grand total"
+   )
+
+4. Worker uses OCR/PDF extraction, creates summary
+
+5. LLM: ingest_from_workspace(output CSV) → searchable expense data
+```
+
+**Potential enhancement**: `copy_attachments_to_workspace` (batch version)
+
+## Bridge Tools
+
+These tools move data between FA's existing systems (attachments, documents, notes) and the
+workspace filesystem.
+
+### copy_attachment_to_workspace
+
+Copy an uploaded attachment to the workspace for worker access.
+
+```python
+COPY_ATTACHMENT_TO_WORKSPACE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "copy_attachment_to_workspace",
+        "description": """Copy an attachment (uploaded file) to the workspace so workers can
+access it. Use this before spawning a worker that needs to process user-uploaded files.
+
+The attachment must exist and be accessible to the current conversation.""",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "attachment_id": {
+                    "type": "string",
+                    "description": "The attachment ID (from upload response or message metadata)."
+                },
+                "destination_path": {
+                    "type": "string",
+                    "description": "Path in /workspace/shared/ to copy to. "
+                    "Parent directories will be created. "
+                    "Example: 'data/input.pdf' or 'uploads/receipt.jpg'"
+                }
+            },
+            "required": ["attachment_id", "destination_path"]
+        }
+    }
+}
+```
+
+### export_notes_to_workspace
+
+Export notes matching a query to workspace files for worker access.
+
+```python
+EXPORT_NOTES_TO_WORKSPACE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "export_notes_to_workspace",
+        "description": """Export notes matching a search query to the workspace as markdown files.
+Use this to give workers access to relevant notes for synthesis, analysis, or reference.
+
+Each note is exported as a separate .md file with frontmatter containing metadata.""",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Semantic search query to find relevant notes."
+                },
+                "destination_dir": {
+                    "type": "string",
+                    "description": "Directory in /workspace/shared/ to export to. "
+                    "Example: 'context/project-notes/'"
+                },
+                "max_notes": {
+                    "type": "integer",
+                    "default": 20,
+                    "description": "Maximum number of notes to export."
+                }
+            },
+            "required": ["query", "destination_dir"]
+        }
+    }
+}
+```
+
+### export_documents_to_workspace
+
+Export indexed documents matching a query to workspace for worker access.
+
+```python
+EXPORT_DOCUMENTS_TO_WORKSPACE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "export_documents_to_workspace",
+        "description": """Export indexed documents matching a search query to the workspace.
+Use this to give workers access to PDFs, emails, or other documents for processing.
+
+Documents are copied as their original files (PDF, etc.) with a manifest.json
+containing metadata.""",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Semantic search query to find relevant documents."
+                },
+                "destination_dir": {
+                    "type": "string",
+                    "description": "Directory in /workspace/shared/ to export to."
+                },
+                "max_documents": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": "Maximum number of documents to export."
+                },
+                "document_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Filter by type: 'pdf', 'email', 'note'. Empty = all types."
+                }
+            },
+            "required": ["query", "destination_dir"]
+        }
+    }
+}
+```
+
+### ingest_from_workspace
+
+Add a file from the workspace to FA's document index for semantic search.
+
+```python
+INGEST_FROM_WORKSPACE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "ingest_from_workspace",
+        "description": """Ingest a file from the workspace into Family Assistant's document index.
+This makes the file searchable via semantic search and available to the assistant.
+
+Use this for worker outputs that should become part of the knowledge base.""",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "source_path": {
+                    "type": "string",
+                    "description": "Path to file in workspace. Can be in shared/ or tasks/task-id/output/."
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Title for the document in the index."
+                },
+                "source_type": {
+                    "type": "string",
+                    "enum": ["worker_output", "generated", "imported"],
+                    "default": "worker_output",
+                    "description": "Type of document for categorization."
+                },
+                "metadata": {
+                    "type": "object",
+                    "description": "Optional metadata to attach (tags, source_task_id, etc.)."
+                }
+            },
+            "required": ["source_path", "title"]
+        }
+    }
+}
+```
+
+### create_attachment_from_workspace
+
+Create a sendable attachment from a workspace file.
+
+```python
+CREATE_ATTACHMENT_FROM_WORKSPACE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "create_attachment_from_workspace",
+        "description": """Create an attachment from a workspace file so it can be sent in messages.
+Use this to send worker output files (images, documents, etc.) to the user.
+
+Returns an attachment_id that can be used with send_message or included in responses.""",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "source_path": {
+                    "type": "string",
+                    "description": "Path to file in workspace (shared/ or tasks/task-id/output/)."
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Description of the attachment for accessibility."
+                }
+            },
+            "required": ["source_path"]
+        }
+    }
+}
+```
+
+## Workspace Directory Structure
+
+Based on use cases, the recommended workspace structure:
+
+```
+/workspace/
+├── shared/                          # Persistent, accessible to FA and workers (RO for workers)
+│   ├── scripts/                     # Reusable scripts created by workers
+│   │   └── resize_images.py
+│   ├── data/                        # User data files (copied from attachments)
+│   │   ├── bank-statement.pdf
+│   │   └── receipts/
+│   ├── context/                     # Exported notes/documents for worker reference
+│   │   └── project-alpha/
+│   │       ├── note1.md
+│   │       └── note2.md
+│   ├── skills/                      # Skill definitions (future)
+│   │   └── expense-analyzer/
+│   │       ├── SKILL.md
+│   │       └── main.py
+│   └── outputs/                     # Saved worker outputs for reuse
+│       └── 2025-01/
+│           └── spending_analysis.png
+│
+└── tasks/                           # Per-task directories (task dir is RW for its worker)
+    └── task-abc123/
+        ├── prompt.md                # Task description
+        ├── context/                 # Files copied for this task
+        │   └── bank-statement.pdf
+        ├── output/                  # Worker results
+        │   ├── analysis.md
+        │   └── chart.png
+        └── status.json              # Completion status
+```
+
+### Directory Lifecycle
+
+| Directory              | Created By | Written By | Cleaned Up          |
+| ---------------------- | ---------- | ---------- | ------------------- |
+| `shared/scripts/`      | FA/Worker  | Worker     | Manual/never        |
+| `shared/data/`         | FA         | FA         | Manual/policy       |
+| `shared/context/`      | FA         | FA         | After task complete |
+| `shared/outputs/`      | FA         | FA         | Policy-based        |
+| `tasks/task-*/`        | FA         | Worker     | After retention     |
+| `tasks/task-*/output/` | Worker     | Worker     | With parent         |
+
+## Tool Summary
+
+All tools required for the AI Worker Sandbox system:
+
+| Tool                               | Purpose                               | Phase |
+| ---------------------------------- | ------------------------------------- | ----- |
+| **Workspace Operations**           |                                       |       |
+| `read_workspace`                   | Read file from shared workspace       | 1     |
+| `write_workspace`                  | Write file to shared workspace        | 1     |
+| `list_workspace`                   | List workspace directory contents     | 1     |
+| **Bridge Tools (Data Movement)**   |                                       |       |
+| `copy_attachment_to_workspace`     | Copy uploaded file to workspace       | 1     |
+| `export_notes_to_workspace`        | Export notes as markdown files        | 1     |
+| `export_documents_to_workspace`    | Export indexed documents to workspace | 1     |
+| `ingest_from_workspace`            | Add workspace file to document index  | 1     |
+| `create_attachment_from_workspace` | Create sendable attachment from file  | 1     |
+| **Worker Management**              |                                       |       |
+| `spawn_worker`                     | Create K8s Job with AI coder          | 2     |
+| `read_task_result`                 | Get completed task output             | 3     |
+| `list_worker_tasks`                | List tasks for conversation           | 3     |
+| `cancel_worker_task`               | Cancel running task                   | 4     |
+
 ## New Tools
 
 ### spawn_worker
@@ -939,13 +1415,21 @@ class WorkerTasksRepository:
    - Mount PVC to FA pod
    - Test file operations
 
-2. **Database schema**
+2. **Bridge tools** (data movement)
+
+   - `copy_attachment_to_workspace` - Copy uploads to workspace
+   - `export_notes_to_workspace` - Export notes as files
+   - `export_documents_to_workspace` - Export indexed docs
+   - `ingest_from_workspace` - Add workspace files to index
+   - `create_attachment_from_workspace` - Create sendable attachments
+
+3. **Database schema**
 
    - Create `worker_tasks` table
    - Implement repository
    - Add migration
 
-3. **Configuration**
+4. **Configuration**
 
    - Add `AIWorkerConfig` Pydantic model
    - Add environment variable mappings
@@ -1079,22 +1563,153 @@ class WorkerTasksRepository:
 **Key advantage**: FA maintains its structured data strengths while gaining ClawdBot's
 general-purpose computing flexibility.
 
+## Integration with Existing FA Systems
+
+### Attachment Storage Integration
+
+FA currently stores attachments in two locations:
+
+- **Chat attachments**: Hash-sharded at `/tmp/chat_attachments/XX/uuid.ext`
+- **Documents**: At `/mnt/data/files/uuid_filename.ext`
+
+The workspace volume is a **third storage location** that bridges the gap:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      Data Flow Between Storage Systems                   │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  User Upload                                                             │
+│       │                                                                  │
+│       ▼                                                                  │
+│  ┌─────────────────┐                                                     │
+│  │ Chat Attachments │──copy_attachment_to_workspace──▶┌────────────────┐│
+│  │ /tmp/chat_...   │                                  │   Workspace    ││
+│  └─────────────────┘                                  │   /workspace/  ││
+│                                                       │   shared/      ││
+│  ┌─────────────────┐                                  │                ││
+│  │ Document Index  │──export_documents_to_workspace──▶│   ┌─────────┐  ││
+│  │ /mnt/data/files │                                  │   │ Worker  │  ││
+│  └─────────────────┘                                  │   │ Process │  ││
+│                                                       │   └────┬────┘  ││
+│  ┌─────────────────┐                                  │        │       ││
+│  │ Notes Database  │──export_notes_to_workspace──────▶│        ▼       ││
+│  └─────────────────┘                                  │   ┌─────────┐  ││
+│                                                       │   │ Output  │  ││
+│                     ◀─────────────────────────────────│   └────┬────┘  ││
+│  ingest_from_workspace                                └────────┼───────┘│
+│  create_attachment_from_workspace                              │        │
+│                                                                │        │
+└────────────────────────────────────────────────────────────────┘        │
+```
+
+### Volume Mounting Strategy
+
+FA pod needs access to multiple storage locations:
+
+```yaml
+# FA Pod volumes
+volumes:
+  - name: workspace
+    persistentVolumeClaim:
+      claimName: ai-workspace-pvc  # RWX Longhorn volume
+
+  - name: chat-attachments
+    persistentVolumeClaim:
+      claimName: chat-attachments-pvc  # Existing attachment storage
+
+  - name: documents
+    persistentVolumeClaim:
+      claimName: documents-pvc  # Existing document storage
+
+volumeMounts:
+  - name: workspace
+    mountPath: /workspace
+
+  - name: chat-attachments
+    mountPath: /mnt/chat-attachments
+    readOnly: true  # FA reads, copies to workspace
+
+  - name: documents
+    mountPath: /mnt/data/files
+```
+
+### Potential Architecture: Unified Storage
+
+An alternative approach is to **move attachment storage to the workspace volume**:
+
+```
+/workspace/
+├── shared/           # Current design
+├── tasks/            # Current design
+├── attachments/      # NEW: Chat attachments stored here
+│   └── XX/           # Hash-sharded like current design
+│       └── uuid.ext
+└── documents/        # NEW: Indexed documents stored here
+    └── uuid_name.ext
+```
+
+**Pros**:
+
+- Single volume to manage
+- Workers could directly access attachments (with subPath mount)
+- Simpler bridge tools (just path translation)
+
+**Cons**:
+
+- Requires migration of existing attachments
+- Changes to AttachmentRegistry paths
+- Larger PVC size needed
+
+**Recommendation**: Start with separate volumes and bridge tools. Consider unification later if the
+copy overhead becomes problematic.
+
 ## Open Questions
+
+### Resolved
+
+1. ~~**Workspace directory structure**~~: Defined above with `scripts/`, `data/`, `context/`,
+   `skills/`, `outputs/` categories.
+
+2. ~~**File system integration**~~: Bridge tools (`copy_attachment_to_workspace`, etc.) handle data
+   movement between FA's existing storage and the workspace.
+
+### Remaining Questions
 
 1. **AI coder image interface**: What exact arguments/environment does the ai-coder image expect?
    Need to align Job manifest with image's run-task mode.
 
-2. **Workspace directory structure**: Should there be more structure in `/workspace/shared/`?
-   Categories like `scripts/`, `data/`, `skills/`?
+2. **Result size limits**: How to handle workers that produce very large output files? Options:
 
-3. **Result size limits**: How to handle workers that produce very large output files? Consider
-   streaming or presigned URLs.
+   - Stream directly from workspace via presigned-style URLs
+   - Chunk large files for reading
+   - Set output size limits in worker
+
+3. **Network access for workers**: Use cases like "research EVs" require web access. Options:
+
+   - Egress gateway that logs/filters traffic
+   - AI API access only (current design)
+   - Full internet with rate limiting
 
 4. **Skill format**: If implementing skills, should they follow ClawdBot's SKILL.md format or use
-   FA's note conventions?
+   FA's note conventions? Consider:
 
-5. **Multi-step workflows**: Should workers be able to spawn other workers? Or should FA orchestrate
-   all multi-step workflows?
+   - ClawdBot format for compatibility
+   - Note-based for integration with existing search
+   - Hybrid: SKILL.md in workspace, indexed as notes
+
+5. **Multi-step workflows**: Should workers be able to spawn other workers? Current answer: No. FA
+   orchestrates all workflows. Workers are single-task.
+
+6. **Attachment unification**: Should attachment storage move to the workspace volume for simpler
+   integration? (See architecture section above)
+
+7. **Context size management**: For `export_notes_to_workspace`, how to handle cases where matching
+   notes exceed reasonable context size?
+
+   - Chunking strategy
+   - Summary generation before export
+   - Relevance ranking cutoff
 
 ## Appendix: ClawdBot Feature Comparison
 
