@@ -8,7 +8,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from family_assistant.config_models import (
+        DockerBackendConfig,
+        KubernetesBackendConfig,
+    )
 
 
 class WorkerStatus(Enum):
@@ -90,11 +96,19 @@ class WorkerBackend(Protocol):
         ...
 
 
-def get_worker_backend(backend_type: str) -> WorkerBackend:
+def get_worker_backend(
+    backend_type: str,
+    workspace_root: str | None = None,
+    docker_config: DockerBackendConfig | None = None,
+    kubernetes_config: KubernetesBackendConfig | None = None,
+) -> WorkerBackend:
     """Factory function to get the appropriate backend implementation.
 
     Args:
         backend_type: One of 'kubernetes', 'docker', 'mock'
+        workspace_root: Root path for workspace volume (for docker/mock backends)
+        docker_config: DockerBackendConfig for docker backend
+        kubernetes_config: KubernetesBackendConfig for kubernetes backend
 
     Returns:
         WorkerBackend implementation
@@ -115,7 +129,7 @@ def get_worker_backend(backend_type: str) -> WorkerBackend:
             DockerBackend,
         )
 
-        return DockerBackend()
+        return DockerBackend(config=docker_config, workspace_root=workspace_root)
     elif backend_type == "kubernetes":
         from family_assistant.services.backends.kubernetes import (  # noqa: PLC0415
             KubernetesBackend,
