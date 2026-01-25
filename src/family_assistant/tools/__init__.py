@@ -157,6 +157,12 @@ from family_assistant.tools.video_generation import (
     VIDEO_GENERATION_TOOLS_DEFINITION,
     generate_video_tool,
 )
+from family_assistant.tools.worker import (
+    WORKER_TOOLS_DEFINITION,
+    list_worker_tasks_tool,
+    read_task_result_tool,
+    spawn_worker_tool,
+)
 from family_assistant.tools.workspace_files import (
     WORKSPACE_TOOLS_DEFINITION,
     workspace_delete_tool,
@@ -279,6 +285,11 @@ __all__ = [
     "workspace_mkdir_tool",
     "workspace_export_notes_tool",
     "workspace_import_note_tool",
+    # Worker tools
+    "WORKER_TOOLS_DEFINITION",
+    "spawn_worker_tool",
+    "read_task_result_tool",
+    "list_worker_tasks_tool",
 ]
 
 
@@ -395,6 +406,10 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "workspace_mkdir": workspace_mkdir_tool,
     "workspace_export_notes": workspace_export_notes_tool,
     "workspace_import_note": workspace_import_note_tool,
+    # Worker tools
+    "spawn_worker": spawn_worker_tool,
+    "read_task_result": read_task_result_tool,
+    "list_worker_tasks": list_worker_tasks_tool,
 }
 
 
@@ -422,4 +437,5 @@ TOOLS_DEFINITION: list[dict[str, Any]] = (
     + MOCK_IMAGE_TOOLS_DEFINITION
     + COMPUTER_USE_TOOLS_DEFINITION
     + WORKSPACE_TOOLS_DEFINITION
+    + WORKER_TOOLS_DEFINITION
 )

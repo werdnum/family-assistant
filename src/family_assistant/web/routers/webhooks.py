@@ -314,6 +314,10 @@ async def handle_generic_webhook(
         "data": body.data,
     }
 
+    # Handle worker completion events - update task status in database
+    if effective_event_type == "worker_completion":
+        await _handle_worker_completion(request, body.data)
+
     # Get webhook source and emit event
     webhook_source: WebhookEventSource | None = getattr(
         request.app.state, "webhook_source", None
@@ -324,3 +328,65 @@ async def handle_generic_webhook(
         await webhook_source.emit_event(event_data)
 
     return WebhookEventResponse(status="accepted", event_id=event_id)
+
+
+async def _handle_worker_completion(
+    request: Request,
+    # ast-grep-ignore: no-dict-any - Webhook data is dynamic from external worker
+    data: dict[str, Any] | None,
+) -> None:
+    """Handle worker completion webhook by updating task status.
+
+    Args:
+        request: The FastAPI request object
+        data: The webhook data containing task_id, outcome, output, exit_code
+    """
+    if not data:
+        logger.warning("Worker completion event missing data payload")
+        return
+
+    task_id = data.get("task_id")
+    if not task_id:
+        logger.warning("Worker completion event missing task_id")
+        return
+
+    outcome = data.get("outcome", "unknown")
+    output = data.get("output")
+    exit_code = data.get("exit_code")
+    output_files = data.get("files", [])
+
+    # Map outcome to status
+    status_map = {
+        "success": "success",
+        "failure": "failed",
+        "error": "failed",
+        "timeout": "timeout",
+        "cancelled": "cancelled",
+    }
+    status = status_map.get(outcome, "failed")
+
+    # Get database context
+    db_context: DatabaseContext | None = getattr(request.app.state, "db_context", None)
+    if not db_context:
+        logger.error("DatabaseContext not available for worker completion handling")
+        return
+
+    try:
+        # Update task status
+        updated = await db_context.worker_tasks.update_task_status(
+            task_id=task_id,
+            status=status,
+            completed_at=datetime.now(UTC),
+            exit_code=exit_code,
+            output_files=output_files,
+            summary=output,
+            error_message=output if status == "failed" else None,
+        )
+
+        if updated:
+            logger.info(f"Updated worker task {task_id} status to {status}")
+        else:
+            logger.warning(f"Worker task {task_id} not found for completion update")
+
+    except Exception as e:
+        logger.error(f"Failed to update worker task {task_id}: {e}", exc_info=True)
