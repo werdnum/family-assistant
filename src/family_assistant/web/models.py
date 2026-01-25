@@ -229,8 +229,10 @@ class WebhookEventPayload(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    event_type: str = Field(
-        ..., description="Type/category of the event (e.g., 'alert', 'build')"
+    event_type: str | None = Field(
+        default=None,
+        description="Type/category of the event (e.g., 'alert', 'build'). "
+        "Can also be provided via query parameter.",
     )
     source: str | None = Field(
         default=None,

@@ -234,6 +234,8 @@ class WebhookEventResponse(BaseModel):
 async def handle_generic_webhook(
     request: Request,
     body: WebhookEventPayload,
+    event_type: str | None = None,
+    source: str | None = None,
 ) -> WebhookEventResponse:
     """
     Receives generic webhook events and routes them to the event processor.
@@ -241,30 +243,46 @@ async def handle_generic_webhook(
     Events are matched against configured event listeners based on event_type,
     source, severity, and custom match conditions.
 
+    Query parameters (optional, override body values):
+        - event_type: Type/category of the event (useful for alertmanager webhooks)
+        - source: Identifier for the event source
+
     Headers (optional):
         - X-Webhook-Signature: HMAC-SHA256 signature for verification
-        - X-Webhook-Source: Alternative source identifier (overrides body source)
+        - X-Webhook-Source: Alternative source identifier (overrides body and query source)
 
     Returns:
         JSON response with status and event_id
     """
-    logger.info(f"Received webhook event: type={body.event_type}, source={body.source}")
+    # Query params override body values
+    effective_event_type = event_type or body.event_type
+    if not effective_event_type:
+        raise HTTPException(
+            status_code=422,
+            detail="event_type is required (provide in body or query parameter)",
+        )
+
+    # Determine source (header > query param > body)
+    effective_source = request.headers.get("X-Webhook-Source") or source or body.source
+
+    logger.info(
+        f"Received webhook event: type={effective_event_type}, source={effective_source}"
+    )
 
     # Get config for signature verification
     config: AppConfig | None = getattr(request.app.state, "config", None)
 
-    # Determine source (header takes precedence)
-    source = request.headers.get("X-Webhook-Source") or body.source
-
     # Verify signature if source has a configured secret
     if config and config.event_system.sources.webhook.secrets:
-        source_secret = config.event_system.sources.webhook.secrets.get(source or "")
+        source_secret = config.event_system.sources.webhook.secrets.get(
+            effective_source or ""
+        )
         if source_secret:
             signature = request.headers.get("X-Webhook-Signature")
             if not signature:
                 raise HTTPException(
                     status_code=401,
-                    detail=f"Signature required for source: {source}",
+                    detail=f"Signature required for source: {effective_source}",
                 )
 
             # Compute expected signature
@@ -286,8 +304,8 @@ async def handle_generic_webhook(
     # ast-grep-ignore: no-dict-any - Event data intentionally combines webhook payload with generated fields
     event_data: dict[str, Any] = {
         "event_id": event_id,
-        "event_type": body.event_type,
-        "source": source,
+        "event_type": effective_event_type,
+        "source": effective_source,
         "title": body.title,
         "message": body.message,
         "severity": body.severity,
