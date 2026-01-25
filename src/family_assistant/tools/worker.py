@@ -297,7 +297,12 @@ async def spawn_worker_tool(
         )
 
         # Get backend and spawn task
-        backend = get_worker_backend(worker_config.backend_type)
+        backend = get_worker_backend(
+            worker_config.backend_type,
+            workspace_root=str(workspace_root),
+            docker_config=worker_config.docker,
+            kubernetes_config=worker_config.kubernetes,
+        )
         try:
             job_id = await backend.spawn_task(
                 task_id=task_id,
