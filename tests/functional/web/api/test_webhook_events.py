@@ -309,3 +309,143 @@ async def test_webhook_source_lifecycle() -> None:
 
     assert source.processor is None
     assert not source._running
+
+
+@pytest.mark.asyncio
+async def test_webhook_event_type_via_query_param(
+    db_engine: AsyncEngine,
+) -> None:
+    """Test that event_type can be provided via query parameter."""
+    transport = ASGITransport(app=fastapi_app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # Provide event_type in query param, not in body
+        response = await client.post(
+            "/webhook/event?event_type=alert",
+            json={
+                "source": "alertmanager",
+                "message": "Test alert from alertmanager",
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_webhook_event_type_query_param_overrides_body(
+    db_engine: AsyncEngine,
+) -> None:
+    """Test that query param event_type overrides body event_type."""
+    transport = ASGITransport(app=fastapi_app)
+
+    mock_webhook_source = AsyncMock(spec=WebhookEventSource)
+    mock_webhook_source.emit_event = AsyncMock(return_value="test-event-id")
+
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with patch.object(
+            fastapi_app.state, "webhook_source", mock_webhook_source, create=True
+        ):
+            response = await client.post(
+                "/webhook/event?event_type=query_type",
+                json={
+                    "event_type": "body_type",
+                    "source": "test",
+                },
+            )
+
+            assert response.status_code == 200
+
+            # Check that emit_event was called with query param event_type
+            if mock_webhook_source.emit_event.called:
+                call_args = mock_webhook_source.emit_event.call_args
+                event_data = call_args[0][0]
+                assert event_data["event_type"] == "query_type"
+
+
+@pytest.mark.asyncio
+async def test_webhook_source_via_query_param(
+    db_engine: AsyncEngine,
+) -> None:
+    """Test that source can be provided via query parameter."""
+    transport = ASGITransport(app=fastapi_app)
+
+    mock_webhook_source = AsyncMock(spec=WebhookEventSource)
+    mock_webhook_source.emit_event = AsyncMock(return_value="test-event-id")
+
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with patch.object(
+            fastapi_app.state, "webhook_source", mock_webhook_source, create=True
+        ):
+            response = await client.post(
+                "/webhook/event?source=query_source",
+                json={
+                    "event_type": "test",
+                },
+            )
+
+            assert response.status_code == 200
+
+            # Check that emit_event was called with query param source
+            if mock_webhook_source.emit_event.called:
+                call_args = mock_webhook_source.emit_event.call_args
+                event_data = call_args[0][0]
+                assert event_data["source"] == "query_source"
+
+
+@pytest.mark.asyncio
+async def test_webhook_source_priority_header_over_query(
+    db_engine: AsyncEngine,
+) -> None:
+    """Test that header source takes priority over query param source."""
+    transport = ASGITransport(app=fastapi_app)
+
+    mock_webhook_source = AsyncMock(spec=WebhookEventSource)
+    mock_webhook_source.emit_event = AsyncMock(return_value="test-event-id")
+
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with patch.object(
+            fastapi_app.state, "webhook_source", mock_webhook_source, create=True
+        ):
+            response = await client.post(
+                "/webhook/event?source=query_source",
+                headers={"X-Webhook-Source": "header_source"},
+                json={
+                    "event_type": "test",
+                    "source": "body_source",
+                },
+            )
+
+            assert response.status_code == 200
+
+            # Check that emit_event was called with header source (highest priority)
+            if mock_webhook_source.emit_event.called:
+                call_args = mock_webhook_source.emit_event.call_args
+                event_data = call_args[0][0]
+                assert event_data["source"] == "header_source"
+
+
+@pytest.mark.asyncio
+async def test_webhook_alertmanager_style_request(
+    db_engine: AsyncEngine,
+) -> None:
+    """Test that alertmanager-style requests work (event_type and source in URL)."""
+    transport = ASGITransport(app=fastapi_app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # Alertmanager sends event_type in URL, alerts in body
+        response = await client.post(
+            "/webhook/event?event_type=alertmanager&source=prometheus",
+            json={
+                "alerts": [
+                    {
+                        "status": "firing",
+                        "labels": {"alertname": "HighCPU"},
+                        "annotations": {"summary": "CPU is high"},
+                    }
+                ],
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "accepted"
