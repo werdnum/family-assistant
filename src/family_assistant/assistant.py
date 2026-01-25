@@ -37,6 +37,7 @@ from family_assistant.embeddings import (
 from family_assistant.events.home_assistant_source import HomeAssistantSource
 from family_assistant.events.indexing_source import IndexingSource
 from family_assistant.events.processor import EventProcessor
+from family_assistant.events.webhook_source import WebhookEventSource
 from family_assistant.home_assistant_shared import create_home_assistant_client
 from family_assistant.indexing.document_indexer import DocumentIndexer
 from family_assistant.indexing.email_indexer import EmailIndexer
@@ -984,6 +985,15 @@ class Assistant:
             self.indexing_source = IndexingSource()
             event_sources["indexing"] = self.indexing_source
             logger.info("Created IndexingSource for document indexing events")
+
+            # Add webhook source if enabled
+            if event_config.sources.webhook.enabled:
+                self.webhook_source = WebhookEventSource()
+                event_sources["webhook"] = self.webhook_source
+                self.fastapi_app.state.webhook_source = self.webhook_source
+                logger.info("Created WebhookEventSource for incoming webhooks")
+            else:
+                self.webhook_source = None
 
             if event_sources:
                 sample_interval_hours = event_config.storage.sample_interval_hours
