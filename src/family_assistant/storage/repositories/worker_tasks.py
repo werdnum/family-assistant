@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, NotRequired, TypedDict
 
 from sqlalchemy import (
     JSON,
@@ -27,6 +27,38 @@ from family_assistant.storage.base import metadata
 from family_assistant.storage.repositories.base import BaseRepository
 
 logger = logging.getLogger(__name__)
+
+
+class WorkerTaskDict(TypedDict):
+    """Typed dictionary for worker task data returned from database queries.
+
+    Note: datetime fields are converted to ISO format strings by _row_to_dict.
+    """
+
+    # Required fields (always present in database rows)
+    id: int
+    task_id: str
+    conversation_id: str
+    interface_type: str
+    model: str
+    task_description: str
+    timeout_minutes: int
+    status: str
+    created_at: str  # ISO format string after _row_to_dict conversion
+    context_files: list[str]  # Defaults to [] if not set
+    output_files: list[str]  # Defaults to [] if not set
+
+    # Optional fields (may be None)
+    user_name: NotRequired[str | None]
+    job_name: NotRequired[str | None]
+    started_at: NotRequired[str | None]  # ISO format string
+    completed_at: NotRequired[str | None]  # ISO format string
+    duration_seconds: NotRequired[int | None]
+    exit_code: NotRequired[int | None]
+    summary: NotRequired[str | None]
+    error_message: NotRequired[str | None]
+    updated_at: NotRequired[str | None]  # ISO format string
+
 
 # Define the worker_tasks table
 worker_tasks_table = Table(
@@ -134,14 +166,14 @@ class WorkerTasksRepository(BaseRepository):
         }
 
     # ast-grep-ignore: no-dict-any - Worker task data is dynamic JSON from database
-    async def get_task(self, task_id: str) -> dict[str, Any] | None:
+    async def get_task(self, task_id: str) -> WorkerTaskDict | None:
         """Get a task by its ID.
 
         Args:
             task_id: The task ID to look up
 
         Returns:
-            Dictionary containing task data, or None if not found
+            WorkerTaskDict containing task data, or None if not found
         """
         stmt = select(worker_tasks_table).where(worker_tasks_table.c.task_id == task_id)
         row = await self._db.fetch_one(stmt)
@@ -155,8 +187,7 @@ class WorkerTasksRepository(BaseRepository):
         conversation_id: str,
         status: str | None = None,
         limit: int = 10,
-        # ast-grep-ignore: no-dict-any - Worker task data is dynamic JSON from database
-    ) -> list[dict[str, Any]]:
+    ) -> list[WorkerTaskDict]:
         """Get tasks for a conversation.
 
         Args:
@@ -165,7 +196,7 @@ class WorkerTasksRepository(BaseRepository):
             limit: Maximum number of tasks to return
 
         Returns:
-            List of task dictionaries
+            List of WorkerTaskDict
         """
         stmt = (
             select(worker_tasks_table)
@@ -284,36 +315,83 @@ class WorkerTasksRepository(BaseRepository):
 
         return deleted_count
 
-    # ast-grep-ignore: no-dict-any - Worker task data is dynamic JSON from database
-    def _row_to_dict(self, row: Any) -> dict[str, Any]:  # noqa: ANN401
-        """Convert a database row to a dictionary.
+    @staticmethod
+    def _require_str(value: str | None, field_name: str, task_id: str) -> str:
+        """Require a non-null string value, failing fast if None.
+
+        Used for database fields that are non-nullable but where the type
+        system can't guarantee non-None (e.g., after datetime conversion).
+        """
+        if value is None:
+            raise ValueError(
+                f"{field_name} is required but was None for task {task_id}"
+            )
+        return value
+
+    # ast-grep-ignore: no-dict-any - Input is raw database row from fetch_one/fetch_all
+    def _row_to_dict(self, row: dict[str, Any]) -> WorkerTaskDict:
+        """Normalize a database row dictionary to WorkerTaskDict.
+
+        Parses JSON fields and converts datetime fields to ISO format strings.
 
         Args:
-            row: Database row
+            row: Database row dict (from fetch_one/fetch_all)
 
         Returns:
-            Dictionary representation of the row
+            Normalized WorkerTaskDict
         """
-        result = dict(row._mapping)
-
         # Parse JSON fields
-        if result.get("context_files"):
+        context_files: list[str] = []
+        if row.get("context_files"):
             try:
-                if isinstance(result["context_files"], str):
-                    result["context_files"] = json.loads(result["context_files"])
+                if isinstance(row["context_files"], str):
+                    context_files = json.loads(row["context_files"])
+                elif isinstance(row["context_files"], list):
+                    context_files = row["context_files"]
             except (json.JSONDecodeError, TypeError):
-                result["context_files"] = []
+                pass
 
-        if result.get("output_files"):
+        output_files: list[str] = []
+        if row.get("output_files"):
             try:
-                if isinstance(result["output_files"], str):
-                    result["output_files"] = json.loads(result["output_files"])
+                if isinstance(row["output_files"], str):
+                    output_files = json.loads(row["output_files"])
+                elif isinstance(row["output_files"], list):
+                    output_files = row["output_files"]
             except (json.JSONDecodeError, TypeError):
-                result["output_files"] = []
+                pass
 
         # Convert datetime fields to ISO format strings
-        for field in ["created_at", "updated_at", "started_at", "completed_at"]:
-            if result.get(field) and isinstance(result[field], datetime):
-                result[field] = result[field].isoformat()
+        def to_iso(value: Any) -> str | None:  # noqa: ANN401 - database returns mixed types
+            if value is None:
+                return None
+            if isinstance(value, datetime):
+                return value.isoformat()
+            if isinstance(value, str):
+                return value
+            return str(value)
 
-        return result
+        return WorkerTaskDict(
+            id=row["id"],
+            task_id=row["task_id"],
+            conversation_id=row["conversation_id"],
+            interface_type=row["interface_type"],
+            user_name=row.get("user_name"),
+            model=row["model"],
+            task_description=row["task_description"],
+            context_files=context_files,
+            timeout_minutes=row["timeout_minutes"],
+            status=row["status"],
+            job_name=row.get("job_name"),
+            started_at=to_iso(row.get("started_at")),
+            completed_at=to_iso(row.get("completed_at")),
+            duration_seconds=row.get("duration_seconds"),
+            exit_code=row.get("exit_code"),
+            output_files=output_files,
+            summary=row.get("summary"),
+            error_message=row.get("error_message"),
+            created_at=self._require_str(
+                to_iso(row["created_at"]), "created_at", row["task_id"]
+            ),
+            updated_at=to_iso(row.get("updated_at")),
+        )

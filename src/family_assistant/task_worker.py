@@ -6,13 +6,16 @@ import asyncio
 import json
 import logging
 import random
+import shutil
 import traceback
 import uuid
 import zoneinfo  # Add this import
 from collections.abc import Awaitable, Callable  # Import Union
 from datetime import UTC, datetime, timedelta  # Added Union
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import aiofiles.os
 from dateutil import rrule
 from dateutil.parser import isoparse
 from sqlalchemy import select
@@ -1030,6 +1033,77 @@ async def handle_system_error_log_cleanup(
         )
     except Exception as e:
         logger.error(f"Error during system error log cleanup: {e}", exc_info=True)
+        raise
+
+
+async def handle_worker_task_cleanup(
+    exec_context: ToolExecutionContext,
+    # ast-grep-ignore: no-dict-any - Task payload is dynamic
+    payload: dict[str, Any],
+) -> None:
+    """Task handler for cleaning up old worker task records and directories.
+
+    This handler:
+    1. Deletes old task records from the database
+    2. Removes old task directories from the filesystem
+
+    Payload can include:
+        retention_hours: Override the default retention period
+        workspace_path: Override the default workspace path
+    """
+    # Get retention hours from payload or use default from config
+    retention_hours = payload.get("retention_hours", 48)
+    workspace_path = payload.get("workspace_path")
+
+    # Try to get workspace path from app config if not in payload
+    if not workspace_path and exec_context.processing_service:
+        app_config = exec_context.processing_service.app_config
+        if app_config.ai_worker_config.enabled:
+            workspace_path = app_config.ai_worker_config.workspace_mount_path
+
+    logger.info(f"Starting worker task cleanup (retention: {retention_hours} hours)")
+
+    db_deleted = 0
+    dirs_deleted = 0
+
+    try:
+        # Step 1: Clean up database records
+        db_deleted = await exec_context.db_context.worker_tasks.cleanup_old_tasks(
+            retention_hours
+        )
+
+        # Step 2: Clean up old task directories from filesystem
+        if workspace_path:
+            tasks_dir = Path(workspace_path) / "tasks"
+            if await aiofiles.os.path.exists(tasks_dir):
+                cutoff = datetime.now(UTC) - timedelta(hours=retention_hours)
+
+                # List directories in tasks/
+                for entry in await aiofiles.os.listdir(tasks_dir):
+                    task_path = tasks_dir / entry
+                    if await aiofiles.os.path.isdir(task_path):
+                        # Check directory modification time
+                        stat_info = await aiofiles.os.stat(task_path)
+                        mtime = datetime.fromtimestamp(stat_info.st_mtime, tz=UTC)
+
+                        if mtime < cutoff:
+                            # Remove old task directory
+                            try:
+                                await asyncio.to_thread(shutil.rmtree, task_path)
+                                dirs_deleted += 1
+                                logger.debug(f"Removed old task directory: {task_path}")
+                            except OSError as e:
+                                logger.warning(
+                                    f"Failed to remove task directory {task_path}: {e}"
+                                )
+
+        logger.info(
+            f"Worker task cleanup completed. "
+            f"Deleted {db_deleted} database records, {dirs_deleted} task directories "
+            f"older than {retention_hours} hours."
+        )
+    except Exception as e:
+        logger.error(f"Error during worker task cleanup: {e}", exc_info=True)
         raise
 
 
