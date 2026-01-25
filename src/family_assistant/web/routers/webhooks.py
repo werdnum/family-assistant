@@ -301,8 +301,10 @@ async def handle_generic_webhook(
     event_id = str(uuid.uuid4())
 
     # Build event data for the processor
+    # Extra fields first so system-generated values take precedence
     # ast-grep-ignore: no-dict-any - Event data intentionally combines webhook payload with generated fields
     event_data: dict[str, Any] = {
+        **(body.model_extra or {}),  # Extra fields from payload (lowest priority)
         "event_id": event_id,
         "event_type": effective_event_type,
         "source": effective_source,
@@ -310,7 +312,6 @@ async def handle_generic_webhook(
         "message": body.message,
         "severity": body.severity,
         "data": body.data,
-        **(body.model_extra or {}),  # Include any extra fields from the payload
     }
 
     # Get webhook source and emit event
