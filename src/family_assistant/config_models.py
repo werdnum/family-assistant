@@ -378,6 +378,19 @@ class HomeAssistantSourceConfig(BaseModel):
     enabled: bool = True
 
 
+class WebhookSourceConfig(BaseModel):
+    """Webhook event source configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    secrets: dict[str, str] = Field(
+        default_factory=dict,
+        description="Optional per-source secrets for signature verification. "
+        "Keys are source names, values are secret keys.",
+    )
+
+
 class EventSourcesConfig(BaseModel):
     """Event sources configuration."""
 
@@ -386,6 +399,7 @@ class EventSourcesConfig(BaseModel):
     home_assistant: HomeAssistantSourceConfig = Field(
         default_factory=HomeAssistantSourceConfig
     )
+    webhook: WebhookSourceConfig = Field(default_factory=WebhookSourceConfig)
 
 
 class EventSystemConfig(BaseModel):

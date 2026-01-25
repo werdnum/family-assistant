@@ -1,23 +1,27 @@
+import hashlib
+import hmac
 import json
 import logging
 import os
 import re
-import uuid  # For generating unique IDs for attachment paths
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any
 
 import aiofiles
 from dateutil.parser import parse as parse_datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.email import AttachmentData, ParsedEmailData
 from family_assistant.web.dependencies import get_db
+from family_assistant.web.models import WebhookEventPayload
 
 if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
+    from family_assistant.events.webhook_source import WebhookEventSource
 
 logger = logging.getLogger(__name__)
 webhooks_router = APIRouter()
@@ -217,3 +221,87 @@ async def handle_mail_webhook(
         raise HTTPException(
             status_code=500, detail="Failed to process incoming email"
         ) from e
+
+
+class WebhookEventResponse(BaseModel):
+    """Response for webhook event endpoint."""
+
+    status: str
+    event_id: str
+
+
+@webhooks_router.post("/webhook/event")
+async def handle_generic_webhook(
+    request: Request,
+    body: WebhookEventPayload,
+) -> WebhookEventResponse:
+    """
+    Receives generic webhook events and routes them to the event processor.
+
+    Events are matched against configured event listeners based on event_type,
+    source, severity, and custom match conditions.
+
+    Headers (optional):
+        - X-Webhook-Signature: HMAC-SHA256 signature for verification
+        - X-Webhook-Source: Alternative source identifier (overrides body source)
+
+    Returns:
+        JSON response with status and event_id
+    """
+    logger.info(f"Received webhook event: type={body.event_type}, source={body.source}")
+
+    # Get config for signature verification
+    config: AppConfig | None = getattr(request.app.state, "config", None)
+
+    # Determine source (header takes precedence)
+    source = request.headers.get("X-Webhook-Source") or body.source
+
+    # Verify signature if source has a configured secret
+    if config and config.event_system.sources.webhook.secrets:
+        source_secret = config.event_system.sources.webhook.secrets.get(source or "")
+        if source_secret:
+            signature = request.headers.get("X-Webhook-Signature")
+            if not signature:
+                raise HTTPException(
+                    status_code=401,
+                    detail=f"Signature required for source: {source}",
+                )
+
+            # Compute expected signature
+            raw_body = await request.body()
+            expected = hmac.new(
+                source_secret.encode(),
+                raw_body,
+                hashlib.sha256,
+            ).hexdigest()
+            expected_signature = f"sha256={expected}"
+
+            if not hmac.compare_digest(expected_signature, signature):
+                raise HTTPException(status_code=403, detail="Invalid signature")
+
+    # Generate event ID
+    event_id = str(uuid.uuid4())
+
+    # Build event data for the processor
+    # ast-grep-ignore: no-dict-any - Event data intentionally combines webhook payload with generated fields
+    event_data: dict[str, Any] = {
+        "event_id": event_id,
+        "event_type": body.event_type,
+        "source": source,
+        "title": body.title,
+        "message": body.message,
+        "severity": body.severity,
+        "data": body.data,
+        **(body.model_extra or {}),  # Include any extra fields from the payload
+    }
+
+    # Get webhook source and emit event
+    webhook_source: WebhookEventSource | None = getattr(
+        request.app.state, "webhook_source", None
+    )
+    if not webhook_source:
+        logger.warning("WebhookEventSource not configured, event will not be processed")
+    else:
+        await webhook_source.emit_event(event_data)
+
+    return WebhookEventResponse(status="accepted", event_id=event_id)

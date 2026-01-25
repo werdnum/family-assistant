@@ -78,8 +78,8 @@ class TestEventSourceDeduplication:
                 # Verify the event processor was set up correctly
                 assert assistant.event_processor is not None
                 assert (
-                    len(assistant.event_processor.sources) == 2
-                )  # home_assistant and indexing
+                    len(assistant.event_processor.sources) == 3
+                )  # home_assistant, indexing, and webhook
 
             finally:
                 # Clean up using the Assistant's built-in stop_services method

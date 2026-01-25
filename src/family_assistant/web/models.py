@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
     from starlette.datastructures import State
@@ -222,3 +222,26 @@ class ChatMessageResponse(BaseModel):
     attachments: list[dict[str, Any]] | None = None  # Add attachments field
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     tool_calls: list[dict[str, Any]] | None = None  # Tool calls made by the assistant
+
+
+class WebhookEventPayload(BaseModel):
+    """Payload for generic webhook events."""
+
+    model_config = ConfigDict(extra="allow")
+
+    event_type: str = Field(
+        ..., description="Type/category of the event (e.g., 'alert', 'build')"
+    )
+    source: str | None = Field(
+        default=None,
+        description="Identifier for the event source (e.g., 'grafana', 'github')",
+    )
+    title: str | None = Field(default=None, description="Human-readable event title")
+    message: str | None = Field(default=None, description="Detailed event message")
+    severity: str | None = Field(
+        default=None, description="Severity level (e.g., 'info', 'warning', 'critical')"
+    )
+    # ast-grep-ignore: no-dict-any - Webhook data field intentionally accepts arbitrary structure from external sources
+    data: dict[str, Any] | None = Field(
+        default=None, description="Additional event-specific data"
+    )
