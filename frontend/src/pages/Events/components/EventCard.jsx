@@ -68,6 +68,16 @@ const EventCard = ({ event }) => {
 
     // Webhook events
     if (event.source_id === 'webhook') {
+      // Generic webhook events have event_type, source, title, message
+      if (data.title) {
+        const source = data.source ? ` (${data.source})` : '';
+        return `${data.title}${source}`;
+      }
+      if (data.event_type) {
+        const source = data.source ? ` from ${data.source}` : '';
+        return `${data.event_type}${source}`;
+      }
+      // Legacy format with method/path
       if (data.method && data.path) {
         return `${data.method} ${data.path}`;
       }
