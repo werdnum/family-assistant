@@ -403,14 +403,14 @@ async def read_task_result_tool(
         "duration_seconds": task.get("duration_seconds"),
     }
 
-    if task.get("summary"):
-        result["summary"] = task["summary"]
+    if summary := task.get("summary"):
+        result["summary"] = summary
 
-    if task.get("error_message"):
-        result["error_message"] = task["error_message"]
+    if error_message := task.get("error_message"):
+        result["error_message"] = error_message
 
-    if task.get("exit_code") is not None:
-        result["exit_code"] = task["exit_code"]
+    if (exit_code := task.get("exit_code")) is not None:
+        result["exit_code"] = exit_code
 
     # Include output files
     output_files = task.get("output_files") or []
@@ -480,14 +480,12 @@ async def list_worker_tasks_tool(
             "created_at": task.get("created_at"),
         }
 
-        if task.get("summary"):
-            task_info["summary"] = task["summary"][:100] + (
-                "..." if len(task.get("summary", "")) > 100 else ""
-            )
+        if summary := task.get("summary"):
+            task_info["summary"] = summary[:100] + ("..." if len(summary) > 100 else "")
 
-        if task.get("error_message"):
-            task_info["error"] = task["error_message"][:100] + (
-                "..." if len(task.get("error_message", "")) > 100 else ""
+        if error_message := task.get("error_message"):
+            task_info["error"] = error_message[:100] + (
+                "..." if len(error_message) > 100 else ""
             )
 
         task_list.append(task_info)
