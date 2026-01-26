@@ -7,7 +7,7 @@ The tools are organized into thematic submodules for better maintainability.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from family_assistant import storage
 from family_assistant.tools.attachments import (
@@ -152,7 +152,7 @@ from family_assistant.tools.tasks import (
     schedule_recurring_task_tool,
     schedule_reminder_tool,
 )
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 from family_assistant.tools.video_generation import (
     VIDEO_GENERATION_TOOLS_DEFINITION,
     generate_video_tool,
@@ -414,8 +414,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
 
 
 # Combine all tool definitions
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-TOOLS_DEFINITION: list[dict[str, Any]] = (
+TOOLS_DEFINITION: list[ToolDefinition] = (
     NOTE_TOOLS_DEFINITION
     + SERVICE_TOOLS_DEFINITION
     + TASK_TOOLS_DEFINITION

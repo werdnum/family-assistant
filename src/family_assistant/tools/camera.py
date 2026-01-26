@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
-from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 # Threshold for warning about old dates (likely model confusion about current date)
 OLD_DATE_THRESHOLD = timedelta(days=30)
@@ -23,8 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 # Tool Definitions
-# ast-grep-ignore: no-dict-any - Tool definitions require dict[str, Any] for JSON schema
-CAMERA_TOOLS_DEFINITION: list[dict[str, Any]] = [
+CAMERA_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {

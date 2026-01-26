@@ -6,7 +6,7 @@ import io
 import json
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, Mock
 
 import aiofiles
@@ -371,8 +371,8 @@ class TestToolRegistration:
             in function_def["description"].lower()
         )
 
-        # Verify parameters
-        params = function_def["parameters"]
+        # Verify parameters (cast to dict for test assertions on optional TypedDict keys)
+        params = cast("dict[str, Any]", function_def["parameters"])
         assert params["type"] == "object"
         assert "attachment_ids" in params["properties"]
         assert params["properties"]["attachment_ids"]["type"] == "array"

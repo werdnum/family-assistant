@@ -7,9 +7,9 @@ without requiring actual image processing dependencies.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.scripting.apis.attachments import ScriptAttachment
@@ -17,8 +17,7 @@ if TYPE_CHECKING:
 
 
 # Tool Definitions
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-MOCK_IMAGE_TOOLS_DEFINITION: list[dict[str, Any]] = [
+MOCK_IMAGE_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {

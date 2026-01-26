@@ -7,7 +7,7 @@ import logging
 import re
 import tempfile
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import TypedDict
 from urllib.parse import urlparse
 
 import yt_dlp
@@ -15,6 +15,7 @@ from yt_dlp.utils import DownloadError, sanitize_filename
 
 from family_assistant.tools.types import (
     ToolAttachment,
+    ToolDefinition,
     ToolExecutionContext,
     ToolResult,
     get_attachment_limits,
@@ -109,8 +110,7 @@ class MediaMetadata(TypedDict, total=False):
     extractor: str | None
 
 
-# ast-grep-ignore: no-dict-any - OpenAI function calling spec requires untyped dict for JSON schema
-MEDIA_DOWNLOAD_TOOLS_DEFINITION: list[dict[str, Any]] = [
+MEDIA_DOWNLOAD_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {

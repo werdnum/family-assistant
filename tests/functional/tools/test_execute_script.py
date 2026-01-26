@@ -16,6 +16,7 @@ from family_assistant.tools.infrastructure import (
 )
 from family_assistant.tools.types import (
     ToolAttachment,
+    ToolDefinition,
     ToolExecutionContext,
     ToolResult,
 )
@@ -102,7 +103,7 @@ async def test_execute_script_with_tools(db_engine: AsyncEngine) -> None:
             return f"Echo: {message}"
 
         # Create tools provider
-        tool_definitions = [
+        tool_definitions: list[ToolDefinition] = [
             {
                 "type": "function",
                 "function": {
@@ -386,7 +387,7 @@ async def test_script_attachment_composition_dict_format(
             )
 
         # Create tools provider with both tools
-        tool_definitions = [
+        tool_definitions: list[ToolDefinition] = [
             {
                 "type": "function",
                 "function": {

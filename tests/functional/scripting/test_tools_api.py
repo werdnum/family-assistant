@@ -9,14 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.scripting.engine import StarlarkEngine
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 
 class MockToolsProvider:
     """Mock tools provider for testing."""
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def get_tool_definitions(self) -> list[dict[str, Any]]:
+    async def get_tool_definitions(self) -> list[ToolDefinition]:
         """Return mock tool definitions."""
         return [
             {

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 import telegramify_markdown
 
 from family_assistant.llm.content_parts import text_content
-from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.llm.content_parts import ContentPartDict
@@ -31,8 +31,7 @@ ConfirmationCallbackSignature = Callable[
 ]
 
 # Tool Definitions
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-SERVICE_TOOLS_DEFINITION: list[dict[str, Any]] = [
+SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {

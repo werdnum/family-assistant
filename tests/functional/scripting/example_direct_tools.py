@@ -14,7 +14,7 @@ from family_assistant.scripting.engine import StarlarkEngine
 from family_assistant.storage import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -24,8 +24,7 @@ logger = logging.getLogger(__name__)
 class SimpleToolsProvider:
     """Simple tools provider with a few example tools."""
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def get_tool_definitions(self) -> list[dict[str, Any]]:
+    async def get_tool_definitions(self) -> list[ToolDefinition]:
         """Return tool definitions."""
         return [
             {

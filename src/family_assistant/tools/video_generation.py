@@ -14,14 +14,14 @@ from google.genai import types
 from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.tools.types import (
     ToolAttachment,
+    ToolDefinition,
     ToolExecutionContext,
     ToolResult,
 )
 
 logger = logging.getLogger(__name__)
 
-# ast-grep-ignore: no-dict-any - Tool definition schema uses dict structure
-VIDEO_GENERATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
+VIDEO_GENERATION_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {

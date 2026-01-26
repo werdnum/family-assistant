@@ -18,11 +18,14 @@ from family_assistant import calendar_integration
 from family_assistant.tools.attachment_utils import process_attachment_arguments
 from family_assistant.tools.types import (
     CalendarConfig,
+    ToolDefinition,
     ToolExecutionContext,
     ToolResult,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from family_assistant.embeddings import EmbeddingGenerator
     from family_assistant.tools.types import CalendarEvent
 
@@ -30,10 +33,8 @@ logger = logging.getLogger(__name__)
 
 
 def translate_attachment_schemas_for_llm(
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    tool_definitions: list[dict[str, Any]],
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-) -> list[dict[str, Any]]:
+    tool_definitions: Sequence[ToolDefinition],
+) -> list[ToolDefinition]:
     """
     Translate tool schemas for LLM compatibility by converting attachment types.
 
@@ -47,7 +48,7 @@ def translate_attachment_schemas_for_llm(
         List of tool definitions compatible with LLMs (no custom attachment types)
     """
 
-    translated_definitions = copy.deepcopy(tool_definitions)
+    translated_definitions: list[ToolDefinition] = list(copy.deepcopy(tool_definitions))
 
     for tool_def in translated_definitions:
         if tool_def.get("type") == "function":
@@ -121,7 +122,7 @@ class ConfirmationCallbackProtocol(Protocol):
         turn_id: str | None,
         tool_name: str,
         call_id: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
         tool_args: dict[str, Any],
         timeout: float,
         context: ToolExecutionContext,
@@ -172,8 +173,7 @@ class ToolsProvider(Protocol):
     tool definitions and execute tools.
     """
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def get_tool_definitions(self) -> list[dict[str, Any]]:
+    async def get_tool_definitions(self) -> list[ToolDefinition]:
         """Returns a list of tool definitions in LLM-compatible format.
 
         Returns:
@@ -185,7 +185,7 @@ class ToolsProvider(Protocol):
     async def execute_tool(
         self,
         name: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
         arguments: dict[str, Any],
         context: ToolExecutionContext,
         call_id: str | None = None,
@@ -228,14 +228,13 @@ class LocalToolsProvider:
 
     def __init__(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        definitions: list[dict[str, Any]],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        definitions: Sequence[ToolDefinition],
+        # ast-grep-ignore: no-dict-any - Implementation map has heterogeneous callable types
         implementations: dict[str, Any],  # dict[str, Callable]
         embedding_generator: EmbeddingGenerator | None = None,
         calendar_config: CalendarConfig | None = None,
     ) -> None:
-        self._definitions = definitions
+        self._definitions = list(definitions)
         self._implementations = implementations
         self._embedding_generator = embedding_generator
         self._calendar_config = calendar_config
@@ -247,8 +246,7 @@ class LocalToolsProvider:
                 f"LocalToolsProvider configured with embedding generator: {type(self._embedding_generator).__name__}"
             )
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def get_tool_definitions(self) -> list[dict[str, Any]]:
+    async def get_tool_definitions(self) -> list[ToolDefinition]:
         """Get tool definitions translated for LLM compatibility.
 
         Returns tool definitions with attachment types converted to string types
@@ -256,8 +254,7 @@ class LocalToolsProvider:
         """
         return translate_attachment_schemas_for_llm(self._definitions)
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def get_raw_tool_definitions(self) -> list[dict[str, Any]]:
+    def get_raw_tool_definitions(self) -> list[ToolDefinition]:
         """Get raw internal tool definitions without LLM translation.
 
         This is used internally by the script API to detect attachment types
@@ -271,7 +268,7 @@ class LocalToolsProvider:
     async def execute_tool(
         self,
         name: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
         arguments: dict[str, Any],
         context: ToolExecutionContext,
         call_id: str | None = None,
@@ -479,10 +476,9 @@ class CompositeToolsProvider:
             f"CompositeToolsProvider initialized with {len(providers)} providers"
         )
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def get_tool_definitions(self) -> list[dict[str, Any]]:
+    async def get_tool_definitions(self) -> list[ToolDefinition]:
         """Returns combined tool definitions from all providers."""
-        all_definitions = []
+        all_definitions: list[ToolDefinition] = []
         for provider in self._providers:
             try:
                 definitions = await provider.get_tool_definitions()
@@ -497,7 +493,7 @@ class CompositeToolsProvider:
     async def execute_tool(
         self,
         name: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
         arguments: dict[str, Any],
         context: ToolExecutionContext,
         call_id: str | None = None,
@@ -565,11 +561,9 @@ class FilteredToolsProvider(ToolsProvider):
         """
         self._wrapped_provider = wrapped_provider
         self._allowed_tool_names = allowed_tool_names
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        self._filtered_definitions: list[dict[str, Any]] | None = None
+        self._filtered_definitions: list[ToolDefinition] | None = None
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def get_tool_definitions(self) -> list[dict[str, Any]]:
+    async def get_tool_definitions(self) -> list[ToolDefinition]:
         """Get filtered tool definitions."""
         if self._filtered_definitions is None:
             all_definitions = await self._wrapped_provider.get_tool_definitions()
@@ -588,7 +582,7 @@ class FilteredToolsProvider(ToolsProvider):
     async def execute_tool(
         self,
         name: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
         arguments: dict[str, Any],
         context: ToolExecutionContext,
         call_id: str | None = None,
@@ -619,14 +613,12 @@ class ConfirmingToolsProvider(ToolsProvider):
         self.wrapped_provider = wrapped_provider
         self._tools_requiring_confirmation = tools_requiring_confirmation
         self.confirmation_timeout = confirmation_timeout
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        self._tool_definitions: list[dict[str, Any]] | None = None
+        self._tool_definitions: list[ToolDefinition] | None = None
         logger.info(
             f"ConfirmingToolsProvider initialized with tools requiring confirmation: {tools_requiring_confirmation}"
         )
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def get_tool_definitions(self) -> list[dict[str, Any]]:
+    async def get_tool_definitions(self) -> list[ToolDefinition]:
         """Returns tool definitions from the wrapped provider."""
         if self._tool_definitions is None:
             self._tool_definitions = await self.wrapped_provider.get_tool_definitions()
@@ -634,10 +626,9 @@ class ConfirmingToolsProvider(ToolsProvider):
         return self._tool_definitions
 
     async def _get_event_details_for_confirmation(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         tool_name: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
         args: dict[str, Any],
         context: ToolExecutionContext,
     ) -> CalendarEvent | None:
@@ -694,7 +685,7 @@ class ConfirmingToolsProvider(ToolsProvider):
     async def execute_tool(
         self,
         name: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
         arguments: dict[str, Any],
         context: ToolExecutionContext,
         call_id: str | None = None,

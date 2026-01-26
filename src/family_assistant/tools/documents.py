@@ -24,6 +24,7 @@ from family_assistant.storage.vector_search import (
 )
 from family_assistant.tools.types import (
     ToolAttachment,
+    ToolDefinition,
     ToolResult,
     get_attachment_limits,
 )
@@ -38,8 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 # Tool Definitions
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-DOCUMENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
+DOCUMENT_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {

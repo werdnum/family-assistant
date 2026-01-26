@@ -20,7 +20,7 @@ from playwright.async_api import (
     async_playwright,
 )
 
-from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 from family_assistant.utils.stealth_browser import (
     create_stealth_context,
     launch_stealth_browser,
@@ -507,7 +507,7 @@ async def computer_use_scroll_document(
 
 
 # Tools Definition
-COMPUTER_USE_TOOLS_DEFINITION = [
+COMPUTER_USE_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {
