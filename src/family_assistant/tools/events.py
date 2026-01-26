@@ -11,14 +11,13 @@ from sqlalchemy import text
 
 # get_db_context import removed - using exec_context.db_context for dependency injection
 from family_assistant.events.validation import format_validation_errors
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
 
 # Tool definitions
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-EVENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
+EVENT_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {

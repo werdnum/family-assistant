@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from family_assistant.tools.types import (
     ToolAttachment,
+    ToolDefinition,
     ToolResult,
     get_attachment_limits,
 )
@@ -46,8 +47,7 @@ def detect_image_mime_type(content: bytes) -> str:
 
 
 # Tool Definitions
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-HOME_ASSISTANT_TOOLS_DEFINITION: list[dict[str, Any]] = [
+HOME_ASSISTANT_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {

@@ -4,18 +4,17 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from family_assistant.scripting.apis.attachments import ScriptAttachment
-    from family_assistant.tools.types import ToolExecutionContext
+    from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
 
 # Tool Definitions
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-ATTACHMENT_TOOLS_DEFINITION: list[dict[str, Any]] = [
+ATTACHMENT_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {

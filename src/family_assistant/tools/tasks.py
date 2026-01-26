@@ -23,15 +23,14 @@ from family_assistant.utils.clock import SystemClock
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from family_assistant.tools.types import ToolExecutionContext
+    from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 
 logger = logging.getLogger(__name__)
 
 
 # Tool Definitions
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-TASK_TOOLS_DEFINITION: list[dict[str, Any]] = [
+TASK_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {

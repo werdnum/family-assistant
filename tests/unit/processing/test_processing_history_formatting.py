@@ -13,7 +13,7 @@ import pytest
 from PIL import Image
 
 if TYPE_CHECKING:
-    from family_assistant.tools.types import ToolAttachment
+    from family_assistant.tools.types import ToolAttachment, ToolDefinition
 
 from family_assistant.config_models import AppConfig
 from family_assistant.llm import LLMStreamEvent
@@ -78,8 +78,7 @@ class MockToolsProvider:
         self,
         *args: Any,  # noqa: ANN401  # Mock needs flexibility
         **kwargs: Any,  # noqa: ANN401 # Mock needs flexibility
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> list[dict[str, Any]]:
+    ) -> "list[ToolDefinition]":
         return []  # Not used
 
     async def execute_tool(

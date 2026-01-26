@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from family_assistant.tools.types import ToolResult
+from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -49,8 +49,7 @@ def _to_isoformat(dt: datetime | None) -> str | None:
 
 
 # Tool Definitions
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-AUTOMATIONS_TOOLS_DEFINITION: list[dict[str, Any]] = [
+AUTOMATIONS_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {

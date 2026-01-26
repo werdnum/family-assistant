@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import vl_convert as vlc
 
-from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.scripting.apis.attachments import ScriptAttachment
@@ -23,8 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Tool Definitions
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-DATA_VISUALIZATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
+DATA_VISUALIZATION_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {

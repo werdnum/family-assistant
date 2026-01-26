@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import (
         CalendarConfig,
         CalendarEvent,
+        ToolDefinition,
         ToolExecutionContext,
     )
 
@@ -271,7 +272,7 @@ async def _check_for_duplicate_events(
         return None
 
 
-CALENDAR_TOOLS_DEFINITION = [
+CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {

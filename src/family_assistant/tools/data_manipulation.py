@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 import jq
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
-from family_assistant.tools.types import ToolResult
+from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
@@ -22,8 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Tool Definitions
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-DATA_MANIPULATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
+DATA_MANIPULATION_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {

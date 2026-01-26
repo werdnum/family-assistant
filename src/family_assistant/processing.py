@@ -15,6 +15,7 @@ from datetime import (  # Added timezone
 from typing import (
     TYPE_CHECKING,
     Any,
+    cast,
 )
 
 if TYPE_CHECKING:
@@ -529,7 +530,9 @@ class ProcessingService:
             try:
                 async for event in self.llm_client.generate_response_stream(
                     messages=messages,
-                    tools=tools_to_offer,
+                    # cast needed because ToolDefinition is a TypedDict which
+                    # the type checker doesn't recognize as assignable to dict[str, Any]
+                    tools=cast("list[dict[str, Any]] | None", tools_to_offer),
                     tool_choice=tool_choice_mode,
                 ):
                     # Yield content events as they come

@@ -13,7 +13,7 @@ from mcp.types import TextContent  # Import TextContent from mcp.types
 
 # Import storage functions needed by local tools
 # Import the context from the new types file
-from .types import ToolExecutionContext, ToolNotFoundError
+from .types import ToolDefinition, ToolExecutionContext, ToolNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +43,7 @@ class MCPToolsProvider:
         self._health_check_interval_seconds = health_check_interval_seconds
         self._sessions: dict[str, ClientSession] = {}
         self._tool_map: dict[str, str] = {}  # Map tool name -> server_id
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        self._definitions: list[dict[str, Any]] = []
+        self._definitions: list[ToolDefinition] = []
         self._initialized = False
         self._connection_contexts: dict[str, contextlib.AsyncExitStack] = {}
         self._server_statuses: dict[str, str] = {
@@ -106,13 +105,11 @@ class MCPToolsProvider:
             logger.debug("MCP initialization logging task finished.")
 
     async def _connect_and_discover_mcp(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         self,
         server_id: str,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        # ast-grep-ignore: no-dict-any - MCP server config can have varied structure
         server_conf: dict[str, Any],
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> tuple["ClientSession | None", list[dict[str, Any]], dict[str, str]]:
+    ) -> tuple["ClientSession | None", list[ToolDefinition], dict[str, str]]:
         """Connects to a single MCP server, discovers tools, and returns results."""
         self._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTING
         discovered_tools = []
@@ -482,8 +479,7 @@ class MCPToolsProvider:
         # self, definitions: List[Dict[str, Any]] # Original signature
         self,
         definitions: list[Any],  # MCP list_tools returns list of Tool objects
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> list[dict[str, Any]]:
+    ) -> list[ToolDefinition]:
         """
         Accepts a list of MCP Tool objects.
         Converts MCP Tool objects to OpenAI-like dictionary format.
@@ -519,8 +515,7 @@ class MCPToolsProvider:
 
     async def get_tool_definitions(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> list[dict[str, Any]]:  # Return type is still dict
+    ) -> list[ToolDefinition]:
         """Returns the aggregated and sanitized tool definitions from all connected servers."""
         if not self._initialized:
             await self.initialize()

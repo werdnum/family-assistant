@@ -28,7 +28,11 @@ from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
 )
-from family_assistant.tools.types import ToolResult
+from family_assistant.tools.types import (
+    ToolDefinition,
+    ToolParametersSchema,
+    ToolResult,
+)
 
 T = TypeVar("T")
 
@@ -45,8 +49,7 @@ class ToolInfo:
 
     name: str
     description: str
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    parameters: dict[str, Any]
+    parameters: ToolParametersSchema
 
 
 @dataclass
@@ -121,10 +124,8 @@ class ToolsAPI:
         self._executor = ThreadPoolExecutor(max_workers=1)
 
         # Cache tool definitions
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        self._tool_definitions: list[dict[str, Any]] | None = None
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        self._raw_tool_definitions: list[dict[str, Any]] | None = None
+        self._tool_definitions: list[ToolDefinition] | None = None
+        self._raw_tool_definitions: list[ToolDefinition] | None = None
 
         logger.info(
             "Initialized ToolsAPI bridge for Starlark scripts (deny_all_tools=%s, allowed_tools=%s, main_loop=%s)",
@@ -251,8 +252,7 @@ class ToolsAPI:
 
         return await fetch_attachment_object(attachment_id, self.execution_context)
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    async def _get_raw_tool_definitions(self) -> list[dict[str, Any]]:
+    async def _get_raw_tool_definitions(self) -> list[ToolDefinition]:
         """Get raw tool definitions for internal schema analysis.
 
         Uses the raw definitions (without LLM translation) to detect attachment types.

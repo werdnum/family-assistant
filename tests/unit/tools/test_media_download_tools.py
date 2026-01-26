@@ -2,7 +2,7 @@
 
 from collections.abc import Generator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -48,7 +48,8 @@ def test_tool_definition_structure() -> None:
     assert tool_def["function"]["name"] == "download_media"
     assert "description" in tool_def["function"]
 
-    params = tool_def["function"]["parameters"]
+    # Cast to dict for test assertions on optional TypedDict keys
+    params = cast("dict[str, Any]", tool_def["function"]["parameters"])
     assert params["type"] == "object"
     assert "url" in params["properties"]
     assert "audio_only" in params["properties"]
