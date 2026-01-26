@@ -29,7 +29,9 @@ if [ "$HAS_VALID_KEY" = "true" ] && [ -n "$GITHUB_APP_ID" ] && [ -n "$GITHUB_APP
 
     # Also export GITHUB_TOKEN for tools that don't use credential helper
     # Note: gh-token outputs JSON, so we extract just the token value
-    export GITHUB_TOKEN=$(/usr/local/bin/gh-token generate --key "$GITHUB_APP_PRIVATE_KEY_FILE" --app-id "$GITHUB_APP_ID" --installation-id "$GITHUB_APP_INSTALLATION_ID" | jq -r .token)
+    # Separate assignment from export so set -e catches failures (SC2155)
+    GITHUB_TOKEN=$(/usr/local/bin/gh-token generate --key "$GITHUB_APP_PRIVATE_KEY_FILE" --app-id "$GITHUB_APP_ID" --installation-id "$GITHUB_APP_INSTALLATION_ID" | jq -r .token)
+    export GITHUB_TOKEN
 
     # Configure git to use HTTPS instead of SSH for GitHub
     # This ensures that tools trying to use SSH URLs (like claude-code)
