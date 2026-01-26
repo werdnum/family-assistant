@@ -15,7 +15,7 @@ Configuration priority (lowest to highest):
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -511,7 +511,7 @@ class AIWorkerConfig(BaseModel):
     enabled: bool = False
 
     # Backend selection
-    backend_type: str = "kubernetes"  # "kubernetes", "docker", "mock"
+    backend_type: Literal["kubernetes", "docker", "mock"] = "kubernetes"
 
     # Volume settings
     workspace_mount_path: str = "/workspace"
