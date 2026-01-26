@@ -20,14 +20,13 @@ from family_assistant.tools.types import ToolResult
 from family_assistant.utils.workspace import get_workspace_root, validate_workspace_path
 
 if TYPE_CHECKING:
-    from family_assistant.tools.types import ToolExecutionContext
+    from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
 
 # Tool Definitions
-# ast-grep-ignore: no-dict-any - Tool definitions follow OpenAI schema format
-_WORKSPACE_FILE_TOOLS: list[dict[str, Any]] = [
+_WORKSPACE_FILE_TOOLS: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {
@@ -507,8 +506,7 @@ async def workspace_mkdir_tool(
 
 
 # Notes Integration Tool Definitions
-# ast-grep-ignore: no-dict-any - Tool definitions follow OpenAI schema format
-NOTES_INTEGRATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
+NOTES_INTEGRATION_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {
@@ -796,4 +794,6 @@ async def workspace_import_note_tool(
 
 
 # Combined tool definitions for export
-WORKSPACE_TOOLS_DEFINITION = _WORKSPACE_FILE_TOOLS + NOTES_INTEGRATION_TOOLS_DEFINITION
+WORKSPACE_TOOLS_DEFINITION: list[ToolDefinition] = (
+    _WORKSPACE_FILE_TOOLS + NOTES_INTEGRATION_TOOLS_DEFINITION
+)

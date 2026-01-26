@@ -25,7 +25,9 @@ Create a new file in `src/family_assistant/tools/` (e.g., `something.py`) with:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+from family_assistant.tools.types import ToolDefinition
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
@@ -33,7 +35,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Tool Definitions
-SOMETHING_TOOLS_DEFINITION: list[dict[str, Any]] = [
+SOMETHING_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {
@@ -111,7 +113,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
 }
 
 # Add to TOOLS_DEFINITION list
-TOOLS_DEFINITION: list[dict[str, Any]] = (
+TOOLS_DEFINITION: list[ToolDefinition] = (
     # ... existing definitions ...
 
     + SOMETHING_TOOLS_DEFINITION

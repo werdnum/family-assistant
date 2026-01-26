@@ -10,7 +10,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
@@ -87,8 +87,7 @@ async def add_or_update_note_tool(
 
 
 # Tool Definitions
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-NOTE_TOOLS_DEFINITION: list[dict[str, Any]] = [
+NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {

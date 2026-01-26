@@ -18,6 +18,7 @@ from family_assistant.tools.infrastructure import (
 )
 from family_assistant.tools.types import (
     ToolAttachment,
+    ToolDefinition,
     ToolExecutionContext,
     ToolResult,
 )
@@ -158,7 +159,7 @@ async def test_execute_script_return_attachment_from_tool(
             )
 
         # Register tool
-        tool_definitions = [
+        tool_definitions: list[ToolDefinition] = [
             {
                 "type": "function",
                 "function": {
@@ -269,7 +270,7 @@ async def test_execute_script_functional_composition(
             )
 
         # Register tools
-        tool_definitions = [
+        tool_definitions: list[ToolDefinition] = [
             {
                 "type": "function",
                 "function": {
@@ -378,7 +379,7 @@ async def test_execute_script_mixed_attachment_sources(
                 ],
             )
 
-        tool_definitions = [
+        tool_definitions: list[ToolDefinition] = [
             {
                 "type": "function",
                 "function": {

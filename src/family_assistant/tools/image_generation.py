@@ -11,7 +11,7 @@ implementations (mock, Gemini API, fallback).
 
 import io
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from PIL import Image
 
@@ -20,7 +20,7 @@ from family_assistant.tools.image_backends import (
     ImageGenerationBackend,
     MockImageBackend,
 )
-from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
@@ -30,8 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Tool Definitions
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-IMAGE_GENERATION_TOOLS_DEFINITION: list[dict[str, Any]] = [
+IMAGE_GENERATION_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {

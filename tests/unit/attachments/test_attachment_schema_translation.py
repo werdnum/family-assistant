@@ -1,11 +1,16 @@
 """Unit tests for attachment schema translation functionality."""
 
+from typing import TYPE_CHECKING, Any, cast
+
 import pytest
 
 from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
     translate_attachment_schemas_for_llm,
 )
+
+if TYPE_CHECKING:
+    from family_assistant.tools.types import ToolDefinition
 
 
 class TestAttachmentSchemaTranslation:
@@ -14,7 +19,7 @@ class TestAttachmentSchemaTranslation:
     def test_translate_attachment_schemas_for_llm(self) -> None:
         """Test that attachment schemas are properly translated for LLM compatibility."""
         # Create tool definitions with attachment types
-        original_definitions = [
+        original_definitions: list[ToolDefinition] = [
             {
                 "type": "function",
                 "function": {
@@ -55,7 +60,11 @@ class TestAttachmentSchemaTranslation:
         assert translated_definitions[0]["type"] == "function"
         assert translated_definitions[0]["function"]["name"] == "test_attachment_tool"
 
-        properties = translated_definitions[0]["function"]["parameters"]["properties"]
+        # Cast to dict for test assertions on optional TypedDict keys
+        params = cast(
+            "dict[str, Any]", translated_definitions[0]["function"]["parameters"]
+        )
+        properties = cast("dict[str, Any]", params["properties"])
 
         # Verify attachment parameter was translated
         image_param = properties["image_id"]
@@ -76,7 +85,7 @@ class TestAttachmentSchemaTranslation:
 
     def test_translate_preserves_non_attachment_schemas(self) -> None:
         """Test that non-attachment schemas are preserved unchanged."""
-        original_definitions = [
+        original_definitions: list[ToolDefinition] = [
             {
                 "type": "function",
                 "function": {
@@ -103,11 +112,12 @@ class TestAttachmentSchemaTranslation:
 
     def test_translate_handles_missing_descriptions(self) -> None:
         """Test translation handles parameters without descriptions gracefully."""
-        original_definitions = [
+        original_definitions: list[ToolDefinition] = [
             {
                 "type": "function",
                 "function": {
                     "name": "test_tool",
+                    "description": "Test tool",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -125,9 +135,12 @@ class TestAttachmentSchemaTranslation:
             original_definitions
         )
 
-        param = translated_definitions[0]["function"]["parameters"]["properties"][
-            "attachment_param"
-        ]
+        # Cast to dict for test assertions on optional TypedDict keys
+        params = cast(
+            "dict[str, Any]", translated_definitions[0]["function"]["parameters"]
+        )
+        properties = cast("dict[str, Any]", params["properties"])
+        param = properties["attachment_param"]
         assert param["type"] == "string"
         assert "UUID of the attachment" in param["description"]
 
@@ -135,7 +148,7 @@ class TestAttachmentSchemaTranslation:
     async def test_local_tools_provider_schema_translation(self) -> None:
         """Test that LocalToolsProvider correctly translates schemas."""
         # Define a tool with attachment type
-        tool_definitions = [
+        tool_definitions: list[ToolDefinition] = [
             {
                 "type": "function",
                 "function": {
@@ -164,27 +177,33 @@ class TestAttachmentSchemaTranslation:
             implementations={"process_image": mock_process_image},
         )
 
-        # Get raw definitions (internal use)
+        # Get raw definitions (internal use) - cast for test assertions
         raw_definitions = provider.get_raw_tool_definitions()
-        raw_param = raw_definitions[0]["function"]["parameters"]["properties"][
-            "image_attachment_id"
-        ]
+        raw_params = cast(
+            "dict[str, Any]", raw_definitions[0]["function"]["parameters"]
+        )
+        raw_props = cast("dict[str, Any]", raw_params["properties"])
+        raw_param = raw_props["image_attachment_id"]
         assert raw_param["type"] == "attachment"
 
-        # Get translated definitions (LLM use)
+        # Get translated definitions (LLM use) - cast for test assertions
         translated_definitions = await provider.get_tool_definitions()
-        translated_param = translated_definitions[0]["function"]["parameters"][
-            "properties"
-        ]["image_attachment_id"]
+        trans_params = cast(
+            "dict[str, Any]", translated_definitions[0]["function"]["parameters"]
+        )
+        trans_props = cast("dict[str, Any]", trans_params["properties"])
+        translated_param = trans_props["image_attachment_id"]
         assert translated_param["type"] == "string"
         assert "UUID" in translated_param["description"]
 
     def test_translate_preserves_original_definitions(self) -> None:
         """Test that translation doesn't modify the original definitions."""
-        original_definitions = [
+        original_definitions: list[ToolDefinition] = [
             {
                 "type": "function",
                 "function": {
+                    "name": "test_tool",
+                    "description": "Test tool",
                     "parameters": {
                         "properties": {
                             "attachment_param": {
@@ -197,10 +216,12 @@ class TestAttachmentSchemaTranslation:
             }
         ]
 
-        # Keep reference to original
-        original_param = original_definitions[0]["function"]["parameters"][
-            "properties"
-        ]["attachment_param"]
+        # Keep reference to original - cast for test assertions
+        orig_params = cast(
+            "dict[str, Any]", original_definitions[0]["function"]["parameters"]
+        )
+        orig_props = cast("dict[str, Any]", orig_params["properties"])
+        original_param = orig_props["attachment_param"]
         original_type = original_param["type"]
 
         # Translate
@@ -211,8 +232,10 @@ class TestAttachmentSchemaTranslation:
         # Verify original is unchanged
         assert original_param["type"] == original_type == "attachment"
 
-        # Verify translation worked
-        translated_param = translated_definitions[0]["function"]["parameters"][
-            "properties"
-        ]["attachment_param"]
+        # Verify translation worked - cast for test assertions
+        trans_params = cast(
+            "dict[str, Any]", translated_definitions[0]["function"]["parameters"]
+        )
+        trans_props = cast("dict[str, Any]", trans_params["properties"])
+        translated_param = trans_props["attachment_param"]
         assert translated_param["type"] == "string"

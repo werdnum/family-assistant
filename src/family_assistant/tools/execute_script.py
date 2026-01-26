@@ -18,7 +18,7 @@ from family_assistant.scripting.errors import (
     ScriptSyntaxError,
     ScriptTimeoutError,
 )
-from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
@@ -321,8 +321,7 @@ async def execute_script_tool(
 
 
 # Tool Definition
-# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-SCRIPT_TOOLS_DEFINITION: list[dict[str, Any]] = [
+SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {

@@ -19,14 +19,13 @@ from family_assistant.tools.types import ToolResult
 from family_assistant.utils.workspace import get_workspace_root, validate_workspace_path
 
 if TYPE_CHECKING:
-    from family_assistant.tools.types import ToolExecutionContext
+    from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
 
 # Tool Definitions
-# ast-grep-ignore: no-dict-any - Tool definitions follow OpenAI schema format
-WORKER_TOOLS_DEFINITION: list[dict[str, Any]] = [
+WORKER_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {

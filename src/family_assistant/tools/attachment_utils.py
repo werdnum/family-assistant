@@ -14,7 +14,7 @@ from family_assistant.scripting.apis.attachments import ScriptAttachment
 
 if TYPE_CHECKING:
     from family_assistant.storage.context import DatabaseContext
-    from family_assistant.tools.types import ToolExecutionContext
+    from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -95,12 +95,11 @@ async def fetch_attachment_object(
 
 
 async def process_attachment_arguments(
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
     arguments: dict[str, Any],
     context: ToolExecutionContext,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    tool_definition: dict[str, Any] | None = None,
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    tool_definition: ToolDefinition | None = None,
+    # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON
 ) -> dict[str, Any]:
     """
     Process arguments and convert attachment IDs to ScriptAttachment objects.
