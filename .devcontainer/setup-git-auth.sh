@@ -20,14 +20,16 @@ if [ "$HAS_VALID_KEY" = "true" ] && [ -n "$GITHUB_APP_ID" ] && [ -n "$GITHUB_APP
     # We use a shell function in the config to execute gh-token
     # We bake the environment variable values into the config because tools like 'claude code'
     # may strip the environment variables when running git commands
+    # Note: gh-token outputs JSON, so we pipe through jq to extract just the token
     git config --global credential.helper "!f() { \
-        TOKEN=\$(/usr/local/bin/gh-token generate --key \"$GITHUB_APP_PRIVATE_KEY_FILE\" --app-id \"$GITHUB_APP_ID\" --installation-id \"$GITHUB_APP_INSTALLATION_ID\"); \
+        TOKEN=\$(/usr/local/bin/gh-token generate --key \"$GITHUB_APP_PRIVATE_KEY_FILE\" --app-id \"$GITHUB_APP_ID\" --installation-id \"$GITHUB_APP_INSTALLATION_ID\" | jq -r .token); \
         echo \"username=x-access-token\"; \
         echo \"password=\$TOKEN\"; \
     }; f"
 
     # Also export GITHUB_TOKEN for tools that don't use credential helper
-    export GITHUB_TOKEN=$(/usr/local/bin/gh-token generate --key "$GITHUB_APP_PRIVATE_KEY_FILE" --app-id "$GITHUB_APP_ID" --installation-id "$GITHUB_APP_INSTALLATION_ID")
+    # Note: gh-token outputs JSON, so we extract just the token value
+    export GITHUB_TOKEN=$(/usr/local/bin/gh-token generate --key "$GITHUB_APP_PRIVATE_KEY_FILE" --app-id "$GITHUB_APP_ID" --installation-id "$GITHUB_APP_INSTALLATION_ID" | jq -r .token)
 
     # Configure git to use HTTPS instead of SSH for GitHub
     # This ensures that tools trying to use SSH URLs (like claude-code)
@@ -38,3 +40,4 @@ if [ "$HAS_VALID_KEY" = "true" ] && [ -n "$GITHUB_APP_ID" ] && [ -n "$GITHUB_APP
 else
     echo "GitHub App authentication skipped (missing configuration or valid key file)."
 fi
+
