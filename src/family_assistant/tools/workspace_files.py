@@ -10,7 +10,6 @@ from __future__ import annotations
 import base64
 import logging
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import aiofiles
@@ -18,60 +17,12 @@ import aiofiles.os
 import yaml
 
 from family_assistant.tools.types import ToolResult
+from family_assistant.utils.workspace import get_workspace_root, validate_workspace_path
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
-
-
-def _get_workspace_root(exec_context: ToolExecutionContext) -> Path:
-    """Get the workspace root path from configuration.
-
-    Args:
-        exec_context: The tool execution context
-
-    Returns:
-        Path to the workspace root
-
-    Raises:
-        ValueError: If processing_service or app_config is not available
-    """
-    if exec_context.processing_service is None:
-        raise ValueError("processing_service not available in exec_context")
-
-    app_config = exec_context.processing_service.app_config
-    return Path(app_config.ai_worker_config.workspace_mount_path)
-
-
-def _validate_workspace_path(relative_path: str, workspace_root: Path) -> Path:
-    """Validate and resolve a workspace-relative path.
-
-    Args:
-        relative_path: Path relative to workspace root
-        workspace_root: The workspace root directory
-
-    Returns:
-        Resolved absolute path within workspace
-
-    Raises:
-        ValueError: If path attempts to escape workspace
-    """
-    # Normalize the path and resolve any .. components
-    normalized = Path(relative_path)
-    if normalized.is_absolute():
-        raise ValueError(f"Path must be relative, not absolute: {relative_path}")
-
-    # Resolve against workspace root
-    full_path = (workspace_root / normalized).resolve()
-
-    # Ensure the resolved path is still within workspace
-    try:
-        full_path.relative_to(workspace_root.resolve())
-    except ValueError as e:
-        raise ValueError(f"Path escapes workspace directory: {relative_path}") from e
-
-    return full_path
 
 
 # Tool Definitions
@@ -275,8 +226,8 @@ async def workspace_read_tool(
     logger.info(f"workspace_read: path={path}, offset={offset}, limit={limit}")
 
     try:
-        workspace_root = _get_workspace_root(exec_context)
-        full_path = _validate_workspace_path(path, workspace_root)
+        workspace_root = get_workspace_root(exec_context)
+        full_path = validate_workspace_path(path, workspace_root)
     except ValueError as e:
         return ToolResult(data={"error": str(e)})
 
@@ -356,8 +307,8 @@ async def workspace_write_tool(
     logger.info(f"workspace_write: path={path}, content_length={len(content)}")
 
     try:
-        workspace_root = _get_workspace_root(exec_context)
-        full_path = _validate_workspace_path(path, workspace_root)
+        workspace_root = get_workspace_root(exec_context)
+        full_path = validate_workspace_path(path, workspace_root)
     except ValueError as e:
         return ToolResult(data={"error": str(e)})
 
@@ -404,9 +355,9 @@ async def workspace_glob_tool(
     )
 
     try:
-        workspace_root = _get_workspace_root(exec_context)
+        workspace_root = get_workspace_root(exec_context)
         base_path = (
-            _validate_workspace_path(path, workspace_root) if path else workspace_root
+            validate_workspace_path(path, workspace_root) if path else workspace_root
         )
     except ValueError as e:
         return ToolResult(data={"error": str(e)})
@@ -466,8 +417,8 @@ async def workspace_delete_tool(
     logger.info(f"workspace_delete: path={path}")
 
     try:
-        workspace_root = _get_workspace_root(exec_context)
-        full_path = _validate_workspace_path(path, workspace_root)
+        workspace_root = get_workspace_root(exec_context)
+        full_path = validate_workspace_path(path, workspace_root)
     except ValueError as e:
         return ToolResult(data={"error": str(e)})
 
@@ -527,8 +478,8 @@ async def workspace_mkdir_tool(
     logger.info(f"workspace_mkdir: path={path}")
 
     try:
-        workspace_root = _get_workspace_root(exec_context)
-        full_path = _validate_workspace_path(path, workspace_root)
+        workspace_root = get_workspace_root(exec_context)
+        full_path = validate_workspace_path(path, workspace_root)
     except ValueError as e:
         return ToolResult(data={"error": str(e)})
 
@@ -664,8 +615,8 @@ async def workspace_export_notes_tool(
     )
 
     try:
-        workspace_root = _get_workspace_root(exec_context)
-        dest_path = _validate_workspace_path(dest_dir, workspace_root)
+        workspace_root = get_workspace_root(exec_context)
+        dest_path = validate_workspace_path(dest_dir, workspace_root)
     except ValueError as e:
         return ToolResult(data={"error": str(e)})
 
@@ -766,8 +717,8 @@ async def workspace_import_note_tool(
     )
 
     try:
-        workspace_root = _get_workspace_root(exec_context)
-        full_path = _validate_workspace_path(path, workspace_root)
+        workspace_root = get_workspace_root(exec_context)
+        full_path = validate_workspace_path(path, workspace_root)
     except ValueError as e:
         return ToolResult(data={"error": str(e)})
 
