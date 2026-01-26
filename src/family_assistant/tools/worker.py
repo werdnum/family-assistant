@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import aiofiles
@@ -16,6 +15,7 @@ import aiofiles.os
 
 from family_assistant.services.worker_backend import get_worker_backend
 from family_assistant.tools.types import ToolResult
+from family_assistant.utils.workspace import get_workspace_root, validate_workspace_path
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
@@ -143,31 +143,6 @@ WORKER_TOOLS_DEFINITION: list[dict[str, Any]] = [
 ]
 
 
-def _get_workspace_root(exec_context: ToolExecutionContext) -> Path:
-    """Get the workspace root path from configuration."""
-    if exec_context.processing_service is None:
-        raise ValueError("processing_service not available in exec_context")
-
-    app_config = exec_context.processing_service.app_config
-    return Path(app_config.ai_worker_config.workspace_mount_path)
-
-
-def _validate_workspace_path(relative_path: str, workspace_root: Path) -> Path:
-    """Validate and resolve a workspace-relative path."""
-    normalized = Path(relative_path)
-    if normalized.is_absolute():
-        raise ValueError(f"Path must be relative, not absolute: {relative_path}")
-
-    full_path = (workspace_root / normalized).resolve()
-
-    try:
-        full_path.relative_to(workspace_root.resolve())
-    except ValueError as e:
-        raise ValueError(f"Path escapes workspace directory: {relative_path}") from e
-
-    return full_path
-
-
 async def spawn_worker_tool(
     exec_context: ToolExecutionContext,
     task_description: str,
@@ -225,7 +200,7 @@ async def spawn_worker_tool(
     task_id = f"worker-{uuid.uuid4().hex[:12]}"
 
     # Set up workspace paths
-    workspace_root = _get_workspace_root(exec_context)
+    workspace_root = get_workspace_root(exec_context)
     task_dir = workspace_root / "tasks" / task_id
     prompt_path = task_dir / "prompt.md"
     output_dir = task_dir / "output"
@@ -245,7 +220,7 @@ async def spawn_worker_tool(
         if context_paths:
             for path in context_paths:
                 try:
-                    validated = _validate_workspace_path(path, workspace_root)
+                    validated = validate_workspace_path(path, workspace_root)
                     if await aiofiles.os.path.exists(validated):
                         validated_context_paths.append(path)
                     else:
@@ -419,7 +394,7 @@ async def read_task_result_tool(
 
         # Optionally include file contents
         if include_file_contents:
-            workspace_root = _get_workspace_root(exec_context)
+            workspace_root = get_workspace_root(exec_context)
             file_contents: dict[str, str | dict[str, str]] = {}
 
             for file_info in output_files:
@@ -430,7 +405,7 @@ async def read_task_result_tool(
 
                 if file_path:
                     try:
-                        full_path = _validate_workspace_path(file_path, workspace_root)
+                        full_path = validate_workspace_path(file_path, workspace_root)
                         if await aiofiles.os.path.exists(full_path):
                             async with aiofiles.open(full_path) as f:
                                 content = await f.read()
