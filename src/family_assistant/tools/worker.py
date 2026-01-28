@@ -7,6 +7,7 @@ reading task results, and managing worker tasks.
 from __future__ import annotations
 
 import logging
+import secrets
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -196,8 +197,8 @@ async def spawn_worker_tool(
             data={"error": f"Invalid model: {model}. Must be 'claude' or 'gemini'"}
         )
 
-    # Generate task ID
-    task_id = f"worker-{uuid.uuid4().hex[:12]}"
+    # Generate task ID with full UUID for 128-bit entropy
+    task_id = f"worker-{uuid.uuid4().hex}"
 
     # Set up workspace paths
     workspace_root = get_workspace_root(exec_context)
@@ -237,6 +238,9 @@ async def spawn_worker_tool(
         server_url = app_config.server_url.rstrip("/")
         webhook_url = f"{server_url}/webhook/event"
 
+        # Generate callback token for webhook verification (32 bytes = 64 hex chars)
+        callback_token = secrets.token_hex(32)
+
         # Create database record
         await db_context.worker_tasks.create_task(
             task_id=task_id,
@@ -247,6 +251,7 @@ async def spawn_worker_tool(
             context_files=validated_context_paths,
             timeout_minutes=timeout_minutes,
             user_name=exec_context.user_name,
+            callback_token=callback_token,
         )
 
         # Create event listener for completion notification
@@ -287,6 +292,7 @@ async def spawn_worker_tool(
                 model=model,
                 timeout_minutes=timeout_minutes,
                 context_paths=validated_context_paths,
+                callback_token=callback_token,
             )
         except Exception as spawn_error:
             # Clean up orphaned database records

@@ -339,7 +339,7 @@ async def _handle_worker_completion(
 
     Args:
         request: The FastAPI request object
-        data: The webhook data containing task_id, outcome, output, exit_code
+        data: The webhook data containing task_id, outcome, output, exit_code, callback_token
     """
     if not data:
         logger.warning("Worker completion event missing data payload")
@@ -349,6 +349,35 @@ async def _handle_worker_completion(
     if not task_id:
         logger.warning("Worker completion event missing task_id")
         return
+
+    # Get database context
+    db_context: DatabaseContext | None = getattr(request.app.state, "db_context", None)
+    if not db_context:
+        logger.error("DatabaseContext not available for worker completion handling")
+        return
+
+    # Verify callback token if the task has one stored
+    task = await db_context.worker_tasks.get_task(task_id)
+    if not task:
+        logger.warning(f"Worker task {task_id} not found for completion update")
+        return
+
+    stored_token = task.get("callback_token")
+    provided_token = data.get("callback_token")
+
+    if stored_token:
+        # Task has a stored token, must verify it
+        if not provided_token:
+            logger.warning(
+                f"Worker completion for task {task_id} missing required callback_token"
+            )
+            return
+        if not hmac.compare_digest(stored_token, provided_token):
+            logger.warning(
+                f"Worker completion for task {task_id} has invalid callback_token"
+            )
+            return
+        logger.debug(f"Callback token verified for task {task_id}")
 
     outcome = data.get("outcome", "unknown")
     output = data.get("output")
@@ -364,12 +393,6 @@ async def _handle_worker_completion(
         "cancelled": "cancelled",
     }
     status = status_map.get(outcome, "failed")
-
-    # Get database context
-    db_context: DatabaseContext | None = getattr(request.app.state, "db_context", None)
-    if not db_context:
-        logger.error("DatabaseContext not available for worker completion handling")
-        return
 
     try:
         # Update task status

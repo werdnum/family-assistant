@@ -159,15 +159,16 @@ class TestDockerBackendBuildCommand:
         # Check environment variables
         cmd_str = " ".join(cmd)
         assert "TASK_ID=task-123" in cmd_str
-        assert "TASK_INPUT=/workspace/tasks/task-123/prompt.md" in cmd_str
-        assert "TASK_OUTPUT_DIR=/workspace/tasks/task-123/output" in cmd_str
+        # Paths are relative to /task since we mount only the task's directory
+        assert "TASK_INPUT=/task/prompt.md" in cmd_str
+        assert "TASK_OUTPUT_DIR=/task/output" in cmd_str
         assert "TASK_WEBHOOK_URL=http://localhost:8000/webhook/event" in cmd_str
         assert "AI_AGENT=claude" in cmd_str
         assert "MAX_TURNS=50" in cmd_str
 
-        # Check workspace mount
+        # Check task-specific mount (only task directory, not full workspace)
         assert "-v" in cmd
-        assert f"{tmp_path}:/workspace" in cmd_str
+        assert f"{tmp_path}/tasks/task-123:/task" in cmd_str
 
     @pytest.mark.asyncio
     async def test_build_command_with_claude_config(self, tmp_path: Path) -> None:
