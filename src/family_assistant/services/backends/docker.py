@@ -109,6 +109,7 @@ class DockerBackend:
         model: str,
         timeout_minutes: int,
         context_paths: list[str] | None = None,
+        callback_token: str | None = None,
     ) -> str:
         """Spawn a worker task in a Docker container.
 
@@ -120,6 +121,7 @@ class DockerBackend:
             model: AI model to use ("claude" or "gemini")
             timeout_minutes: Maximum execution time
             context_paths: Additional paths to include as context (unused for now)
+            callback_token: Security token for webhook verification
 
         Returns:
             Container ID that can be used to track the task
@@ -132,6 +134,7 @@ class DockerBackend:
             webhook_url=webhook_url,
             model=model,
             timeout_minutes=timeout_minutes,
+            callback_token=callback_token,
         )
 
         logger.info(f"Starting Docker container for task {task_id}")
@@ -235,8 +238,14 @@ class DockerBackend:
         webhook_url: str,
         model: str,
         timeout_minutes: int,
+        callback_token: str | None = None,
     ) -> list[str]:
         """Build the docker run command with all arguments."""
+        # Extract the filename from paths (e.g., "tasks/{task_id}/prompt.md" -> "prompt.md")
+        # We mount only the task's directory at /task for isolation
+        prompt_filename = prompt_path.rsplit("/", maxsplit=1)[-1]  # "prompt.md"
+        output_dirname = output_dir.rsplit("/", maxsplit=1)[-1]  # "output"
+
         cmd = [
             "docker",
             "run",
@@ -250,22 +259,28 @@ class DockerBackend:
         ]
 
         # Environment variables for the task runner
+        # Paths are relative to /task since we mount only the task's directory
         env_vars = {
             "TASK_ID": task_id,
-            "TASK_INPUT": f"/workspace/{prompt_path}",
-            "TASK_OUTPUT_DIR": f"/workspace/{output_dir}",
+            "TASK_INPUT": f"/task/{prompt_filename}",
+            "TASK_OUTPUT_DIR": f"/task/{output_dirname}",
             "TASK_WEBHOOK_URL": webhook_url,
             "AI_AGENT": model,
             "MAX_TURNS": str(DEFAULT_MAX_TURNS),
             "TASK_TIMEOUT_MINUTES": str(timeout_minutes),
         }
 
+        # Add callback token for webhook verification
+        if callback_token:
+            env_vars["TASK_CALLBACK_TOKEN"] = callback_token
+
         for key, value in env_vars.items():
             cmd.extend(["-e", f"{key}={value}"])
 
-        # Mount workspace volume
-        workspace_abs = str(self._workspace_root.resolve())
-        cmd.extend(["-v", f"{workspace_abs}:/workspace"])
+        # Mount only the task's directory for isolation (not the entire workspace)
+        task_dir = self._workspace_root / "tasks" / task_id
+        task_dir_abs = str(task_dir.resolve())
+        cmd.extend(["-v", f"{task_dir_abs}:/task"])
 
         # Mount auth config paths if configured
         if self._config:

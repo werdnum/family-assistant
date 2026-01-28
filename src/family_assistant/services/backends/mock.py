@@ -77,6 +77,7 @@ class MockBackend:
         model: str,
         timeout_minutes: int,
         context_paths: list[str] | None = None,
+        callback_token: str | None = None,
     ) -> str:
         """Spawn a mock task.
 
