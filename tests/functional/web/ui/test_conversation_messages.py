@@ -126,11 +126,16 @@ async def test_get_conversation_messages_with_data(
 
 
 @pytest.mark.asyncio
+@pytest.mark.flaky(reruns=3)
 async def test_get_conversation_messages_cross_interface_retrieval(
     web_only_assistant: Assistant,
     db_engine: AsyncEngine,
 ) -> None:
-    """Test that messages are retrieved from all interfaces for the same conversation ID."""
+    """Test that messages are retrieved from all interfaces for the same conversation ID.
+
+    Note: This test is marked flaky for SQLite due to intermittent CI failures.
+    See https://github.com/werdnum/family-assistant/issues/525
+    """
     conv_id = "test_conv_interface_filter"
 
     # Create test messages in different interfaces for same conversation ID
@@ -329,11 +334,16 @@ async def test_get_conversation_messages_pagination_after(
 
 
 @pytest.mark.asyncio
+@pytest.mark.flaky(reruns=3)
 async def test_get_conversation_messages_pagination_limit_zero(
     web_only_assistant: Assistant,
     db_engine: AsyncEngine,
 ) -> None:
-    """Test backward compatibility with limit=0 (get all messages)."""
+    """Test backward compatibility with limit=0 (get all messages).
+
+    Note: This test is marked flaky for SQLite due to intermittent CI failures.
+    See https://github.com/werdnum/family-assistant/issues/525
+    """
     conv_id = "test_pagination_limit_zero"
 
     # Create 10 messages

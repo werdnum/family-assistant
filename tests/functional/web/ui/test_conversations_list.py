@@ -30,10 +30,15 @@ async def test_get_conversations_empty(web_only_assistant: Assistant) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.flaky(reruns=3)
 async def test_get_conversations_with_data(
     web_only_assistant: Assistant, mock_llm_client: RuleBasedMockLLMClient
 ) -> None:
-    """Test getting conversations with existing conversation data."""
+    """Test getting conversations with existing conversation data.
+
+    Note: This test is marked flaky for SQLite due to intermittent CI failures.
+    See https://github.com/werdnum/family-assistant/issues/525
+    """
     # Configure mock LLM to respond appropriately
 
     # Set up dynamic rules based on conversation content
