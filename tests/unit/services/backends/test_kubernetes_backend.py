@@ -159,10 +159,9 @@ class TestKubernetesBackendBuildJobManifest:
         env_vars = {e["name"]: e for e in container["env"]}
 
         assert env_vars["TASK_ID"]["value"] == "task-123"
-        assert env_vars["TASK_INPUT"]["value"] == "/workspace/tasks/task-123/prompt.md"
-        assert (
-            env_vars["TASK_OUTPUT_DIR"]["value"] == "/workspace/tasks/task-123/output"
-        )
+        # Paths are relative to /task since we mount only the task's directory
+        assert env_vars["TASK_INPUT"]["value"] == "/task/prompt.md"
+        assert env_vars["TASK_OUTPUT_DIR"]["value"] == "/task/output"
         assert (
             env_vars["TASK_WEBHOOK_URL"]["value"]
             == "http://localhost:8000/webhook/event"
@@ -236,7 +235,9 @@ class TestKubernetesBackendBuildJobManifest:
         volume_mounts = {v["name"]: v for v in container["volumeMounts"]}
 
         assert "workspace" in volume_mounts
-        assert volume_mounts["workspace"]["mountPath"] == "/workspace"
+        # Volume is mounted at /task with subPath for task isolation
+        assert volume_mounts["workspace"]["mountPath"] == "/task"
+        assert volume_mounts["workspace"]["subPath"] == "tasks/task-123"
 
         # Claude settings mount
         assert "claude-settings" in volume_mounts

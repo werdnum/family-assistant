@@ -56,6 +56,7 @@ class WorkerBackend(Protocol):
         model: str,
         timeout_minutes: int,
         context_paths: list[str] | None = None,
+        callback_token: str | None = None,
     ) -> str:
         """Spawn a worker task.
 
@@ -67,6 +68,7 @@ class WorkerBackend(Protocol):
             model: AI model to use (claude, gemini)
             timeout_minutes: Maximum execution time
             context_paths: Optional list of paths to mount as context (relative to workspace)
+            callback_token: Security token for webhook verification
 
         Returns:
             Job/container identifier from the backend

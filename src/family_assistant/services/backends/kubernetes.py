@@ -132,6 +132,7 @@ class KubernetesBackend:
         model: str,
         timeout_minutes: int,
         context_paths: list[str] | None = None,
+        callback_token: str | None = None,
     ) -> str:
         """Spawn a worker task as a Kubernetes Job.
 
@@ -143,6 +144,7 @@ class KubernetesBackend:
             model: AI model to use ("claude" or "gemini")
             timeout_minutes: Maximum execution time
             context_paths: Additional paths to include as context (unused for now)
+            callback_token: Security token for webhook verification
 
         Returns:
             Job name that can be used to track the task
@@ -158,6 +160,7 @@ class KubernetesBackend:
             webhook_url=webhook_url,
             model=model,
             timeout_minutes=timeout_minutes,
+            callback_token=callback_token,
         )
 
         logger.info(f"Creating Kubernetes Job {job_name} for task {task_id}")
@@ -211,22 +214,33 @@ class KubernetesBackend:
         webhook_url: str,
         model: str,
         timeout_minutes: int,
+        callback_token: str | None = None,
     ) -> dict:
         """Build the Kubernetes Job manifest.
 
         Returns a dictionary that can be serialized to JSON/YAML for kubectl apply.
         """
+        # Extract the filename from prompt_path (e.g., "tasks/{task_id}/prompt.md" -> "prompt.md")
+        # The workspace volume uses subPath to isolate each task, so paths are relative to /task
+        prompt_filename = prompt_path.rsplit("/", maxsplit=1)[-1]  # "prompt.md"
+        output_dirname = output_dir.rsplit("/", maxsplit=1)[-1]  # "output"
+
         # Environment variables for the task runner
+        # Paths are relative to /task since we mount only the task's directory
         # ast-grep-ignore: no-dict-any - Kubernetes env vars have mixed structures (value vs valueFrom)
         env_vars: list[dict[str, Any]] = [
             {"name": "TASK_ID", "value": task_id},
-            {"name": "TASK_INPUT", "value": f"/workspace/{prompt_path}"},
-            {"name": "TASK_OUTPUT_DIR", "value": f"/workspace/{output_dir}"},
+            {"name": "TASK_INPUT", "value": f"/task/{prompt_filename}"},
+            {"name": "TASK_OUTPUT_DIR", "value": f"/task/{output_dirname}"},
             {"name": "TASK_WEBHOOK_URL", "value": webhook_url},
             {"name": "AI_AGENT", "value": model},
             {"name": "MAX_TURNS", "value": str(DEFAULT_MAX_TURNS)},
             {"name": "TASK_TIMEOUT_MINUTES", "value": str(timeout_minutes)},
         ]
+
+        # Add callback token for webhook verification
+        if callback_token:
+            env_vars.append({"name": "TASK_CALLBACK_TOKEN", "value": callback_token})
 
         # Add API key from secret based on model
         if model == "claude":
@@ -264,12 +278,13 @@ class KubernetesBackend:
                     },
                 })
 
-        # Volume mounts
+        # Volume mounts with isolation - mount only the task's directory at /task
         # ast-grep-ignore: no-dict-any - Kubernetes volume mounts have mixed types (str vs bool for readOnly)
         volume_mounts: list[dict[str, Any]] = [
             {
                 "name": "workspace",
-                "mountPath": "/workspace",
+                "mountPath": "/task",
+                "subPath": f"tasks/{task_id}",
             }
         ]
 

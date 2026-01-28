@@ -58,6 +58,7 @@ class WorkerTaskDict(TypedDict):
     summary: NotRequired[str | None]
     error_message: NotRequired[str | None]
     updated_at: NotRequired[str | None]  # ISO format string
+    callback_token: NotRequired[str | None]  # Security token for webhook verification
 
 
 # Define the worker_tasks table
@@ -101,6 +102,8 @@ worker_tasks_table = Table(
         server_default=func.now(),
     ),
     Column("updated_at", DateTime(timezone=True), nullable=True, onupdate=func.now()),
+    # Security
+    Column("callback_token", String(64), nullable=True),
 )
 
 
@@ -117,6 +120,7 @@ class WorkerTasksRepository(BaseRepository):
         context_files: list[str] | None = None,
         timeout_minutes: int = 30,
         user_name: str | None = None,
+        callback_token: str | None = None,
         # ast-grep-ignore: no-dict-any - Worker task data is dynamic JSON from database
     ) -> dict[str, Any]:
         """Create a new worker task record.
@@ -130,6 +134,7 @@ class WorkerTasksRepository(BaseRepository):
             context_files: List of file paths to include as context
             timeout_minutes: Maximum execution time
             user_name: Name of the user who initiated the task
+            callback_token: Security token for webhook verification
 
         Returns:
             Dictionary containing the created task data
@@ -147,6 +152,7 @@ class WorkerTasksRepository(BaseRepository):
             timeout_minutes=timeout_minutes,
             status="pending",
             created_at=now,
+            callback_token=callback_token,
         )
 
         await self._execute_with_logging("create_task", stmt)
@@ -163,6 +169,7 @@ class WorkerTasksRepository(BaseRepository):
             "timeout_minutes": timeout_minutes,
             "status": "pending",
             "created_at": now.isoformat(),
+            "callback_token": callback_token,
         }
 
     # ast-grep-ignore: no-dict-any - Worker task data is dynamic JSON from database
@@ -394,4 +401,5 @@ class WorkerTasksRepository(BaseRepository):
                 to_iso(row["created_at"]), "created_at", row["task_id"]
             ),
             updated_at=to_iso(row.get("updated_at")),
+            callback_token=row.get("callback_token"),
         )
