@@ -18,6 +18,8 @@ from family_assistant.services.worker_backend import WorkerStatus, WorkerTaskRes
 if TYPE_CHECKING:
     from family_assistant.config_models import DockerBackendConfig
 
+from family_assistant.config_models import WorkerResourceLimits
+
 logger = logging.getLogger(__name__)
 
 # Default max turns for the AI agent
@@ -91,6 +93,13 @@ class DockerBackend:
             return self._config.network
         return "bridge"
 
+    @property
+    def resources(self) -> WorkerResourceLimits:
+        """Get the resource limits for worker containers."""
+        if self._config:
+            return self._config.resources
+        return WorkerResourceLimits()
+
     async def spawn_task(
         self,
         task_id: str,
@@ -162,6 +171,62 @@ class DockerBackend:
         logger.info(f"Started container {container_id[:12]} for task {task_id}")
         return container_id
 
+    def _convert_memory_to_docker(self, k8s_memory: str) -> str:
+        """Convert Kubernetes memory format to Docker format.
+
+        Args:
+            k8s_memory: Memory in Kubernetes format (e.g., "512Mi", "2Gi", "2G")
+
+        Returns:
+            Memory in Docker format (e.g., "512m", "2g")
+        """
+        # Kubernetes uses Mi/Gi/Ki/M/G/K, Docker uses m/g/k (lowercase)
+        # Order matters: check longer suffixes first
+        result = k8s_memory
+        for k8s_suffix, docker_suffix in [
+            ("Mi", "m"),
+            ("Gi", "g"),
+            ("Ki", "k"),
+            ("M", "m"),
+            ("G", "g"),
+            ("K", "k"),
+        ]:
+            if result.endswith(k8s_suffix):
+                return result[: -len(k8s_suffix)] + docker_suffix
+        return result
+
+    def _convert_cpu_to_docker(self, k8s_cpu: str) -> str:
+        """Convert Kubernetes CPU format to Docker format.
+
+        Args:
+            k8s_cpu: CPU in Kubernetes format (e.g., "500m" millicores, "2" cores)
+
+        Returns:
+            CPU in Docker format (e.g., "0.5", "2.0")
+
+        Raises:
+            ValueError: If the CPU value is malformed.
+        """
+        # Kubernetes uses millicores (e.g., "500m" = 0.5 cores) or whole cores
+        if k8s_cpu.endswith("m"):
+            try:
+                millicores = int(k8s_cpu[:-1])
+                return str(millicores / 1000)
+            except ValueError as e:
+                raise ValueError(
+                    f"Invalid CPU millicore value: {k8s_cpu!r}. "
+                    "Expected format like '500m' or '2000m'."
+                ) from e
+        # Already a number (e.g., "2" = 2 cores) - validate it's numeric
+        try:
+            float(k8s_cpu)
+            return k8s_cpu
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid CPU value: {k8s_cpu!r}. "
+                "Expected format like '500m' (millicores) or '2' (cores)."
+            ) from e
+
     async def _build_docker_command(
         self,
         task_id: str,
@@ -179,6 +244,9 @@ class DockerBackend:
             "--rm",  # Remove container when done
             f"--name=worker-{task_id}",
             f"--network={self.network}",
+            # Resource limits
+            f"--memory={self._convert_memory_to_docker(self.resources.memory_limit)}",
+            f"--cpus={self._convert_cpu_to_docker(self.resources.cpu_limit)}",
         ]
 
         # Environment variables for the task runner
