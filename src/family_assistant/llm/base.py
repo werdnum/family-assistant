@@ -61,3 +61,9 @@ class ServiceUnavailableError(LLMProviderError):
     """Raised when the service is temporarily unavailable (503 errors)."""
 
     pass
+
+
+class EmptyLLMResponseError(LLMProviderError):
+    """Raised when the LLM returns an empty response (no content and no tool calls)."""
+
+    pass

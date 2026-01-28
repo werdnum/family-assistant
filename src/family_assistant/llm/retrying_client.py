@@ -16,13 +16,14 @@ if TYPE_CHECKING:
 
 from . import LLMInterface, LLMMessage, LLMOutput, LLMStreamEvent
 from .base import (
+    EmptyLLMResponseError,
     LLMProviderError,
     ProviderConnectionError,
     ProviderTimeoutError,
     RateLimitError,
     ServiceUnavailableError,
 )
-from .messages import UserMessage
+from .messages import UserMessage, message_to_json_dict
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ class RetryingLLMClient:
             ProviderTimeoutError,
             RateLimitError,
             ServiceUnavailableError,
+            EmptyLLMResponseError,
         )
 
         last_exception: Exception | None = None
@@ -83,11 +85,22 @@ class RetryingLLMClient:
         # Attempt 1: Primary model
         try:
             logger.info(f"Attempt 1: Primary model ({self.primary_model})")
-            return await self.primary_client.generate_response(
+            response = await self.primary_client.generate_response(
                 messages=messages,
                 tools=tools,
                 tool_choice=tool_choice,
             )
+            if not response.content and not response.tool_calls:
+                logger.warning(
+                    f"Attempt 1 (Primary model {self.primary_model}) returned empty response. "
+                    f"Messages: {[message_to_json_dict(m) for m in messages]}, Tools: {tools}"
+                )
+                raise EmptyLLMResponseError(
+                    "Received empty response from LLM",
+                    provider="unknown",
+                    model=self.primary_model,
+                )
+            return response
         except retriable_errors as e:
             logger.warning(
                 f"Attempt 1 (Primary model {self.primary_model}) failed with retriable error: {e}. "
@@ -111,11 +124,22 @@ class RetryingLLMClient:
         if isinstance(last_exception, retriable_errors):
             try:
                 logger.info(f"Attempt 2: Retrying primary model ({self.primary_model})")
-                return await self.primary_client.generate_response(
+                response = await self.primary_client.generate_response(
                     messages=messages,
                     tools=tools,
                     tool_choice=tool_choice,
                 )
+                if not response.content and not response.tool_calls:
+                    logger.warning(
+                        f"Attempt 2 (Retry Primary model {self.primary_model}) returned empty response. "
+                        f"Messages: {[message_to_json_dict(m) for m in messages]}, Tools: {tools}"
+                    )
+                    raise EmptyLLMResponseError(
+                        "Received empty response from LLM on retry",
+                        provider="unknown",
+                        model=self.primary_model,
+                    )
+                return response
             except retriable_errors as e:
                 logger.warning(
                     f"Attempt 2 (Retry Primary model {self.primary_model}) failed with retriable error: {e}. "
@@ -203,6 +227,18 @@ class RetryingLLMClient:
             ):
                 yield event
                 events_yielded = True
+
+            if not events_yielded:
+                logger.warning(
+                    f"Streaming from primary model {self.primary_model} yielded no events. "
+                    f"Messages: {[message_to_json_dict(m) for m in messages]}, Tools: {tools}"
+                )
+                raise EmptyLLMResponseError(
+                    "Received empty streaming response from LLM",
+                    provider="unknown",
+                    model=self.primary_model,
+                )
+
         except Exception as e:
             logger.error(
                 f"Streaming from primary model {self.primary_model} failed: {e}",
