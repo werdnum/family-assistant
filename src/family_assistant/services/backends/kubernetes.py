@@ -20,6 +20,8 @@ from family_assistant.services.worker_backend import WorkerStatus, WorkerTaskRes
 if TYPE_CHECKING:
     from family_assistant.config_models import KubernetesBackendConfig
 
+from family_assistant.config_models import WorkerResourceLimits
+
 logger = logging.getLogger(__name__)
 
 # Default max turns for the AI agent
@@ -113,6 +115,13 @@ class KubernetesBackend:
         if self._config:
             return self._config.job_ttl_seconds
         return 3600
+
+    @property
+    def resources(self) -> WorkerResourceLimits:
+        """Get the resource limits for worker containers."""
+        if self._config:
+            return self._config.resources
+        return WorkerResourceLimits()
 
     async def spawn_task(
         self,
@@ -352,12 +361,12 @@ class KubernetesBackend:
                                 },
                                 "resources": {
                                     "requests": {
-                                        "memory": "512Mi",
-                                        "cpu": "500m",
+                                        "memory": self.resources.memory_request,
+                                        "cpu": self.resources.cpu_request,
                                     },
                                     "limits": {
-                                        "memory": "2Gi",
-                                        "cpu": "2000m",
+                                        "memory": self.resources.memory_limit,
+                                        "cpu": self.resources.cpu_limit,
                                     },
                                 },
                             }

@@ -485,6 +485,8 @@ class KubernetesBackendConfig(BaseModel):
     # Config/auth mounts (read-only) - names of Kubernetes secrets
     claude_settings_secret: str | None = "ai-coder-claude-settings"
     gemini_settings_secret: str | None = "ai-coder-gemini-settings"
+    # Resource limits for worker containers
+    resources: WorkerResourceLimits = Field(default_factory=WorkerResourceLimits)
 
 
 class DockerBackendConfig(BaseModel):
@@ -497,6 +499,8 @@ class DockerBackendConfig(BaseModel):
     # Local paths to mount for auth
     claude_config_path: str | None = None
     gemini_config_path: str | None = None
+    # Resource limits for worker containers
+    resources: WorkerResourceLimits = Field(default_factory=WorkerResourceLimits)
 
 
 class AIWorkerConfig(BaseModel):
