@@ -27,6 +27,12 @@ from .messages import UserMessage
 logger = logging.getLogger(__name__)
 
 
+class EmptyResponseError(Exception):
+    """Exception raised when the LLM returns an empty response."""
+
+    pass
+
+
 class RetryingLLMClient:
     """
     LLM client that provides retry and fallback capabilities.
@@ -62,6 +68,10 @@ class RetryingLLMClient:
             f"fallback model: {fallback_model if fallback_client else 'None'}"
         )
 
+    def _is_empty(self, response: "LLMOutput") -> bool:
+        """Check if the response is empty (no content and no tool calls)."""
+        return not response.content and not response.tool_calls
+
     async def generate_response(
         self,
         messages: Sequence[LLMMessage],
@@ -76,18 +86,29 @@ class RetryingLLMClient:
             ProviderTimeoutError,
             RateLimitError,
             ServiceUnavailableError,
+            EmptyResponseError,
         )
 
         last_exception: Exception | None = None
+        messages_for_retry = list(messages)
 
         # Attempt 1: Primary model
         try:
             logger.info(f"Attempt 1: Primary model ({self.primary_model})")
-            return await self.primary_client.generate_response(
+            response = await self.primary_client.generate_response(
                 messages=messages,
                 tools=tools,
                 tool_choice=tool_choice,
             )
+
+            if self._is_empty(response):
+                logger.warning(
+                    f"Attempt 1 (Primary model {self.primary_model}) returned empty response. "
+                    f"Messages: {len(messages)}, Tools: {bool(tools)}"
+                )
+                raise EmptyResponseError("Empty response received from primary model")
+
+            return response
         except retriable_errors as e:
             logger.warning(
                 f"Attempt 1 (Primary model {self.primary_model}) failed with retriable error: {e}. "
@@ -109,13 +130,29 @@ class RetryingLLMClient:
 
         # Attempt 2: Retry Primary model (if Attempt 1 was a retriable error)
         if isinstance(last_exception, retriable_errors):
+            if isinstance(last_exception, EmptyResponseError):
+                logger.info("Appending re-prompt message for empty response retry.")
+                messages_for_retry.append(
+                    UserMessage(
+                        content="You returned an empty response. Please try again."
+                    )
+                )
+
             try:
                 logger.info(f"Attempt 2: Retrying primary model ({self.primary_model})")
-                return await self.primary_client.generate_response(
-                    messages=messages,
+                response = await self.primary_client.generate_response(
+                    messages=messages_for_retry,
                     tools=tools,
                     tool_choice=tool_choice,
                 )
+
+                if self._is_empty(response):
+                    logger.warning(
+                        f"Attempt 2 (Retry Primary model {self.primary_model}) returned empty response again."
+                    )
+                    raise EmptyResponseError("Empty response received on retry")
+
+                return response
             except retriable_errors as e:
                 logger.warning(
                     f"Attempt 2 (Retry Primary model {self.primary_model}) failed with retriable error: {e}. "
