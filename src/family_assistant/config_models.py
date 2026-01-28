@@ -520,6 +520,12 @@ class AIWorkerConfig(BaseModel):
     # Volume settings
     workspace_mount_path: str = "/workspace"
 
+    # Webhook URL for worker completion notifications
+    # If not set, falls back to server_url + /webhook/event
+    # For Kubernetes, use internal service URL like:
+    # http://family-assistant.family-assistant.svc.cluster.local:8000/webhook/event
+    webhook_url: str | None = None
+
     # Execution settings
     default_timeout_minutes: int = 30
     max_timeout_minutes: int = 120

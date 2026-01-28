@@ -234,9 +234,12 @@ async def spawn_worker_tool(
                     skipped_context_paths.append({"path": path, "reason": str(e)})
                     logger.warning(f"Invalid context path {path}: {e}")
 
-        # Build webhook URL
-        server_url = app_config.server_url.rstrip("/")
-        webhook_url = f"{server_url}/webhook/event"
+        # Build webhook URL (use configured URL or fall back to server_url)
+        if worker_config.webhook_url:
+            webhook_url = worker_config.webhook_url.rstrip("/")
+        else:
+            server_url = app_config.server_url.rstrip("/")
+            webhook_url = f"{server_url}/webhook/event"
 
         # Generate callback token for webhook verification (32 bytes = 64 hex chars)
         callback_token = secrets.token_hex(32)
