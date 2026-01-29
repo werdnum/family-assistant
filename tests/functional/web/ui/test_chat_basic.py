@@ -88,10 +88,7 @@ async def test_basic_chat_conversation(
     assert any(m["role"] == "assistant" for m in messages), "No assistant message found"
 
     # Verify chat input is re-enabled after streaming
-    await page.wait_for_function(
-        "document.querySelector('[data-testid=\"chat-input\"]')?.disabled === false",
-        timeout=10000,
-    )
+    await page.wait_for_selector('[data-testid="chat-input"]:enabled', timeout=10000)
     assert await chat_page.is_chat_input_enabled()
 
     # Get the actual response text
