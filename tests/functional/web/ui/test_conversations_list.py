@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
 from family_assistant.storage.context import get_db_context
+from tests.functional.web.ui.conftest import wait_for_condition
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 
 
@@ -30,15 +31,10 @@ async def test_get_conversations_empty(web_only_assistant: Assistant) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.flaky(reruns=3)
 async def test_get_conversations_with_data(
     web_only_assistant: Assistant, mock_llm_client: RuleBasedMockLLMClient
 ) -> None:
-    """Test getting conversations with existing conversation data.
-
-    Note: This test is marked flaky for SQLite due to intermittent CI failures.
-    See https://github.com/werdnum/family-assistant/issues/525
-    """
+    """Test getting conversations with existing conversation data."""
     # Configure mock LLM to respond appropriately
 
     # Set up dynamic rules based on conversation content
@@ -80,12 +76,19 @@ async def test_get_conversations_with_data(
             data = response.json()
             assert data["reply"] == f"Hello! This is response {i}"
 
-        # Now get conversations via API
-        response = await client.get("/api/v1/chat/conversations")
+        # Now get conversations via API (use retry for SQLite transaction visibility)
+        async def get_conversations() -> dict | None:
+            response = await client.get("/api/v1/chat/conversations")
+            if response.status_code == 200:
+                data = response.json()
+                if len(data["conversations"]) == 3:
+                    return data
+            return None
 
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["conversations"]) == 3
+        data = await wait_for_condition(
+            get_conversations, description="3 conversations to be visible"
+        )
+        assert data is not None
         assert data["count"] == 3
 
         # Check conversation summaries
@@ -153,61 +156,80 @@ async def test_get_conversations_interface_filter(
     db_engine: AsyncEngine,
 ) -> None:
     """Test filtering conversations by interface type."""
+    # Use fixed timestamps for deterministic behavior
+    base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+
     # Create test conversations in different interfaces
     async with get_db_context(db_engine) as db_context:
         # Add web conversation
-        await db_context.message_history.add_message(
+        result1 = await db_context.message_history.add_message(
             interface_type="web",
             conversation_id="web_conv_filter_test",
             interface_message_id="web_msg_1",
             turn_id="turn_1",
             thread_root_id=None,
-            timestamp=datetime.now(UTC),
+            timestamp=base_time,
             role="user",
             content="Web user message",
         )
-        await db_context.message_history.add_message(
+        assert result1 is not None, "Failed to add web user message"
+
+        result2 = await db_context.message_history.add_message(
             interface_type="web",
             conversation_id="web_conv_filter_test",
             interface_message_id="web_msg_2",
             turn_id="turn_1",
             thread_root_id=None,
-            timestamp=datetime.now(UTC),
+            timestamp=base_time + timedelta(seconds=1),
             role="assistant",
             content="Web assistant response",
         )
+        assert result2 is not None, "Failed to add web assistant message"
 
         # Add telegram conversation
-        await db_context.message_history.add_message(
+        result3 = await db_context.message_history.add_message(
             interface_type="telegram",
             conversation_id="tg_conv_filter_test",
             interface_message_id="tg_msg_1",
             turn_id="turn_2",
             thread_root_id=None,
-            timestamp=datetime.now(UTC),
+            timestamp=base_time + timedelta(seconds=2),
             role="user",
             content="Telegram user message",
         )
-        await db_context.message_history.add_message(
+        assert result3 is not None, "Failed to add telegram user message"
+
+        result4 = await db_context.message_history.add_message(
             interface_type="telegram",
             conversation_id="tg_conv_filter_test",
             interface_message_id="tg_msg_2",
             turn_id="turn_2",
             thread_root_id=None,
-            timestamp=datetime.now(UTC),
+            timestamp=base_time + timedelta(seconds=3),
             role="assistant",
             content="Telegram assistant response",
         )
+        assert result4 is not None, "Failed to add telegram assistant message"
 
+    # Get conversations via API with retry for SQLite transaction visibility
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
-        # Test no filter (should return both)
-        response = await client.get("/api/v1/chat/conversations")
-        assert response.status_code == 200
-        data = response.json()
+
+        async def get_conversations() -> dict | None:
+            response = await client.get("/api/v1/chat/conversations")
+            if response.status_code == 200:
+                data = response.json()
+                if data["count"] == 2:
+                    return data
+            return None
+
+        data = await wait_for_condition(
+            get_conversations, description="2 conversations to be visible"
+        )
+        assert data is not None
         assert data["count"] == 2
         conversation_ids = [conv["conversation_id"] for conv in data["conversations"]]
         assert "web_conv_filter_test" in conversation_ids
@@ -243,32 +265,46 @@ async def test_get_conversations_conversation_id_filter(
     db_engine: AsyncEngine,
 ) -> None:
     """Test filtering conversations by specific conversation ID."""
+    # Use fixed timestamps for deterministic behavior
+    base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+
     # Create test conversations
     async with get_db_context(db_engine) as db_context:
         for i in range(3):
             conv_id = f"conv_id_filter_test_{i}"
-            await db_context.message_history.add_message(
+            result = await db_context.message_history.add_message(
                 interface_type="web",
                 conversation_id=conv_id,
                 interface_message_id=f"msg_{i}",
                 turn_id=f"turn_{i}",
                 thread_root_id=None,
-                timestamp=datetime.now(UTC),
+                timestamp=base_time + timedelta(minutes=i),
                 role="user",
                 content=f"Test message {i}",
             )
+            assert result is not None, f"Failed to add message for conv {i}"
 
+    # Get conversations via API with retry for SQLite transaction visibility
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
-        # Test specific conversation ID filter
-        response = await client.get(
-            "/api/v1/chat/conversations?conversation_id=conv_id_filter_test_1"
+
+        async def get_conversations() -> dict | None:
+            response = await client.get(
+                "/api/v1/chat/conversations?conversation_id=conv_id_filter_test_1"
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if data["count"] == 1:
+                    return data
+            return None
+
+        data = await wait_for_condition(
+            get_conversations, description="conversation to be visible"
         )
-        assert response.status_code == 200
-        data = response.json()
+        assert data is not None
         assert data["count"] == 1
         assert data["conversations"][0]["conversation_id"] == "conv_id_filter_test_1"
 
@@ -288,11 +324,11 @@ async def test_get_conversations_date_filters(
 ) -> None:
     """Test filtering conversations by date range."""
 
-    # Create test conversations with different timestamps
-    base_time = datetime.now(UTC)
+    # Use fixed base time for deterministic timestamps
+    base_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
     async with get_db_context(db_engine) as db_context:
         # Old conversation (3 days ago)
-        await db_context.message_history.add_message(
+        result1 = await db_context.message_history.add_message(
             interface_type="web",
             conversation_id="old_conv",
             interface_message_id="old_msg",
@@ -302,9 +338,10 @@ async def test_get_conversations_date_filters(
             role="user",
             content="Old message",
         )
+        assert result1 is not None, "Failed to add old_conv message"
 
         # Recent conversation (1 day ago)
-        await db_context.message_history.add_message(
+        result2 = await db_context.message_history.add_message(
             interface_type="web",
             conversation_id="recent_conv",
             interface_message_id="recent_msg",
@@ -314,9 +351,10 @@ async def test_get_conversations_date_filters(
             role="user",
             content="Recent message",
         )
+        assert result2 is not None, "Failed to add recent_conv message"
 
         # Today's conversation
-        await db_context.message_history.add_message(
+        result3 = await db_context.message_history.add_message(
             interface_type="web",
             conversation_id="today_conv",
             interface_message_id="today_msg",
@@ -326,12 +364,26 @@ async def test_get_conversations_date_filters(
             role="user",
             content="Today's message",
         )
+        assert result3 is not None, "Failed to add today_conv message"
 
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
+        # Wait for all 3 conversations to be visible (SQLite transaction visibility)
+        async def get_all_conversations() -> dict | None:
+            response = await client.get("/api/v1/chat/conversations")
+            if response.status_code == 200:
+                data = response.json()
+                if data["count"] == 3:
+                    return data
+            return None
+
+        await wait_for_condition(
+            get_all_conversations, description="3 conversations to be visible"
+        )
+
         # Test date_from filter (last 2 days)
         date_from = (base_time - timedelta(days=2)).strftime("%Y-%m-%d")
         response = await client.get(f"/api/v1/chat/conversations?date_from={date_from}")
@@ -392,12 +444,13 @@ async def test_get_conversations_combined_filters(
 ) -> None:
     """Test using multiple filters together."""
 
-    base_time = datetime.now(UTC)
+    # Use fixed base time for deterministic timestamps
+    base_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 
     # Create test data
     async with get_db_context(db_engine) as db_context:
         # Web conversation from yesterday matching all filters
-        await db_context.message_history.add_message(
+        result1 = await db_context.message_history.add_message(
             interface_type="web",
             conversation_id="matching_conv",
             interface_message_id="match_msg",
@@ -407,21 +460,23 @@ async def test_get_conversations_combined_filters(
             role="user",
             content="Matching message",
         )
+        assert result1 is not None, "Failed to add matching_conv message"
 
         # Telegram conversation from yesterday (wrong interface)
-        await db_context.message_history.add_message(
+        result2 = await db_context.message_history.add_message(
             interface_type="telegram",
             conversation_id="wrong_interface_conv",
             interface_message_id="wrong_msg",
             turn_id="turn_wrong",
             thread_root_id=None,
-            timestamp=base_time - timedelta(days=1),
+            timestamp=base_time - timedelta(days=1) + timedelta(minutes=1),
             role="user",
             content="Wrong interface message",
         )
+        assert result2 is not None, "Failed to add wrong_interface_conv message"
 
         # Web conversation from 3 days ago (wrong date)
-        await db_context.message_history.add_message(
+        result3 = await db_context.message_history.add_message(
             interface_type="web",
             conversation_id="wrong_date_conv",
             interface_message_id="date_msg",
@@ -431,12 +486,26 @@ async def test_get_conversations_combined_filters(
             role="user",
             content="Wrong date message",
         )
+        assert result3 is not None, "Failed to add wrong_date_conv message"
 
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
+        # Wait for all 3 conversations to be visible (SQLite transaction visibility)
+        async def get_all_conversations() -> dict | None:
+            response = await client.get("/api/v1/chat/conversations")
+            if response.status_code == 200:
+                data = response.json()
+                if data["count"] == 3:
+                    return data
+            return None
+
+        await wait_for_condition(
+            get_all_conversations, description="3 conversations to be visible"
+        )
+
         # Use combined filters: web interface + yesterday's date
         date_yesterday = (base_time - timedelta(days=1)).strftime("%Y-%m-%d")
         response = await client.get(
