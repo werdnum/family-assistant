@@ -31,10 +31,10 @@ async def wait_for_condition(  # noqa: UP047 - Use TypeVar for pylint compatibil
     Raises:
         TimeoutError: If condition doesn't become truthy within timeout.
     """
-    deadline = asyncio.get_event_loop().time() + timeout
+    deadline = asyncio.get_running_loop().time() + timeout
     last_result = None
 
-    while asyncio.get_event_loop().time() < deadline:
+    while asyncio.get_running_loop().time() < deadline:
         result = await condition()
         if result:
             return result
