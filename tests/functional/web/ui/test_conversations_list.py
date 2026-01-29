@@ -77,16 +77,19 @@ async def test_get_conversations_with_data(
             assert data["reply"] == f"Hello! This is response {i}"
 
         # Now get conversations via API (use retry for SQLite transaction visibility)
+        # Check for 3 conversations, each with 2 messages (user + assistant)
         async def get_conversations() -> dict | None:
             response = await client.get("/api/v1/chat/conversations")
             if response.status_code == 200:
                 data = response.json()
-                if len(data["conversations"]) == 3:
+                convs = data["conversations"]
+                if len(convs) == 3 and all(c["message_count"] == 2 for c in convs):
                     return data
             return None
 
         data = await wait_for_condition(
-            get_conversations, description="3 conversations to be visible"
+            get_conversations,
+            description="3 conversations with 2 messages each to be visible",
         )
         assert data is not None
         assert data["count"] == 3
@@ -95,7 +98,6 @@ async def test_get_conversations_with_data(
         for conv in data["conversations"]:
             assert conv["conversation_id"] in conv_ids
             assert conv["last_message"].startswith("Hello! This is response")
-            assert conv["message_count"] == 2
             assert "last_timestamp" in conv
 
 
