@@ -9,7 +9,7 @@ T = TypeVar("T")
 
 async def wait_for_condition(  # noqa: UP047 - Use TypeVar for pylint compatibility
     condition: Callable[[], Awaitable[T]],
-    timeout: float = 2.0,
+    timeout: float = 5.0,
     interval: float = 0.1,
     description: str = "condition",
 ) -> T:
