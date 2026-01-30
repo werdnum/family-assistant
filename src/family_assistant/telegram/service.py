@@ -65,7 +65,13 @@ class TelegramService:
             get_db_context_func: Async context manager function to get a DatabaseContext.
         """
         logger.info("Initializing TelegramService...")
-        self.application = ApplicationBuilder().token(telegram_token).build()
+        builder = ApplicationBuilder().token(telegram_token)
+        if app_config.telegram_api_base_url:
+            builder = builder.base_url(app_config.telegram_api_base_url)
+            logger.info(
+                f"Using custom Telegram API base URL: {app_config.telegram_api_base_url}"
+            )
+        self.application = builder.build()
         self._was_started: bool = False
         self._last_error: Exception | None = None
         self.chat_interface = TelegramChatInterface(
