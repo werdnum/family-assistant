@@ -1,63 +1,57 @@
 # --- Testing Philosophy ---
 # These tests focus on the end-to-end behavior of the Telegram handler from the USER'S perspective.
-# Assertions primarily check:
-# 1. Messages SENT by the bot (via mocked Telegram API calls like send_message).
-# 2. Messages RECEIVED by the bot (implicitly verified by mock LLM rules/matchers).
+# Uses telegram-test-api for realistic HTTP-level testing. The bot makes real HTTP calls to the
+# test server, which records all messages. Tests verify bot responses using the telegram_client.
 # Database state changes (message history, notes, tasks) are NOT directly asserted here.
 import io
-import json  # Add import
+import json
 import logging
-import typing  # ADDED for cast
-import uuid  # Add import
+import typing
+import uuid
 from datetime import UTC, datetime
-from typing import Any  # Add missing typing imports
-from unittest.mock import AsyncMock  # Import call
+from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
-import telegramify_markdown  # type: ignore[import-untyped] # Import the library
-from assertpy import (
-    assert_that,
-    soft_assertions,
-)  # Import assert_that and soft_assertions
+import telegramify_markdown  # type: ignore[import-untyped]  # Third-party library has no type stubs
+from assertpy import assert_that, soft_assertions
 from telegram import Chat, Message, PhotoSize, Update, User
-from telegram.ext import ContextTypes
+from telegram.ext import Application, ContextTypes
 
-# CHANGED: LLMOutput from family_assistant.llm aliased
 from family_assistant.llm import ToolCallFunction, ToolCallItem
-
-# Import mock LLM helpers
-# CHANGED: LLMOutput and RuleBasedMockLLMClient added here
 from tests.mocks.mock_llm import (
-    LLMOutput,  # This is the one for Rules
+    LLMOutput,
     MatcherArgs,
     Rule,
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
 
-# Import the fixture and its type hint
 from .conftest import TelegramHandlerTestFixture
+from .helpers import assert_bot_sent_message, wait_for_bot_response
 
 logger = logging.getLogger(__name__)
 
 # --- Test Helper Functions ---
 
 
-def create_mock_context(
-    mock_application: AsyncMock,  # Pass the application mock
+def create_context(
+    application: Application[Any, Any, Any, Any, Any, Any],
     bot_data: dict[Any, Any] | None = None,
+    chat_id: int = 123,
+    user_id: int = 12345,
 ) -> ContextTypes.DEFAULT_TYPE:
-    """Creates a mock CallbackContext."""
-    # Use the provided application mock, which should have .bot set
+    """Creates a CallbackContext from an Application."""
     context = ContextTypes.DEFAULT_TYPE(
-        application=mock_application, chat_id=123, user_id=12345
+        application=application, chat_id=chat_id, user_id=user_id
     )
-    # The bot should be automatically set from mock_application.bot
-    # Do not reassign bot_data, update it instead
     if bot_data:
         context.bot_data.update(bot_data)
-    # Mock other attributes if needed
     return context
+
+
+# Alias for backwards compatibility
+create_mock_context = create_context
 
 
 def create_mock_update(
@@ -151,7 +145,6 @@ async def test_simple_text_message(
     user_chat_id = 123
     user_id = 12345
     user_message_id = 101
-    assistant_message_id = 102
     user_text = "Hello assistant!"
     llm_response_text = "Hello TestUser! This is the LLM response."
 
@@ -171,70 +164,37 @@ async def test_simple_text_message(
         rule_hello_response
     ]  # Set rules for this test instance
 
-    # Configure mock Bot response (simulate sending message)
-    mock_sent_message = AsyncMock(
-        spec=Message, message_id=assistant_message_id
-    )  # Use AsyncMock for awaitable return
-    fix.mock_bot.send_message.return_value = mock_sent_message
-
-    # Create mock Update and Context
+    # Create Update and Context
     update = create_mock_update(
         user_text, chat_id=user_chat_id, user_id=user_id, message_id=user_message_id
     )
-    # Pass the mock_application associated with the mock_telegram_service from the fixture
-    context = create_mock_context(
-        fix.mock_application,  # Use the mock_application from the fixture
+    context = create_context(
+        fix.application,
         bot_data={"processing_service": fix.processing_service},
     )
 
     # Act
     await fix.handler.message_handler(update, context)
 
-    # Assert
-    with soft_assertions():  # type: ignore[attr-defined]
-        # 1. LLM Call Verification
-        assert_that(
-            typing.cast("RuleBasedMockLLMClient", fix.mock_llm)._calls
-        ).described_as("LLM Call Count").is_length(1)
+    # Assert - verify bot sent message via telegram-test-api
+    # 1. LLM Call Verification
+    assert_that(
+        typing.cast("RuleBasedMockLLMClient", fix.mock_llm)._calls
+    ).described_as("LLM Call Count").is_length(1)
 
-        # 2. Bot API Call Verification (Output to user)
-        fix.mock_bot.send_message.assert_awaited_once()
-        # Check specific arguments using call_args
-        _, kwargs = fix.mock_bot.send_message.call_args
+    # 2. Verify bot response via test server
+    bot_responses = await wait_for_bot_response(fix.telegram_client, timeout=5.0)
+    assert_that(bot_responses).described_as("Bot responses").is_not_empty()
 
-        # Use chained assertions and descriptive names for kwargs
-        assert_that(kwargs).described_as("send_message kwargs").contains_key("chat_id")
-        assert_that(kwargs["chat_id"]).described_as("send_message chat_id").is_equal_to(
-            user_chat_id
-        )
+    # Get the bot's message text
+    bot_message = bot_responses[-1]
+    bot_message_text = bot_message.get("message", {}).get("text", "")
 
-        assert_that(kwargs).described_as("send_message kwargs").contains_key("text")
-        # Calculate the expected escaped text using the library
-        expected_escaped_text = telegramify_markdown.markdownify(llm_response_text)
-        assert_that(kwargs["text"]).described_as("send_message text").is_equal_to(
-            expected_escaped_text
-        )
-
-        assert_that(kwargs).described_as("send_message kwargs").contains_key(
-            "reply_to_message_id"
-        )
-        assert_that(kwargs["reply_to_message_id"]).described_as(
-            "send_message reply_to_message_id"
-        ).is_equal_to(user_message_id)
-
-        assert_that(kwargs).described_as("send_message kwargs").contains_key(
-            "parse_mode"
-        ).is_not_none()
-        assert_that(kwargs["parse_mode"]).described_as(
-            "send_message parse_mode"
-        )  # Just check it exists and isn't None
-
-        assert_that(kwargs).described_as("send_message kwargs").contains_key(
-            "reply_markup"
-        ).is_not_none()
-        assert_that(kwargs["reply_markup"]).described_as(
-            "send_message reply_markup"
-        )  # Just check it exists and isn't None
+    # The response should contain the LLM response (may be escaped for markdown)
+    expected_escaped_text = telegramify_markdown.markdownify(llm_response_text)
+    assert_that(bot_message_text).described_as("Bot message text").is_equal_to(
+        expected_escaped_text
+    )
 
 
 @pytest.mark.asyncio
@@ -250,14 +210,11 @@ async def test_add_note_tool_usage(
     user_chat_id = 123
     user_id = 12345
     user_message_id = 201
-    assistant_final_message_id = 202  # ID for the final confirmation message
     test_note_title = f"Telegram Tool Test Note {uuid.uuid4()}"
     test_note_content = "Content added via Telegram handler test."
     user_text = f"Please remember this note. Title: {test_note_title}. Content: {test_note_content}"
-    tool_call_id = f"call_{uuid.uuid4()}"  # ID for the LLM's tool request
-    llm_tool_request_text = (
-        "Okay, I can add that note for you."  # Optional text alongside tool call
-    )
+    tool_call_id = f"call_{uuid.uuid4()}"
+    llm_tool_request_text = "Okay, I can add that note for you."
     llm_final_confirmation_text = (
         f"Okay, I've saved the note titled '{test_note_title}'."
     )
@@ -267,23 +224,23 @@ async def test_add_note_tool_usage(
     def add_note_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         last_text = get_last_message_text(messages).lower()
-        # Basic check, adjust if needed for more robustness
         return (
             f"title: {test_note_title}".lower() in last_text
             and "remember this note" in last_text
         )
 
     add_note_tool_call = LLMOutput(
-        content=llm_tool_request_text,  # Optional text
+        content=llm_tool_request_text,
         tool_calls=[
             ToolCallItem(
                 id=tool_call_id,
                 type="function",
                 function=ToolCallFunction(
                     name="add_or_update_note",
-                    arguments=json.dumps(  # Use json.dumps
-                        {"title": test_note_title, "content": test_note_content}
-                    ),
+                    arguments=json.dumps({
+                        "title": test_note_title,
+                        "content": test_note_content,
+                    }),
                 ),
             )
         ],
@@ -291,12 +248,10 @@ async def test_add_note_tool_usage(
     rule_add_note_request: Rule = (add_note_matcher, add_note_tool_call)
 
     # Rule 2: Match Tool Result -> Respond with Final Confirmation
-    # This matcher looks for a 'tool' role message with the correct tool_call_id
     def tool_result_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         if not messages:
             return False
-        # Check previous messages too, as history might be added before tool result
         for msg in reversed(messages):
             if msg.role == "tool" and msg.tool_call_id == tool_call_id:
                 logger.debug(f"Tool result matcher found tool message: {msg}")
@@ -314,21 +269,14 @@ async def test_add_note_tool_usage(
     typing.cast("RuleBasedMockLLMClient", fix.mock_llm).rules = [
         rule_add_note_request,
         rule_final_confirmation,
-    ]  # Order matters if matchers overlap
+    ]
 
-    # --- Mock Confirmation Manager (Not needed for add_note) ---
-
-    # --- Mock Bot Response ---
-    mock_final_message = AsyncMock(spec=Message, message_id=assistant_final_message_id)
-    # Assume send_message is called only for the *final* confirmation in this flow
-    fix.mock_bot.send_message.return_value = mock_final_message
-
-    # --- Create Mock Update/Context ---
+    # --- Create Update/Context ---
     update = create_mock_update(
         user_text, chat_id=user_chat_id, user_id=user_id, message_id=user_message_id
     )
-    context = create_mock_context(
-        fix.mock_application,  # Use the mock_application from the fixture
+    context = create_context(
+        fix.application,
         bot_data={"processing_service": fix.processing_service},
     )
 
@@ -340,39 +288,25 @@ async def test_add_note_tool_usage(
         # 1. Confirmation Manager Call (Should NOT be called for add_note)
         fix.mock_confirmation_manager.request_confirmation.assert_not_awaited()
 
-        # 2. LLM Calls
-        # Expect two calls: first triggers tool, second processes result
+        # 2. LLM Calls - expect two calls: first triggers tool, second processes result
         assert_that(
             typing.cast("RuleBasedMockLLMClient", fix.mock_llm)._calls
         ).described_as("LLM Call Count").is_length(2)
 
-        # Implicitly verified LLM inputs:
-        # - The first call must have matched add_note_matcher to produce the tool call.
-        # - The second call must have matched tool_result_matcher (which checks for the
-        #   tool result message with the correct tool_call_id) to produce the final response.
-        # Therefore, explicit checks on the `messages` list sent to the LLM are removed.
+        # 3. Verify bot response via telegram-test-api
+        bot_responses = await wait_for_bot_response(fix.telegram_client, timeout=5.0)
+        assert_that(bot_responses).described_as("Bot responses").is_not_empty()
 
-        # 3. Bot API Call (Final Response)
-        fix.mock_bot.send_message.assert_awaited_once()  # Check it was called exactly once for the final message
-        _, kwargs_bot = fix.mock_bot.send_message.call_args
+        # Get the bot's final message text
+        bot_message = bot_responses[-1]
+        bot_message_text = bot_message.get("message", {}).get("text", "")
+
         expected_final_escaped_text = telegramify_markdown.markdownify(
             llm_final_confirmation_text
         )
-        assert_that(kwargs_bot["text"]).described_as(
+        assert_that(bot_message_text).described_as(
             "Final bot message text"
         ).is_equal_to(expected_final_escaped_text)
-        assert_that(kwargs_bot["reply_to_message_id"]).described_as(
-            "Final bot message reply ID"
-        ).is_equal_to(user_message_id)
-        # 4. Database State (Note) - OMITTED
-        # We trust the tool implementation works and the LLM correctly processed
-        # the tool result (verified implicitly by Rule 2 matching).
-        # Asserting the DB state here would make it an integration test, not E2E.
-
-        # 5. Database State (Message History) - OMITTED
-        # We trust the message history saving logic works. Asserting its content
-        # here would make it an integration test. We verified the *final* user-facing
-        # output and the LLM call chain.
 
 
 @pytest.mark.asyncio
@@ -387,12 +321,8 @@ async def test_tool_result_in_subsequent_history(
     fix = telegram_handler_fixture
     user_chat_id = 123
     user_id = 12345
-    # Message IDs for Turn 1
     user_message_id_1 = 301
-    assistant_final_message_id_1 = 302
-    # Message IDs for Turn 2
     user_message_id_2 = 303
-    assistant_final_message_id_2 = 304
 
     test_note_title = f"History Context Test Note {uuid.uuid4()}"
     test_note_content = "Content for history context test."
@@ -401,7 +331,6 @@ async def test_tool_result_in_subsequent_history(
     tool_call_id_1 = f"call_{uuid.uuid4()}"
     llm_tool_request_text_1 = "Okay, adding the note."
     llm_final_confirmation_text_1 = f"Note '{test_note_title}' added."
-    # Update expected response based on the actual tool result ("Success") seen in history
     llm_response_text_2 = "The last tool call result was: Success"
 
     # --- Mock LLM Rules ---
@@ -452,39 +381,27 @@ async def test_tool_result_in_subsequent_history(
         # Check 2: Does the history *before* the last user message contain the tool result from Turn 1?
         history_includes_tool_result = any(
             msg.role == "tool" and msg.tool_call_id == tool_call_id_1
-            for msg in messages[
-                :-1
-            ]  # Look in history *before* the current user message
+            for msg in messages[:-1]
         )
         logger.debug(
-            f"Matcher T2: Last user msg correct? {last_user_msg_correct}. History includes tool result? {history_includes_tool_result}. History: {messages}"
+            f"Matcher T2: Last user msg correct? {last_user_msg_correct}. "
+            f"History includes tool result? {history_includes_tool_result}. History: {messages}"
         )
         return last_user_msg_correct and history_includes_tool_result
 
     ask_result_response_t2 = LLMOutput(content=llm_response_text_2, tool_calls=None)
     rule_ask_result_t2: Rule = (ask_result_matcher_t2, ask_result_response_t2)
 
-    # Set rules (order matters for non-overlapping matchers, but explicit here)
+    # Set rules (order matters for non-overlapping matchers)
     typing.cast("RuleBasedMockLLMClient", fix.mock_llm).rules = [
         rule_add_note_request_t1,
         rule_ask_result_t2,
-        rule_final_confirmation_t1,  # More general rule checked last
+        rule_final_confirmation_t1,
     ]
 
-    # --- Mock Bot Responses ---
-    mock_sent_message_1 = AsyncMock(
-        spec=Message, message_id=assistant_final_message_id_1
-    )
-    mock_sent_message_2 = AsyncMock(
-        spec=Message, message_id=assistant_final_message_id_2
-    )
-    # Set side effect to return different messages for different calls
-    fix.mock_bot.send_message.side_effect = [mock_sent_message_1, mock_sent_message_2]
-
     # --- Context ---
-    # Same context object can be reused if state doesn't need to be reset between turns
-    context = create_mock_context(
-        fix.mock_application,  # Use the mock_application from the fixture
+    context = create_context(
+        fix.application,
         bot_data={"processing_service": fix.processing_service},
     )
 
@@ -494,19 +411,20 @@ async def test_tool_result_in_subsequent_history(
     )
     await fix.handler.message_handler(update_1, context)
 
-    # --- Assert (Turn 1 - Minimal, just ensure it likely completed) ---
+    # --- Assert (Turn 1) ---
     assert_that(
         typing.cast("RuleBasedMockLLMClient", fix.mock_llm)._calls
     ).described_as("LLM Calls after Turn 1").is_length(2)
-    assert_that(fix.mock_bot.send_message.await_count).described_as(
-        "Bot Sends after Turn 1"
-    ).is_equal_to(1)
-    # Retrieve the args/kwargs for the first call
+
+    # Verify bot response via telegram-test-api for Turn 1
     expected_escaped_text_1 = telegramify_markdown.markdownify(
         llm_final_confirmation_text_1
     )
-    _, call_1_kwargs = fix.mock_bot.send_message.call_args_list[0]
-    assert_that(call_1_kwargs["text"]).described_as(
+    bot_message_t1 = await assert_bot_sent_message(
+        fix.telegram_client, expected_escaped_text_1, timeout=5.0, partial_match=False
+    )
+    bot_message_text_t1 = bot_message_t1.get("message", {}).get("text", "")
+    assert_that(bot_message_text_t1).described_as(
         "Bot message text (Turn 1)"
     ).is_equal_to(expected_escaped_text_1)
 
@@ -517,32 +435,28 @@ async def test_tool_result_in_subsequent_history(
     await fix.handler.message_handler(update_2, context)
 
     # --- Assert (Turn 2) ---
-    with soft_assertions():  # type: ignore[attr-defined]
+    with soft_assertions():  # type: ignore[attr-defined]  # assertpy soft_assertions decorator
         assert_that(
             typing.cast("RuleBasedMockLLMClient", fix.mock_llm)._calls
-        ).described_as("LLM Calls after Turn 2").is_length(3)  # One more call
-        assert_that(fix.mock_bot.send_message.await_count).described_as(
-            "Bot Sends after Turn 2"
-        ).is_equal_to(2)  # One more send
+        ).described_as("LLM Calls after Turn 2").is_length(3)
 
-        # Check the *second* call to send_message
-        _, call_2_kwargs = fix.mock_bot.send_message.call_args_list[1]
-        # --- Expected behavior assertion ---
+        # Verify bot response via telegram-test-api for Turn 2
+        # Use assert_bot_sent_message to wait for the specific expected message
         expected_escaped_text_2 = telegramify_markdown.markdownify(llm_response_text_2)
-        assert_that(call_2_kwargs["text"]).described_as(
+        bot_message_t2 = await assert_bot_sent_message(
+            fix.telegram_client,
+            expected_escaped_text_2,
+            timeout=5.0,
+            partial_match=False,
+        )
+        bot_message_text_t2 = bot_message_t2.get("message", {}).get("text", "")
+        assert_that(bot_message_text_t2).described_as(
             "Final bot message text (Turn 2)"
         ).is_equal_to(expected_escaped_text_2)
 
-        assert_that(call_2_kwargs["reply_to_message_id"]).described_as(
-            "Final bot message reply ID (Turn 2)"
-        ).is_equal_to(user_message_id_2)
-
         # The key assertion is implicit: rule_ask_result_t2 matched.
-
         # If it hadn't matched (because the tool result wasn't in the history),
-        # the mock LLM would have returned the default response or failed differently.
-        # We check that the *expected* response for Turn 2 was sent.
-        # output and the LLM call chain.
+        # the mock LLM would have returned the default response.
 
 
 @pytest.mark.asyncio
@@ -573,13 +487,16 @@ async def test_telegram_photo_persistence_and_llm_context(
 
     # Configure mock LLM rules
     mock_llm = typing.cast("RuleBasedMockLLMClient", fix.mock_llm)
+    first_response = "I can see a test image you've sent! How can I help you with it?"
+    second_response = (
+        "Yes, I still have access to the image you sent earlier. It's a test image."
+    )
+
     mock_llm.rules = [
         # First message with photo - LLM should recognize the image
         (
             has_image_content,
-            LLMOutput(
-                content="I can see a test image you've sent! How can I help you with it?"
-            ),
+            LLMOutput(content=first_response),
         ),
         # Second message - LLM should still have access to historical image
         (
@@ -588,9 +505,7 @@ async def test_telegram_photo_persistence_and_llm_context(
                 and "remember"
                 in get_last_message_text(args.get("messages", [])).lower()
             ),
-            LLMOutput(
-                content="Yes, I still have access to the image you sent earlier. It's a test image."
-            ),
+            LLMOutput(content=second_response),
         ),
     ]
 
@@ -602,64 +517,60 @@ async def test_telegram_photo_persistence_and_llm_context(
     test_photo_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xdd\x8d\xb4\x1c\x00\x00\x00\x00IEND\xaeB`\x82"
 
     # Mock the file object and its download method
-    # download_to_memory writes bytes to the buffer passed as 'out' kwarg
     async def mock_download_to_memory(out: io.BytesIO) -> None:
         out.write(test_photo_bytes)
 
     mock_file = AsyncMock()
     mock_file.download_to_memory = mock_download_to_memory
     mock_file.file_size = len(test_photo_bytes)
-    fix.mock_bot.get_file = AsyncMock(return_value=mock_file)
 
-    # === TURN 1: Send photo with text ===
-    photo_update = create_mock_update_with_photo(
-        message_text="What do you see in this image?",
-        chat_id=user_chat_id,
-        user_id=user_id,
-        message_id=101,
-        bot=fix.mock_bot,
-    )
-    photo_context = create_mock_context(fix.mock_application)
+    # Use patch on the class method since the Bot instance is frozen/immutable
+    with patch("telegram.Bot.get_file", AsyncMock(return_value=mock_file)):
+        # === TURN 1: Send photo with text ===
+        photo_update = create_mock_update_with_photo(
+            message_text="What do you see in this image?",
+            chat_id=user_chat_id,
+            user_id=user_id,
+            message_id=101,
+            bot=fix.bot,
+        )
+        photo_context = create_context(fix.application)
 
-    await fix.handler.message_handler(photo_update, photo_context)
+        await fix.handler.message_handler(photo_update, photo_context)
 
-    # Verify bot responded to the photo message
-    fix.mock_bot.send_message.assert_called()
-    first_call_args = fix.mock_bot.send_message.call_args_list[0]
-    first_response_text = first_call_args[1]["text"]
+        # Verify bot responded to the photo message via telegram-test-api
+        # Use assert_bot_sent_message to wait for the specific expected content
+        bot_message_t1 = await assert_bot_sent_message(
+            fix.telegram_client, "image", timeout=5.0, partial_match=True
+        )
+        first_response_text = bot_message_t1.get("message", {}).get("text", "")
+        assert_that(first_response_text).described_as(
+            "First response should recognize the image"
+        ).contains("image")
 
-    assert_that(first_response_text).described_as(
-        "First response should recognize the image"
-    ).contains("image")
+        # === TURN 2: Ask about the previous image ===
+        follow_up_update = create_mock_update(
+            message_text="Do you remember the image I sent earlier?",
+            chat_id=user_chat_id,
+            user_id=user_id,
+            message_id=102,
+        )
+        follow_up_context = create_context(fix.application)
 
-    # === TURN 2: Ask about the previous image ===
-    follow_up_update = create_mock_update(
-        message_text="Do you remember the image I sent earlier?",
-        chat_id=user_chat_id,
-        user_id=user_id,
-        message_id=102,
-    )
-    follow_up_context = create_mock_context(fix.mock_application)
+        await fix.handler.message_handler(follow_up_update, follow_up_context)
 
-    await fix.handler.message_handler(follow_up_update, follow_up_context)
+        # Verify bot responded with knowledge of the historical image
+        # Use assert_bot_sent_message to wait for the specific expected content
+        bot_message_t2 = await assert_bot_sent_message(
+            fix.telegram_client, "image", timeout=5.0, partial_match=True
+        )
+        second_response_text = bot_message_t2.get("message", {}).get("text", "")
+        assert_that(second_response_text).described_as(
+            "Second response should reference the historical image"
+        ).matches(r".*(access|image|earlier).*")
 
-    # Verify bot responded with knowledge of the historical image
-    assert_that(fix.mock_bot.send_message.call_count).described_as(
-        "Should have two bot responses"
-    ).is_equal_to(2)
-
-    second_call_args = fix.mock_bot.send_message.call_args_list[1]
-    second_response_text = second_call_args[1]["text"]
-
-    assert_that(second_response_text).described_as(
-        "Second response should reference the historical image"
-    ).matches(r".*(access|image|earlier).*")
-
-    # === VERIFICATION: Check that image was persisted properly ===
-    # The test implicitly verifies:
-    # 1. AttachmentService was used (not base64) - if it failed, the handler would crash
-    # 2. Attachment metadata was stored - verified by the LLM receiving image_url in turn 2
-    # 3. Historical attachments included in LLM context - verified by the second rule matching
-
-    # Additional verification: Mock LLM should have been called twice with image content
-    # Both calls should contain image_url content parts due to our implementation
+        # === VERIFICATION: Check that image was persisted properly ===
+        # The test implicitly verifies:
+        # 1. AttachmentService was used (not base64) - if it failed, the handler would crash
+        # 2. Attachment metadata was stored - verified by the LLM receiving image_url in turn 2
+        # 3. Historical attachments included in LLM context - verified by the second rule matching

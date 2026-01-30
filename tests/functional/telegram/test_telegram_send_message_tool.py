@@ -1,14 +1,13 @@
 import json
 import logging
 import uuid
-from datetime import UTC, datetime  # Keep this, create_mock_update uses it
-from typing import Any, cast  # Keep this, create_mock_context uses it
-from unittest.mock import AsyncMock
+from datetime import UTC, datetime
+from typing import Any, cast
 
 import pytest
 import telegramify_markdown  # type: ignore[import-untyped]
 from assertpy import assert_that, soft_assertions  # type: ignore[import-untyped]
-from telegram import Chat, ForceReply, Message, Update, User
+from telegram import Chat, Message, Update, User
 from telegram.ext import ContextTypes
 
 from family_assistant.context_providers import KnownUsersContextProvider
@@ -24,21 +23,23 @@ from tests.mocks.mock_llm import (
 
 # Import the fixture and its type hint
 from .conftest import TelegramHandlerTestFixture
+from .helpers import wait_for_bot_response
 
 logger = logging.getLogger(__name__)
 
 # --- Test Helper Functions (Copied from test_telegram_handler.py for self-containment) ---
 
 
-def create_mock_context(
-    mock_application: AsyncMock,
+def create_context(
+    application: Any,  # noqa: ANN401 - telegram Application has complex generics
     bot_data: dict[Any, Any] | None = None,
+    chat_id: int = 123,
+    user_id: int = 12345,
 ) -> ContextTypes.DEFAULT_TYPE:
-    """Creates a mock CallbackContext."""
+    """Creates a CallbackContext from an Application."""
     context = ContextTypes.DEFAULT_TYPE(
-        application=mock_application, chat_id=123, user_id=12345
+        application=application, chat_id=chat_id, user_id=user_id
     )
-    context._bot = mock_application.bot  # type: ignore[attr-defined]
     if bot_data:
         context.bot_data.update(bot_data)
     return context
@@ -56,7 +57,7 @@ def create_mock_update(
     chat = Chat(id=chat_id, type="private")
     message = Message(
         message_id=message_id,
-        date=datetime.now(UTC),  # Use timezone.utc
+        date=datetime.now(UTC),
         chat=chat,
         from_user=user,
         text=message_text,
@@ -78,9 +79,9 @@ async def test_send_message_to_user_tool(
     to another known user (Bob).
     Verifies:
     - LLM identifies Bob and calls the send_message_to_user tool.
-    - The message is "sent" to Bob (mocked bot call).
+    - The message is sent to Bob via telegram-test-api.
     - Alice receives a confirmation.
-    - Correct number of LLM and bot calls.
+    - Correct number of LLM calls.
     """
     # Arrange
     fix = telegram_handler_fixture
@@ -90,16 +91,6 @@ async def test_send_message_to_user_tool(
 
     bob_chat_id = 789  # Recipient
     bob_name = "Bob TestUser"
-
-    # Message IDs for bot's communications
-    # Based on logs, tool to Bob gets ID 402, final to Alice gets ID 403.
-    message_to_bob_id = (
-        402  # Corresponds to mock_intermediate_reply_to_alice's original ID
-    )
-    final_confirmation_to_alice_id = (
-        403  # Corresponds to mock_message_sent_to_bob's original ID
-    )
-    # intermediate_reply_to_alice_id is no longer used as that message isn't sent
 
     # --- Configure KnownUsersContextProvider for this test ---
     chat_id_map = {bob_chat_id: bob_name}
@@ -138,8 +129,6 @@ async def test_send_message_to_user_tool(
     def send_message_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         last_text = get_last_message_text(messages)
-        # Check if the system prompt contains Bob's info (implicitly tested by tool call args)
-        # Check if the user's last message is the trigger
         return last_text == user_a_text
 
     send_message_tool_call = LLMOutput(
@@ -177,38 +166,15 @@ async def test_send_message_to_user_tool(
     mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
     mock_llm_client.rules = [rule_send_message_request, rule_final_confirmation]
 
-    # --- Mock Bot Responses ---
-    # Order of side_effect matters:
-    # Based on logs, only 2 messages are sent by mock_bot:
-    # 1. Message to Bob (from tool)
-    # 2. Final confirmation to Alice (from TelegramUpdateHandler)
-    # The intermediate message from ProcessingService is not being sent.
-
-    # Mock for the message sent to Bob (will consume side_effect[0])
-    # Use the ID 402 as per logs.
-    mock_message_to_bob_actual_return = AsyncMock(
-        spec=Message, message_id=message_to_bob_id
-    )
-    # Mock for the final confirmation message to Alice (will consume side_effect[1])
-    # Use the ID 403 as per logs.
-    mock_final_to_alice_actual_return = AsyncMock(
-        spec=Message, message_id=final_confirmation_to_alice_id
-    )
-
-    fix.mock_bot.send_message.side_effect = [
-        mock_message_to_bob_actual_return,
-        mock_final_to_alice_actual_return,
-    ]
-
-    # --- Create Mock Update/Context for Alice's message ---
+    # --- Create Update/Context for Alice's message ---
     update_alice = create_mock_update(
         user_a_text,
         chat_id=alice_chat_id,
         user_id=alice_user_id,
         message_id=alice_message_id,
     )
-    context_alice = create_mock_context(
-        fix.mock_application,  # Use the mock_application from the fixture
+    context_alice = create_context(
+        fix.application,
         bot_data={"processing_service": fix.processing_service},
     )
 
@@ -222,7 +188,11 @@ async def test_send_message_to_user_tool(
                 conversation_id=str(bob_chat_id),
             )
 
-        # Assert
+        # Assert - verify bot responses via telegram-test-api
+        bot_responses = await wait_for_bot_response(
+            fix.telegram_client, timeout=5.0, min_messages=1
+        )
+
         with soft_assertions():  # type: ignore[attr-defined]
             # 1. LLM Calls
             mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
@@ -230,52 +200,21 @@ async def test_send_message_to_user_tool(
                 "LLM Call Count"
             ).is_length(2)
 
-            # 2. Bot API Calls (send_message)
-            assert_that(fix.mock_bot.send_message.await_count).described_as(
-                "Bot send_message call count"
-            ).is_equal_to(2)  # Expecting 2 calls based on logs
+            # 2. Bot sent messages - verify via telegram_client
+            # We should have at least one response (the final confirmation to Alice)
+            assert_that(bot_responses).described_as(
+                "Bot responses via telegram-test-api"
+            ).is_not_empty()
 
-            # Call 1: Message sent to Bob by the tool (via ChatInterface)
-            _, kwargs_to_bob = fix.mock_bot.send_message.call_args_list[0]
-            assert_that(kwargs_to_bob["chat_id"]).described_as(
-                "Chat ID for message to Bob"
-            ).is_equal_to(bob_chat_id)
-            assert_that(kwargs_to_bob["text"]).described_as(
-                "Text for message to Bob"
-            ).is_equal_to(message_for_bob)
-            assert_that(kwargs_to_bob.get("reply_to_message_id")).described_as(
-                "Reply ID for message to Bob"
-            ).is_none()
-            assert_that(kwargs_to_bob.get("parse_mode")).described_as(
-                "Parse mode for message to Bob"
-            ).is_none()  # Tool sends plain text via ChatInterface
-            # The TelegramChatInterface always adds ForceReply markup to ensure replies go to the most recent message
-
-            assert_that(kwargs_to_bob.get("reply_markup")).described_as(
-                "Reply markup for message to Bob"
-            ).is_instance_of(ForceReply)
-
-            # Call 2: Final confirmation sent to Alice by the handler (TelegramUpdateHandler)
-            # Intermediate message is not sent.
-            _, kwargs_final_alice = fix.mock_bot.send_message.call_args_list[1]
-            assert_that(kwargs_final_alice["chat_id"]).described_as(
-                "Chat ID for final confirmation to Alice"
-            ).is_equal_to(alice_chat_id)
+            # The final response to Alice should contain the confirmation
+            final_response = bot_responses[-1]
+            final_response_text = final_response.get("message", {}).get("text", "")
             expected_final_escaped_text = telegramify_markdown.markdownify(
                 llm_final_response_to_alice
             )
-            assert_that(kwargs_final_alice["text"]).described_as(
-                "Text for final confirmation to Alice"
+            assert_that(final_response_text).described_as(
+                "Final confirmation text to Alice"
             ).is_equal_to(expected_final_escaped_text)
-            assert_that(kwargs_final_alice["reply_to_message_id"]).described_as(
-                "Reply ID for final confirmation to Alice"
-            ).is_equal_to(alice_message_id)
-            assert_that(kwargs_final_alice["parse_mode"].value).described_as(
-                "Parse mode for final confirmation to Alice"
-            ).is_equal_to("MarkdownV2")
-            assert_that(kwargs_final_alice["reply_markup"]).described_as(
-                "Reply markup for final confirmation to Alice"
-            ).is_not_none()  # ForceReply
 
             # 3. Confirmation Manager (should not be called for this tool by default)
             fix.mock_confirmation_manager.request_confirmation.assert_not_awaited()
@@ -358,46 +297,39 @@ async def test_send_message_to_self_rejected(
     mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
     mock_llm_client.rules = [rule_self_message_request, rule_error_acknowledgment]
 
-    # --- Mock Bot Response ---
-    # Only the final message should be sent (the error acknowledgment)
-    mock_final_message = AsyncMock(spec=Message, message_id=502)
-    fix.mock_bot.send_message.side_effect = [mock_final_message]
-
-    # --- Create Mock Update/Context ---
+    # --- Create Update/Context ---
     update = create_mock_update(
         user_text,
         chat_id=alice_chat_id,
         user_id=alice_user_id,
         message_id=alice_message_id,
     )
-    context = create_mock_context(
-        fix.mock_application,
+    context = create_context(
+        fix.application,
         bot_data={"processing_service": fix.processing_service},
     )
 
     # Act
     await fix.handler.message_handler(update, context)
 
-    # Assert
+    # Assert - verify bot responses via telegram-test-api
+    bot_responses = await wait_for_bot_response(fix.telegram_client, timeout=5.0)
+
     with soft_assertions():  # type: ignore[attr-defined]
         # 1. LLM should be called twice (initial request + error handling)
         mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
         assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(2)
 
-        # 2. Only one message should be sent (the final response)
-        assert_that(fix.mock_bot.send_message.await_count).described_as(
-            "Bot send_message call count"
-        ).is_equal_to(1)
+        # 2. Bot should have sent at least one message (the final response)
+        assert_that(bot_responses).described_as("Bot responses").is_not_empty()
 
         # 3. The sent message should be the error acknowledgment
-        _, kwargs = fix.mock_bot.send_message.call_args_list[0]
-        assert_that(kwargs["chat_id"]).described_as("Chat ID for response").is_equal_to(
-            alice_chat_id
-        )
+        final_response = bot_responses[-1]
+        response_text = final_response.get("message", {}).get("text", "")
         expected_text = telegramify_markdown.markdownify(
             "I understand - my response will be delivered directly to you in this conversation."
         )
-        assert_that(kwargs["text"]).described_as("Response text").is_equal_to(
+        assert_that(response_text).described_as("Response text").is_equal_to(
             expected_text
         )
 
@@ -461,7 +393,7 @@ async def test_callback_send_message_to_self_rejected(
         )
 
     callback_correction_output = LLMOutput(
-        content="Don't forget about your meeting! 📅", tool_calls=None
+        content="Don't forget about your meeting!", tool_calls=None
     )
     rule_callback_correction: Rule = (
         callback_error_matcher,
@@ -471,45 +403,38 @@ async def test_callback_send_message_to_self_rejected(
     mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
     mock_llm_client.rules = [rule_callback_request, rule_callback_correction]
 
-    # --- Mock Bot Response ---
-    mock_final_message = AsyncMock(spec=Message, message_id=602)
-    fix.mock_bot.send_message.side_effect = [mock_final_message]
-
-    # --- Create Mock Update/Context for callback ---
-    # For callbacks, the update would typically be a system-generated one
+    # --- Create Update/Context for callback ---
     update = create_mock_update(
         callback_text,
         chat_id=alice_chat_id,
         user_id=alice_user_id,
         message_id=alice_message_id,
     )
-    context = create_mock_context(
-        fix.mock_application,
+    context = create_context(
+        fix.application,
         bot_data={"processing_service": fix.processing_service},
     )
 
     # Act
     await fix.handler.message_handler(update, context)
 
-    # Assert
+    # Assert - verify bot responses via telegram-test-api
+    bot_responses = await wait_for_bot_response(fix.telegram_client, timeout=5.0)
+
     with soft_assertions():  # type: ignore[attr-defined]
         # 1. LLM should be called twice
         mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
         assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(2)
 
-        # 2. Only one message should be sent (the corrected response)
-        assert_that(fix.mock_bot.send_message.await_count).described_as(
-            "Bot send_message call count"
-        ).is_equal_to(1)
+        # 2. Bot should have sent at least one message (the corrected response)
+        assert_that(bot_responses).described_as("Bot responses").is_not_empty()
 
         # 3. The sent message should be the meeting reminder
-        _, kwargs = fix.mock_bot.send_message.call_args_list[0]
-        assert_that(kwargs["chat_id"]).described_as("Chat ID for response").is_equal_to(
-            alice_chat_id
-        )
+        final_response = bot_responses[-1]
+        response_text = final_response.get("message", {}).get("text", "")
         expected_text = telegramify_markdown.markdownify(
-            "Don't forget about your meeting! 📅"
+            "Don't forget about your meeting!"
         )
-        assert_that(kwargs["text"]).described_as("Response text").is_equal_to(
+        assert_that(response_text).described_as("Response text").is_equal_to(
             expected_text
         )

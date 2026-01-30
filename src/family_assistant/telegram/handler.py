@@ -211,12 +211,12 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             while not stop_event.is_set():
                 try:
                     await context.bot.send_chat_action(chat_id=chat_id, action=action)
-                    await asyncio.wait_for(stop_event.wait(), timeout=4.5)
-                except TimeoutError:
-                    pass
                 except Exception as e:
-                    logger.warning(f"Error sending chat action: {e}")
-                    await asyncio.sleep(5)
+                    # Typing indicators are non-critical UX niceties - don't fail the message flow
+                    # This also handles telegram-test-api which doesn't support sendChatAction
+                    logger.debug(f"Could not send chat action (non-critical): {e}")
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(stop_event.wait(), timeout=4.5)
 
         typing_task = asyncio.create_task(typing_loop())
         try:
