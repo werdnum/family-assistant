@@ -4,6 +4,7 @@ import binascii
 import contextlib
 import json
 import logging
+import mimetypes
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
@@ -95,7 +96,9 @@ async def _process_user_attachments(
     if payload.attachments:
         trigger_attachments = []
         for attachment in payload.attachments:
-            if attachment.get("type") == "image":
+            # Handle images, videos, audio, and documents (PDFs)
+            attachment_type = attachment.get("type")
+            if attachment_type in {"image", "video", "audio", "document"}:
                 # Validate that content is present and not empty
                 content_data = attachment.get("content")
                 if not content_data:
@@ -169,15 +172,21 @@ async def _process_user_attachments(
                             header, b64_data = content_data.split(",", 1)
                             mime_type = header.split(":")[1].split(";")[0]
                             content_bytes = base64.b64decode(b64_data)
-                            filename = attachment.get(
+                            base_filename = attachment.get(
                                 "filename", f"upload_{uuid.uuid4().hex[:8]}"
                             )
+                            # Ensure filename has correct extension based on MIME type
+                            ext = mimetypes.guess_extension(mime_type) or ""
+                            if ext and not base_filename.lower().endswith(ext):
+                                filename = f"{base_filename}{ext}"
+                            else:
+                                filename = base_filename
                         else:
                             # Assume direct base64 content
                             content_bytes = base64.b64decode(content_data)
                             # For security, don't trust client-provided filenames for MIME type
                             # Instead, try to detect from content magic bytes or use safe default
-                            filename = attachment.get(
+                            base_filename = attachment.get(
                                 "filename", f"upload_{uuid.uuid4().hex[:8]}"
                             )
 
@@ -200,7 +209,12 @@ async def _process_user_attachments(
                                 # Unknown format, use safe generic type
                                 mime_type = "application/octet-stream"
 
-                        # Filename was determined above with fallback
+                            # Ensure filename has correct extension based on MIME type
+                            ext = mimetypes.guess_extension(mime_type) or ""
+                            if ext and not base_filename.lower().endswith(ext):
+                                filename = f"{base_filename}{ext}"
+                            else:
+                                filename = base_filename
 
                         # Store attachment via AttachmentRegistry
                         attachment_record = (
@@ -283,7 +297,9 @@ class ConversationMessage(BaseModel):
 
     internal_id: int = Field(..., description="Internal database ID")
     role: str = Field(..., description="Message role (user/assistant/system/tool)")
-    content: str | None = Field(None, description="Message content")
+    content: str | list[dict] | None = Field(
+        None, description="Message content (string or list for multimodal)"
+    )
     timestamp: datetime = Field(..., description="Message timestamp")
     tool_calls: list[dict] | None = Field(None, description="Tool calls if any")
     tool_call_id: str | None = Field(None, description="Tool call ID for tool messages")

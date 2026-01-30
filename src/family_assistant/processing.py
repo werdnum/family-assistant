@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 import aiofiles
 import pytz  # Added
+from pydantic import TypeAdapter
 
 from family_assistant.config_models import AppConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -1417,6 +1418,56 @@ class ProcessingService:
 
         return converted_parts
 
+    async def _convert_message_urls_to_data_uris(
+        self,
+        messages: list[LLMMessage],
+    ) -> list[LLMMessage]:
+        """
+        Convert any attachment server URLs in message content to data URIs.
+
+        This applies the URL-to-data-URI conversion to all user messages in the list.
+
+        Args:
+            messages: List of LLM messages
+
+        Returns:
+            Modified messages with server URLs converted to data URIs
+        """
+        if not self.attachment_registry:
+            return messages
+
+        # TypeAdapter for deserializing ContentPart union from dicts
+        content_part_adapter: TypeAdapter[ContentPart] = TypeAdapter(ContentPart)
+
+        converted_messages: list[LLMMessage] = []
+
+        for msg in messages:
+            if isinstance(msg, UserMessage) and isinstance(msg.content, list):
+                # Serialize content parts to dicts using Pydantic's model_dump
+                content_dicts: list[ContentPartDict] = [
+                    part.model_dump()
+                    for part in msg.content  # type: ignore[misc]
+                ]
+
+                # Apply URL conversion
+                converted_dicts = await self._convert_attachment_urls_to_data_uris(
+                    content_dicts
+                )
+
+                # Deserialize back to ContentPart objects using TypeAdapter
+                converted_parts: list[ContentPart] = [
+                    content_part_adapter.validate_python(part_dict)
+                    for part_dict in converted_dicts
+                ]
+
+                # Create new UserMessage with converted content
+                converted_messages.append(UserMessage(content=converted_parts))
+            else:
+                # Keep non-user messages and string-content messages as-is
+                converted_messages.append(msg)
+
+        return converted_messages
+
     async def _extract_conversation_attachments_context(
         self, db_context: DatabaseContext, conversation_id: str, max_age_hours: float
     ) -> str:
@@ -1784,22 +1835,35 @@ Call attach_to_response with your selected attachment IDs."""
                         "Creating new thread."
                     )
 
-            # Prepare user message content for saving (simplified for now, can be expanded)
-            # For simplicity, taking the first text part if available, or a placeholder.
-            user_content_for_history = "[User message content]"
+            # Prepare user message content for history
+            # Save the full content structure (text + attachment URL references) to preserve multimodal content
+            # This allows us to reconstruct the message with attachments when loading from history
+            user_content_for_history: str | list[ContentPartDict]
             if trigger_content_parts:
-                first_text_part = next(
-                    (
-                        part.get("text")
-                        for part in trigger_content_parts
-                        if part.get("type") == "text"
-                    ),
-                    None,
+                # Check if we have any non-text content parts (images, videos, audio)
+                has_non_text_parts = any(
+                    part.get("type") != "text" for part in trigger_content_parts
                 )
-                if first_text_part:
-                    user_content_for_history = str(first_text_part)
-                elif trigger_content_parts[0].get("type") == "image_url":
-                    user_content_for_history = "[Image Attached]"
+                if has_non_text_parts:
+                    # Save the full content structure with attachment URL references
+                    user_content_for_history = trigger_content_parts
+                else:
+                    # Text only - extract and save as string
+                    first_text_part = next(
+                        (
+                            part.get("text")
+                            for part in trigger_content_parts
+                            if part.get("type") == "text"
+                        ),
+                        None,
+                    )
+                    user_content_for_history = (
+                        str(first_text_part)
+                        if first_text_part
+                        else "[User message content]"
+                    )
+            else:
+                user_content_for_history = "[User message content]"
 
             # Generate a temporary interface_message_id if not provided
             # This ensures the just-saved message can be filtered out of history
@@ -2098,7 +2162,10 @@ Call attach_to_response with your selected attachment IDs."""
             messages_for_llm.append(UserMessage(content=user_content_for_llm))
 
             # Messages are already typed (list[LLMMessage])
-            typed_messages_for_llm = messages_for_llm
+            # Convert attachment URLs to data URIs in messages from history
+            typed_messages_for_llm = await self._convert_message_urls_to_data_uris(
+                messages_for_llm
+            )
 
             # --- 3. Call Core LLM Processing (self.process_message) ---
             (
@@ -2285,21 +2352,35 @@ Call attach_to_response with your selected attachment IDs."""
                     "Thread root ID will be determined from saved message."
                 )
 
-            # Prepare user message content
-            user_content_for_history = "[User message content]"
+            # Prepare user message content for history
+            # Save the full content structure (text + attachment URL references) to preserve multimodal content
+            # This allows us to reconstruct the message with attachments when loading from history
+            user_content_for_history: str | list[ContentPartDict]
             if trigger_content_parts:
-                first_text_part = next(
-                    (
-                        part.get("text")
-                        for part in trigger_content_parts
-                        if part.get("type") == "text"
-                    ),
-                    None,
+                # Check if we have any non-text content parts (images, videos, audio)
+                has_non_text_parts = any(
+                    part.get("type") != "text" for part in trigger_content_parts
                 )
-                if first_text_part:
-                    user_content_for_history = str(first_text_part)
-                elif trigger_content_parts[0].get("type") == "image_url":
-                    user_content_for_history = "[Image Attached]"
+                if has_non_text_parts:
+                    # Save the full content structure with attachment URL references
+                    user_content_for_history = trigger_content_parts
+                else:
+                    # Text only - extract and save as string
+                    first_text_part = next(
+                        (
+                            part.get("text")
+                            for part in trigger_content_parts
+                            if part.get("type") == "text"
+                        ),
+                        None,
+                    )
+                    user_content_for_history = (
+                        str(first_text_part)
+                        if first_text_part
+                        else "[User message content]"
+                    )
+            else:
+                user_content_for_history = "[User message content]"
 
             # Generate a temporary interface_message_id if not provided
             # This ensures the just-saved message can be filtered out of history
@@ -2479,7 +2560,10 @@ Call attach_to_response with your selected attachment IDs."""
             # handle_chat_interaction confirms the just-saved user message is included in history.
 
             # Messages are already typed (list[LLMMessage])
-            typed_messages_for_llm = messages_for_llm
+            # Convert attachment URLs to data URIs in messages from history
+            typed_messages_for_llm = await self._convert_message_urls_to_data_uris(
+                messages_for_llm
+            )
 
             # --- 3. Stream LLM Processing ---
             async for event, message_dict in self.process_message_stream(

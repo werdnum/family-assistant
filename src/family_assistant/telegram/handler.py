@@ -361,18 +361,32 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             or f"Telegram attachment from {user_name}",
                         )
 
-                        if (
-                            attachment_metadata.content_url
-                            and attachment_metadata.mime_type.startswith("image/")
+                        # Pass images, videos, audio, and PDFs to LLM for processing
+                        # Gemini supports all of these; other providers may gracefully
+                        # handle or ignore unsupported types
+                        mime_type = attachment_metadata.mime_type
+                        if attachment_metadata.content_url and (
+                            mime_type.startswith("image/")
+                            or mime_type.startswith("video/")
+                            or mime_type.startswith("audio/")
+                            or mime_type == "application/pdf"
                         ):
                             trigger_content_parts.append(
                                 image_url_content(attachment_metadata.content_url)
                             )
 
+                        # Classify attachment type for metadata
+                        if mime_type.startswith("image/"):
+                            attachment_type = "image"
+                        elif mime_type.startswith("video/"):
+                            attachment_type = "video"
+                        elif mime_type.startswith("audio/"):
+                            attachment_type = "audio"
+                        else:
+                            attachment_type = "file"
+
                         attachment_dict = {
-                            "type": "image"
-                            if attachment_metadata.mime_type.startswith("image/")
-                            else "file",
+                            "type": attachment_type,
                             "content_url": attachment_metadata.content_url,
                             "name": attachment_metadata.description,
                             "size": attachment_metadata.size,

@@ -1,5 +1,6 @@
 """Repository for message history storage operations."""
 
+import contextlib
 import json
 import logging
 from dataclasses import asdict
@@ -146,6 +147,12 @@ class MessageHistoryRepository(BaseRepository):
                 # For backwards compatibility or other providers
                 serialized_provider_metadata = provider_metadata
 
+        # Serialize content to JSON string if it's a list (for multimodal content parts)
+        # The content column is TEXT type, so we need to serialize lists manually
+        serialized_content = content
+        if isinstance(content, list):
+            serialized_content = json.dumps(content)
+
         values = {
             "interface_type": interface_type,
             "conversation_id": conversation_id,
@@ -154,7 +161,7 @@ class MessageHistoryRepository(BaseRepository):
             "thread_root_id": thread_root_id,
             "timestamp": timestamp,
             "role": role,
-            "content": content,
+            "content": serialized_content,
             "tool_calls": serialized_tool_calls,
             "reasoning_info": reasoning_info,
             "tool_call_id": tool_call_id,
@@ -829,6 +836,12 @@ class MessageHistoryRepository(BaseRepository):
                 )
                 msg["tool_calls"] = None
 
+        # Handle content deserialization: content may be JSON-serialized list for multimodal content
+        content = msg.get("content")
+        if isinstance(content, str) and content.startswith("["):
+            with contextlib.suppress(json.JSONDecodeError):
+                msg["content"] = json.loads(content)
+
         # Deserialize provider_metadata within each tool call to typed objects
         if msg.get("tool_calls") and isinstance(msg["tool_calls"], list):
             tool_call_items = []
@@ -936,6 +949,12 @@ class MessageHistoryRepository(BaseRepository):
                     f"Failed to parse tool_calls JSON for message {msg.get('internal_id')}"
                 )
                 msg["tool_calls"] = None
+
+        # Handle content deserialization: content may be JSON-serialized list for multimodal content
+        content = msg.get("content")
+        if isinstance(content, str) and content.startswith("["):
+            with contextlib.suppress(json.JSONDecodeError):
+                msg["content"] = json.loads(content)
 
         # Deserialize provider_metadata within each tool call to typed objects
         if msg.get("tool_calls") and isinstance(msg["tool_calls"], list):

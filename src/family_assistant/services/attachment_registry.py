@@ -43,6 +43,12 @@ DEFAULT_ALLOWED_MIME_TYPES: set[str] = {
     "text/plain",
     "application/pdf",
     "video/mp4",
+    "video/webm",
+    "video/ogg",
+    "audio/mpeg",
+    "audio/wav",
+    "audio/ogg",
+    "audio/webm",
 }
 
 
