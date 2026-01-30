@@ -494,14 +494,24 @@ access, input validation, and defense-in-depth approaches.
 
 ### Refactoring and Error Handling
 
-- **No Backwards Compatibility for Internal Code**: When migrating from implementation X to Y,
-  delete X immediately. Do not keep backwards compatibility layers. Rely on the type checker and
-  tests to identify all places that need to be updated. This ensures a clean migration and prevents
-  technical debt.
+See **[docs/development/error-handling.md](docs/development/error-handling.md)** for comprehensive
+error handling guidelines. Key principles:
+
+- **Prevention First**: Detect errors at development time with type checking and tests rather than
+  handling them at runtime.
+- **No Silent Failures**: Never silently drop errors or user input. A silent failure at one layer
+  often causes a confusing error at another layer (e.g., user sends video → video silently stripped
+  → empty input error shown to user).
 - **Fail Fast**: Do not implement "graceful fallbacks" that mask bugs (e.g., returning `None` or
   empty lists when an unexpected error occurs). Errors should look like errors. Let exceptions
-  propagate so they can be caught by tests and debugging tools. Silent failures make production
-  issues impossible to debug.
+  propagate so they can be caught by tests and debugging tools.
+- **Handle at the Right Layer**: Only catch errors at layers that have enough context to handle them
+  correctly. When in doubt, let errors propagate.
+- **Correct vs. Possible**: Don't ask "can we continue?" but "is it correct to continue?" Prefer
+  enforcing invariants over "graceful degradation" that produces confusing results.
+- **No Backwards Compatibility for Internal Code**: When migrating from implementation X to Y,
+  delete X immediately. Do not keep backwards compatibility layers. Rely on the type checker and
+  tests to identify all places that need to be updated.
 
 ### Debugging and Change Verification
 
