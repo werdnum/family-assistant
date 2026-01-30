@@ -284,7 +284,8 @@ async def test_get_conversations_date_filters(
     """Test filtering conversations by date range."""
 
     # Create test conversations with different timestamps
-    base_time = datetime.now(UTC)
+    # Use a fixed date to avoid flakiness at day boundaries
+    base_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
     async with get_db_context(db_engine) as db_context:
         # Old conversation (3 days ago)
         await db_context.message_history.add_message(
@@ -387,7 +388,8 @@ async def test_get_conversations_combined_filters(
 ) -> None:
     """Test using multiple filters together."""
 
-    base_time = datetime.now(UTC)
+    # Use a fixed date to avoid flakiness at day boundaries
+    base_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 
     # Create test data
     async with get_db_context(db_engine) as db_context:
