@@ -119,6 +119,68 @@ Examples:
 - `for i in range(len(items) + 1):` (will go out of bounds)
 - Missing handling for empty lists or None values
 
+### ERROR_HANDLING_ISSUE
+
+**Exit Code Impact: 2 (blocking)**
+
+See **[docs/development/error-handling.md](docs/development/error-handling.md)** for comprehensive
+guidelines.
+
+Improper error handling that masks bugs, creates confusing errors, or silently loses data:
+
+- **Silent failures**: Catching exceptions and returning null/empty without logging or re-raising
+- **Cascading silent failures**: Silent failure at one layer causes confusing error at another
+  (e.g., video silently stripped → "empty input" error shown to user)
+- **Catch-and-return-null**: Catching broad exceptions and returning None, making it impossible to
+  distinguish "not found" from "error occurred"
+- **Overly broad exception handling**: Catching `Exception` when specific exception types should be
+  caught
+- **Lost error context**: Re-raising exceptions without preserving the original error chain
+- **"Graceful degradation" that masks bugs**: Returning default values that produce confusing
+  downstream behavior
+
+**Key principle**: Ask "is it **correct** to continue?" not "is it **possible** to continue?"
+
+Examples:
+
+```python
+# BAD: Silent failure - user sends video, gets "empty input" error
+def extract_content(msg):
+    try:
+        return msg.video
+    except Exception:
+        return None  # Video silently dropped!
+
+# BAD: Catch-and-return-null masks bugs
+def get_user(id):
+    try:
+        return db.query(User).get(id)
+    except Exception:
+        return None  # Was it not found, or did DB crash?
+
+# BAD: Overly broad exception handling
+try:
+    result = complex_operation()
+except Exception:
+    return default_value  # Hides bugs in complex_operation()
+```
+
+```python
+# GOOD: Catch specific exceptions, let others propagate
+def get_user(id) -> User | None:
+    try:
+        return db.query(User).get(id)
+    except NoResultFound:
+        return None  # Expected case
+    # Other exceptions propagate - infrastructure or bug
+
+# GOOD: Preserve error context
+try:
+    external_api.call()
+except ExternalAPIError as e:
+    raise ProcessingError(f"Failed: {e}") from e
+```
+
 ### DESIGN_FLAW_MAJOR
 
 **Exit Code Impact: 2 (blocking)**
