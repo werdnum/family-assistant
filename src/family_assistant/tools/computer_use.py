@@ -21,6 +21,10 @@ from playwright.async_api import (
 )
 
 from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.utils.stealth_browser import (
+    create_stealth_context,
+    launch_stealth_browser,
+)
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
@@ -56,11 +60,12 @@ class BrowserSession:
             self.playwright = await async_playwright().start()
 
         if self.browser is None:
-            self.browser = await self.playwright.chromium.launch(headless=True)
+            self.browser = await launch_stealth_browser(self.playwright, headless=True)
 
         if self.context is None:
-            self.context = await self.browser.new_context(
-                viewport={"width": self.screen_width, "height": self.screen_height}
+            self.context = await create_stealth_context(
+                self.browser,
+                viewport={"width": self.screen_width, "height": self.screen_height},
             )
 
         if self.page is None:
