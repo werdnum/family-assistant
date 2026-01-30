@@ -171,6 +171,9 @@ class OpenAIClient(BaseLLMClient):
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Generate response using OpenAI API."""
+        # Validate user input before processing
+        self._validate_user_input(messages)
+
         try:
             # Process tool attachments before sending
             processed_messages = self._process_tool_messages(list(messages))
@@ -342,6 +345,8 @@ class OpenAIClient(BaseLLMClient):
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Generate streaming response using OpenAI API."""
+        # Validate user input before processing
+        self._validate_user_input(messages)
         return self._generate_response_stream(messages, tools, tool_choice)
 
     async def _generate_response_stream(

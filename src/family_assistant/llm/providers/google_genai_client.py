@@ -752,6 +752,9 @@ class GoogleGenAIClient(BaseLLMClient):
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Generate response using Google GenAI."""
+        # Validate user input before processing
+        self._validate_user_input(messages)
+
         try:
             # Keep messages as typed objects for processing
             typed_messages = list(messages)
@@ -1079,6 +1082,9 @@ class GoogleGenAIClient(BaseLLMClient):
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Generate streaming response using Google GenAI."""
+        # Validate user input before processing
+        self._validate_user_input(messages)
+
         if self._is_deep_research_model(self.model_name):
             return self._generate_deep_research_stream(messages)
         return self._generate_response_stream(messages, tools, tool_choice)
