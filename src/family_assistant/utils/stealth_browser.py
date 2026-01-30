@@ -107,6 +107,8 @@ async def create_stealth_context(
     viewport: ViewportSize | None = None,
     user_agent: str | None = None,
     ignore_https_errors: bool = False,
+    locale: str = "en-US",
+    timezone_id: str | None = None,
 ) -> BrowserContext:
     """Create a browser context with stealth configuration.
 
@@ -115,6 +117,9 @@ async def create_stealth_context(
         viewport: Optional viewport dimensions. Defaults to 1920x1080.
         user_agent: Optional user agent string. Uses random Chrome UA if not provided.
         ignore_https_errors: Whether to ignore HTTPS certificate errors.
+        locale: Browser locale setting. Defaults to "en-US".
+        timezone_id: IANA timezone ID (e.g., "America/New_York"). If None, uses
+            system default.
 
     Returns:
         A BrowserContext configured for stealth operation.
@@ -134,9 +139,8 @@ async def create_stealth_context(
         viewport=effective_viewport,
         user_agent=user_agent,
         ignore_https_errors=ignore_https_errors,
-        # Additional context settings for realism
-        locale="en-US",
-        timezone_id="America/New_York",
+        locale=locale,
+        timezone_id=timezone_id,
         # Device scale factor for high-DPI displays
         device_scale_factor=1,
         # Enable JavaScript

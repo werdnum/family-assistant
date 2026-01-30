@@ -152,16 +152,32 @@ class PlaywrightScraper:
     Implements the Scraper protocol.
     """
 
-    def __init__(self, verify_ssl: bool = True, user_agent: str | None = None) -> None:
+    def __init__(
+        self,
+        verify_ssl: bool = True,
+        user_agent: str | None = None,
+        use_stealth_user_agent: bool = True,
+    ) -> None:
         """
         Initializes the scraper.
 
         Args:
             verify_ssl: Whether to verify SSL certificates. Defaults to True.
-            user_agent: Custom user agent string. Defaults to DEFAULT_USER_AGENT.
+            user_agent: Custom user agent string. If None, uses a stealth Chrome UA
+                (if use_stealth_user_agent is True) or DEFAULT_USER_AGENT.
+            use_stealth_user_agent: If True and user_agent is None, use a realistic
+                Chrome user agent instead of the bot-like DEFAULT_USER_AGENT.
+                This ensures consistent user agent between httpx and Playwright.
+                Defaults to True.
         """
         self.verify_ssl = verify_ssl
-        self.user_agent = user_agent or DEFAULT_USER_AGENT
+        if user_agent is not None:
+            self.user_agent = user_agent
+        elif use_stealth_user_agent and _playwright_installed:
+            # Use a stealth user agent for consistency between httpx and Playwright
+            self.user_agent = get_random_user_agent()
+        else:
+            self.user_agent = DEFAULT_USER_AGENT
         self.playwright_available = _playwright_installed
         if MarkItDownType is not None:
             self.md_converter: ActualMarkItDownClass | None = MarkItDownType()
@@ -412,13 +428,12 @@ class PlaywrightScraper:
         try:
             async with async_playwright() as p:
                 try:
-                    # Use stealth browser with modern user agent
-                    effective_user_agent = get_random_user_agent()
+                    # Use stealth browser with same user agent as httpx for consistency
                     browser = await launch_stealth_browser(p, headless=True)
                     context = await create_stealth_context(
                         browser,
                         ignore_https_errors=not self.verify_ssl,
-                        user_agent=effective_user_agent,
+                        user_agent=self.user_agent,
                     )
                     page = await context.new_page()
                     response = None
