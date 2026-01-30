@@ -11,6 +11,7 @@ from .push_subscription import PushSubscriptionRepository
 from .schedule_automations import ScheduleAutomationsRepository
 from .tasks import TasksRepository
 from .vector import VectorRepository
+from .worker_tasks import WorkerTasksRepository
 
 __all__ = [
     "AutomationsRepository",
@@ -24,4 +25,5 @@ __all__ = [
     "ScheduleAutomationsRepository",
     "TasksRepository",
     "VectorRepository",
+    "WorkerTasksRepository",
 ]
