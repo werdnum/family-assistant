@@ -117,18 +117,6 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
         "default_profile_settings.chat_id_to_name_map",
         dict,
     ),
-    # AI Worker configuration
-    EnvVarMapping("AI_WORKER_ENABLED", "ai_worker_config.enabled", bool),
-    EnvVarMapping("AI_WORKER_BACKEND_TYPE", "ai_worker_config.backend_type"),
-    EnvVarMapping("AI_WORKER_WORKSPACE_PATH", "ai_worker_config.workspace_mount_path"),
-    EnvVarMapping(
-        "AI_WORKER_DEFAULT_TIMEOUT", "ai_worker_config.default_timeout_minutes", int
-    ),
-    EnvVarMapping(
-        "AI_WORKER_MAX_CONCURRENT", "ai_worker_config.max_concurrent_workers", int
-    ),
-    EnvVarMapping("AI_WORKER_K8S_NAMESPACE", "ai_worker_config.kubernetes.namespace"),
-    EnvVarMapping("AI_WORKER_K8S_IMAGE", "ai_worker_config.kubernetes.ai_coder_image"),
 ]
 
 
