@@ -33,6 +33,12 @@ try:
     from playwright.async_api import TimeoutError as PlaywrightTimeoutErrorImport
     from playwright.async_api import async_playwright as async_playwright_import
 
+    from family_assistant.utils.stealth_browser import (
+        create_stealth_context,
+        get_random_user_agent,
+        launch_stealth_browser,
+    )
+
     PlaywrightError = PlaywrightErrorImport
     PlaywrightTimeoutError = PlaywrightTimeoutErrorImport
     async_playwright = async_playwright_import
@@ -406,9 +412,11 @@ class PlaywrightScraper:
         try:
             async with async_playwright() as p:
                 try:
-                    effective_user_agent = f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 {self.user_agent}"
-                    browser = await p.chromium.launch()
-                    context = await browser.new_context(
+                    # Use stealth browser with modern user agent
+                    effective_user_agent = get_random_user_agent()
+                    browser = await launch_stealth_browser(p, headless=True)
+                    context = await create_stealth_context(
+                        browser,
                         ignore_https_errors=not self.verify_ssl,
                         user_agent=effective_user_agent,
                     )
@@ -537,9 +545,9 @@ async def check_playwright_is_functional() -> bool:
     browser = None
     try:
         async with async_playwright() as p:
-            logger.debug("Launching Playwright Chromium for check...")
-            browser = await p.chromium.launch()
-            logger.info("Playwright Chromium browser check successful.")
+            logger.debug("Launching stealth Chromium browser for check...")
+            browser = await launch_stealth_browser(p, headless=True)
+            logger.info("Stealth Chromium browser check successful.")
         return True
     except Exception as e:
         logger.warning("Playwright Chromium browser check failed.")
