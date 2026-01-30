@@ -87,9 +87,9 @@ async def test_basic_chat_conversation(
     assert any(m["role"] == "user" for m in messages), "No user message found"
     assert any(m["role"] == "assistant" for m in messages), "No assistant message found"
 
-    # TODO: There's a known issue where the chat input remains disabled after streaming completes.
-    # This appears to be related to the assistant-ui library's runtime state management.
-    # For now, we'll skip the input re-enabled check and just verify the messages are displayed.
+    # Verify chat input is re-enabled after streaming
+    await page.wait_for_selector('[data-testid="chat-input"]:enabled', timeout=10000)
+    assert await chat_page.is_chat_input_enabled()
 
     # Get the actual response text
     response = await chat_page.get_last_assistant_message()

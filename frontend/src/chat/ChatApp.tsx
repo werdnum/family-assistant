@@ -342,7 +342,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   };
 
   // Load messages for a conversation
-  const loadConversationMessages = useCallback(async (convId: string) => {
+  const loadConversationMessages = useCallback(async (convId: string, background = false) => {
     try {
       // Cancel previous messages request if it exists
       if (messagesAbortControllerRef.current) {
@@ -353,7 +353,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       const messagesAbortController = new AbortController();
       messagesAbortControllerRef.current = messagesAbortController;
 
-      setIsLoading(true);
+      if (!background) {
+        setIsLoading(true);
+      }
       const response = await fetch(`/api/v1/chat/conversations/${convId}/messages`, {
         signal: messagesAbortController.signal,
       });
@@ -567,7 +569,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         console.error('Error loading conversation:', error);
       }
     } finally {
-      setIsLoading(false);
+      if (!background) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
@@ -705,8 +709,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       }
 
       // Reload messages for the updated conversation
-      if (update.conversation_id === conversationId) {
-        loadConversationMessages(conversationId);
+      // Skip reload if we're currently streaming to avoid race conditions
+      // Use background loading to prevent disabling the input during updates
+      if (update.conversation_id === conversationId && !isStreaming) {
+        loadConversationMessages(conversationId, true);
       }
     },
     [conversationId, loadConversationMessages, showNotification, isStreaming]

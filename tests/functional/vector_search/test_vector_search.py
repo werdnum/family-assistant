@@ -19,7 +19,7 @@ from family_assistant.web.app_creator import app as fastapi_app
 from family_assistant.web.dependencies import get_db
 
 
-class DocumentTestHelper:
+class TestDocument:
     """Test document class that implements the Document protocol."""
 
     def __init__(
@@ -165,7 +165,7 @@ async def _setup_comprehensive_test_data(
 
         for doc_data in test_docs:
             # Create document
-            doc = DocumentTestHelper(
+            doc = TestDocument(
                 source_type=doc_data["source_type"],
                 source_id=doc_data["source_id"],
                 id=None,
@@ -423,7 +423,7 @@ async def test_vector_search_document_with_no_embeddings(
     """Test document detail for document without embeddings."""
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
         # Create document without embeddings
-        doc = DocumentTestHelper(
+        doc = TestDocument(
             source_type="orphan",
             source_id="no_embeddings",
             id=None,
@@ -455,7 +455,7 @@ async def test_vector_search_performance_with_large_dataset(
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
         # Create 50 additional documents
         for i in range(50):
-            doc = DocumentTestHelper(
+            doc = TestDocument(
                 source_type="performance_test",
                 source_id=f"perf_doc_{i}",
                 id=None,
