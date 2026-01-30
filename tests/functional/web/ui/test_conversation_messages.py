@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.assistant import Assistant
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.storage.context import get_db_context
-from tests.functional.web.ui.conftest import wait_for_condition
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 
 
@@ -91,23 +90,14 @@ async def test_get_conversation_messages_with_data(
         assert response.status_code == 200
         assert "weather is sunny and 72°F" in response.json()["reply"]
 
-        # Get conversation messages via API (use retry for SQLite transaction visibility)
-        async def get_messages() -> dict | None:
-            response = await client.get(
-                f"/api/v1/chat/conversations/{conv_id}/messages"
-            )
-            if response.status_code == 200:
-                data = response.json()
-                # Should have at least 4 messages: user, assistant with tool call, tool response, final assistant
-                if len(data["messages"]) >= 4:
-                    return data
-            return None
+        # Get conversation messages via API
+        response = await client.get(f"/api/v1/chat/conversations/{conv_id}/messages")
 
-        data = await wait_for_condition(
-            get_messages, description="at least 4 messages to be visible"
-        )
-        assert data is not None
+        assert response.status_code == 200
+        data = response.json()
         assert data["conversation_id"] == conv_id
+        # Should have at least 4 messages: user, assistant with tool call, tool response, final assistant
+        assert len(data["messages"]) >= 4
         assert data["count"] >= 4
 
         # Verify message roles and content
@@ -143,59 +133,42 @@ async def test_get_conversation_messages_cross_interface_retrieval(
     """Test that messages are retrieved from all interfaces for the same conversation ID."""
     conv_id = "test_conv_interface_filter"
 
-    # Use distinct timestamps to ensure stable ordering
-    base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
-
     # Create test messages in different interfaces for same conversation ID
     async with get_db_context(db_engine) as db_context:
         # Add web message
-        result1 = await db_context.message_history.add_message(
+        await db_context.message_history.add_message(
             interface_type="web",
             conversation_id=conv_id,
             interface_message_id="web_msg",
             turn_id="turn_1",
             thread_root_id=None,
-            timestamp=base_time,
+            timestamp=datetime.now(UTC),
             role="user",
             content="Web message",
         )
-        assert result1 is not None, "Failed to add web message"
 
-        # Add telegram message to same conversation with distinct timestamp
-        result2 = await db_context.message_history.add_message(
+        # Add telegram message to same conversation (should now appear)
+        await db_context.message_history.add_message(
             interface_type="telegram",
             conversation_id=conv_id,
             interface_message_id="tg_msg",
             turn_id="turn_2",
             thread_root_id=None,
-            timestamp=base_time + timedelta(minutes=1),
+            timestamp=datetime.now(UTC),
             role="user",
             content="Telegram message",
         )
-        assert result2 is not None, "Failed to add telegram message"
 
-    # Get messages via API with retry for SQLite transaction visibility
+    # Get messages via API
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
+        response = await client.get(f"/api/v1/chat/conversations/{conv_id}/messages")
 
-        async def get_messages() -> dict | None:
-            response = await client.get(
-                f"/api/v1/chat/conversations/{conv_id}/messages"
-            )
-            if response.status_code == 200:
-                data = response.json()
-                if len(data["messages"]) == 2:
-                    return data
-            return None
-
-        data = await wait_for_condition(
-            get_messages, description="2 messages to be visible"
-        )
-        assert data is not None
-
+        assert response.status_code == 200
+        data = response.json()
         # Should now return messages from both interfaces
         assert len(data["messages"]) == 2
         assert data["count"] == 2
@@ -220,7 +193,7 @@ async def test_get_conversation_messages_pagination_default(
         base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
         for i in range(100):
             timestamp = base_time + timedelta(minutes=i)  # Each message 1 minute apart
-            result = await db_context.message_history.add_message(
+            await db_context.message_history.add_message(
                 interface_type="web",
                 conversation_id=conv_id,
                 interface_message_id=f"msg_{i}",
@@ -230,29 +203,17 @@ async def test_get_conversation_messages_pagination_default(
                 role="user",
                 content=f"Message {i}",
             )
-            assert result is not None, f"Failed to add message {i}"
 
-    # Get messages via API with retry for SQLite transaction visibility
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
+        # Default request (should get 50 most recent messages)
+        response = await client.get(f"/api/v1/chat/conversations/{conv_id}/messages")
 
-        async def get_messages() -> dict | None:
-            response = await client.get(
-                f"/api/v1/chat/conversations/{conv_id}/messages"
-            )
-            if response.status_code == 200:
-                data = response.json()
-                if data["total_messages"] == 100:
-                    return data
-            return None
-
-        data = await wait_for_condition(
-            get_messages, description="100 messages to be visible"
-        )
-        assert data is not None
+        assert response.status_code == 200
+        data = response.json()
 
         # Should get 50 most recent messages (50-99)
         assert len(data["messages"]) == 50
@@ -280,7 +241,7 @@ async def test_get_conversation_messages_pagination_before(
         base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
         for i in range(20):
             timestamp = base_time.replace(minute=i)
-            result = await db_context.message_history.add_message(
+            await db_context.message_history.add_message(
                 interface_type="web",
                 conversation_id=conv_id,
                 interface_message_id=f"msg_{i}",
@@ -290,9 +251,7 @@ async def test_get_conversation_messages_pagination_before(
                 role="user",
                 content=f"Message {i}",
             )
-            assert result is not None, f"Failed to add message {i}"
 
-    # Get messages via API with retry for SQLite transaction visibility
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
@@ -302,21 +261,12 @@ async def test_get_conversation_messages_pagination_before(
         before_timestamp = (
             base_time.replace(minute=15).isoformat().replace("+00:00", "Z")
         )
-
-        async def get_messages() -> dict | None:
-            response = await client.get(
-                f"/api/v1/chat/conversations/{conv_id}/messages?before={before_timestamp}&limit=10"
-            )
-            if response.status_code == 200:
-                data = response.json()
-                if len(data["messages"]) == 10:
-                    return data
-            return None
-
-        data = await wait_for_condition(
-            get_messages, description="10 messages to be visible"
+        response = await client.get(
+            f"/api/v1/chat/conversations/{conv_id}/messages?before={before_timestamp}&limit=10"
         )
-        assert data is not None
+
+        assert response.status_code == 200
+        data = response.json()
 
         # Should get 10 messages before timestamp (messages 5-14 since we get newest first)
         assert len(data["messages"]) == 10
@@ -342,7 +292,7 @@ async def test_get_conversation_messages_pagination_after(
         base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
         for i in range(20):
             timestamp = base_time.replace(minute=i)
-            result = await db_context.message_history.add_message(
+            await db_context.message_history.add_message(
                 interface_type="web",
                 conversation_id=conv_id,
                 interface_message_id=f"msg_{i}",
@@ -352,9 +302,7 @@ async def test_get_conversation_messages_pagination_after(
                 role="user",
                 content=f"Message {i}",
             )
-            assert result is not None, f"Failed to add message {i}"
 
-    # Get messages via API with retry for SQLite transaction visibility
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
@@ -362,21 +310,12 @@ async def test_get_conversation_messages_pagination_after(
     ) as client:
         # Get messages after minute 5 (should get messages 6-19, but limited to 10)
         after_timestamp = base_time.replace(minute=5).isoformat().replace("+00:00", "Z")
-
-        async def get_messages() -> dict | None:
-            response = await client.get(
-                f"/api/v1/chat/conversations/{conv_id}/messages?after={after_timestamp}&limit=10"
-            )
-            if response.status_code == 200:
-                data = response.json()
-                if len(data["messages"]) == 10:
-                    return data
-            return None
-
-        data = await wait_for_condition(
-            get_messages, description="10 messages to be visible"
+        response = await client.get(
+            f"/api/v1/chat/conversations/{conv_id}/messages?after={after_timestamp}&limit=10"
         )
-        assert data is not None
+
+        assert response.status_code == 200
+        data = response.json()
 
         # Should get 10 messages after timestamp (messages 6-15)
         assert len(data["messages"]) == 10
@@ -402,7 +341,7 @@ async def test_get_conversation_messages_pagination_limit_zero(
         base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
         for i in range(10):
             timestamp = base_time.replace(minute=i)
-            result = await db_context.message_history.add_message(
+            await db_context.message_history.add_message(
                 interface_type="web",
                 conversation_id=conv_id,
                 interface_message_id=f"msg_{i}",
@@ -412,29 +351,19 @@ async def test_get_conversation_messages_pagination_limit_zero(
                 role="user",
                 content=f"Message {i}",
             )
-            assert result is not None, f"Failed to add message {i}"
 
-    # Get messages via API with retry for SQLite transaction visibility
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
-
-        async def get_messages() -> dict | None:
-            response = await client.get(
-                f"/api/v1/chat/conversations/{conv_id}/messages?limit=0"
-            )
-            if response.status_code == 200:
-                data = response.json()
-                if len(data["messages"]) == 10:
-                    return data
-            return None
-
-        data = await wait_for_condition(
-            get_messages, description="10 messages to be visible"
+        # Request with limit=0 should return all messages
+        response = await client.get(
+            f"/api/v1/chat/conversations/{conv_id}/messages?limit=0"
         )
-        assert data is not None
+
+        assert response.status_code == 200
+        data = response.json()
 
         # Should get all 10 messages
         assert len(data["messages"]) == 10

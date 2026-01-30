@@ -249,24 +249,14 @@ Deviations from established patterns and conventions:
 - Missing docstrings/comments for complex logic
 - Not following project naming conventions
 - Missing type hints (in typed codebases)
-- Overuse of `Any` or `dict[str, Any]` for structured data
 - Not using context managers for resources
 - Ignored linter warnings
 - Missing error context in exception handling
 - Using mutable default arguments
 
-**Type Safety Guidance:**
-
-- If a dictionary has a known structure (e.g. `{"monkeys": {"like": "bananas"}}`), it **must** be
-  typed using `TypedDict`, `dataclass`, or Pydantic model.
-- `dict[str, Any]` is only acceptable when the structure is genuinely unknown or dynamic.
-- Recommend finding or creating a correct type instead of using `Any`.
-
 Examples:
 
 - `def calculate_total(items=[]):` # mutable default
-- `def process(data: dict[str, Any]):` where data has a known structure (use TypedDict/Pydantic
-  instead)
 - Catching broad exceptions: `except Exception:`
 - Magic numbers without constants
 
