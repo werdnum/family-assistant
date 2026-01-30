@@ -12,7 +12,7 @@ from family_assistant.web.app_creator import app as fastapi_app
 from family_assistant.web.dependencies import get_db
 
 
-class DocumentTestHelper:
+class TestDocument:
     """Test document class that implements the Document protocol."""
 
     def __init__(
@@ -235,7 +235,7 @@ async def test_documents_api_list_and_detail(
     api_client: httpx.AsyncClient, db_engine: AsyncEngine
 ) -> None:
     async with DatabaseContext(engine=db_engine) as db:
-        doc = DocumentTestHelper(
+        doc = TestDocument(
             source_type="note",
             source_id="doc1",
             id=None,
@@ -296,7 +296,7 @@ async def test_vector_search_api_search(
     """Test vector search API endpoint."""
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
         # Create test document
-        doc = DocumentTestHelper(
+        doc = TestDocument(
             source_type="note",
             source_id="doc2",
             id=None,
@@ -344,7 +344,7 @@ async def test_vector_search_api_with_limit(
         # Create multiple test documents
         doc_ids = []
         for i in range(5):
-            doc = DocumentTestHelper(
+            doc = TestDocument(
                 source_type="note",
                 source_id=f"doc{i}",
                 id=None,
@@ -381,7 +381,7 @@ async def test_vector_search_api_document_detail(
 ) -> None:
     """Test vector search document detail API endpoint."""
     async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        doc = DocumentTestHelper(
+        doc = TestDocument(
             source_type="pdf",
             source_id="test_pdf",
             id=None,
