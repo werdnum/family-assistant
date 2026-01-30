@@ -1835,35 +1835,23 @@ Call attach_to_response with your selected attachment IDs."""
                         "Creating new thread."
                     )
 
-            # Prepare user message content for history
-            # Save the full content structure (text + attachment URL references) to preserve multimodal content
-            # This allows us to reconstruct the message with attachments when loading from history
-            user_content_for_history: str | list[ContentPartDict]
+            # Prepare user message content for history - store only text
+            # Attachments are stored separately in the attachments column and
+            # reconstructed into multimodal content when loading from history
+            user_content_for_history = "[User message content]"
             if trigger_content_parts:
-                # Check if we have any non-text content parts (images, videos, audio)
-                has_non_text_parts = any(
-                    part.get("type") != "text" for part in trigger_content_parts
+                first_text_part = next(
+                    (
+                        part.get("text")
+                        for part in trigger_content_parts
+                        if part.get("type") == "text"
+                    ),
+                    None,
                 )
-                if has_non_text_parts:
-                    # Save the full content structure with attachment URL references
-                    user_content_for_history = trigger_content_parts
-                else:
-                    # Text only - extract and save as string
-                    first_text_part = next(
-                        (
-                            part.get("text")
-                            for part in trigger_content_parts
-                            if part.get("type") == "text"
-                        ),
-                        None,
-                    )
-                    user_content_for_history = (
-                        str(first_text_part)
-                        if first_text_part
-                        else "[User message content]"
-                    )
-            else:
-                user_content_for_history = "[User message content]"
+                if first_text_part:
+                    user_content_for_history = str(first_text_part)
+                elif trigger_content_parts[0].get("type") == "image_url":
+                    user_content_for_history = "[Image Attached]"
 
             # Generate a temporary interface_message_id if not provided
             # This ensures the just-saved message can be filtered out of history
@@ -2352,35 +2340,23 @@ Call attach_to_response with your selected attachment IDs."""
                     "Thread root ID will be determined from saved message."
                 )
 
-            # Prepare user message content for history
-            # Save the full content structure (text + attachment URL references) to preserve multimodal content
-            # This allows us to reconstruct the message with attachments when loading from history
-            user_content_for_history: str | list[ContentPartDict]
+            # Prepare user message content for history - store only text
+            # Attachments are stored separately in the attachments column and
+            # reconstructed into multimodal content when loading from history
+            user_content_for_history = "[User message content]"
             if trigger_content_parts:
-                # Check if we have any non-text content parts (images, videos, audio)
-                has_non_text_parts = any(
-                    part.get("type") != "text" for part in trigger_content_parts
+                first_text_part = next(
+                    (
+                        part.get("text")
+                        for part in trigger_content_parts
+                        if part.get("type") == "text"
+                    ),
+                    None,
                 )
-                if has_non_text_parts:
-                    # Save the full content structure with attachment URL references
-                    user_content_for_history = trigger_content_parts
-                else:
-                    # Text only - extract and save as string
-                    first_text_part = next(
-                        (
-                            part.get("text")
-                            for part in trigger_content_parts
-                            if part.get("type") == "text"
-                        ),
-                        None,
-                    )
-                    user_content_for_history = (
-                        str(first_text_part)
-                        if first_text_part
-                        else "[User message content]"
-                    )
-            else:
-                user_content_for_history = "[User message content]"
+                if first_text_part:
+                    user_content_for_history = str(first_text_part)
+                elif trigger_content_parts[0].get("type") == "image_url":
+                    user_content_for_history = "[Image Attached]"
 
             # Generate a temporary interface_message_id if not provided
             # This ensures the just-saved message can be filtered out of history
@@ -2418,21 +2394,46 @@ Call attach_to_response with your selected attachment IDs."""
             )
 
             try:
-                raw_history_messages = await db_context.message_history.get_recent(
-                    interface_type=interface_type,
-                    conversation_id=conversation_id,
-                    limit=history_limit,
-                    max_age=history_max_age,
-                    processing_profile_id=self.service_config.id,
-                )
+                # Use get_recent_with_typed_metadata to get history with interface_message_id
+                # so we can filter out the just-saved user message to avoid duplication
+                if actual_interface_message_id:
+                    messages_with_metadata = (
+                        await db_context.message_history.get_recent_with_typed_metadata(
+                            interface_type=interface_type,
+                            conversation_id=conversation_id,
+                            limit=history_limit,
+                            max_age=history_max_age,
+                            processing_profile_id=self.service_config.id,
+                        )
+                    )
+
+                    # Filter out current trigger message to avoid duplication
+                    # (we'll add it back with full multimodal content below)
+                    filtered_with_metadata = [
+                        msg_meta
+                        for msg_meta in messages_with_metadata
+                        if msg_meta.interface_message_id != actual_interface_message_id
+                    ]
+
+                    # Extract typed messages
+                    raw_history_messages = [
+                        msg_meta.message for msg_meta in filtered_with_metadata
+                    ]
+                else:
+                    # No filtering needed - use direct typed messages
+                    raw_history_messages = await db_context.message_history.get_recent(
+                        interface_type=interface_type,
+                        conversation_id=conversation_id,
+                        limit=history_limit,
+                        max_age=history_max_age,
+                        processing_profile_id=self.service_config.id,
+                    )
             except Exception as hist_err:
                 logger.error(
                     f"Failed to get message history: {hist_err}", exc_info=True
                 )
                 raw_history_messages = []
 
-            # Note: Repository now returns typed LLMMessage objects without database metadata fields
-            # like interface_message_id. Cannot filter by interface_message_id anymore.
             initial_messages_for_llm = await self._format_history_for_llm(
                 raw_history_messages
             )
@@ -2554,10 +2555,26 @@ Call attach_to_response with your selected attachment IDs."""
                             },
                         )
 
-            # NOTE: We do NOT add the current user trigger message here because it was already
-            # saved to the database and will be included in the history fetched earlier.
-            # Adding it again would create a duplicate. The comment near line 1669-1672 in
-            # handle_chat_interaction confirms the just-saved user message is included in history.
+            # Add the current user message with multimodal content to messages_for_llm
+            # History only stores text content, so we need to add the full message here
+            # to preserve attachments/images that were passed with the trigger
+            user_content_for_llm: str | list[ContentPart]
+            if converted_trigger_parts and len(converted_trigger_parts) == 1:
+                # Single part - extract text if it's a text part
+                first_part = converted_trigger_parts[0]
+                if isinstance(first_part, dict) and first_part.get("type") == "text":
+                    user_content_for_llm = str(first_part.get("text", ""))
+                else:
+                    # Non-text single part, keep as list
+                    user_content_for_llm = converted_trigger_parts  # type: ignore[assignment]
+            elif converted_trigger_parts:
+                # Multiple parts - keep as list for multimodal content
+                user_content_for_llm = converted_trigger_parts  # type: ignore[assignment]
+            else:
+                # No parts - empty string
+                user_content_for_llm = ""
+
+            messages_for_llm.append(UserMessage(content=user_content_for_llm))
 
             # Messages are already typed (list[LLMMessage])
             # Convert attachment URLs to data URIs in messages from history

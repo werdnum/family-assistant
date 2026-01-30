@@ -11,16 +11,34 @@ are correctly passed to the LLM, not just images.
 import io
 from datetime import UTC, datetime
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from telegram import Audio, Chat, Document, Message, PhotoSize, Update, User, Video
-from telegram.ext import ContextTypes
+from telegram import Audio, Bot, Chat, Document, Message, PhotoSize, Update, User, Video
+from telegram.ext import Application, ContextTypes
 
 from family_assistant.llm.messages import ImageUrlContentPart
 from tests.mocks.mock_llm import LLMOutput, MatcherArgs, RuleBasedMockLLMClient
 
 from .conftest import TelegramHandlerTestFixture
+
+
+def create_mock_get_file(file_data: bytes, file_size: int = 1000) -> AsyncMock:
+    """Create a mock get_file method that returns a downloadable File object.
+
+    Since Bot/ExtBot objects are frozen, we mock get_file at the media class level
+    (Video, Audio, Document, PhotoSize) rather than on the bot instance.
+    """
+
+    async def mock_download(out: io.BytesIO) -> None:
+        out.write(file_data)
+
+    mock_file = AsyncMock()
+    mock_file.file_size = file_size
+    mock_file.download_to_memory = mock_download
+
+    return AsyncMock(return_value=mock_file)
+
 
 # ============================================================================
 # Helper: Content Part Matchers
@@ -68,12 +86,12 @@ def has_pdf_content(args: MatcherArgs) -> bool:
 
 
 def create_mock_context(
-    mock_application: AsyncMock,
+    application: Application[Any, Any, Any, Any, Any, Any] | AsyncMock,
     bot_data: dict[Any, Any] | None = None,
 ) -> ContextTypes.DEFAULT_TYPE:
     """Creates a mock CallbackContext."""
     context = ContextTypes.DEFAULT_TYPE(
-        application=mock_application, chat_id=123, user_id=12345
+        application=application, chat_id=123, user_id=12345
     )
     if bot_data:
         context.bot_data.update(bot_data)
@@ -115,7 +133,7 @@ def create_video_update(
     video_bytes: bytes | None = None,
     file_size: int = 1000,
     mime_type: str = "video/mp4",
-    bot: AsyncMock | None = None,
+    bot: Bot | None = None,
 ) -> Update:
     """Create a Telegram Update with a video using real PTB objects."""
     user = User(id=user_id, is_bot=False, first_name="Test", last_name="User")
@@ -145,19 +163,9 @@ def create_video_update(
 
     update = Update(update_id=100 + message_id, message=message)
 
-    # Mock bot's get_file to return downloadable content
+    # Set bot on video so it can call get_file
+    # The actual get_file mock should be set up by the test using mock_bot_get_file
     if bot:
-        video_data = video_bytes or b"\x00" * 100
-
-        async def mock_download(out: io.BytesIO) -> None:
-            out.write(video_data)
-
-        mock_file = AsyncMock()
-        mock_file.file_size = file_size
-        mock_file.download_to_memory = mock_download
-        bot.get_file = AsyncMock(return_value=mock_file)
-
-        # Set bot on video
         video.set_bot(bot)
 
     return update
@@ -171,7 +179,7 @@ def create_audio_update(
     audio_bytes: bytes | None = None,
     file_size: int = 1000,
     mime_type: str = "audio/mpeg",
-    bot: AsyncMock | None = None,
+    bot: Bot | None = None,
 ) -> Update:
     """Create a Telegram Update with audio using real PTB objects."""
     user = User(id=user_id, is_bot=False, first_name="Test", last_name="User")
@@ -198,17 +206,9 @@ def create_audio_update(
 
     update = Update(update_id=100 + message_id, message=message)
 
+    # Set bot on audio so it can call get_file
+    # The actual get_file mock should be set up by the test using mock_bot_get_file
     if bot:
-        audio_data = audio_bytes or b"\x00" * 100
-
-        async def mock_download(out: io.BytesIO) -> None:
-            out.write(audio_data)
-
-        mock_file = AsyncMock()
-        mock_file.file_size = file_size
-        mock_file.download_to_memory = mock_download
-        bot.get_file = AsyncMock(return_value=mock_file)
-
         audio.set_bot(bot)
 
     return update
@@ -223,7 +223,7 @@ def create_document_update(
     file_name: str = "document.pdf",
     mime_type: str = "application/pdf",
     file_size: int = 1000,
-    bot: AsyncMock | None = None,
+    bot: Bot | None = None,
 ) -> Update:
     """Create a Telegram Update with a document using real PTB objects."""
     user = User(id=user_id, is_bot=False, first_name="Test", last_name="User")
@@ -249,17 +249,9 @@ def create_document_update(
 
     update = Update(update_id=100 + message_id, message=message)
 
+    # Set bot on document so it can call get_file
+    # The actual get_file mock should be set up by the test using mock_bot_get_file
     if bot:
-        doc_data = document_bytes or b"%PDF-1.4 mock content"
-
-        async def mock_download(out: io.BytesIO) -> None:
-            out.write(doc_data)
-
-        mock_file = AsyncMock()
-        mock_file.file_size = file_size
-        mock_file.download_to_memory = mock_download
-        bot.get_file = AsyncMock(return_value=mock_file)
-
         document.set_bot(bot)
 
     return update
@@ -272,7 +264,7 @@ def create_mock_update_with_photo(
     message_id: int = 101,
     photo_file_id: str = "test_photo_123",
     photo_bytes: bytes | None = None,
-    bot: AsyncMock | None = None,
+    bot: Bot | None = None,
 ) -> Update:
     """Creates a mock Telegram Update object for a message with a photo."""
     # Create mock photo bytes if not provided
@@ -312,22 +304,12 @@ def create_mock_update_with_photo(
         photo=[photo_small, photo_large],
     )
 
-    # Set bot if provided
+    # Set bot on photo objects so they can call get_file
+    # The actual get_file mock should be set up by the test using mock_bot_get_file
     if bot:
         message.set_bot(bot)
         for photo in message.photo:
             photo.set_bot(bot)
-
-        # Mock bot's get_file
-        photo_data = photo_bytes
-
-        async def mock_download(out: io.BytesIO) -> None:
-            out.write(photo_data)
-
-        mock_file = AsyncMock()
-        mock_file.file_size = len(photo_bytes)
-        mock_file.download_to_memory = mock_download
-        bot.get_file = AsyncMock(return_value=mock_file)
 
     update = Update(update_id=1, message=message)
     return update
@@ -376,12 +358,13 @@ class TestTelegramVideoToLLM:
         update = create_video_update(
             caption="What's happening in this video?",
             video_bytes=video_bytes,
-            bot=fix.mock_bot,
+            bot=fix.bot,
         )
-        context = create_mock_context(fix.mock_application)
+        context = create_mock_context(fix.application)
 
-        # Handle the message
-        await fix.handler.message_handler(update, context)
+        # Mock Video.get_file at the class level (bot is frozen, can't patch directly)
+        with patch.object(Video, "get_file", create_mock_get_file(video_bytes)):
+            await fix.handler.message_handler(update, context)
 
         # Assert: Video was passed to LLM
         assert video_seen["value"], "LLM should have received video content part"
@@ -417,13 +400,16 @@ class TestTelegramVideoToLLM:
             (check_both, LLMOutput(content="I see your cat video!")),
         ]
 
+        video_bytes = b"\x00" * 100  # Minimal video content
         update = create_video_update(
             caption="Check out my cat doing something funny!",
-            bot=fix.mock_bot,
+            video_bytes=video_bytes,
+            bot=fix.bot,
         )
-        context = create_mock_context(fix.mock_application)
+        context = create_mock_context(fix.application)
 
-        await fix.handler.message_handler(update, context)
+        with patch.object(Video, "get_file", create_mock_get_file(video_bytes)):
+            await fix.handler.message_handler(update, context)
 
         assert caption_and_video["caption"], "Caption text should be in LLM input"
         assert caption_and_video["video"], "Video content should be in LLM input"
@@ -453,14 +439,16 @@ class TestTelegramAudioToLLM:
         ]
         mock_llm.default_response = LLMOutput(content="No audio found")
 
+        audio_bytes = b"ID3" + b"\x00" * 100  # Fake MP3 header
         update = create_audio_update(
             caption="What song is this?",
-            audio_bytes=b"ID3" + b"\x00" * 100,  # Fake MP3 header
-            bot=fix.mock_bot,
+            audio_bytes=audio_bytes,
+            bot=fix.bot,
         )
-        context = create_mock_context(fix.mock_application)
+        context = create_mock_context(fix.application)
 
-        await fix.handler.message_handler(update, context)
+        with patch.object(Audio, "get_file", create_mock_get_file(audio_bytes)):
+            await fix.handler.message_handler(update, context)
 
         assert audio_seen["value"], "LLM should have received audio content part"
 
@@ -489,16 +477,18 @@ class TestTelegramDocumentToLLM:
         ]
         mock_llm.default_response = LLMOutput(content="No PDF found")
 
+        pdf_bytes = b"%PDF-1.4\n%mock PDF content"
         update = create_document_update(
             caption="Summarize this document",
-            document_bytes=b"%PDF-1.4\n%mock PDF content",
+            document_bytes=pdf_bytes,
             file_name="report.pdf",
             mime_type="application/pdf",
-            bot=fix.mock_bot,
+            bot=fix.bot,
         )
-        context = create_mock_context(fix.mock_application)
+        context = create_mock_context(fix.application)
 
-        await fix.handler.message_handler(update, context)
+        with patch.object(Document, "get_file", create_mock_get_file(pdf_bytes)):
+            await fix.handler.message_handler(update, context)
 
         assert pdf_seen["value"], "LLM should have received PDF content part"
 
@@ -527,12 +517,20 @@ class TestTelegramImageStillWorks:
         ]
         mock_llm.default_response = LLMOutput(content="No image found")
 
+        # Simple test image data (1x1 PNG)
+        photo_bytes = (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08"
+            b"\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04"
+            b"\x00\x01\xdd\x8d\xb4\x1c\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
         update = create_mock_update_with_photo(
             message_text="What's in this photo?",
-            bot=fix.mock_bot,
+            photo_bytes=photo_bytes,
+            bot=fix.bot,
         )
-        context = create_mock_context(fix.mock_application)
+        context = create_mock_context(fix.application)
 
-        await fix.handler.message_handler(update, context)
+        with patch.object(PhotoSize, "get_file", create_mock_get_file(photo_bytes)):
+            await fix.handler.message_handler(update, context)
 
         assert image_seen["value"], "LLM should have received image content part"

@@ -1,6 +1,5 @@
 """Repository for message history storage operations."""
 
-import contextlib
 import json
 import logging
 from dataclasses import asdict
@@ -14,10 +13,13 @@ from sqlalchemy.sql import functions as func
 from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.messages import (
     AssistantMessage,
+    ContentPart,
     ErrorMessage,
+    ImageUrlContentPart,
     LLMMessage,
     MessageWithMetadata,
     SystemMessage,
+    TextContentPart,
     ToolMessage,
     UserMessage,
 )
@@ -147,12 +149,6 @@ class MessageHistoryRepository(BaseRepository):
                 # For backwards compatibility or other providers
                 serialized_provider_metadata = provider_metadata
 
-        # Serialize content to JSON string if it's a list (for multimodal content parts)
-        # The content column is TEXT type, so we need to serialize lists manually
-        serialized_content = content
-        if isinstance(content, list):
-            serialized_content = json.dumps(content)
-
         values = {
             "interface_type": interface_type,
             "conversation_id": conversation_id,
@@ -161,7 +157,7 @@ class MessageHistoryRepository(BaseRepository):
             "thread_root_id": thread_root_id,
             "timestamp": timestamp,
             "role": role,
-            "content": serialized_content,
+            "content": content,
             "tool_calls": serialized_tool_calls,
             "reasoning_info": reasoning_info,
             "tool_call_id": tool_call_id,
@@ -836,12 +832,6 @@ class MessageHistoryRepository(BaseRepository):
                 )
                 msg["tool_calls"] = None
 
-        # Handle content deserialization: content may be JSON-serialized list for multimodal content
-        content = msg.get("content")
-        if isinstance(content, str) and content.startswith("["):
-            with contextlib.suppress(json.JSONDecodeError):
-                msg["content"] = json.loads(content)
-
         # Deserialize provider_metadata within each tool call to typed objects
         if msg.get("tool_calls") and isinstance(msg["tool_calls"], list):
             tool_call_items = []
@@ -950,12 +940,6 @@ class MessageHistoryRepository(BaseRepository):
                 )
                 msg["tool_calls"] = None
 
-        # Handle content deserialization: content may be JSON-serialized list for multimodal content
-        content = msg.get("content")
-        if isinstance(content, str) and content.startswith("["):
-            with contextlib.suppress(json.JSONDecodeError):
-                msg["content"] = json.loads(content)
-
         # Deserialize provider_metadata within each tool call to typed objects
         if msg.get("tool_calls") and isinstance(msg["tool_calls"], list):
             tool_call_items = []
@@ -1053,9 +1037,42 @@ class MessageHistoryRepository(BaseRepository):
         role = msg.get("role")
 
         if role == "user":
-            return UserMessage(
-                content=msg.get("content") or "",
-            )
+            text_content_str = msg.get("content") or ""
+            attachments = msg.get("attachments")
+
+            # Reconstruct multimodal content from attachments if present
+            # Attachments with content_url that are images/video/audio/PDF should be
+            # included as content parts for the LLM
+            if attachments and isinstance(attachments, list):
+                multimodal_attachments = [
+                    att
+                    for att in attachments
+                    if att.get("content_url")
+                    and (
+                        att.get("type") in {"image", "video", "audio"}
+                        or att.get("content_type") == "application/pdf"
+                    )
+                ]
+
+                if multimodal_attachments:
+                    # Build multimodal content: text first, then attachment URLs
+                    content_parts: list[ContentPart] = []
+                    if text_content_str:
+                        content_parts.append(
+                            TextContentPart(type="text", text=text_content_str)
+                        )
+                    for att in multimodal_attachments:
+                        content_parts.append(
+                            ImageUrlContentPart(
+                                type="image_url",
+                                image_url={"url": att["content_url"]},
+                            )
+                        )
+
+                    return UserMessage(content=content_parts)
+
+            # No multimodal attachments - return simple text content
+            return UserMessage(content=text_content_str)
         elif role == "assistant":
             return AssistantMessage(
                 content=msg.get("content"),
