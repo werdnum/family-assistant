@@ -119,9 +119,12 @@ FROM base
 # Switch to claude user for dev tool installations
 USER claude
 
+# Install Claude Code using native installer (recommended over deprecated npm install)
+RUN curl -fsSL https://claude.ai/install.sh | bash
+
 # Install development Node.js packages
 RUN --mount=type=cache,target=/home/claude/.npm,sharing=locked,uid=1001,gid=1001 \
-    npm install -g @anthropic-ai/claude-code @google/gemini-cli@nightly
+    npm install -g @google/gemini-cli@nightly
 
 # Install Python development tools
 RUN --mount=type=cache,target=/home/claude/.cache/uv,sharing=locked,uid=1001,gid=1001 \
