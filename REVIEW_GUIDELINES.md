@@ -128,7 +128,8 @@ guidelines.
 
 Improper error handling that masks bugs, creates confusing errors, or silently loses data:
 
-- **Silent failures**: Catching exceptions and returning null/empty without logging or re-raising
+- **Silent failures**: Catching exceptions and returning null/empty (logging alone is still
+  silent—the user doesn't see the log)
 - **Cascading silent failures**: Silent failure at one layer causes confusing error at another
   (e.g., video silently stripped → "empty input" error shown to user)
 - **Catch-and-return-null**: Catching broad exceptions and returning None, making it impossible to
