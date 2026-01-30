@@ -76,10 +76,14 @@ async def test_telegram_test_client_send_command(
 async def test_bot_api_url_generation(
     telegram_test_server_session: TelegramTestServer,
 ) -> None:
-    """Test that the bot API URL is correctly generated."""
-    token = "my_bot_token"
-    expected_url = f"{telegram_test_server_session.api_url}/bot{token}"
+    """Test that the bot API URL is correctly generated.
 
-    actual_url = telegram_test_server_session.get_bot_api_url(token)
+    The get_bot_api_url() method returns the base URL ending with '/bot',
+    matching Telegram's default format. python-telegram-bot will append
+    the token, resulting in '{base_url}{token}'.
+    """
+    expected_url = f"{telegram_test_server_session.api_url}/bot"
+
+    actual_url = telegram_test_server_session.get_bot_api_url()
 
     assert actual_url == expected_url

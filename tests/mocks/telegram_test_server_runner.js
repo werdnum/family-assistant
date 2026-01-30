@@ -22,6 +22,31 @@ const config = {
 
 const server = new TelegramServer(config);
 
+// Fix timestamps in responses by patching the Express response prototype.
+// telegram-test-api returns JavaScript timestamps (milliseconds) but
+// python-telegram-bot expects Unix timestamps (seconds).
+function fixTimestamps(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+
+  for (const key in obj) {
+    if (key === 'date' && typeof obj[key] === 'number') {
+      // If timestamp looks like milliseconds (> year 2100 in seconds), convert to seconds
+      if (obj[key] > 4102444800) {
+        obj[key] = Math.floor(obj[key] / 1000);
+      }
+    } else if (typeof obj[key] === 'object') {
+      fixTimestamps(obj[key]);
+    }
+  }
+  return obj;
+}
+
+// Patch res.json on the Express response prototype to intercept ALL responses
+const originalResJson = server.webServer.response.json;
+server.webServer.response.json = function(data) {
+  return originalResJson.call(this, fixTimestamps(data));
+};
+
 server.start().then(() => {
   console.log(`telegram-test-api server started on ${host}:${port}`);
   console.log(`API URL: ${server.config.apiURL}`);
