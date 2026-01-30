@@ -4,8 +4,6 @@ import json
 import logging
 from pathlib import Path
 
-from family_assistant.constants import PACKAGE_ROOT
-
 logger = logging.getLogger(__name__)
 
 # Cache for the manifest file
@@ -40,7 +38,13 @@ def get_static_asset(
     # In production, read from manifest
     global _manifest_cache, _manifest_last_read
 
-    manifest_path = PACKAGE_ROOT / "static" / "dist" / ".vite" / "manifest.json"
+    manifest_path = (
+        Path(__file__).parent.parent.resolve()
+        / "static"
+        / "dist"
+        / ".vite"
+        / "manifest.json"
+    )
 
     if not manifest_path.exists():
         manifest_path = Path(

@@ -16,8 +16,6 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.templating import _TemplateResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from family_assistant.constants import PACKAGE_ROOT, PROJECT_ROOT
-
 # Import new auth and utils modules
 from family_assistant.web.auth import (
     AUTH_ENABLED,
@@ -56,8 +54,14 @@ SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
 
 # --- Determine base path for templates and static files ---
 try:
-    templates_dir = PACKAGE_ROOT / "templates"
-    static_dir = PACKAGE_ROOT / "static"
+    # __file__ is src/family_assistant/web/app_creator.py
+    # Project root is 4 levels up from app_creator.py
+    _project_root = pathlib.Path(__file__).parent.parent.parent.parent.resolve()
+    # Package root (src/family_assistant/) is 2 levels up from app_creator.py
+    package_root_dir = pathlib.Path(__file__).parent.parent.resolve()
+
+    templates_dir = package_root_dir / "templates"
+    static_dir = package_root_dir / "static"
 
     # Allow docs directory to be configured via environment variable for Docker deployments
     docs_user_dir_env = os.getenv("DOCS_USER_DIR")
@@ -65,7 +69,7 @@ try:
         docs_user_dir = pathlib.Path(docs_user_dir_env).resolve()
         logger.info(f"Using DOCS_USER_DIR from environment: {docs_user_dir}")
     else:
-        docs_user_dir = PROJECT_ROOT / "docs" / "user"
+        docs_user_dir = _project_root / "docs" / "user"
         # In Docker, if the calculated path doesn't exist, try /app/docs/user
         if not docs_user_dir.exists() and pathlib.Path("/app/docs/user").exists():
             docs_user_dir = pathlib.Path("/app/docs/user")
