@@ -12,7 +12,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment
 
-from family_assistant.llm import LLMInterface, LLMMessage, LLMOutput, LLMStreamEvent
+from family_assistant.llm import (
+    BaseLLMClient,
+    LLMInterface,
+    LLMMessage,
+    LLMOutput,
+    LLMStreamEvent,
+)
 from family_assistant.llm.messages import UserMessage, message_to_json_dict
 
 logger = logging.getLogger(__name__)
@@ -31,12 +37,14 @@ ResponseGenerator = LLMOutput | Callable[[MatcherArgs], LLMOutput]
 Rule = tuple[MatcherFunction, ResponseGenerator]
 
 
-class RuleBasedMockLLMClient(LLMInterface):
+class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
     """
     A mock LLM client that responds based on a list of predefined rules.
     Each rule consists of a matcher function and the LLMOutput to return if matched.
     Rules are evaluated in the order they are provided.
     The matcher function receives the method name and a dictionary of all keyword arguments.
+
+    Inherits from BaseLLMClient to get common functionality like empty input validation.
     """
 
     def __init__(
@@ -101,6 +109,9 @@ class RuleBasedMockLLMClient(LLMInterface):
         """
         Evaluates rules against the input for 'generate_response' and returns the corresponding output.
         """
+        # Validate user input before processing
+        self._validate_user_input(messages)
+
         # Pass typed messages directly to matchers
         # Matchers can access fields via .attribute or dict-style .get()
         actual_kwargs: MatcherArgs = {
@@ -189,6 +200,8 @@ class RuleBasedMockLLMClient(LLMInterface):
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Mock streaming implementation that yields events based on generate_response."""
+        # Validate user input before processing
+        self._validate_user_input(messages)
 
         async def _stream() -> AsyncIterator[LLMStreamEvent]:
             # Get the non-streaming response
