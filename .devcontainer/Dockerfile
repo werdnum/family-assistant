@@ -1,13 +1,6 @@
 # Multi-stage build for the development container.
 # Stage 1: Base image setup (from the old Dockerfile.base)
 
-# Build stage for shpool
-FROM rust:latest AS shpool-builder
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash \
-    && cargo binstall -y shpool
-
 # Build stage for gh-token
 FROM golang:1.24 AS gh-token-builder
 RUN go install github.com/Link-/gh-token@latest
@@ -51,7 +44,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && apt-get install -y nodejs
 
 # Binary tools
-COPY --from=shpool-builder /usr/local/cargo/bin/shpool /usr/local/bin/shpool
 COPY --from=gh-token-builder /go/bin/gh-token /usr/local/bin/gh-token
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
