@@ -26,6 +26,7 @@ from litellm.exceptions import (
     Timeout,
 )
 
+from .base import InvalidRequestError
 from .factory import LLMClientFactory
 from .google_types import GeminiProviderMetadata
 from .messages import (
@@ -33,6 +34,7 @@ from .messages import (
     ErrorMessage,
     LLMMessage,
     SystemMessage,
+    TextContentPart,
     ToolMessage,
     UserMessage,
     message_to_json_dict,
@@ -72,10 +74,60 @@ StreamingMetadata = dict[str, object]
 class BaseLLMClient:
     """Base class providing common functionality for LLM clients"""
 
+    model: str  # Subclasses must set this attribute
+
     def _supports_multimodal_tools(self) -> bool:
         """Check if this LLM client supports multimodal tool responses natively"""
         # Default implementation - override in subclasses
         return False
+
+    def _validate_user_input(self, messages: Sequence[LLMMessage]) -> None:
+        """
+        Validate that the messages contain non-empty user input.
+
+        Raises InvalidRequestError if the last user message is empty.
+        This prevents sending empty requests to the LLM which would
+        typically result in errors anyway.
+        """
+        # Find the last UserMessage
+        last_user_message = None
+        for msg in reversed(messages):
+            if isinstance(msg, UserMessage):
+                last_user_message = msg
+                break
+
+        if last_user_message is None:
+            return
+
+        content = last_user_message.content
+        is_empty = False
+
+        if isinstance(content, str):
+            is_empty = not content.strip()
+        elif isinstance(content, list):
+            # Check if list is empty or contains only empty text parts
+            if not content:
+                is_empty = True
+            else:
+                # Check if all parts are empty text
+                has_non_empty = False
+                for part in content:
+                    if isinstance(part, TextContentPart):
+                        if part.text and part.text.strip():
+                            has_non_empty = True
+                            break
+                    else:
+                        # Non-text parts (images, attachments) count as content
+                        has_non_empty = True
+                        break
+                is_empty = not has_non_empty
+
+        if is_empty:
+            raise InvalidRequestError(
+                "User message cannot be empty",
+                provider=getattr(self, "model", "unknown").split("/")[0],
+                model=getattr(self, "model", "unknown"),
+            )
 
     def create_attachment_injection(
         self,
@@ -937,6 +989,9 @@ class LiteLLMClient(BaseLLMClient):
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Generates a response using LiteLLM, with one retry on primary model and fallback."""
+        # Validate user input before processing
+        self._validate_user_input(messages)
+
         # Keep messages as typed objects throughout processing
         message_list = list(messages)
 
@@ -1236,6 +1291,8 @@ class LiteLLMClient(BaseLLMClient):
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Generate streaming response using LiteLLM, with one retry on primary model and fallback."""
+        # Validate user input before processing
+        self._validate_user_input(messages)
         return self._generate_response_stream(messages, tools, tool_choice)
 
     async def _attempt_streaming_completion(
