@@ -566,6 +566,9 @@ class AppConfig(BaseModel):
     # Secrets and API keys (primarily from environment)
     telegram_token: str | None = None
     telegram_enabled: bool = True
+    telegram_api_base_url: str | None = (
+        None  # Custom Telegram Bot API URL (for testing or self-hosted)
+    )
     openrouter_api_key: str | None = None
     gemini_api_key: str | None = None
 

@@ -58,6 +58,7 @@ from family_assistant.task_worker import TaskWorker
 from family_assistant.utils.clock import MockClock
 from family_assistant.web.app_creator import app as fastapi_app
 from tests.integration.llm.vcr_helpers import llm_request_matcher
+from tests.mocks.telegram_test_server import TelegramTestServer
 
 # Configure logging for tests (optional, but can be helpful)
 logging.basicConfig(level=logging.INFO)
@@ -1285,3 +1286,31 @@ def setup_fastapi_test_config() -> Generator[None]:
         elif hasattr(fastapi_app.state, "config"):
             # Remove config if it didn't exist before
             del fastapi_app.state.config
+
+
+# --- Telegram Test API Server Fixtures ---
+
+
+@pytest.fixture(scope="session")
+def telegram_test_server_session() -> Generator[Any]:
+    """Session-scoped fixture that starts telegram-test-api once.
+
+    Like radicale_server_session: starts server once per test session.
+    This fixture manages the Node.js telegram-test-api subprocess.
+
+    Yields:
+        TelegramTestServer instance with the server running.
+    """
+    port = find_free_port()
+    server = TelegramTestServer(port=port)
+
+    # Run async start in sync context (like Radicale does)
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(server.start())
+        logger.info(f"telegram-test-api session server started on port {port}")
+        yield server
+    finally:
+        loop.run_until_complete(server.stop())
+        loop.close()
+        logger.info("telegram-test-api session server stopped")
