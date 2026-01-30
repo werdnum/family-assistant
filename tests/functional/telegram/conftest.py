@@ -1,10 +1,11 @@
 import contextlib
 from collections.abc import AsyncGenerator, Callable
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 from unittest.mock import AsyncMock
 
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
+from telegram import Bot
 from telegram.ext import Application, JobQueue
 
 from family_assistant.assistant import Assistant
@@ -22,16 +23,22 @@ from family_assistant.tools import (
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
+if TYPE_CHECKING:
+    from tests.mocks.telegram_test_server import TelegramTestClient
+
+from tests.mocks.telegram_test_server import TelegramTestServer
+
 
 # Define a named tuple to hold the fixture results for easier access
 class TelegramHandlerTestFixture(NamedTuple):
     assistant: Assistant  # Add the assistant instance
     handler: TelegramUpdateHandler
-    mock_bot: AsyncMock
-    # mock_telegram_service is now assistant.telegram_service
+    bot: Bot  # Real bot that talks to telegram-test-api
     mock_llm: LLMInterface
-    mock_confirmation_manager: AsyncMock  # This will be a mock on assistant.telegram_service.chat_interface.request_confirmation
-    mock_application: AsyncMock  # Add mock_application field
+    mock_confirmation_manager: (
+        AsyncMock  # Mock on confirmation_manager.request_confirmation
+    )
+    application: Application[Any, Any, Any, Any, Any, JobQueue[Any]]  # Real application
     processing_service: (
         ProcessingService  # This is assistant.default_processing_service
     )
@@ -41,16 +48,22 @@ class TelegramHandlerTestFixture(NamedTuple):
     get_db_context_func: Callable[
         ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
     ]
+    telegram_client: "TelegramTestClient"  # For verifying bot responses
 
 
 @pytest_asyncio.fixture(scope="function")
 async def telegram_handler_fixture(
     db_engine: AsyncEngine,
+    telegram_test_server_session: TelegramTestServer,
 ) -> AsyncGenerator[TelegramHandlerTestFixture]:
     """
     Sets up the environment for testing TelegramUpdateHandler using the Assistant class.
+
+    Uses telegram-test-api for realistic HTTP-level testing instead of mocking the bot.
+    The bot makes real HTTP calls to the test server, which records all messages.
+    Tests can verify bot responses using the telegram_client.
     """
-    # 1. Create Mock LLM
+    # 1. Create Mock LLM (still needed for controlled responses)
     mock_llm_client = RuleBasedMockLLMClient(
         rules=[],
         default_response=MockLLMOutput(
@@ -59,11 +72,14 @@ async def telegram_handler_fixture(
     )
 
     # 2. Prepare Configuration for Assistant
-    # Ensure this profile ID matches what Assistant expects or is configured as default
+    # Use the test server URL for realistic HTTP-level testing
     test_profile_id = "default_assistant_test_profile"
+    telegram_token = "test_token_123:ABC"
+
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     test_config: dict[str, Any] = {  # noqa: ANN401
-        "telegram_token": "test_token_123:ABC",
+        "telegram_token": telegram_token,
+        "telegram_api_base_url": telegram_test_server_session.get_bot_api_url(),
         "allowed_user_ids": [123, 12345],  # Include user_id used in tests
         "developer_chat_id": None,
         "model": "mock-model-for-testing",  # Will be overridden
@@ -123,42 +139,26 @@ async def telegram_handler_fixture(
 
     # 4. Setup Dependencies
     # This will create TelegramService, ProcessingService, etc.
-    # The TelegramService will use a real Application with a *real* Bot,
-    # so we need to mock the bot *after* setup_dependencies.
+    # The TelegramService will use a real Application with a Bot that talks to
+    # telegram-test-api server (configured via telegram_api_base_url).
     await assistant_app.setup_dependencies()
 
     # Ensure TelegramService and its application are created
     assert assistant_app.telegram_service is not None
-    # The real application is assistant_app.telegram_service.application
-    # We will create a separate mock_application for use with create_mock_context.
-
-    # Mock the bot instance that will be used by both the real application (by patching)
-    # and the mock_application (by assignment).
-    mock_bot_instance = AsyncMock(name="MockBotInstance")
-    mock_bot_instance.send_message = AsyncMock()
-    mock_bot_instance.send_chat_action = AsyncMock()
-    mock_bot_instance.edit_message_text = AsyncMock()
-    mock_bot_instance.edit_message_reply_markup = AsyncMock()
-
-    # Patch the .bot attribute of the *real* application instance used by the handler
     assert assistant_app.telegram_service.application is not None
-    assistant_app.telegram_service.application.bot = mock_bot_instance
 
-    # Create a fully mocked Application for create_mock_context
-    # This mock_application will be passed to create_mock_context.
-    # It needs to provide the same mock_bot_instance for context.bot.
-    # It also needs bot_data and job_queue attributes for CallbackContext.
+    # Get the real application and bot
+    real_application = assistant_app.telegram_service.application
+    real_bot = real_application.bot
 
-    mock_application_for_context = AsyncMock(
-        spec=Application, name="MockApplicationForContext"
-    )
-    mock_application_for_context.bot = mock_bot_instance
-    mock_application_for_context.bot_data = {}  # Initialize as dict
-    mock_application_for_context.bot_data_class = (
-        dict  # For CallbackContext initialization
-    )
-    mock_application_for_context.job_queue = AsyncMock(
-        spec=JobQueue, name="MockJobQueue"
+    # Create a test client for verifying bot responses (for realistic testing)
+    # Use fixed IDs that match what tests expect (tests use chat_id=123, user_id=12345)
+    telegram_client = telegram_test_server_session.get_client(
+        token=telegram_token,
+        user_id=12345,
+        chat_id=123,
+        first_name="TestUser",
+        user_name="testuser",
     )
 
     # Mock the ConfirmationUIManager's request_confirmation method
@@ -204,14 +204,15 @@ async def telegram_handler_fixture(
 
     fixture_tuple = TelegramHandlerTestFixture(
         assistant=assistant_app,
-        handler=assistant_app.telegram_service.update_handler,  # Changed handler to update_handler
-        mock_bot=mock_bot_instance,  # The bot from the real application, now mocked
+        handler=assistant_app.telegram_service.update_handler,
+        bot=real_bot,  # Real bot that talks to telegram-test-api
         mock_llm=mock_llm_client,
-        mock_confirmation_manager=assistant_app.telegram_service.update_handler.confirmation_manager.request_confirmation,  # Return the actual mock that's being used
-        mock_application=mock_application_for_context,  # Pass the new mock application
+        mock_confirmation_manager=mock_request_confirmation_method,
+        application=real_application,  # Real application
         processing_service=assistant_app.default_processing_service,
         tools_provider=assistant_app.default_processing_service.tools_provider,
         get_db_context_func=get_test_db_context_func,
+        telegram_client=telegram_client,  # For verifying bot responses
     )
     yield fixture_tuple
 

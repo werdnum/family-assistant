@@ -130,19 +130,20 @@ class TelegramTestServer:
         """Get the base API URL for the test server."""
         return self._api_url
 
-    def get_bot_api_url(self, token: str) -> str:
-        """Get the bot API URL for a specific token.
+    def get_bot_api_url(self) -> str:
+        """Get the bot API base URL for python-telegram-bot.
 
         This is the URL that should be passed to python-telegram-bot's
-        ApplicationBuilder().base_url() method.
+        ApplicationBuilder().base_url() method. The format matches Telegram's
+        default: 'https://api.telegram.org/bot' - note the '/bot' suffix.
 
-        Args:
-            token: The bot token.
+        python-telegram-bot will append the token to this URL, resulting in:
+        '{base_url}{token}' -> 'http://host:port/bot{token}'
 
         Returns:
-            The full base URL for bot API calls.
+            The base URL ending with '/bot' (e.g., 'http://localhost:9000/bot').
         """
-        return f"{self._api_url}/bot{token}"
+        return f"{self._api_url}/bot"
 
     async def start(self, timeout: float = 30.0) -> None:
         """Start the telegram-test-api server subprocess.
@@ -473,7 +474,9 @@ class TelegramTestClient:
     ) -> list[TestServerUpdate]:
         """Get messages that the bot has sent to this chat.
 
-        This polls the server until messages are available or timeout.
+        This polls the server using getUpdatesHistory endpoint until messages
+        are available or timeout. The getUpdatesHistory endpoint returns both
+        bot and user messages, so we filter for bot messages only.
 
         Args:
             timeout: Maximum time to wait for updates.
@@ -484,24 +487,59 @@ class TelegramTestClient:
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
+        initial_count = 0  # Track initial message count to detect new messages
 
         while loop.time() < deadline:
             async with (
                 aiohttp.ClientSession() as session,
                 session.post(
-                    f"{self.api_url}/getUpdates",
-                    json={"token": self.token, "chatId": self.chat_id},
+                    f"{self.api_url}/getUpdatesHistory",
+                    json={"token": self.token},
                     timeout=aiohttp.ClientTimeout(total=5),
                 ) as resp,
             ):
                 data = await resp.json()
+                result = data.get("result", [])
 
-                if data.get("result") and len(data["result"]) > 0:
-                    return data["result"]
+                logger.debug(
+                    f"getUpdatesHistory returned {len(result)} items for token {self.token}"
+                )
+                if result:
+                    logger.debug(f"First item structure: {list(result[0].keys())}")
+
+                # Bot messages in telegram-test-api are stored differently
+                # They have 'botToken' and 'message' keys
+                bot_messages = [
+                    update
+                    for update in result
+                    if update.get("botToken") and update.get("message")
+                ]
+
+                logger.debug(f"Found {len(bot_messages)} bot messages")
+
+                # Filter by chat_id if we have messages
+                # Note: telegram-test-api stores chat_id as a string directly on message,
+                # not nested under message.chat.id
+                if bot_messages:
+                    chat_messages = [
+                        msg
+                        for msg in bot_messages
+                        if str(msg.get("message", {}).get("chat_id", ""))
+                        == str(self.chat_id)
+                    ]
+                    logger.debug(
+                        f"Filtered to {len(chat_messages)} messages for chat_id {self.chat_id}"
+                    )
+                    if chat_messages and len(chat_messages) > initial_count:
+                        return chat_messages
+
+                if initial_count == 0:
+                    initial_count = len(bot_messages)
 
             # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling for bot responses requires delay
             await asyncio.sleep(poll_interval)
 
+        logger.debug("Timeout waiting for bot responses, returning empty list")
         return []
 
     async def get_updates_history(self) -> list[TestServerUpdate]:

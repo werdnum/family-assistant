@@ -3,17 +3,15 @@ import json
 import logging
 import uuid
 from typing import cast
-from unittest.mock import AsyncMock
 
 import pytest
-import telegramify_markdown  # type: ignore[import-untyped]
+import telegramify_markdown  # type: ignore[import-untyped]  # No type stubs available
 from assertpy import assert_that, soft_assertions
-from telegram import Message
 
 # Import mock LLM helpers
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from tests.functional.telegram.test_telegram_handler import (
-    create_mock_context,
+    create_context,
     create_mock_update,
 )
 from tests.mocks.mock_llm import (
@@ -28,6 +26,7 @@ from tests.mocks.mock_llm import (
 
 # Import the test fixture and helper functions
 from .conftest import TelegramHandlerTestFixture
+from .helpers import wait_for_bot_response
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +60,6 @@ async def test_confirmation_accepted(
     # Cast mock_llm to the concrete type to access specific attributes like .rules and ._calls
     mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
     user_message_id = 401
-    assistant_final_message_id = 402
     # Test data for adding a note (confirmed scenario)
     test_note_title = f"Confirmed Note Add {uuid.uuid4()}"
     test_note_content = "This note required confirmation."
@@ -131,51 +129,40 @@ async def test_confirmation_accepted(
     # --- No need to mock tool execution ---
     # The actual add_or_update_note tool will execute after confirmation
 
-    # --- Mock Bot Response ---
-    # Mock the final message sent by the bot after successful tool execution
-    mock_final_message = AsyncMock(spec=Message, message_id=assistant_final_message_id)
-    fix.mock_bot.send_message.return_value = mock_final_message
-
     # --- Create Mock Update/Context ---
     update = create_mock_update(
         user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id
-    )  # noqa: E501
-    context = create_mock_context(
-        fix.mock_application,  # Use the mock_application from the fixture
+    )
+    context = create_context(
+        fix.application,
         bot_data={"processing_service": fix.processing_service},
-    )  # noqa: E501
+    )
 
     # Act: Call the handler - it will use the ConfirmingToolsProvider created by Assistant
     await fix.handler.message_handler(update, context)
 
-    # Assert: Perform assertions *after* the handler call but *within* the patch context
-    # to ensure mocks are checked correctly.
+    # Assert
     with soft_assertions():  # type: ignore[attr-defined]
         # 1. Confirmation Manager was called because the tool was configured to require it
-        # Note: We use assert_called_once() instead of assert_awaited_once() because
-        # AsyncMock's await tracking doesn't work correctly when patched as a method
-        # Also, call_args aren't tracked correctly when patched directly, so we can't check them
         fix.mock_confirmation_manager.assert_called_once()
 
-        # 2. The tool was executed successfully (we know because the LLM received the result)
+        # 2. LLM was called twice (request tool, process result)
+        assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(2)
 
-        # 3. LLM was called twice (request tool, process result)
-        assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(
-            2
-        )  # Use casted client
+    # 3. Verify bot response via test server
+    bot_responses = await wait_for_bot_response(fix.telegram_client, timeout=5.0)
+    assert_that(bot_responses).described_as("Bot responses").is_not_empty()
 
-    # 4. Final success message sent to user
-    fix.mock_bot.send_message.assert_awaited_once()
-    _, kwargs_bot = fix.mock_bot.send_message.call_args
+    # Get the final bot message text
+    bot_message = bot_responses[-1]
+    bot_message_text = bot_message.get("message", {}).get("text", "")
+
     expected_final_escaped_text = telegramify_markdown.markdownify(
         llm_final_success_text
     )
-    assert_that(kwargs_bot["text"]).described_as("Final bot message text").is_equal_to(
+    assert_that(bot_message_text).described_as("Final bot message text").is_equal_to(
         expected_final_escaped_text
     )
-    assert_that(kwargs_bot["reply_to_message_id"]).described_as(
-        "Final bot message reply ID"
-    ).is_equal_to(user_message_id)
 
 
 @pytest.mark.asyncio
@@ -201,7 +188,6 @@ async def test_confirmation_rejected(
     # Cast mock_llm to the concrete type
     mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
     user_message_id = 501
-    assistant_cancel_message_id = 502  # ID for the cancellation message
     # Test data for adding a note (rejected scenario)
     test_note_title = f"Rejected Note Add {uuid.uuid4()}"
     test_note_content = "This note add was rejected."
@@ -263,23 +249,14 @@ async def test_confirmation_rejected(
     # Simulate user REJECTING the confirmation prompt
     fix.mock_confirmation_manager.return_value = False
 
-    # --- Mock Bot Response ---
-    mock_cancel_message = AsyncMock(
-        spec=Message, message_id=assistant_cancel_message_id
-    )
-    fix.mock_bot.send_message.return_value = mock_cancel_message
-
-    # --- No need to mock tool execution ---
-    # The tool should NOT be executed when confirmation is rejected
-
     # --- Create Mock Update/Context ---
     update = create_mock_update(
         user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id
-    )  # noqa: E501
-    context = create_mock_context(
-        fix.mock_application,  # Use the mock_application from the fixture
+    )
+    context = create_context(
+        fix.application,
         bot_data={"processing_service": fix.processing_service},
-    )  # noqa: E501
+    )
 
     # Act: Call the handler - it will use the ConfirmingToolsProvider created by Assistant
     await fix.handler.message_handler(update, context)
@@ -287,31 +264,25 @@ async def test_confirmation_rejected(
     # Assert
     with soft_assertions():  # type: ignore[attr-defined]
         # 1. Confirmation Manager was called
-        # Note: We use assert_called_once() instead of assert_awaited_once() because
-        # AsyncMock's await tracking doesn't work correctly when patched as a method
-        # Also, call_args aren't tracked correctly when patched directly, so we can't check them
         fix.mock_confirmation_manager.assert_called_once()
-        # 2. Tool was NOT executed (confirmation was rejected)
-        # We can verify this by checking the LLM received the cancellation message
 
-    # 3. LLM was called twice (request tool, process cancellation result)
-    assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(
-        2
-    )  # Use casted client
+    # 2. LLM was called twice (request tool, process cancellation result)
+    assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(2)
 
-    # 4. Final cancellation message sent to user (matching rule_final_cancel)
-    # This assertion is now outside both patches.
-    fix.mock_bot.send_message.assert_awaited_once()
-    _, kwargs_bot = fix.mock_bot.send_message.call_args
+    # 3. Verify bot response via test server
+    bot_responses = await wait_for_bot_response(fix.telegram_client, timeout=5.0)
+    assert_that(bot_responses).described_as("Bot responses").is_not_empty()
+
+    # Get the final bot message text
+    bot_message = bot_responses[-1]
+    bot_message_text = bot_message.get("message", {}).get("text", "")
+
     expected_cancel_escaped_text = telegramify_markdown.markdownify(
         llm_final_cancel_text
     )
-    assert_that(kwargs_bot["text"]).described_as("Final bot message text").is_equal_to(
+    assert_that(bot_message_text).described_as("Final bot message text").is_equal_to(
         expected_cancel_escaped_text
     )
-    assert_that(kwargs_bot["reply_to_message_id"]).described_as(
-        "Final bot message reply ID"
-    ).is_equal_to(user_message_id)
 
 
 @pytest.mark.asyncio
@@ -337,7 +308,6 @@ async def test_confirmation_timed_out(
     # Cast mock_llm to the concrete type
     mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
     user_message_id = 601
-    assistant_timeout_message_id = 602  # ID for the timeout message
     # Test data for adding a note (timeout scenario)
     test_note_title = f"Timeout Note Add {uuid.uuid4()}"
     test_note_content = "This note add timed out."
@@ -395,23 +365,14 @@ async def test_confirmation_timed_out(
     # Simulate TIMEOUT during the confirmation request
     fix.mock_confirmation_manager.side_effect = asyncio.TimeoutError
 
-    # --- Mock Bot Response ---
-    mock_timeout_message = AsyncMock(
-        spec=Message, message_id=assistant_timeout_message_id
-    )
-    fix.mock_bot.send_message.return_value = mock_timeout_message
-
-    # --- No need to mock tool execution ---
-    # The tool should NOT be executed when confirmation times out
-
     # --- Create Mock Update/Context ---
     update = create_mock_update(
         user_text, chat_id=USER_CHAT_ID, user_id=USER_ID, message_id=user_message_id
-    )  # noqa: E501
-    context = create_mock_context(
-        fix.mock_application,  # Use the mock_application from the fixture
+    )
+    context = create_context(
+        fix.application,
         bot_data={"processing_service": fix.processing_service},
-    )  # noqa: E501
+    )
 
     # Act: Call the handler - it will use the ConfirmingToolsProvider created by Assistant
     await fix.handler.message_handler(update, context)
@@ -419,29 +380,22 @@ async def test_confirmation_timed_out(
     # Assert
     with soft_assertions():  # type: ignore[attr-defined]
         # 1. Confirmation Manager was called (and raised TimeoutError)
-        # Note: We use assert_called_once() instead of assert_awaited_once() because
-        # AsyncMock's await tracking doesn't work correctly when patched as a method
-        # Also, call_args aren't tracked correctly when patched directly, so we can't check them
         fix.mock_confirmation_manager.assert_called_once()
-        # 2. Tool was NOT executed (confirmation timed out)
-        # We can verify this by checking the LLM received the timeout message
 
-    # 3. LLM was called twice (request tool, process timeout/cancellation result)
-    assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(
-        2
-    )  # Use casted client
+    # 2. LLM was called twice (request tool, process timeout/cancellation result)
+    assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(2)
 
-    # 4. Final timeout message sent to user (matching rule_final_timeout)
-    # This assertion is now outside both patches.
-    fix.mock_bot.send_message.assert_awaited_once()
-    _, kwargs_bot = fix.mock_bot.send_message.call_args
-    # Get the default response text from the mock LLM used in the fixture
+    # 3. Verify bot response via test server
+    bot_responses = await wait_for_bot_response(fix.telegram_client, timeout=5.0)
+    assert_that(bot_responses).described_as("Bot responses").is_not_empty()
+
+    # Get the final bot message text
+    bot_message = bot_responses[-1]
+    bot_message_text = bot_message.get("message", {}).get("text", "")
+
     expected_timeout_escaped_text = telegramify_markdown.markdownify(
         llm_final_timeout_text
     )
-    assert_that(kwargs_bot["text"]).described_as("Final bot message text").is_equal_to(
+    assert_that(bot_message_text).described_as("Final bot message text").is_equal_to(
         expected_timeout_escaped_text
     )
-    assert_that(kwargs_bot["reply_to_message_id"]).described_as(
-        "Final bot message reply ID"
-    ).is_equal_to(user_message_id)

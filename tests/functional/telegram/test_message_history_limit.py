@@ -2,15 +2,15 @@
 
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 from telegram import Chat, Message, Update, User
-from telegram.ext import ContextTypes
+from telegram.ext import Application, ContextTypes
 
 from tests.mocks.mock_llm import LLMOutput
 
 from .conftest import TelegramHandlerTestFixture
+from .helpers import wait_for_bot_response
 
 
 def create_mock_update(
@@ -33,14 +33,14 @@ def create_mock_update(
     return update
 
 
-def create_mock_context(
-    mock_application: AsyncMock,
+def create_context(
+    application: Application[Any, Any, Any, Any, Any, Any],
     chat_id: int = 123,
     user_id: int = 12345,
 ) -> ContextTypes.DEFAULT_TYPE:
-    """Creates a mock CallbackContext."""
+    """Creates a CallbackContext from an Application."""
     context = ContextTypes.DEFAULT_TYPE(
-        application=mock_application, chat_id=chat_id, user_id=user_id
+        application=application, chat_id=chat_id, user_id=user_id
     )
     return context
 
@@ -58,26 +58,11 @@ async def test_message_history_includes_most_recent_when_limited(
     # Simulate a conversation with multiple back-and-forth messages
     chat_id = 123
     user_id = 12345
-    context = create_mock_context(fixture.mock_application, chat_id, user_id)
-
-    # Configure mock bot to return message IDs in sequence
-    message_counter = 2  # Start at 2 (1 is user's first message)
-
-    def mock_send_message(*args: Any, **kwargs: Any) -> Message:  # noqa: ANN401  # Mock function args/kwargs
-        nonlocal message_counter
-        msg_id = message_counter
-        message_counter += 2  # Skip user message IDs
-        return Message(
-            message_id=msg_id,
-            date=datetime.now(UTC),
-            chat=Chat(id=chat_id, type="private"),
-        )
-
-    fixture.mock_bot.send_message.side_effect = mock_send_message
+    context = create_context(fixture.application, chat_id, user_id)
 
     # Set up LLM responses for the conversation
     # We'll use a single rule that responds differently based on the conversation state
-    def dynamic_response(messages: Any) -> LLMOutput | bool:  # noqa: ANN401
+    def dynamic_response(messages: Any) -> LLMOutput | bool:  # noqa: ANN401 - LLM message list has complex nested types
         # Get the last user message
         user_messages = [msg for msg in messages if msg.role == "user"]
         if not user_messages:
@@ -113,22 +98,10 @@ async def test_message_history_includes_most_recent_when_limited(
 
         return False
 
-    # Create matcher function that always returns True
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def always_match(kwargs: dict[str, Any]) -> bool:  # noqa: ANN401
-        return True
-
-    # Create rule function that returns the dynamic response
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    def get_response(kwargs: dict[str, Any]) -> LLMOutput | bool:  # noqa: ANN401
-        messages = kwargs.get("messages", [])
-        return dynamic_response(messages)
-
     # Set up the mock LLM with a custom generate_response method
     async def mock_generate_response(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: Any,  # noqa: ANN401
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        messages: Any,  # noqa: ANN401 - LLM message list has complex nested types
+        # ast-grep-ignore: no-dict-any - Matches LLM interface signature
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
@@ -137,41 +110,45 @@ async def test_message_history_includes_most_recent_when_limited(
             return result
         return LLMOutput(content="Default response")
 
-    fixture.mock_llm.generate_response = mock_generate_response  # type: ignore[assignment]
+    fixture.mock_llm.generate_response = mock_generate_response  # type: ignore[assignment] - Replacing method for test
 
     # Have the actual conversation
     # First exchange
     update1 = create_mock_update(
-        "First message from user", chat_id=chat_id, message_id=1
+        "First message from user", chat_id=chat_id, message_id=101
     )
     await fixture.handler.message_handler(update1, context)
+    await wait_for_bot_response(fixture.telegram_client)
 
     # Second exchange
     update2 = create_mock_update(
-        "Second message from user", chat_id=chat_id, message_id=3
+        "Second message from user", chat_id=chat_id, message_id=103
     )
     await fixture.handler.message_handler(update2, context)
+    await wait_for_bot_response(fixture.telegram_client)
 
     # Third exchange - assistant completes a task
     update3 = create_mock_update(
-        "Third message from user", chat_id=chat_id, message_id=5
+        "Third message from user", chat_id=chat_id, message_id=105
     )
     await fixture.handler.message_handler(update3, context)
-
-    # Clear previous mock calls to check only the final response
-    fixture.mock_bot.send_message.reset_mock()
-    fixture.mock_bot.send_message.side_effect = mock_send_message
+    await wait_for_bot_response(fixture.telegram_client)
 
     # Now send a new unrelated request
     # With max_history_messages=3, it should include the 3 most recent messages
     # and the assistant should "remember" the completed task
-    update4 = create_mock_update("New unrelated request", chat_id=chat_id, message_id=7)
+    update4 = create_mock_update(
+        "New unrelated request", chat_id=chat_id, message_id=107
+    )
     await fixture.handler.message_handler(update4, context)
 
     # Verify the assistant's response acknowledges the completed task
-    fixture.mock_bot.send_message.assert_called_once()
-    call_args = fixture.mock_bot.send_message.call_args
-    response_text = call_args[1]["text"]
+    bot_responses = await wait_for_bot_response(fixture.telegram_client, timeout=5.0)
+    assert len(bot_responses) >= 1, "Expected at least one bot response"
+
+    # Get the bot's message text
+    bot_message = bot_responses[-1]
+    response_text = bot_message.get("message", {}).get("text", "")
 
     assert "successfully completed the previous task" in response_text
     assert "help with your new request" in response_text
@@ -189,22 +166,7 @@ async def test_reminder_after_completed_conversation(
 
     chat_id = 123
     user_id = 12345
-    context = create_mock_context(fixture.mock_application, chat_id, user_id)
-
-    # Configure mock bot responses
-    message_counter = 2
-
-    def mock_send_message(*args: Any, **kwargs: Any) -> Message:  # noqa: ANN401  # Mock function args/kwargs
-        nonlocal message_counter
-        msg_id = message_counter
-        message_counter += 2
-        return Message(
-            message_id=msg_id,
-            date=datetime.now(UTC),
-            chat=Chat(id=chat_id, type="private"),
-        )
-
-    fixture.mock_bot.send_message.side_effect = mock_send_message
+    context = create_context(fixture.application, chat_id, user_id)
 
     # Set up dynamic LLM response
     def dynamic_response(messages: Any) -> LLMOutput | bool:  # noqa: ANN401
@@ -237,9 +199,8 @@ async def test_reminder_after_completed_conversation(
 
     # Set up the mock LLM with a custom generate_response method
     async def mock_generate_response(
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        messages: Any,  # noqa: ANN401
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+        messages: Any,  # noqa: ANN401 - LLM message list has complex nested types
+        # ast-grep-ignore: no-dict-any - Matches LLM interface signature
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
@@ -248,26 +209,24 @@ async def test_reminder_after_completed_conversation(
             return result
         return LLMOutput(content="Default response")
 
-    fixture.mock_llm.generate_response = mock_generate_response  # type: ignore[assignment]
+    fixture.mock_llm.generate_response = mock_generate_response  # type: ignore[assignment] - Replacing method for test
 
     # Simulate a conversation about updating a note
     # User complains about clobbered content
     update1 = create_mock_update(
-        "You clobbered my note content!", chat_id=chat_id, message_id=1
+        "You clobbered my note content!", chat_id=chat_id, message_id=201
     )
     await fixture.handler.message_handler(update1, context)
+    await wait_for_bot_response(fixture.telegram_client)
 
     # User provides new content
     update2 = create_mock_update(
         "Here's the new content for the note: Important information...",
         chat_id=chat_id,
-        message_id=3,
+        message_id=203,
     )
     await fixture.handler.message_handler(update2, context)
-
-    # Clear previous mock calls
-    fixture.mock_bot.send_message.reset_mock()
-    fixture.mock_bot.send_message.side_effect = mock_send_message
+    await wait_for_bot_response(fixture.telegram_client)
 
     # Now process a reminder trigger
     # The assistant should handle the reminder, not continue the note conversation
@@ -275,13 +234,17 @@ async def test_reminder_after_completed_conversation(
         "System: Reminder triggered\n\nThe time is now 2025-01-15 12:00:00 AEST.\n"
         "Task: Send a reminder about: check the water meter",
         chat_id=chat_id,
-        message_id=5,
+        message_id=205,
     )
     await fixture.handler.message_handler(update3, context)
 
     # Verify the response is about the reminder, not the old note conversation
-    fixture.mock_bot.send_message.assert_called_once()
-    response_text = fixture.mock_bot.send_message.call_args[1]["text"]
+    bot_responses = await wait_for_bot_response(fixture.telegram_client, timeout=5.0)
+    assert len(bot_responses) >= 1, "Expected at least one bot response"
+
+    # Get the bot's message text
+    bot_message = bot_responses[-1]
+    response_text = bot_message.get("message", {}).get("text", "")
 
     assert "reminder" in response_text.lower()
     assert "water meter" in response_text
