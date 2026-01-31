@@ -110,13 +110,13 @@ class TestAttachmentAPI:
 
         assert result is None
 
-    async def test_get_attachment_wrong_conversation(
+    async def test_get_attachment_cross_conversation_success(
         self,
         db_engine: AsyncEngine,
         attachment_registry: AttachmentRegistry,
         sample_attachment: str,
     ) -> None:
-        """Test getting attachment from different conversation is blocked."""
+        """Test getting attachment from different conversation is allowed."""
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="different_conversation",  # Different conversation
@@ -126,8 +126,9 @@ class TestAttachmentAPI:
 
         result = await api._get_async(sample_attachment)
 
-        # Should return None due to conversation mismatch
-        assert result is None
+        # Should succeed regardless of conversation
+        assert result is not None
+        assert result["attachment_id"] == sample_attachment
 
     async def test_list_attachments_success(
         self,
@@ -230,13 +231,13 @@ class TestAttachmentAPI:
         assert "not found" in result.lower()
         assert fake_id in result
 
-    async def test_send_attachment_wrong_conversation(
+    async def test_send_attachment_cross_conversation_success(
         self,
         db_engine: AsyncEngine,
         attachment_registry: AttachmentRegistry,
         sample_attachment: str,
     ) -> None:
-        """Test sending attachment from different conversation is blocked."""
+        """Test sending attachment from different conversation is allowed."""
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="different_conversation",
@@ -246,7 +247,7 @@ class TestAttachmentAPI:
 
         result = await api._send_async(sample_attachment)
 
-        assert "not accessible" in result.lower()
+        assert "sent attachment" in result.lower()
 
     async def test_create_attachment_with_string_content(
         self,
@@ -355,12 +356,12 @@ class TestAttachmentAPI:
             retrieved_data = json.loads(retrieved_content.decode("utf-8"))
             assert retrieved_data == json_data
 
-    async def test_create_attachment_conversation_scoped(
+    async def test_create_attachment_cross_conversation_accessible(
         self,
         db_engine: AsyncEngine,
         attachment_registry: AttachmentRegistry,
     ) -> None:
-        """Test that created attachments are scoped to the conversation."""
+        """Test that created attachments are accessible from other conversations."""
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="conversation_a",
@@ -385,7 +386,7 @@ class TestAttachmentAPI:
         result = await same_api._get_async(metadata.attachment_id)
         assert result is not None
 
-        # Verify it's NOT accessible from a different conversation
+        # Verify it's also accessible from a different conversation
         different_api = AttachmentAPI(
             attachment_registry=attachment_registry,
             conversation_id="conversation_b",
@@ -393,7 +394,8 @@ class TestAttachmentAPI:
             db_engine=db_engine,
         )
         result = await different_api._get_async(metadata.attachment_id)
-        assert result is None
+        assert result is not None
+        assert result["attachment_id"] == metadata.attachment_id
 
 
 class TestCreateAttachmentAPI:

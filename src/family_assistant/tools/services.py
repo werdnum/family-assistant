@@ -255,7 +255,6 @@ async def delegate_to_service_tool(
                         )
                         continue
 
-
                     # Add attachment content part
                     content_parts.append({
                         "type": "attachment",

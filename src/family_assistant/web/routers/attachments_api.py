@@ -142,15 +142,12 @@ async def serve_attachment(
         db_context, attachment_id
     )
     if not attachment_metadata:
-        raise HTTPException(
-            status_code=404, detail="Attachment not found"
-        )
+        raise HTTPException(status_code=404, detail="Attachment not found")
 
     # Schedule access time update as background task (non-blocking)
     background_tasks.add_task(
         attachment_registry.update_access_time_background, attachment_id
     )
-
 
     # Get file path
     file_path = attachment_registry.get_attachment_path(attachment_id)
@@ -209,9 +206,7 @@ async def delete_attachment(
     # This handles both database deletion and file cleanup in the correct order
     deleted = await attachment_registry.delete_attachment(db_context, attachment_id)
     if not deleted:
-        raise HTTPException(
-            status_code=404, detail="Attachment not found"
-        )
+        raise HTTPException(status_code=404, detail="Attachment not found")
 
     return {"message": f"Attachment {attachment_id} deleted successfully"}
 

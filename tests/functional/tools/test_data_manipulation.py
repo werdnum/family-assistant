@@ -451,12 +451,12 @@ result = jq_query(
             text = result.text.lower()
             assert "error" in text or "not found" in text
 
-    async def test_jq_query_cross_conversation_access_denied(
+    async def test_jq_query_cross_conversation_access_allowed(
         self,
         db_engine: AsyncEngine,
         attachment_registry_with_json: tuple[AttachmentRegistry, str, str],
     ) -> None:
-        """Test that jq query prevents cross-conversation attachment access."""
+        """Test that jq query allows cross-conversation attachment access."""
         registry, attachment_id, _conversation_id = attachment_registry_with_json
 
         async with DatabaseContext(db_engine) as db_context:
@@ -487,12 +487,14 @@ result
 
             result = await execute_script_tool(exec_context, script=script)
 
-            # Script should report access denied
+            # Script execution should succeed
             assert result.text is not None
-            text = result.text.lower()
-            assert (
-                "error" in text or "access denied" in text or "not accessible" in text
-            )
+            assert "Error" not in result.text
+
+            # Parse the result data
+            data = result.get_data()
+            assert isinstance(data, list)
+            assert len(data) == 3
 
     async def test_jq_query_non_json_attachment(
         self, db_engine: AsyncEngine, tmp_path: Path

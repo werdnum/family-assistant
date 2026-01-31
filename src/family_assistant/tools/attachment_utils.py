@@ -64,7 +64,6 @@ async def fetch_attachment_object(
             f"Found attachment {attachment_id}: {metadata.description}, conversation_id: {metadata.conversation_id}"
         )
 
-
         # Create a DatabaseContext getter for the ScriptAttachment
         # Use the existing database context from the execution context to maintain transaction consistency
         def db_context_getter() -> DatabaseContext:

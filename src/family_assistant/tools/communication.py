@@ -304,7 +304,6 @@ async def send_message_to_user_tool(
                         logger.warning(f"Attachment {actual_attachment_id} not found")
                         continue
 
-
                     # Always append the string ID to the validated list
                     validated_attachment_ids.append(actual_attachment_id)
                     logger.debug(
@@ -424,7 +423,6 @@ async def get_attachment_info_tool(
         if not attachment:
             logger.warning(f"Attachment {attachment_id} not found")
             return f"Error: Attachment with ID {attachment_id} not found."
-
 
         # Convert to dictionary and return as JSON string
         metadata_dict = attachment.to_dict()
