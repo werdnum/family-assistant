@@ -108,9 +108,11 @@ ENV PATH="/app/.venv/bin:${UV_TOOL_BIN_DIR}:/home/appuser/.deno/bin:/usr/local/b
 COPY --chown=appuser:appuser pyproject.toml uv.lock* ./
 
 # Install Python dependencies (without installing the project itself yet)
-# This includes rebrowser-playwright which provides the playwright module
+# This includes rebrowser-playwright. We create a symlink so it can be imported as 'playwright'.
 USER appuser
-RUN uv sync --no-install-project --extra local-embeddings
+RUN uv sync --no-install-project --extra local-embeddings && \
+    SITE_PACKAGES=$(.venv/bin/python -c "import site; print(site.getsitepackages()[0])") && \
+    ln -s rebrowser_playwright ${SITE_PACKAGES}/playwright
 
 # --- Install Playwright browsers with system dependencies ---
 # Install Playwright browsers with system dependencies
@@ -152,7 +154,9 @@ COPY --chown=appuser:appuser . .
 # Install the package using uv sync to ensure uv.lock continues to apply.
 # This completes the installation by adding the project itself.
 USER appuser
-RUN uv sync --extra local-embeddings
+RUN uv sync --extra local-embeddings && \
+    SITE_PACKAGES=$(.venv/bin/python -c "import site; print(site.getsitepackages()[0])") && \
+    if [ ! -L ${SITE_PACKAGES}/playwright ]; then ln -s rebrowser_playwright ${SITE_PACKAGES}/playwright; fi
 
 # --- Runtime Configuration ---
 # Expose the port the web server listens on
