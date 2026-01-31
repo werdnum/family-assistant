@@ -82,8 +82,8 @@ async def test_get_conversation_messages_with_data(
 
         await wait_for_condition(
             get_messages_with_both_roles,
-            timeout_seconds=30.0,
-            error_message="both user and assistant messages not visible",
+            timeout=30.0,
+            description="both user and assistant messages not visible",
         )
         data = result_data
 
@@ -162,8 +162,8 @@ async def test_get_conversation_messages_cross_interface_retrieval(
 
         await wait_for_condition(
             get_all_four_messages,
-            timeout_seconds=30.0,
-            error_message="expected 4 messages (2 user + 2 assistant) not visible",
+            timeout=30.0,
+            description="expected 4 messages (2 user + 2 assistant) not visible",
         )
         data = result_data
 
@@ -230,8 +230,8 @@ async def test_get_conversation_messages_pagination_default(
 
         await wait_for_condition(
             get_all_hundred_messages,
-            timeout_seconds=30.0,
-            error_message="expected 100 total messages not visible",
+            timeout=30.0,
+            description="expected 100 total messages not visible",
         )
 
         # Now test the default pagination behavior
@@ -304,8 +304,8 @@ async def test_get_conversation_messages_pagination_before(
 
         await wait_for_condition(
             get_all_twenty_messages,
-            timeout_seconds=30.0,
-            error_message="expected 20 messages not visible",
+            timeout=30.0,
+            description="expected 20 messages not visible",
         )
         all_messages = result_data["messages"]
         assert len(all_messages) == 20
@@ -384,8 +384,8 @@ async def test_get_conversation_messages_pagination_after(
 
         await wait_for_condition(
             get_all_twenty_messages,
-            timeout_seconds=30.0,
-            error_message="expected 20 messages not visible",
+            timeout=30.0,
+            description="expected 20 messages not visible",
         )
         all_messages = result_data["messages"]
         assert len(all_messages) == 20
@@ -465,8 +465,8 @@ async def test_get_conversation_messages_pagination_limit_zero(
 
         await wait_for_condition(
             get_all_ten_messages,
-            timeout_seconds=30.0,
-            error_message="expected 10 messages not visible",
+            timeout=30.0,
+            description="expected 10 messages not visible",
         )
         data = result_data
 
