@@ -1276,18 +1276,10 @@ class ProcessingService:
                         )
                         continue
 
-                    # Security: Verify conversation scoping
-                    if attachment_metadata.conversation_id != conversation_id:
-                        logger.error(
-                            f"Security violation: Attachment {attachment_id} from conversation "
-                            f"{attachment_metadata.conversation_id} not accessible from "
-                            f"conversation {conversation_id}"
-                        )
-                        continue
 
                     # Fetch attachment content
                     content = await self.attachment_registry.get_attachment_content(
-                        db_context, attachment_id, conversation_id
+                        db_context, attachment_id
                     )
 
                     if content is None:

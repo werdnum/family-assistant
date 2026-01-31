@@ -433,7 +433,6 @@ class AttachmentRegistry:
         self,
         db_context: DatabaseContext,
         attachment_id: str,
-        conversation_id: str | None = None,
     ) -> bytes | None:
         """
         Get attachment content by ID.
@@ -441,10 +440,9 @@ class AttachmentRegistry:
         Args:
             db_context: Database context
             attachment_id: Attachment identifier
-            conversation_id: Conversation scope for access control
 
         Returns:
-            File content bytes if found and accessible, None otherwise
+            File content bytes if found, None otherwise
         """
         # First verify access
         metadata = await self.get_attachment(db_context, attachment_id)
@@ -477,44 +475,15 @@ class AttachmentRegistry:
         Args:
             db_context: Database context
             attachment_id: Attachment identifier
-            conversation_id: Conversation scope for access control (for linked attachments)
-            user_id: User identifier for deleting unlinked attachments
+            conversation_id: Optional conversation ID (for backward compatibility, unused)
+            user_id: Optional user ID (for backward compatibility, unused)
 
         Returns:
-            True if deleted, False if not found or access denied
+            True if deleted, False if not found
         """
-        # Build conditions based on what's provided
         conditions = [attachment_metadata_table.c.attachment_id == attachment_id]
 
-        if conversation_id is not None:
-            # Delete linked attachment - require exact conversation match
-            conditions.append(
-                attachment_metadata_table.c.conversation_id == conversation_id
-            )
-            logger.debug(
-                f"Deleting linked attachment {attachment_id} from conversation {conversation_id}"
-            )
-        elif user_id is not None:
-            # Delete unlinked attachment - allow user to delete their own unlinked attachments
-            conditions.extend([
-                attachment_metadata_table.c.conversation_id.is_(
-                    None
-                ),  # Must be unlinked
-                attachment_metadata_table.c.source_type
-                == "user",  # Must be user attachment
-                attachment_metadata_table.c.source_id
-                == user_id,  # Must be owned by user
-            ])
-            logger.debug(
-                f"Deleting unlinked attachment {attachment_id} for user {user_id}"
-            )
-        else:
-            logger.warning(
-                f"Delete attempt without conversation_id or user_id for attachment {attachment_id}"
-            )
-            return False
-
-        # Atomic delete with authorization check - prevents TOCTOU race condition
+        # Atomic delete
         delete_stmt = delete(attachment_metadata_table).where(and_(*conditions))
         result = await db_context.execute_with_retry(delete_stmt)
 

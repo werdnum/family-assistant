@@ -283,15 +283,6 @@ class AttachmentAPI:
             if not attachment:
                 return None
 
-            # Check conversation scoping if we have a conversation ID
-            if (
-                self.conversation_id
-                and attachment.conversation_id != self.conversation_id
-            ):
-                logger.warning(
-                    f"Attachment {attachment_id} not accessible from conversation {self.conversation_id}"
-                )
-                return None
 
             return {
                 "attachment_id": attachment.attachment_id,
@@ -407,12 +398,6 @@ class AttachmentAPI:
             if not attachment:
                 return f"Attachment {attachment_id} not found"
 
-            # Check conversation scoping if we have a conversation ID
-            if (
-                self.conversation_id
-                and attachment.conversation_id != self.conversation_id
-            ):
-                return f"Attachment {attachment_id} not accessible from current conversation"
 
             # For now, we'll just return a success message
             # In the future, this could integrate with the chat system to actually display the attachment
