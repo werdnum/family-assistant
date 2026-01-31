@@ -109,20 +109,18 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     fonts-noto-color-emoji \
     fonts-unifont
 
-# Python venv with rebrowser-playwright (patched for reduced bot detection)
-# Also install regular playwright for pytest-playwright-asyncio compatibility
+# Python venv with rebrowser-playwright and playwright pinned to same version
+# so they share browser binaries. rebrowser-playwright is used by app code,
+# playwright is used by pytest-playwright-asyncio for functional tests.
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv venv /venv && \
-    uv pip install -p /venv/bin/python --system "rebrowser-playwright>=1.52.0" "playwright>=1.50.0" "markitdown[html]>=0.1.0" "jsonmerge>=1.9.0" && \
+    uv pip install -p /venv/bin/python --system "rebrowser-playwright==1.52.0" "playwright==1.52.0" "markitdown[html]>=0.1.0" "jsonmerge>=1.9.0" && \
     chown -R claude:claude /venv && \
     chmod -R 755 /venv
 
-# Install browsers for both playwright packages
-# - rebrowser-playwright: used by scraping/computer_use code
-# - playwright: used by pytest-playwright-asyncio for functional tests
+# Install chromium browsers (shared by both playwright packages since versions match)
 USER claude
-RUN /venv/bin/python -m rebrowser_playwright install chromium && \
-    /venv/bin/python -m playwright install chromium
+RUN /venv/bin/python -m playwright install chromium
 
 USER root
 
