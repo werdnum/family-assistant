@@ -60,65 +60,60 @@ The opportunity is to:
 
 ## 2. Proposed Architecture
 
-### 2.1. Two-Phase Skill Activation with Preflight Routing
+### 2.1. Hybrid Activation: Agent Self-Selection with Preflight Hints
 
-The key innovation proposed here is **preflight skill selection** using a lightweight model:
+The architecture supports **two complementary activation modes**:
+
+1. **Agent Self-Activation**: The main model always sees skill metadata in the system prompt and can
+   decide to load any skill's full instructions via a tool call
+2. **Preflight Hints**: A lightweight model pre-selects likely-relevant skills, loading their full
+   instructions before the main model starts, improving reliability and speed
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           User Request                                       │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
+                    ┌───────────────┴───────────────┐
+                    ▼                               ▼
+┌───────────────────────────────────┐  ┌──────────────────────────────────────┐
+│  PREFLIGHT (optional optimization)│  │  SYSTEM PROMPT (always present)      │
+│                                   │  │                                      │
+│  gemini-2.5-flash-lite analyzes   │  │  Skill catalog with metadata:        │
+│  request + last N turns           │  │  - Skill names and descriptions      │
+│                                   │  │  - "Use load_skill tool for details" │
+│  Output: pre-load these skills    │  │                                      │
+└───────────────────────────────────┘  └──────────────────────────────────────┘
+                    │                               │
+                    └───────────────┬───────────────┘
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  PHASE 1: Preflight Routing (gemini-2.5-flash-lite or similar)             │
+│  MAIN MODEL PROCESSING                                                      │
 │                                                                             │
-│  Input:                                                                     │
-│  - User request (+ last N turns of conversation)                           │
-│  - Skill metadata catalog (names + descriptions only, ~100 tokens each)    │
+│  Context includes:                                                          │
+│  - Skill catalog (always)                                                   │
+│  - Pre-loaded skill instructions (from preflight, if enabled)              │
+│  - load_skill tool (for on-demand activation)                              │
 │                                                                             │
-│  Output (structured/constrained):                                           │
-│  - List of relevant skill IDs (0-3 skills typically)                       │
-│  - Confidence scores                                                        │
-│  - Optional: brief reasoning for selection                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  PHASE 2: Context Injection & Main Processing                              │
-│                                                                             │
-│  For each selected skill:                                                   │
-│  - Load full SKILL.md body into system prompt                              │
-│  - Register skill's tools with ToolsProvider                               │
-│  - Make references/ available for on-demand loading                        │
-│                                                                             │
-│  Main model processes request with enriched context                         │
+│  Model can:                                                                 │
+│  - Use pre-loaded skills immediately                                        │
+│  - Load additional skills via tool if needed                               │
+│  - Ignore skills entirely if not relevant                                   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.2. Why Preflight Routing?
+### 2.2. Why Preflight? Reliability and Speed
 
-The standard Agent Skills approach loads all skill metadata into the system prompt and lets the main
-LLM decide which to activate. This has drawbacks:
+Preflight routing is **not primarily about cost savings** (context costs are acceptable). The main
+benefits are:
 
-1. **Token cost**: Every request pays for skill metadata tokens, even when irrelevant
-2. **Distraction**: Large skill catalogs can distract the model from the actual task
-3. **Latency**: Main model must process all metadata before starting work
+1. **Reliability**: The main model starts with relevant instructions already loaded, reducing the
+   chance it forgets to load a skill or loads the wrong one
+2. **Speed**: Skill instructions are available from the first token, avoiding a tool-call round-trip
+3. **Focus**: Pre-loading signals relevance, helping the model prioritize
 
-**Preflight routing with a lightweight model** addresses these:
-
-| Aspect             | Standard Approach         | Preflight Routing            |
-| ------------------ | ------------------------- | ---------------------------- |
-| Metadata tokens    | All skills, every request | Only for preflight (~cheap)  |
-| Main model context | Cluttered with metadata   | Clean, only relevant skills  |
-| Cost per request   | O(num_skills) overhead    | O(1) preflight + O(selected) |
-| Latency            | Single pass, but longer   | Two passes, but optimized    |
-
-**Cost Analysis** (rough estimates):
-
-- Preflight with gemini-2.5-flash-lite: ~$0.0001 per request (50 skills × 100 tokens metadata)
-- Avoided main model tokens: ~$0.001-0.01 per request (depending on model)
-- Net savings: 10-100x on context costs when skills aren't needed
+The main model **always has the option** to load skills directly via tool call. Preflight is a hint
+system, not a gatekeeper.
 
 ### 2.3. Structured Output for Skill Selection
 
@@ -147,54 +142,126 @@ valid JSON matching the expected schema.
 
 ## 3. Integration with Family Assistant
 
-### 3.1. Skill Storage and Discovery
+### 3.1. Skill Storage: Notes as the Primary Store
 
-Skills can be stored in multiple locations:
+Skills in Family Assistant are stored as **notes with YAML frontmatter**. This leverages existing
+infrastructure and allows users to create skills through natural conversation.
 
-1. **Built-in skills**: `src/family_assistant/skills/` directory
-2. **User skills**: Stored as special notes with `skill_type` metadata
-3. **External skills**: Loaded from git repos or skill registries
+**Why notes instead of files?**
+
+| Aspect           | Notes                                 | Files                        |
+| ---------------- | ------------------------------------- | ---------------------------- |
+| Creation         | Via assistant conversation            | Manual filesystem access     |
+| Editing          | Via assistant or web UI               | External editor              |
+| Version control  | Database with timestamps              | Requires git                 |
+| Profile affinity | Uses existing notes-v2 profile system | Would need separate config   |
+| Portability      | Export to SKILL.md format             | Native format                |
+| Vector search    | Already indexed                       | Would need separate indexing |
+
+**Skill sources (in priority order):**
+
+1. **User skill notes**: Notes with valid skill frontmatter (primary)
+2. **Built-in skills**: `src/family_assistant/skills/` directory (for defaults shipped with app)
+
+### 3.2. Identifying Skill Notes via Frontmatter
+
+A note is a skill if its content starts with valid YAML frontmatter containing required skill
+fields. **No schema changes needed** - we parse frontmatter on read.
+
+```python
+def is_skill_note(note_content: str) -> bool:
+    """Check if a note is a skill by parsing its frontmatter."""
+    try:
+        frontmatter, _ = parse_frontmatter(note_content)
+        # Required fields for a valid skill
+        return "name" in frontmatter and "description" in frontmatter
+    except Exception:
+        return False
+```
+
+**Example skill note:**
+
+```markdown
+---
+name: Meeting Notes Helper
+description: Help format meeting notes with attendees, agenda, decisions, and action items.
+proactive_for_profile_ids: ["default_assistant"]
+---
+
+# Meeting Notes Skill
+
+When the user asks to take meeting notes or summarize a meeting...
+```
+
+### 3.3. Profile Affinity for Skills
+
+Skills integrate with the **notes-v2 profile affinity system** (see `docs/design/notes-v2.md`). This
+allows skills to be automatically loaded for specific processing profiles.
+
+**Frontmatter fields for profile control:**
+
+```yaml
+---
+name: Home Automation
+description: Control smart home devices...
+# Profile affinity (from notes-v2 design)
+include_in_prompt_default: false # Not loaded by default
+proactive_for_profile_ids: ["default_assistant", "automation_creation"] # Auto-load for these
+exclude_from_prompt_profile_ids: ["untrusted_readonly"] # Never load for these
+---
+```
+
+**Resolution order** (same as notes-v2):
+
+1. If current profile in `exclude_from_prompt_profile_ids` → skill not available
+2. Else if current profile in `proactive_for_profile_ids` → skill auto-loaded (preflight hint)
+3. Else use `include_in_prompt_default` to determine if in catalog
+
+### 3.4. Skill Data Models
 
 ```python
 @dataclass
 class SkillMetadata:
-    """Parsed from SKILL.md frontmatter."""
-    id: str                          # e.g., "home-automation"
-    name: str                        # Human-readable name
+    """Parsed from note frontmatter."""
+    id: str                          # Derived from note title (slugified)
+    name: str                        # From frontmatter
     description: str                 # Used for skill selection
-    license: str | None = None
-    compatibility: str | None = None
+    # Profile affinity (from notes-v2)
+    include_in_prompt_default: bool = True
+    proactive_for_profile_ids: list[str] | None = None
+    exclude_from_prompt_profile_ids: list[str] | None = None
+    # Skill-specific
     allowed_tools: list[str] | None = None
-    metadata: dict[str, str] | None = None
+    compatibility: str | None = None
 
 @dataclass
 class Skill:
     """Full skill with loaded content."""
     metadata: SkillMetadata
-    instructions: str                 # SKILL.md body
-    scripts: dict[str, str]          # filename -> content
-    references: dict[str, str]       # filename -> content
-    source_path: Path | None = None  # For file-based skills
+    instructions: str                 # Content after frontmatter
+    note_id: int | None = None       # Database note ID (for notes)
+    source_path: Path | None = None  # Filesystem path (for built-in)
 ```
 
-### 3.2. SkillsContextProvider
+### 3.5. SkillsContextProvider
 
-A new `ContextProvider` implementation that integrates with the existing pattern:
+A new `ContextProvider` that provides both the skill catalog (always) and pre-loaded skill
+instructions (from preflight):
 
 ```python
 class SkillsContextProvider(ContextProvider):
-    """Provides skill instructions as context fragments."""
+    """Provides skill catalog and pre-loaded instructions."""
 
     def __init__(
         self,
         skill_registry: SkillRegistry,
-        skill_router: SkillRouter,
-        max_skills: int = 3,
+        skill_router: SkillRouter | None = None,  # Optional preflight
+        profile_id: str = "default_assistant",
     ):
         self._registry = skill_registry
         self._router = skill_router
-        self._max_skills = max_skills
-        self._selected_skills: list[Skill] = []
+        self._profile_id = profile_id
+        self._preloaded_skills: list[Skill] = []
 
     @property
     def name(self) -> str:
@@ -205,30 +272,42 @@ class SkillsContextProvider(ContextProvider):
         user_message: str,
         conversation_history: list[Message],
     ) -> None:
-        """Run preflight routing to select relevant skills."""
-        self._selected_skills = await self._router.select_skills(
-            user_message=user_message,
-            history=conversation_history[-4:],  # Last 4 turns
-            max_skills=self._max_skills,
-        )
+        """Optionally run preflight to pre-select skills."""
+        if self._router:
+            self._preloaded_skills = await self._router.select_skills(
+                user_message=user_message,
+                history=conversation_history[-4:],
+                profile_id=self._profile_id,
+            )
 
     async def get_context_fragments(self) -> list[str]:
-        """Return formatted skill instructions for selected skills."""
-        if not self._selected_skills:
-            return []
+        """Return skill catalog + pre-loaded instructions."""
+        fragments = []
 
-        fragments = ["## Active Skills\n"]
-        for skill in self._selected_skills:
-            fragments.append(f"### {skill.metadata.name}\n{skill.instructions}\n")
+        # Always include skill catalog (metadata only)
+        available = self._registry.get_available_skills(self._profile_id)
+        if available:
+            fragments.append("## Available Skills\n")
+            fragments.append("Use `load_skill` tool to activate a skill's full instructions.\n")
+            for skill in available:
+                fragments.append(
+                    f"- **{skill.metadata.name}**: {skill.metadata.description}\n"
+                )
+
+        # Include pre-loaded skill instructions
+        if self._preloaded_skills:
+            fragments.append("\n## Pre-loaded Skills\n")
+            for skill in self._preloaded_skills:
+                fragments.append(f"### {skill.metadata.name}\n{skill.instructions}\n")
 
         return fragments
 ```
 
-### 3.3. Preflight Skill Router
+### 3.6. Preflight Skill Router
 
 ```python
 class SkillRouter:
-    """Routes requests to relevant skills using lightweight LLM."""
+    """Pre-selects skills using lightweight LLM for reliability/speed."""
 
     def __init__(
         self,
@@ -242,12 +321,18 @@ class SkillRouter:
         self,
         user_message: str,
         history: list[Message],
+        profile_id: str,
         max_skills: int = 3,
     ) -> list[Skill]:
-        """Use lightweight LLM to select relevant skills."""
+        """Pre-select skills that are likely relevant."""
 
-        # Build skill catalog (metadata only)
-        catalog = self._build_skill_catalog()
+        # Get skills available for this profile
+        available = self._registry.get_available_skills(profile_id)
+        if not available:
+            return []
+
+        # Build catalog from available skills only
+        catalog = self._build_skill_catalog(available)
 
         # Create routing prompt
         prompt = self._build_routing_prompt(user_message, history, catalog)
@@ -258,18 +343,15 @@ class SkillRouter:
             response_schema=SkillSelectionSchema,
         )
 
-        # Parse and return selected skills
+        # Return full skill objects for selected IDs
         selection = parse_skill_selection(response)
-        return [
-            self._registry.get_skill(s.skill_id)
-            for s in selection.selected_skills[:max_skills]
-            if s.confidence >= 0.5
-        ]
+        selected_ids = {s.skill_id for s in selection.selected_skills[:max_skills]}
+        return [s for s in available if s.metadata.id in selected_ids]
 
-    def _build_skill_catalog(self) -> str:
+    def _build_skill_catalog(self, skills: list[Skill]) -> str:
         """Format skill metadata for routing prompt."""
         lines = ["Available skills:\n"]
-        for skill in self._registry.list_skills():
+        for skill in skills:
             lines.append(f"- {skill.metadata.id}: {skill.metadata.description}")
         return "\n".join(lines)
 
@@ -279,7 +361,7 @@ class SkillRouter:
         history: list[Message],
         catalog: str,
     ) -> str:
-        return f"""Analyze the user's request and select relevant skills.
+        return f"""Analyze the user's request and select relevant skills to pre-load.
 
 {catalog}
 
@@ -289,90 +371,117 @@ Recent conversation:
 Current request: {user_message}
 
 Select 0-3 skills that would help with this request. Return only skills that are clearly relevant.
-If no skills are needed, return an empty list."""
+The user can still load other skills manually, so only select high-confidence matches."""
 ```
 
-### 3.4. Integration with Processing Profiles
+### 3.7. Integration with Processing Profiles
 
-Skills can be enabled/disabled per processing profile, aligning with Rule of Two security:
+Skills integrate with processing profiles via the notes-v2 profile affinity system. Configuration in
+`config.yaml` controls preflight behavior:
 
 ```yaml
 service_profiles:
   - id: "default_assistant"
     skills_config:
-      enable_skills: null  # All skills enabled
-      skill_sources:
-        - "builtin"
-        - "user_notes"
       preflight_model: "gemini-2.5-flash-lite"
       preflight_enabled: true
-      max_active_skills: 3
+      max_preloaded_skills: 3
 
   - id: "untrusted_readonly"
     skills_config:
-      enable_skills:        # Only safe skills
-        - "search-help"
-        - "formatting-guide"
       preflight_enabled: false  # No external model calls
+      # Skills with exclude_from_prompt_profile_ids: ["untrusted_readonly"]
+      # are automatically unavailable
 
   - id: "automation_creation"
     skills_config:
-      enable_skills:
-        - "starlark-scripting"
-        - "home-assistant"
-        - "event-listener-patterns"
-      include_skill_tools: true  # Register skill scripts as tools
+      preflight_enabled: true
+      # Skills with proactive_for_profile_ids: ["automation_creation"]
+      # are auto-loaded even without preflight matching
 ```
 
-### 3.5. Notes as Skills
+### 3.8. load_skill Tool for On-Demand Activation
 
-Family Assistant's notes system can serve as a skill store, enabling users to create skills through
-natural conversation:
+The main model can load any skill from the catalog on demand:
 
 ```python
-class NotesSkillProvider:
-    """Extracts skills from notes with skill metadata."""
+@tool(
+    name="load_skill",
+    description="Load a skill's full instructions. Use when you need detailed guidance for a task.",
+)
+async def load_skill_tool(
+    skill_id: str,
+    context: ToolExecutionContext,
+) -> str:
+    """Load a skill's instructions into context."""
+    registry = context.skill_registry
+    skill = registry.get_skill(skill_id)
 
-    async def load_skills_from_notes(self, db: DatabaseContext) -> list[Skill]:
-        """Load notes that are formatted as skills."""
-        notes = await db.notes.get_notes_by_tag("skill")
+    if not skill:
+        return f"Skill '{skill_id}' not found. Available: {registry.list_skill_ids()}"
 
+    # Check profile permissions
+    if not registry.is_skill_available(skill_id, context.profile_id):
+        return f"Skill '{skill_id}' is not available for this profile."
+
+    # Return instructions (they'll be in the tool result, visible to the model)
+    return f"# {skill.metadata.name}\n\n{skill.instructions}"
+```
+
+### 3.9. Skill Registry
+
+```python
+class SkillRegistry:
+    """Manages skill discovery and access."""
+
+    def __init__(self, db_context: DatabaseContext, builtin_path: Path | None = None):
+        self._db = db_context
+        self._builtin_path = builtin_path
+        self._cache: dict[str, Skill] = {}
+
+    async def refresh(self) -> None:
+        """Reload skills from all sources."""
+        self._cache.clear()
+
+        # Load built-in skills from filesystem
+        if self._builtin_path:
+            for skill in self._load_builtin_skills():
+                self._cache[skill.metadata.id] = skill
+
+        # Load skill notes from database
+        for skill in await self._load_skill_notes():
+            self._cache[skill.metadata.id] = skill  # Notes override built-in
+
+    async def _load_skill_notes(self) -> list[Skill]:
+        """Load all notes that are valid skills."""
+        all_notes = await self._db.notes.get_all_notes()
         skills = []
-        for note in notes:
+        for note in all_notes:
             if skill := self._parse_note_as_skill(note):
                 skills.append(skill)
         return skills
 
-    def _parse_note_as_skill(self, note: Note) -> Skill | None:
-        """Parse a note as a skill if it has valid frontmatter."""
-        try:
-            frontmatter, body = parse_frontmatter(note.content)
-            if "name" not in frontmatter or "description" not in frontmatter:
-                return None
+    def get_available_skills(self, profile_id: str) -> list[Skill]:
+        """Get skills available for a profile (respecting affinity rules)."""
+        return [
+            skill for skill in self._cache.values()
+            if self._is_available_for_profile(skill, profile_id)
+        ]
 
-            return Skill(
-                metadata=SkillMetadata(
-                    id=slugify(note.title),
-                    name=frontmatter["name"],
-                    description=frontmatter["description"],
-                    **{k: v for k, v in frontmatter.items()
-                       if k in SkillMetadata.__dataclass_fields__}
-                ),
-                instructions=body,
-                scripts={},
-                references={},
-                source_path=None,
-            )
-        except Exception:
-            return None
+    def _is_available_for_profile(self, skill: Skill, profile_id: str) -> bool:
+        """Check if skill is available for profile (notes-v2 rules)."""
+        meta = skill.metadata
+        # Exclusion takes precedence
+        if meta.exclude_from_prompt_profile_ids:
+            if profile_id in meta.exclude_from_prompt_profile_ids:
+                return False
+        # Profile-specific inclusion
+        if meta.proactive_for_profile_ids:
+            if profile_id in meta.proactive_for_profile_ids:
+                return True
+        # Default behavior
+        return meta.include_in_prompt_default
 ```
-
-This allows users to say:
-
-> "Create a skill for helping me write meeting notes. It should format notes with attendees, agenda,
-> decisions, and action items."
-
-The assistant creates a note with proper SKILL.md frontmatter, and it becomes available as a skill.
 
 ## 4. Example Skills for Family Assistant
 
@@ -520,106 +629,68 @@ Present research findings with:
 
 ### 6.1. Embedding-Based Routing
 
-Instead of using a lightweight LLM for preflight routing, we could use embeddings:
+**Status: Probably overkill for our use case.**
+
+Embedding-based routing would use vector similarity to match user requests to skill descriptions:
 
 ```python
 async def select_skills_by_embedding(
     user_message: str,
     skill_embeddings: dict[str, list[float]],
-    embedding_model: EmbeddingGenerator,
     threshold: float = 0.7,
 ) -> list[str]:
     """Select skills using semantic similarity."""
     query_embedding = await embedding_model.generate(user_message)
-
     scores = [
         (skill_id, cosine_similarity(query_embedding, skill_emb))
         for skill_id, skill_emb in skill_embeddings.items()
     ]
-
-    return [
-        skill_id for skill_id, score in sorted(scores, key=lambda x: -x[1])
-        if score >= threshold
-    ][:3]
+    return [sid for sid, score in sorted(scores, key=lambda x: -x[1]) if score >= threshold][:3]
 ```
 
-**Pros**:
+**Analysis:**
 
-- Very fast (~5ms vs ~100ms for LLM)
-- No external API calls
-- Deterministic
+- **When it makes sense**: 100+ skills, need sub-10ms routing, local-only operation
+- **Our situation**: Likely \<20 skills, 100ms preflight acceptable, LLM already available
+- **Verdict**: Skip for now. Lightweight LLM routing is simpler and more accurate for our scale.
+  Revisit if skill count grows significantly.
 
-**Cons**:
+### 6.2. Keyword/Rule-Based Fast Path
 
-- Less nuanced understanding of context
-- Can't reason about multi-step tasks
-- Requires embedding model
-
-**Recommendation**: Use embedding-based routing as a fast path, with LLM routing for ambiguous cases
-or when high accuracy is needed.
-
-### 6.2. Rule-Based Routing
-
-Simple keyword or pattern matching:
+For obvious cases, we could bypass the preflight LLM entirely:
 
 ```python
-SKILL_PATTERNS = {
-    "home-automation": ["light", "temperature", "sensor", "automation", "home assistant"],
-    "calendar-management": ["calendar", "meeting", "schedule", "appointment", "event"],
-}
+# Skills can declare trigger keywords in frontmatter
+# ---
+# trigger_keywords: ["light", "temperature", "thermostat"]
+# ---
 
-def select_skills_by_rules(user_message: str) -> list[str]:
+def fast_path_selection(user_message: str, skills: list[Skill]) -> list[Skill]:
+    """Quick keyword match before falling back to LLM preflight."""
     message_lower = user_message.lower()
-    return [
-        skill_id for skill_id, keywords in SKILL_PATTERNS.items()
-        if any(kw in message_lower for kw in keywords)
-    ]
+    matches = []
+    for skill in skills:
+        if keywords := skill.metadata.trigger_keywords:
+            if any(kw in message_lower for kw in keywords):
+                matches.append(skill)
+    return matches
 ```
 
-**Pros**:
+**Recommendation**: Could be useful as an optimization layer, but not required initially. The LLM
+preflight is cheap enough (~100ms, ~$0.0001) that the complexity isn't justified yet.
 
-- Extremely fast
-- No model dependencies
-- Fully transparent
+### 6.3. No Preflight (Agent-Only Selection)
 
-**Cons**:
+The simplest approach: include skill catalog in system prompt, let main model decide via tool call.
 
-- Brittle (missed synonyms, context)
-- Requires manual maintenance
-- No understanding of intent
+**This is actually our baseline**, not an alternative. The proposed architecture always includes the
+skill catalog, and preflight is an optional enhancement for reliability/speed.
 
-**Recommendation**: Use as a fast-path optimization for obvious cases, not as primary routing.
+**When to disable preflight:**
 
-### 6.3. No Preflight (Standard Approach)
-
-Load all skill metadata into the system prompt and let the main model decide:
-
-```python
-async def get_context_fragments(self) -> list[str]:
-    """Standard approach: return all skill metadata."""
-    fragments = ["## Available Skills\n"]
-    for skill in self._registry.list_skills():
-        fragments.append(
-            f"### {skill.metadata.name}\n"
-            f"{skill.metadata.description}\n"
-            f"To use this skill, I'll load its full instructions.\n"
-        )
-    return fragments
-```
-
-**Pros**:
-
-- Simpler architecture
-- Main model has full context for decisions
-- Works with any model
-
-**Cons**:
-
-- Higher token costs
-- Context pollution
-- Main model distraction
-
-**Recommendation**: Support this as a fallback when preflight routing is disabled or unavailable.
+- Untrusted profiles (no external LLM calls)
+- Very low latency requirements
+- Cost-sensitive deployments with many requests
 
 ## 7. Security Considerations
 
@@ -663,17 +734,32 @@ Mitigations:
 ## 8. Open Questions
 
 1. **Preflight model selection**: Is gemini-2.5-flash-lite the best choice? Need to benchmark
-   alternatives (claude-3-haiku, gpt-4o-mini, local models).
+   accuracy vs latency for alternatives (claude-3-haiku, gpt-4o-mini).
 
-2. **Caching strategy**: Should we cache routing decisions? For how long? Based on what key?
+2. **Skill caching**: Should we cache parsed skills? The registry currently loads all notes on
+   `refresh()`. Consider lazy loading or incremental updates for many skills.
 
-3. **Skill composition**: How should skills that depend on each other interact?
+3. **Skill creation UX**: How should the assistant create skill notes?
 
-4. **Feedback loop**: Should we track which skills are actually used vs. selected, to improve
-   routing over time?
+   - Direct note creation with frontmatter?
+   - Guided wizard-style conversation?
+   - Template-based with fill-in-the-blanks?
 
-5. **User control**: How much control should users have over skill activation? Always-on skills?
-   Skill preferences?
+4. **Skill testing**: How do users validate a skill works before relying on it?
+
+   - Dry-run mode?
+   - Example requests in frontmatter?
+   - Automated validation?
+
+5. **Portability**: Should we support importing/exporting skills in Agent Skills standard format?
+
+   - Export note → SKILL.md file
+   - Import SKILL.md file → note
+   - Sync with external skill repos?
+
+6. **Profile auto-detection**: Should preflight also suggest which profile to use, not just which
+   skills? (e.g., "This looks like an automation request, should I use automation_creation
+   profile?")
 
 ## 9. References
 
