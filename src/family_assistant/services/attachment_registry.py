@@ -466,8 +466,6 @@ class AttachmentRegistry:
         self,
         db_context: DatabaseContext,
         attachment_id: str,
-        conversation_id: str | None = None,
-        user_id: str | None = None,
     ) -> bool:
         """
         Delete an attachment (metadata and file).
@@ -475,8 +473,6 @@ class AttachmentRegistry:
         Args:
             db_context: Database context
             attachment_id: Attachment identifier
-            conversation_id: Optional conversation ID (for backward compatibility, unused)
-            user_id: Optional user ID (for backward compatibility, unused)
 
         Returns:
             True if deleted, False if not found

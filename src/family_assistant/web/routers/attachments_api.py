@@ -105,30 +105,28 @@ async def upload_attachment(
     "/{attachment_id}",
     response_class=FileResponse,
     summary="Serve attachment file",
-    description="Serve an attachment file by its ID with proper authorization checks.",
+    description="Serve an attachment file by its ID.",
 )
 async def serve_attachment(
     attachment_id: str,
     background_tasks: BackgroundTasks,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    _: Annotated[dict, Depends(get_current_user)],
     attachment_registry: Annotated[
         AttachmentRegistry, Depends(get_attachment_registry)
     ],
     db_context: Annotated[DatabaseContext, Depends(get_db)],
-    conversation_id: str | None = None,
 ) -> FileResponse:
     """
-    Serve an attachment file by its ID with proper authorization.
+    Serve an attachment file by its ID.
 
     Args:
         attachment_id: UUID of the attachment to serve
-        conversation_id: Optional conversation ID for access control
 
     Returns:
         FileResponse with the attachment file
 
     Raises:
-        HTTPException: If attachment not found, access denied, or invalid ID format
+        HTTPException: If attachment not found or invalid ID format
     """
     # Validate UUID format
     try:
@@ -138,14 +136,14 @@ async def serve_attachment(
             status_code=400, detail="Invalid attachment ID format"
         ) from e
 
-    # Check access via attachment registry (respects conversation scoping)
+    # Check access via attachment registry
     # Note: get_attachment() no longer updates access time synchronously
     attachment_metadata = await attachment_registry.get_attachment(
         db_context, attachment_id
     )
     if not attachment_metadata:
         raise HTTPException(
-            status_code=404, detail="Attachment not found or access denied"
+            status_code=404, detail="Attachment not found"
         )
 
     # Schedule access time update as background task (non-blocking)
@@ -181,25 +179,23 @@ async def serve_attachment(
 )
 async def delete_attachment(
     attachment_id: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    _: Annotated[dict, Depends(get_current_user)],
     attachment_registry: Annotated[
         AttachmentRegistry, Depends(get_attachment_registry)
     ],
     db_context: Annotated[DatabaseContext, Depends(get_db)],
-    conversation_id: str | None = None,
 ) -> dict[str, str]:
     """
     Delete an attachment file by its ID.
 
     Args:
         attachment_id: UUID of the attachment to delete
-        conversation_id: Optional conversation ID for access control
 
     Returns:
         Success message
 
     Raises:
-        HTTPException: If attachment not found, access denied, or invalid ID format
+        HTTPException: If attachment not found or invalid ID format
     """
     # Validate UUID format
     try:
@@ -209,14 +205,12 @@ async def delete_attachment(
             status_code=400, detail="Invalid attachment ID format"
         ) from e
 
-    # Use attachment registry for proper authorization and order of operations
+    # Use attachment registry for deletion
     # This handles both database deletion and file cleanup in the correct order
-    deleted = await attachment_registry.delete_attachment(
-        db_context, attachment_id, conversation_id, current_user["user_identifier"]
-    )
+    deleted = await attachment_registry.delete_attachment(db_context, attachment_id)
     if not deleted:
         raise HTTPException(
-            status_code=404, detail="Attachment not found or access denied"
+            status_code=404, detail="Attachment not found"
         )
 
     return {"message": f"Attachment {attachment_id} deleted successfully"}
