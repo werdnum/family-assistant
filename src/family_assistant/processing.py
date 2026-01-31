@@ -1839,7 +1839,7 @@ Call attach_to_response with your selected attachment IDs."""
             # Prepare user message content for history - store only text
             # Attachments are stored separately in the attachments column and
             # reconstructed into multimodal content when loading from history
-            user_content_for_history = "[User message content]"
+            user_content_for_history = ""
             if trigger_content_parts:
                 first_text_part = next(
                     (
@@ -1852,7 +1852,8 @@ Call attach_to_response with your selected attachment IDs."""
                 if first_text_part:
                     user_content_for_history = str(first_text_part)
                 elif trigger_content_parts[0].get("type") == "image_url":
-                    user_content_for_history = "[Image Attached]"
+                    # image_url type is used for images, video, audio, and PDFs via data URIs
+                    user_content_for_history = "[Media Attached]"
 
             # Generate a temporary interface_message_id if not provided
             # This ensures the just-saved message can be filtered out of history
@@ -2276,7 +2277,7 @@ Call attach_to_response with your selected attachment IDs."""
             # Prepare user message content for history - store only text
             # Attachments are stored separately in the attachments column and
             # reconstructed into multimodal content when loading from history
-            user_content_for_history = "[User message content]"
+            user_content_for_history = ""
             if trigger_content_parts:
                 first_text_part = next(
                     (
@@ -2289,7 +2290,8 @@ Call attach_to_response with your selected attachment IDs."""
                 if first_text_part:
                     user_content_for_history = str(first_text_part)
                 elif trigger_content_parts[0].get("type") == "image_url":
-                    user_content_for_history = "[Image Attached]"
+                    # image_url type is used for images, video, audio, and PDFs via data URIs
+                    user_content_for_history = "[Media Attached]"
 
             # Generate a temporary interface_message_id if not provided
             # This ensures the just-saved message can be filtered out of history
