@@ -1,6 +1,8 @@
 # Production Deployment Guide
 
-This guide covers deploying Family Assistant to a production Kubernetes environment.
+This guide covers deploying Family Assistant to a production Kubernetes environment. For other
+deployment options (like Docker Compose), see the
+[Operator Getting Started Guide](../operations/GETTING_STARTED.md).
 
 ## Prerequisites
 
@@ -364,6 +366,8 @@ After successful deployment:
 
 ## Related Documentation
 
+- [Operator Getting Started Guide](../operations/GETTING_STARTED.md) - Overview of deployment
+  options
 - [AGENTS.md](../../AGENTS.md) - Development setup and environment variables
 - [.devcontainer/k8s/PRODUCTION_CHECKLIST.md](../../.devcontainer/k8s/PRODUCTION_CHECKLIST.md) -
   Production readiness checklist

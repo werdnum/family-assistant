@@ -1,0 +1,41 @@
+services:
+  app:
+    image: ghcr.io/werdnum/family-assistant:latest
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://assistant:${POSTGRES_PASSWORD}@db:5432/assistant
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - ALLOWED_USER_IDS=${ALLOWED_USER_IDS}
+      - TIMEZONE=${TIMEZONE:-UTC}
+      - DOCUMENT_STORAGE_PATH=/data/documents
+      - ATTACHMENT_STORAGE_PATH=/data/attachments
+      - CHAT_ATTACHMENT_STORAGE_PATH=/data/chat_attachments
+    volumes:
+      - app_data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: pgvector/pgvector:pg16
+    restart: always
+    environment:
+      - POSTGRES_DB=assistant
+      - POSTGRES_USER=assistant
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U assistant -d assistant"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  app_data:
+  db_data:
