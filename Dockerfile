@@ -105,19 +105,19 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 ENV PATH="${UV_TOOL_BIN_DIR}:/home/appuser/.deno/bin:/usr/local/bin:${PATH}"
 
 # --- Install Python dependencies for contrib/scrape_mcp.py and Playwright browsers ---
-# Install playwright and markitdown packages first
-# Pin playwright to match pyproject.toml version to ensure browser compatibility
+# Install rebrowser-playwright and markitdown packages first
+# Pin rebrowser-playwright to match pyproject.toml version to ensure browser compatibility
 USER appuser
-RUN uv pip install "playwright==1.55.0" "markitdown[html]>=0.1.0"
+RUN uv pip install "rebrowser-playwright>=1.52.0" "markitdown[html]>=0.1.0"
 
 # Install Playwright browsers with system dependencies
 # Switch back to root for system dependencies installation
 USER root
-RUN playwright install-deps chromium
+RUN python -m rebrowser_playwright install-deps chromium
 
 # Switch to appuser for browser installation
 USER appuser
-RUN playwright install chromium && \
+RUN python -m rebrowser_playwright install chromium && \
     # Verify the browser was installed correctly - build should fail if this fails
     ls -la ${PLAYWRIGHT_BROWSERS_PATH}/
 

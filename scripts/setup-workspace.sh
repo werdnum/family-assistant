@@ -66,12 +66,12 @@ echo "🐚 Installing shellcheck..."
     echo "   You may need to run: ./scripts/install-shellcheck.sh manually"
 }
 
-# Step 7: Install Playwright browsers
-if grep -q "playwright" pyproject.toml 2>/dev/null; then
+# Step 7: Install Playwright browsers (using rebrowser-playwright)
+if grep -q "rebrowser-playwright" pyproject.toml 2>/dev/null; then
     echo "🎭 Installing Playwright browsers..."
-    .venv/bin/playwright install chromium || {
+    .venv/bin/python -m rebrowser_playwright install chromium || {
         echo "⚠️  Warning: Failed to install Playwright browsers"
-        echo "   You may need to run: .venv/bin/playwright install chromium manually"
+        echo "   You may need to run: .venv/bin/python -m rebrowser_playwright install chromium manually"
     }
 fi
 
