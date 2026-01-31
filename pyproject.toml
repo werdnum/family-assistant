@@ -113,6 +113,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "telegram-bot-api-mock[dev]",  # Mock server for Telegram bot testing
     "email-validator>=2.3.0",
     "fastapi-sso>=0.18.0",
     "pytest",
@@ -412,4 +413,4 @@ explicit = true
 
 [tool.uv.sources]
 torch = { index = "torch-cpu" }
-
+telegram-bot-api-mock = { git = "https://github.com/werdnum/telegram-bot-api-mock" }

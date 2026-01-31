@@ -1,4 +1,5 @@
 import contextlib
+import uuid
 from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, NamedTuple
 from unittest.mock import AsyncMock
@@ -74,7 +75,11 @@ async def telegram_handler_fixture(
     # 2. Prepare Configuration for Assistant
     # Use the test server URL for realistic HTTP-level testing
     test_profile_id = "default_assistant_test_profile"
-    telegram_token = "test_token_123:ABC"
+    # Token must be in format <numeric_id>:<secret> for telegram-bot-api-mock
+    # Generate a unique token for each test to isolate updates in the shared server
+    # bot_id must be a pure positive integer, so use uuid int and take last 9 digits
+    unique_bot_id = str(uuid.uuid4().int)[-9:]
+    telegram_token = f"{unique_bot_id}:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
 
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     test_config: dict[str, Any] = {  # noqa: ANN401

@@ -24,7 +24,8 @@ async def test_telegram_test_server_starts_and_stops(
     assert telegram_test_server_session.api_url.startswith("http://")
 
     # Verify we can get a client
-    token = "test_token_123"
+    # Token must be in format <numeric_id>:<secret> for telegram-bot-api-mock
+    token = "111111111:test_token_123"
     client = telegram_test_server_session.get_client(token)
     assert client is not None
     assert client.token == token
@@ -35,7 +36,8 @@ async def test_telegram_test_client_send_message(
     telegram_test_server_session: TelegramTestServer,
 ) -> None:
     """Test that the client can send messages to the test server."""
-    token = "test_bot_token_456"
+    # Token must be in format <numeric_id>:<secret> for telegram-bot-api-mock
+    token = "222222222:test_bot_token_456"
     client = telegram_test_server_session.get_client(
         token=token,
         user_id=123,
@@ -57,7 +59,8 @@ async def test_telegram_test_client_send_command(
     telegram_test_server_session: TelegramTestServer,
 ) -> None:
     """Test that the client can send commands to the test server."""
-    token = "test_bot_token_789"
+    # Token must be in format <numeric_id>:<secret> for telegram-bot-api-mock
+    token = "333333333:test_bot_token_789"
     client = telegram_test_server_session.get_client(
         token=token,
         user_id=789,

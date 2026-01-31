@@ -299,12 +299,14 @@ class GoogleGenAIClient(BaseLLMClient):
             {"text": "[System: File from previous tool response]"}
         ]
 
+        # Gemini supports images, videos, audio, and PDFs via types.Part.from_bytes()
         if attachment.content and (
             attachment.mime_type.startswith("image/")
+            or attachment.mime_type.startswith("video/")
+            or attachment.mime_type.startswith("audio/")
             or attachment.mime_type == "application/pdf"
         ):
-            # Use the recommended types.Part.from_bytes() method for both images and PDFs
-            # This is the cleanest approach that works for both content types
+            # Use the recommended types.Part.from_bytes() method for multimodal content
             media_part = types.Part.from_bytes(
                 data=attachment.content, mime_type=attachment.mime_type
             )
@@ -343,8 +345,11 @@ class GoogleGenAIClient(BaseLLMClient):
                                 effective_mime_type = guessed_mime_type
 
                         # Handle supported file types with content
+                        # Gemini supports images, videos, audio, and PDFs
                         if effective_mime_type and (
                             effective_mime_type.startswith("image/")
+                            or effective_mime_type.startswith("video/")
+                            or effective_mime_type.startswith("audio/")
                             or effective_mime_type == "application/pdf"
                         ):
                             media_part = types.Part.from_bytes(

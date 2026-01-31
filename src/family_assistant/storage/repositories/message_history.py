@@ -13,10 +13,13 @@ from sqlalchemy.sql import functions as func
 from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.messages import (
     AssistantMessage,
+    ContentPart,
     ErrorMessage,
+    ImageUrlContentPart,
     LLMMessage,
     MessageWithMetadata,
     SystemMessage,
+    TextContentPart,
     ToolMessage,
     UserMessage,
 )
@@ -240,6 +243,7 @@ class MessageHistoryRepository(BaseRepository):
         max_age: timedelta | None = None,
         processing_profile_id: str | None = None,
         subconversation_id: str | None = None,
+        current_time: datetime | None = None,
     ) -> list[LLMMessage]:
         """
         Retrieves recent message history for a conversation.
@@ -251,14 +255,13 @@ class MessageHistoryRepository(BaseRepository):
             max_age: Maximum age of messages to return
             processing_profile_id: Filter by processing profile
             subconversation_id: Filter by subconversation ID
+            current_time: Current time for calculating cutoff (defaults to now)
 
         Returns:
             List of typed LLMMessage objects in chronological order
         """
-        if max_age:
-            cutoff = datetime.now(UTC) - max_age
-        else:
-            cutoff = datetime.now(UTC) - timedelta(hours=24)
+        now = current_time or datetime.now(UTC)
+        cutoff = now - max_age if max_age else now - timedelta(hours=24)
 
         conditions = [
             message_history_table.c.interface_type == interface_type,
@@ -1034,9 +1037,43 @@ class MessageHistoryRepository(BaseRepository):
         role = msg.get("role")
 
         if role == "user":
-            return UserMessage(
-                content=msg.get("content") or "",
-            )
+            text_content_str = msg.get("content") or ""
+            attachments = msg.get("attachments")
+
+            # Reconstruct multimodal content from attachments if present
+            # Attachments with content_url that are images/video/audio/PDF should be
+            # included as content parts for the LLM
+            if attachments and isinstance(attachments, list):
+                multimodal_attachments = [
+                    att
+                    for att in attachments
+                    if att.get("content_url")
+                    and (
+                        att.get("type") in {"image", "video", "audio", "document"}
+                        or att.get("content_type") == "application/pdf"
+                        or att.get("mime_type") == "application/pdf"
+                    )
+                ]
+
+                if multimodal_attachments:
+                    # Build multimodal content: text first, then attachment URLs
+                    content_parts: list[ContentPart] = []
+                    if text_content_str:
+                        content_parts.append(
+                            TextContentPart(type="text", text=text_content_str)
+                        )
+                    for att in multimodal_attachments:
+                        content_parts.append(
+                            ImageUrlContentPart(
+                                type="image_url",
+                                image_url={"url": att["content_url"]},
+                            )
+                        )
+
+                    return UserMessage(content=content_parts)
+
+            # No multimodal attachments - return simple text content
+            return UserMessage(content=text_content_str)
         elif role == "assistant":
             return AssistantMessage(
                 content=msg.get("content"),
