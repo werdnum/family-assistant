@@ -53,7 +53,7 @@ from .llm.messages import (
 )
 
 # Import DatabaseContext for type hinting
-from .storage.context import DatabaseContext, get_db_context
+from .storage.context import DatabaseContext
 
 # Import ToolsProvider interface and context
 from .tools import ToolExecutionContext, ToolNotFoundError, ToolsProvider
@@ -982,7 +982,11 @@ class ProcessingService:
 
                 # Auto-convert large text result to attachment
                 new_content, auto_att_id = await self._handle_large_tool_result(
-                    content_for_stream, function_name, conversation_id, call_id
+                    db_context,
+                    content_for_stream,
+                    function_name,
+                    conversation_id,
+                    call_id,
                 )
                 if auto_att_id:
                     content_for_stream = new_content
@@ -1097,7 +1101,11 @@ class ProcessingService:
 
                 # Auto-convert large text result to attachment
                 new_content, auto_att_id = await self._handle_large_tool_result(
-                    content_for_stream, function_name, conversation_id, call_id
+                    db_context,
+                    content_for_stream,
+                    function_name,
+                    conversation_id,
+                    call_id,
                 )
                 if auto_att_id:
                     content_for_stream = new_content
@@ -2309,25 +2317,24 @@ Call attach_to_response with your selected attachment IDs."""
             if actual_interface_message_id is None:
                 actual_interface_message_id = f"temp_{turn_id}"
 
-            # Save user message in its own transaction to avoid long-running transactions
-            async with get_db_context(engine=db_context.engine) as user_msg_db:
-                saved_user_msg_record = await user_msg_db.message_history.add(
-                    interface_type=interface_type,
-                    conversation_id=conversation_id,
-                    interface_message_id=actual_interface_message_id,
-                    turn_id=turn_id,
-                    thread_root_id=thread_root_id_for_turn,
-                    timestamp=user_message_timestamp,
-                    role="user",
-                    content=user_content_for_history,
-                    tool_calls=None,
-                    reasoning_info=None,
-                    error_traceback=None,
-                    tool_call_id=None,
-                    processing_profile_id=self.service_config.id,
-                    attachments=trigger_attachments,
-                    user_id=user_id,  # Pass user_id
-                )
+            # Save user message
+            saved_user_msg_record = await db_context.message_history.add(
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                interface_message_id=actual_interface_message_id,
+                turn_id=turn_id,
+                thread_root_id=thread_root_id_for_turn,
+                timestamp=user_message_timestamp,
+                role="user",
+                content=user_content_for_history,
+                tool_calls=None,
+                reasoning_info=None,
+                error_traceback=None,
+                tool_call_id=None,
+                processing_profile_id=self.service_config.id,
+                attachments=trigger_attachments,
+                user_id=user_id,  # Pass user_id
+            )
 
             if saved_user_msg_record and not thread_root_id_for_turn:
                 thread_root_id_for_turn = saved_user_msg_record.get("internal_id")
@@ -2496,9 +2503,8 @@ Call attach_to_response with your selected attachment IDs."""
                     # Remove fields that shouldn't be saved to database
                     msg_to_save.pop("_attachment", None)  # Remove raw attachment data
 
-                    # Save each message in its own transaction to avoid PostgreSQL transaction issues
-                    async with get_db_context(engine=db_context.engine) as msg_db:
-                        await msg_db.message_history.add(**msg_to_save)
+                    # Save each message
+                    await db_context.message_history.add(**msg_to_save)
 
         except Exception as e:
             logger.error(f"Error in streaming chat interaction: {e}", exc_info=True)
@@ -2586,6 +2592,7 @@ Call attach_to_response with your selected attachment IDs."""
 
     async def _handle_large_tool_result(
         self,
+        db_context: DatabaseContext,
         content: str,
         tool_name: str,
         conversation_id: str,
@@ -2632,6 +2639,7 @@ Call attach_to_response with your selected attachment IDs."""
                         "auto_display": True,
                         "large_result_auto_convert": True,
                     },
+                    db_context=db_context,
                 )
             )
 
