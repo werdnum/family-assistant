@@ -95,16 +95,8 @@ if [ -f "frontend/package.json" ] && [ ! -d "frontend/node_modules" ]; then
     npm install --prefix frontend
 fi
 
-# Update Claude plugin marketplaces
+# Update Claude plugin marketplaces (fetches latest from GitHub)
 echo "🔄 Updating Claude plugin marketplaces..."
-# Pull latest changes from local plugin marketplace clone
-PLUGINS_DIR="$HOME/werdnum-plugins"
-if [ -d "$PLUGINS_DIR/.git" ]; then
-    # GIT_TERMINAL_PROMPT=0 prevents hanging if credentials are needed
-    (cd "$PLUGINS_DIR" && GIT_TERMINAL_PROMPT=0 git pull --quiet 2>/dev/null) || {
-        echo "⚠️  Warning: Failed to pull plugin marketplace updates"
-    }
-fi
 /home/claude/.npm-global/bin/claude plugin marketplace update >/dev/null 2>&1 || {
     echo "⚠️  Warning: Failed to update plugin marketplaces"
 }
