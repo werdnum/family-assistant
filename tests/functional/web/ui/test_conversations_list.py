@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
 from family_assistant.storage.context import get_db_context
-from tests.functional.web.ui.conftest import wait_for_condition
+from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 
 
