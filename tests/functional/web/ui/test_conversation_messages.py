@@ -42,36 +42,35 @@ async def test_get_conversation_messages_with_data(
 
     conv_id = "test_conv_messages"
 
-    # Configure mock LLM to simulate a tool call flow using search_documents
-    # (which is available in the web_only_assistant fixture)
+    # Configure mock LLM to simulate a tool call flow
     call_count = 0
     tool_call_id = "call_1"
 
-    def search_flow(kwargs: dict) -> LLMOutput:
+    def weather_flow(kwargs: dict) -> LLMOutput:
         nonlocal call_count
         call_count += 1
 
         if call_count == 1:
             # First call: respond with tool call
             return LLMOutput(
-                content="I'll search for documents about recipes.",
+                content="I'll check the weather for you.",
                 tool_calls=[
                     ToolCallItem(
                         id=tool_call_id,
                         type="function",
                         function=ToolCallFunction(
-                            name="search_documents",
-                            arguments=json.dumps({"query": "recipes"}),
+                            name="get_weather",
+                            arguments=json.dumps({"location": "current"}),
                         ),
                     )
                 ],
             )
         else:
             # Second call: respond with final answer
-            return LLMOutput(content="I found some great recipe documents for you.")
+            return LLMOutput(content="The weather is sunny and 72°F.")
 
     mock_llm_client.rules = [
-        (lambda kwargs: True, search_flow),
+        (lambda kwargs: True, weather_flow),
     ]
 
     # Create conversation via API
@@ -84,13 +83,13 @@ async def test_get_conversation_messages_with_data(
         response = await client.post(
             "/api/v1/chat/send_message",
             json={
-                "prompt": "Find me some recipe documents",
+                "prompt": "What is the weather like?",
                 "conversation_id": conv_id,
                 "interface_type": "web",
             },
         )
         assert response.status_code == 200
-        assert "recipe documents" in response.json()["reply"]
+        assert "weather is sunny and 72°F" in response.json()["reply"]
 
         # Get conversation messages via API (use retry for SQLite transaction visibility)
         async def get_messages() -> dict | None:
@@ -131,9 +130,9 @@ async def test_get_conversation_messages_with_data(
         assert len(tool_msgs) >= 1
 
         # Check content
-        assert any("Find me some recipe documents" in m["content"] for m in user_msgs)
-        assert any("recipe documents" in m["content"] for m in assistant_msgs)
-        assert any("search_documents" in str(m["tool_calls"]) for m in tool_call_msgs)
+        assert any("What is the weather like?" in m["content"] for m in user_msgs)
+        assert any("weather is sunny and 72°F" in m["content"] for m in assistant_msgs)
+        assert any("get_weather" in str(m["tool_calls"]) for m in tool_call_msgs)
 
 
 @pytest.mark.asyncio
