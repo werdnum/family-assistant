@@ -81,8 +81,8 @@ uv sync --extra dev --extra pgserver
 # Install frontend dependencies
 npm ci --prefix frontend
 
-# Install Playwright browsers
-.venv/bin/playwright install chromium
+# Install Playwright browsers (using rebrowser-playwright)
+.venv/bin/python -m rebrowser_playwright install chromium
 
 # Optional: Install local embedding model support (adds ~450MB of dependencies)
 # Only needed if you want to use local sentence transformer models instead of cloud APIs

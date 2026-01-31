@@ -485,7 +485,7 @@ class PlaywrightScraper:
                     ) or "Browser process exited" in str(e):
                         logger.error(
                             "Playwright browser not found or failed to launch. "
-                            "Please run: python -m playwright install --with-deps chromium"
+                            "Please run: python -m rebrowser_playwright install --with-deps chromium"
                         )
                         self.playwright_available = False
                     return None, None, None
@@ -573,7 +573,7 @@ async def check_playwright_is_functional() -> bool:
         if "Executable doesn't exist" in str(e) or "Browser process exited" in str(e):
             logger.warning(
                 "Playwright browser executable not found or failed to launch. "
-                "Run: python -m playwright install --with-deps chromium. "
+                "Run: python -m rebrowser_playwright install --with-deps chromium. "
                 "Scraping will fall back to basic HTTP GET for HTML if Playwright is needed."
             )
         else:
