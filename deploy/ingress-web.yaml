@@ -12,10 +12,10 @@ metadata:
 spec:
   tls:
     - hosts:
-        - assistant.alexsmith.dev
+        - assistant.example.com
       secretName: family-assistant-web-tls # cert-manager will create this secret
   rules:
-    - host: assistant.alexsmith.dev
+    - host: assistant.example.com
       http:
         paths:
           - path: / # Target all paths for the web UI

@@ -111,7 +111,7 @@
       "mcp__serena__insert_before_symbol",
       "mcp__playwright__browser_resize",
       "mcp__playwright__browser_evaluate",
-      "WebFetch(domain:bin.alexsmith.dev)",
+      "WebFetch(domain:bin.example-user.dev)",
       "Bash(llm:*)",
       "WebSearch",
       "Bash(gh run view:*)",

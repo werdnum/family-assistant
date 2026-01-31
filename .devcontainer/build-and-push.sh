@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Configuration
-REGISTRY="containers.alexsmith.dev"
+REGISTRY="your-registry.example.com"
 IMAGE_NAME="family-assistant-devcontainer"
 # Default to timestamp format if no tag provided
 DEFAULT_TAG=$(date +%Y%m%d_%H%M%S)

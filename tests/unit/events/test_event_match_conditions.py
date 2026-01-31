@@ -54,9 +54,7 @@ def test_check_match_conditions() -> None:
 
     # Test exact matches
     assert (
-        events_module._check_match_conditions(
-            event_data, {"entity_id": "person.alex"}
-        )
+        events_module._check_match_conditions(event_data, {"entity_id": "person.alex"})
         is True
     )
     assert (

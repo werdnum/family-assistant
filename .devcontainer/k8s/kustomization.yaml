@@ -9,5 +9,5 @@ resources:
 namespace: family-assistant-dev
 # Optional: Set the image dynamically
 images:
-  - name: containers.alexsmith.dev/family-assistant-devcontainer
+  - name: your-registry.example.com/family-assistant-devcontainer
     newTag: latest

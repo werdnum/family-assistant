@@ -13,15 +13,19 @@ def minimal_anonymize(data: Any) -> Any:  # noqa: ANN401  # Handles arbitrary JS
         data = re.sub(r"[\w\.-]+@[\w\.-]+\.\w+", "user@example.com", data)
 
         # Replace specific personal names with generic ones
+        # NOTE: Add any real names that appear in production data here
+        # These are example replacements - update with actual names if different
         replacements = {
-            # Add actual names from the data if needed
+            # Person names (use your actual names if different)
             "Alex": "Alex",
             "Taylor": "Taylor",
             "Smith": "Smith",
-            # Location anonymization
-            "Redmond": "Anytown",
-            "Seattle": "BigCity",
-            "Washington": "State",
+            "Avery": "Avery",
+            "Luna": "Luna",
+            # Location anonymization (use your actual locations if different)
+            "Sampletown": "Sampletown",
+            "Northtown": "Northtown",
+            "Example": "Example",
         }
 
         for old, new in replacements.items():

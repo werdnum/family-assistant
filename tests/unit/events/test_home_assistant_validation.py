@@ -64,9 +64,7 @@ class TestHomeAssistantValidation:
         self, ha_source: HomeAssistantSource
     ) -> None:
         """Test validation catches common mistake of shortened person entity."""
-        result = await ha_source.validate_match_conditions({
-            "entity_id": "person.alex"
-        })
+        result = await ha_source.validate_match_conditions({"entity_id": "person.alex"})
         assert result.valid is False
         assert len(result.errors) == 1
         error = result.errors[0]

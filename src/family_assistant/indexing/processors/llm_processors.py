@@ -227,7 +227,7 @@ The summary should capture the main essence of the document.
 Examples of good summaries:
 - "A receipt for in flight wifi from a united airlines flight 870 from Sydney to San Francisco on 12 May 2025"
 - "a pharmacy receipt from Sampletown pharmacy on 8 November 2024 for Espomeprazole 20mg"
-- "a confirmation from National Australia Bank (NAB) that the interest rate on a mortgage of 25 Example Ave Sampletown has changed. It's dated 15 January 2024"
+- "a confirmation from National Australia Bank (NAB) that the interest rate on a mortgage of 123 Example St Sampletown has changed. It's dated 15 January 2024"
 
 Please use the 'extract_summary' tool to provide your summary based on the document content.
 """

@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: family-assistant
-          image: containers.alexsmith.dev/family-assistant:latest # Your specified image
+          image: your-registry.example.com/family-assistant:latest # Your specified image
           imagePullPolicy: Always # Or IfNotPresent, depending on your tagging strategy
           ports:
             - containerPort: 8000 # Port exposed by the application

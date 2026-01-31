@@ -175,15 +175,14 @@ You can ask the assistant a wide variety of things:
     lights, switches, sensors, etc., as they are defined in your Home Assistant configuration.
 
 - **Monitor Events and Get Automated Notifications:** \*The assistant can now watch for specific
-  events and notify you when they happen: \*"Let me know when Alex arrives home" \*"Alert me if
-  the garage door opens after 10pm" \*"Watch for when the washing machine finishes" \*"Notify me
-  when any new documents are indexed" \*You can manage these automations: \*"List all my
-  automations" or "List all my event automations" \*"Disable the garage door alert" \*"Delete the
-  washing machine automation" \*Test conditions before creating automations: \*"Show me recent
-  events from home assistant" \*"Test if person.alex state changes to 'Home' would have triggered
-  in the last day" \*You can also manage automations through the Web UI: navigate to the Automations
-  section to view all automations, see their execution history, and modify their conditions or
-  scripts
+  events and notify you when they happen: \*"Let me know when Alex arrives home" \*"Alert me if the
+  garage door opens after 10pm" \*"Watch for when the washing machine finishes" \*"Notify me when
+  any new documents are indexed" \*You can manage these automations: \*"List all my automations" or
+  "List all my event automations" \*"Disable the garage door alert" \*"Delete the washing machine
+  automation" \*Test conditions before creating automations: \*"Show me recent events from home
+  assistant" \*"Test if person.alex state changes to 'Home' would have triggered in the last day"
+  \*You can also manage automations through the Web UI: navigate to the Automations section to view
+  all automations, see their execution history, and modify their conditions or scripts
 
 - **Automated Script Actions for Events:** \*For simple, deterministic actions, you can now create
   script-based event automations that run instantly without waking the assistant: \*"Run a script to
@@ -412,13 +411,13 @@ various tasks with dark mode support and mobile optimization.
 - \*\*Setting Up Event Automations:\*\*You can create event automations either by asking the
   assistant or through the Web UI. When creating event automations: \*Start by exploring what events
   are available: "Show me recent home assistant events" \*Test your conditions before creating the
-  automation: "Test if entity_id equals 'person.alex' would match recent events" \*Be specific
-  with field names - use the exact names you see in the event data \*You can filter by event type:
-  "Test if event_type equals 'state_changed' and entity_id equals 'person.alex'" \*For complex
-  conditions (like detecting zone entry/exit or temperature thresholds), use condition scripts:
-  \*"Create an automation that detects when I arrive home" (state changes from not 'home' to 'home')
-  \*"Alert me when temperature rises above 25°C" (numeric threshold checking) \*"Watch for any
-  motion sensor that turns on" (pattern matching with entity_id) \*Choose between two action types:
+  automation: "Test if entity_id equals 'person.alex' would match recent events" \*Be specific with
+  field names - use the exact names you see in the event data \*You can filter by event type: "Test
+  if event_type equals 'state_changed' and entity_id equals 'person.alex'" \*For complex conditions
+  (like detecting zone entry/exit or temperature thresholds), use condition scripts: \*"Create an
+  automation that detects when I arrive home" (state changes from not 'home' to 'home') \*"Alert me
+  when temperature rises above 25°C" (numeric threshold checking) \*"Watch for any motion sensor
+  that turns on" (pattern matching with entity_id) \*Choose between two action types:
 
   - **wake_llm**: Wakes the assistant to handle complex situations requiring reasoning - **script**:
     Runs automated Starlark code for simple, deterministic tasks \*Scripts can also use wake_llm()
