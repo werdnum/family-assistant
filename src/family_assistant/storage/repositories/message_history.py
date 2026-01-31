@@ -193,20 +193,16 @@ class MessageHistoryRepository(BaseRepository):
 
         try:
             # Use RETURNING to get the generated internal_id
-            if self._db.engine.dialect.name == "postgresql":
-                stmt = (
-                    insert(message_history_table)
-                    .values(**values)
-                    .returning(message_history_table.c.internal_id)
-                )
-                result = await self._db.execute_with_retry(stmt)
-                row = result.one()  # type: ignore[attr-defined]
-                internal_id = row[0]
-            else:
-                # SQLite: Insert and then get lastrowid
-                stmt = insert(message_history_table).values(**values)
-                result = await self._db.execute_with_retry(stmt)
-                internal_id = result.lastrowid  # type: ignore[attr-defined]
+            # Note: Both PostgreSQL and SQLite 3.35+ support RETURNING clause
+            # Using RETURNING instead of lastrowid is more reliable with async connections
+            stmt = (
+                insert(message_history_table)
+                .values(**values)
+                .returning(message_history_table.c.internal_id)
+            )
+            result = await self._db.execute_with_retry(stmt)
+            row = result.one()  # type: ignore[attr-defined]
+            internal_id = row[0]
 
             self._logger.info(
                 f"Added message to history: role={role}, "

@@ -13,16 +13,13 @@ from datetime import UTC, datetime, timedelta
 from typing import TypeVar
 
 import httpx
-import sqlalchemy as sa  # Import sqlalchemy
+import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.sql.functions import (
     count as sql_count,
-)  # Alias to avoid confusion with len()
+)
 
-# Use absolute imports if DatabaseContext is defined elsewhere,
-# otherwise adjust as needed. Assuming it's accessible.
-# Adjust the import path based on your project structure if needed
 from family_assistant.storage.context import get_db_context
 from family_assistant.storage.tasks import tasks_table
 
