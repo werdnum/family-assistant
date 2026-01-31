@@ -148,10 +148,24 @@ async def test_get_conversation_messages_cross_interface_retrieval(
         )
         assert response.status_code == 200
 
-        # Get messages via API
-        response = await client.get(f"/api/v1/chat/conversations/{conv_id}/messages")
-        assert response.status_code == 200
-        data = response.json()
+        # Get messages via API with retry for eventual consistency
+        result_data: dict = {}
+
+        async def get_all_four_messages() -> bool:
+            nonlocal result_data
+            resp = await client.get(f"/api/v1/chat/conversations/{conv_id}/messages")
+            if resp.status_code == 200:
+                result_data = resp.json()
+                if len(result_data.get("messages", [])) == 4:
+                    return True
+            return False
+
+        await wait_for_condition(
+            get_all_four_messages,
+            timeout_seconds=30.0,
+            error_message="expected 4 messages (2 user + 2 assistant) not visible",
+        )
+        data = result_data
 
         # Should have 4 messages (2 user + 2 assistant)
         assert len(data["messages"]) == 4
@@ -200,6 +214,27 @@ async def test_get_conversation_messages_pagination_default(
             assert response.status_code == 200, f"Failed to send message {i}"
 
         # Get messages via API - default limit is 50
+        # Wait for all 100 messages to be visible before checking pagination
+        result_data: dict = {}
+
+        async def get_all_hundred_messages() -> bool:
+            nonlocal result_data
+            resp = await client.get(
+                f"/api/v1/chat/conversations/{conv_id}/messages?limit=0"
+            )
+            if resp.status_code == 200:
+                result_data = resp.json()
+                if result_data.get("total_messages", 0) == 100:
+                    return True
+            return False
+
+        await wait_for_condition(
+            get_all_hundred_messages,
+            timeout_seconds=30.0,
+            error_message="expected 100 total messages not visible",
+        )
+
+        # Now test the default pagination behavior
         response = await client.get(f"/api/v1/chat/conversations/{conv_id}/messages")
         assert response.status_code == 200
         data = response.json()
@@ -253,12 +288,26 @@ async def test_get_conversation_messages_pagination_before(
             )
             assert response.status_code == 200, f"Failed to send message {i}"
 
-        # First get all messages to find a timestamp in the middle
-        response = await client.get(
-            f"/api/v1/chat/conversations/{conv_id}/messages?limit=0"
+        # Wait for all 20 messages to be visible
+        result_data: dict = {}
+
+        async def get_all_twenty_messages() -> bool:
+            nonlocal result_data
+            resp = await client.get(
+                f"/api/v1/chat/conversations/{conv_id}/messages?limit=0"
+            )
+            if resp.status_code == 200:
+                result_data = resp.json()
+                if len(result_data.get("messages", [])) == 20:
+                    return True
+            return False
+
+        await wait_for_condition(
+            get_all_twenty_messages,
+            timeout_seconds=30.0,
+            error_message="expected 20 messages not visible",
         )
-        assert response.status_code == 200
-        all_messages = response.json()["messages"]
+        all_messages = result_data["messages"]
         assert len(all_messages) == 20
 
         # Use the timestamp of message at index 14 (15th message) as the "before" cutoff
@@ -319,12 +368,26 @@ async def test_get_conversation_messages_pagination_after(
             )
             assert response.status_code == 200, f"Failed to send message {i}"
 
-        # First get all messages to find a timestamp in the middle
-        response = await client.get(
-            f"/api/v1/chat/conversations/{conv_id}/messages?limit=0"
+        # Wait for all 20 messages to be visible
+        result_data: dict = {}
+
+        async def get_all_twenty_messages() -> bool:
+            nonlocal result_data
+            resp = await client.get(
+                f"/api/v1/chat/conversations/{conv_id}/messages?limit=0"
+            )
+            if resp.status_code == 200:
+                result_data = resp.json()
+                if len(result_data.get("messages", [])) == 20:
+                    return True
+            return False
+
+        await wait_for_condition(
+            get_all_twenty_messages,
+            timeout_seconds=30.0,
+            error_message="expected 20 messages not visible",
         )
-        assert response.status_code == 200
-        all_messages = response.json()["messages"]
+        all_messages = result_data["messages"]
         assert len(all_messages) == 20
 
         # Use the timestamp of message at index 5 (6th message) as the "after" cutoff
@@ -386,12 +449,26 @@ async def test_get_conversation_messages_pagination_limit_zero(
             )
             assert response.status_code == 200, f"Failed to send message {i}"
 
-        # Get all messages with limit=0
-        response = await client.get(
-            f"/api/v1/chat/conversations/{conv_id}/messages?limit=0"
+        # Wait for all 10 messages to be visible
+        result_data: dict = {}
+
+        async def get_all_ten_messages() -> bool:
+            nonlocal result_data
+            resp = await client.get(
+                f"/api/v1/chat/conversations/{conv_id}/messages?limit=0"
+            )
+            if resp.status_code == 200:
+                result_data = resp.json()
+                if len(result_data.get("messages", [])) == 10:
+                    return True
+            return False
+
+        await wait_for_condition(
+            get_all_ten_messages,
+            timeout_seconds=30.0,
+            error_message="expected 10 messages not visible",
         )
-        assert response.status_code == 200
-        data = response.json()
+        data = result_data
 
         # Should get all 10 messages (5 user + 5 assistant)
         assert len(data["messages"]) == 10
