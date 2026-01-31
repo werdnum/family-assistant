@@ -254,6 +254,10 @@ default_profile_settings:
       - "download_media" # Download video/audio from URLs using yt-dlp
       # Image manipulation tools
       - "highlight_image" # Highlight or annotate areas in images
+      # AI Worker tools (for delegating complex coding tasks to isolated agents)
+      - "spawn_worker" # Spawn an AI coding agent for complex tasks
+      - "read_task_result" # Read results from a completed worker task
+      - "list_worker_tasks" # List worker tasks for a conversation
     enable_mcp_server_ids: # Explicitly define MCP servers for the default profile
       - "time"
       - "brave"
@@ -369,6 +373,10 @@ service_profiles:
         - "list_home_assistant_entities"
         - "render_home_assistant_template"
         - "execute_script"
+        # AI Worker tools (for complex data processing tasks)
+        - "spawn_worker"
+        - "read_task_result"
+        - "list_worker_tasks"
       enable_mcp_server_ids:
         - "python"
         - "homeassistant"
@@ -718,6 +726,10 @@ service_profiles:
         - "schedule_action"
         - "schedule_recurring_action"
         - "list_pending_callbacks"
+        # AI Worker tools (for complex automation scripting tasks)
+        - "spawn_worker"
+        - "read_task_result"
+        - "list_worker_tasks"
       enable_mcp_server_ids:
         - "homeassistant" # For validating entity IDs and states
       confirm_tools: [] # No confirmation needed for automation creation workflows
