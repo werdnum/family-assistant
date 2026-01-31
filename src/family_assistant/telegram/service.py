@@ -74,7 +74,7 @@ class TelegramService:
             # Derive base_file_url from base_url for file downloads
             # If base_url is "http://localhost:9000/bot", base_file_url should be
             # "http://localhost:9000/file/bot" to match Telegram's URL structure
-            base_url = app_config.telegram_api_base_url
+            base_url = app_config.telegram_api_base_url.rstrip("/")
             if base_url.endswith("/bot"):
                 base_file_url = base_url[:-4] + "/file/bot"
                 builder = builder.base_file_url(base_file_url)
