@@ -214,17 +214,17 @@ exemptions:
 # In tests/helpers.py
 # ast-grep-ignore-block: no-asyncio-sleep-in-tests - Helper implements polling with sleep
 async def wait_for_condition(
-    condition: Callable[[], bool],
-    timeout_seconds: float = 5.0,
-    poll_interval_seconds: float = 0.1,
-) -> None:
+    condition: Callable[[], T | Awaitable[T]],
+    timeout: float = 30.0,
+    interval: float = 0.1,
+    description: str = "condition",
+) -> T:
     """Poll until condition is true or timeout."""
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
-        if condition():
-            return
-        await asyncio.sleep(poll_interval_seconds)  # Legitimate use
-    raise TimeoutError("Condition not met")
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        # ... implementation ...
+        await asyncio.sleep(interval)  # Legitimate use
+    raise TimeoutError(f"Timed out waiting for {description}")
 # ast-grep-ignore-end
 ```
 
