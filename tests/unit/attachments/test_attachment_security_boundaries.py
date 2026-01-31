@@ -14,10 +14,10 @@ class TestAttachmentSecurityBoundaries:
     """Test suite for attachment security boundaries and conversation scoping."""
 
     @pytest.mark.asyncio
-    async def test_cross_conversation_access_denied(
+    async def test_cross_conversation_access_allowed(
         self, db_engine: AsyncEngine
     ) -> None:
-        """Test that attachments cannot be accessed from different conversations."""
+        """Test that attachments CAN be accessed from different conversations if ID is known."""
 
         with tempfile.TemporaryDirectory() as temp_dir:
             attachment_registry = AttachmentRegistry(
@@ -27,7 +27,6 @@ class TestAttachmentSecurityBoundaries:
             # Create attachment in conversation A
             test_content = b"test content for conversation A"
             conversation_a_id = "conversation_a"
-            conversation_b_id = "conversation_b"
 
             async with DatabaseContext(engine=db_engine) as db_context:
                 # Register attachment in conversation A
@@ -42,26 +41,19 @@ class TestAttachmentSecurityBoundaries:
                 )
                 attachment_id = attachment_record.attachment_id
 
-                # Verify attachment exists and is accessible in conversation A
-                retrieved_from_a = await attachment_registry.get_attachment(
+                # Verify attachment exists and is accessible regardless of context
+                # Having the ID is enough.
+                retrieved = await attachment_registry.get_attachment(
                     db_context, attachment_id
                 )
-                assert retrieved_from_a is not None
-                assert retrieved_from_a.conversation_id == conversation_a_id
+                assert retrieved is not None
+                assert retrieved.conversation_id == conversation_a_id
 
-                # Try to access attachment from conversation B by simulating different conversation context
-                # This should still return the attachment metadata but security should be enforced at tool level
-                retrieved_from_b = await attachment_registry.get_attachment(
+                # Content should also be accessible
+                content = await attachment_registry.get_attachment_content(
                     db_context, attachment_id
                 )
-                assert retrieved_from_b is not None
-                assert (
-                    retrieved_from_b.conversation_id == conversation_a_id
-                )  # Should show original conversation
-
-                # Security check: Attachment should not be accessible from different conversation
-                # This is enforced at the tool level (e.g., in delegate_to_service_tool)
-                assert retrieved_from_b.conversation_id != conversation_b_id
+                assert content == test_content
 
     @pytest.mark.asyncio
     async def test_attachment_persistence_throughout_conversation(

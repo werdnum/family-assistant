@@ -304,18 +304,6 @@ async def send_message_to_user_tool(
                         logger.warning(f"Attachment {actual_attachment_id} not found")
                         continue
 
-                    # Check conversation scoping for cross-user sending
-                    # For send_message_to_user, we allow attachments from the current conversation
-                    # to be sent to other users (cross-conversation sharing is legitimate)
-                    # Only allow attachments that belong to the current conversation
-                    if (
-                        exec_context.conversation_id
-                        and attachment.conversation_id != exec_context.conversation_id
-                    ):
-                        logger.warning(
-                            f"Attachment {actual_attachment_id} from conversation {attachment.conversation_id} not accessible from conversation {exec_context.conversation_id}. Only attachments from current conversation can be sent to other users."
-                        )
-                        continue
 
                     # Always append the string ID to the validated list
                     validated_attachment_ids.append(actual_attachment_id)
@@ -437,16 +425,6 @@ async def get_attachment_info_tool(
             logger.warning(f"Attachment {attachment_id} not found")
             return f"Error: Attachment with ID {attachment_id} not found."
 
-        # Check conversation scoping - only allow access to attachments from current conversation
-        if (
-            exec_context.conversation_id
-            and attachment.conversation_id != exec_context.conversation_id
-        ):
-            logger.warning(
-                f"Access denied: attachment {attachment_id} belongs to conversation {attachment.conversation_id}, "
-                f"but current conversation is {exec_context.conversation_id}"
-            )
-            return f"Error: Access denied. Attachment {attachment_id} is not accessible from the current conversation."
 
         # Convert to dictionary and return as JSON string
         metadata_dict = attachment.to_dict()

@@ -153,8 +153,6 @@ async def serve_attachment(
         attachment_registry.update_access_time_background, attachment_id
     )
 
-    # Note: Ownership verification removed since API endpoints are public
-    # All authenticated users can access any attachment for simplicity
 
     # Get file path
     file_path = attachment_registry.get_attachment_path(attachment_id)

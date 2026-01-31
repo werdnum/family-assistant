@@ -91,18 +91,6 @@ async def jq_query_tool(
                 text=f"Error: Attachment with ID {attachment_id} not found."
             )
 
-        # Check conversation scoping - only allow access to attachments from current conversation
-        if (
-            exec_context.conversation_id
-            and attachment.conversation_id != exec_context.conversation_id
-        ):
-            logger.warning(
-                f"Access denied: attachment {attachment_id} belongs to conversation {attachment.conversation_id}, "
-                f"but current conversation is {exec_context.conversation_id}"
-            )
-            return ToolResult(
-                text=f"Error: Access denied. Attachment {attachment_id} is not accessible from the current conversation."
-            )
 
         # Get attachment content
         file_path = attachment_registry.get_attachment_path(attachment_id_str)

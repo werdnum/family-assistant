@@ -64,18 +64,6 @@ async def fetch_attachment_object(
             f"Found attachment {attachment_id}: {metadata.description}, conversation_id: {metadata.conversation_id}"
         )
 
-        # Check conversation scoping - this is a critical security check
-        logger.debug(
-            f"Checking conversation access: context.conversation_id={context.conversation_id}, metadata.conversation_id={metadata.conversation_id}"
-        )
-        if (
-            context.conversation_id
-            and metadata.conversation_id != context.conversation_id
-        ):
-            logger.warning(
-                f"Attachment {attachment_id} not accessible from conversation {context.conversation_id} (attachment belongs to {metadata.conversation_id})"
-            )
-            return None
 
         # Create a DatabaseContext getter for the ScriptAttachment
         # Use the existing database context from the execution context to maintain transaction consistency

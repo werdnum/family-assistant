@@ -111,10 +111,10 @@ class TestGetAttachmentInfoTool:
                 assert "Error: Attachment with ID non-existent-id not found." in result
 
     @pytest.mark.asyncio
-    async def test_get_attachment_info_cross_conversation_access_denied(
+    async def test_get_attachment_info_cross_conversation_access_allowed(
         self, db_engine: AsyncEngine
     ) -> None:
-        """Test that cross-conversation access is properly denied."""
+        """Test that cross-conversation access is allowed if ID is known."""
         with tempfile.TemporaryDirectory() as temp_dir:
             attachment_registry = AttachmentRegistry(
                 storage_path=temp_dir, db_engine=db_engine, config=None
@@ -137,7 +137,7 @@ class TestGetAttachmentInfoTool:
 
                 attachment_id = attachment_record.attachment_id
 
-                # Try to access from conversation B
+                # Access from conversation B
                 exec_context = ToolExecutionContext(
                     conversation_id=conversation_b,  # Different conversation
                     interface_type="test",
@@ -157,8 +157,10 @@ class TestGetAttachmentInfoTool:
                     attachment_id=attachment_id,
                 )
 
-                assert "Error: Access denied" in result
-                assert "not accessible from the current conversation" in result
+                # Should succeed
+                attachment_info = json.loads(result)
+                assert attachment_info["attachment_id"] == attachment_id
+                assert attachment_info["conversation_id"] == conversation_a
 
     @pytest.mark.asyncio
     async def test_get_attachment_info_no_attachment_registry(
