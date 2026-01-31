@@ -8,7 +8,7 @@ IMAGE_NAME=${1:-"family-assistant:smoke-test"}
 PORT=${2:-8000}
 HEALTH_PATH=${3:-"/health"}
 CONTAINER_NAME="smoke-test-$(date +%s)"
-MAX_RETRIES=30
+MAX_RETRIES=150
 SLEEP_INTERVAL=2
 
 echo "Starting smoke test for image: $IMAGE_NAME"
@@ -39,6 +39,7 @@ trap cleanup EXIT
 echo "Launching container..."
 docker run -d --name "$CONTAINER_NAME" -p "$PORT:$PORT" \
     -e GEMINI_API_KEY=dummy \
+    -e OPENAI_API_KEY=dummy \
     -e BRAVE_API_KEY=dummy \
     -e HOMEASSISTANT_API_KEY=dummy \
     -e GOOGLE_MAPS_API_KEY=dummy \
