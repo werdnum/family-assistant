@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 import httpx
 
 if TYPE_CHECKING:
-    from playwright.async_api._context_manager import (  # noqa: PLC2701
+    from rebrowser_playwright.async_api._context_manager import (  # noqa: PLC2701
         PlaywrightContextManager,
     )
 
@@ -28,10 +28,14 @@ async_playwright: Callable[[], "PlaywrightContextManager"] | None
 
 
 try:
-    # Use Async API imports
-    from playwright.async_api import Error as PlaywrightErrorImport
-    from playwright.async_api import TimeoutError as PlaywrightTimeoutErrorImport
-    from playwright.async_api import async_playwright as async_playwright_import
+    # Use Async API imports from rebrowser-playwright (patched for reduced detection)
+    from rebrowser_playwright.async_api import Error as PlaywrightErrorImport
+    from rebrowser_playwright.async_api import (
+        TimeoutError as PlaywrightTimeoutErrorImport,
+    )
+    from rebrowser_playwright.async_api import (
+        async_playwright as async_playwright_import,
+    )
 
     from family_assistant.utils.stealth_browser import (
         create_stealth_context,
