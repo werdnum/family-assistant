@@ -44,10 +44,19 @@ service_profiles:
       Investigation methodology:
       1. UNDERSTAND - What event are we looking for?
       2. SEARCH - Use search_camera_events to find AI detections (person, pet, vehicle)
-      3. BINARY SEARCH - Use get_camera_frames_batch to scan time ranges with thumbnails
-      4. NARROW DOWN - Based on what you see, refine time ranges
+      3. SMART SCAN - For large time ranges, use scan_camera_frames which:
+         - Analyzes each frame in PARALLEL with AI
+         - Returns ONLY matching frames with descriptions
+         - Much faster than manually reviewing all frames
+      4. BINARY SEARCH - Use get_camera_frames_batch when you need to see all frames yourself
       5. VERIFY - Use get_camera_frame for specific moment examination
       6. REPORT - Return your findings with timestamps and evidence to the caller
+
+      Tool selection:
+      - scan_camera_frames: BEST for scanning large time ranges (hours) for specific events
+        Returns pre-filtered, pre-analyzed frames matching your query
+      - get_camera_frames_batch: Use when you need to see all frames and decide yourself
+      - get_camera_frame: Use for detailed examination of a specific moment
 
       When analyzing images:
       - Describe what you see clearly

@@ -1,0 +1,193 @@
+# Parallel Image Scanning for Camera Analyst
+
+## Problem Statement
+
+When scanning large time ranges in the camera analyst profile, the current approach sends all images
+to the LLM at once via `get_camera_frames_batch`. This has several limitations:
+
+1. **Context/token usage**: All images consume context at once
+2. **Latency**: Serial processing - all images must be processed together
+3. **Limited filtering**: No way to pre-filter images before sending to main LLM
+4. **Focus issues**: LLM must analyze many images simultaneously
+
+## Key Insight
+
+The LLM doesn't need all images at once. We can send each image independently to an LLM as parallel
+requests with one or a few images each.
+
+## Solution: New `scan_camera_frames` Tool
+
+Create a new tool that performs parallel per-frame LLM analysis internally, returning only relevant
+frames with structured analysis results.
+
+### Tool Signature
+
+```python
+async def scan_camera_frames_tool(
+    exec_context: ToolExecutionContext,
+    camera_id: str,
+    start_time: str,
+    end_time: str,
+    query: str,
+    interval_minutes: int = 5,
+    max_frames: int = 20,
+    filter_matching: bool = True,
+    max_concurrent: int = 5,
+) -> ToolResult:
+    """
+    Scan camera frames in parallel with per-frame LLM analysis.
+
+    This tool is optimized for scanning large time ranges efficiently:
+    1. Extracts frames at regular intervals (parallelized frame extraction)
+    2. Analyzes each frame with a focused LLM call (parallelized analysis)
+    3. Returns filtered results with structured descriptions
+
+    Args:
+        camera_id: Camera to scan
+        start_time: Start of time range in LOCAL TIME
+        end_time: End of time range in LOCAL TIME
+        query: What to look for (e.g., "person entering the yard", "package delivery")
+        interval_minutes: Minutes between frames (default 5)
+        max_frames: Maximum frames to scan (default 20)
+        filter_matching: If True, only return frames that match the query (default True)
+        max_concurrent: Maximum concurrent LLM analysis calls (default 5)
+
+    Returns:
+        ToolResult with:
+        - data: Summary of scan results (total scanned, matches found, timestamps)
+        - attachments: Only the matching frames (if filter_matching=True) or all frames
+    """
+```
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         scan_camera_frames                               │
+│                                                                          │
+│  1. Extract frames (parallelized via existing get_frames_batch)          │
+│     ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐                             │
+│     │ t=0 │ │ t=5 │ │t=10 │ │t=15 │ │t=20 │  ...                        │
+│     └──┬──┘ └──┬──┘ └──┬──┘ └──┬──┘ └──┬──┘                             │
+│        │       │       │       │       │                                 │
+│  2. Parallel LLM analysis (semaphore-limited, default 5 concurrent)      │
+│        │       │       │       │       │                                 │
+│        ▼       ▼       ▼       ▼       ▼                                 │
+│     ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐                             │
+│     │ LLM │ │ LLM │ │ LLM │ │ LLM │ │ LLM │  (cheap/fast model)         │
+│     └──┬──┘ └──┬──┘ └──┬──┘ └──┬──┘ └──┬──┘                             │
+│        │       │       │       │       │                                 │
+│  3. Structured output per frame:                                         │
+│     {                                                                    │
+│       "matches_query": true/false,                                       │
+│       "description": "Person walking toward front door",                 │
+│       "confidence": 0.85,                                                │
+│       "details": {...}                                                   │
+│     }                                                                    │
+│        │       │       │       │       │                                 │
+│  4. Filter & return matching frames with analysis                        │
+│        ▼       ✗       ▼       ✗       ✗                                 │
+│     ┌─────┐         ┌─────┐                                              │
+│     │Match│         │Match│     (only 2 of 5 frames matched)            │
+│     └─────┘         └─────┘                                              │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Structured Output Schema
+
+Each frame is analyzed with this JSON schema:
+
+```json
+{
+  "matches_query": true,
+  "description": "Person walking up driveway toward front door carrying a package",
+  "confidence": 0.85,
+  "detected_objects": ["person", "package", "car"],
+  "activity": "delivery"
+}
+```
+
+### Model Selection
+
+The per-frame analysis uses the camera_analyst profile's configured model (gemini-3-flash-preview by
+default), which is:
+
+- Fast (good for parallel processing)
+- Multimodal capable
+- Cost-effective for many small calls
+
+### Benefits
+
+1. **Faster for large scans**: 20 frames analyzed in ~2-3 seconds vs ~10+ seconds serial
+2. **Reduced main context**: Only matching frames returned to the calling LLM
+3. **Structured filtering**: Boolean match + description enables smart filtering
+4. **Focused analysis**: Each frame gets dedicated attention
+5. **Progressive narrowing**: Find approximate time, then use existing tools to zoom in
+
+### Example Usage
+
+```
+User: "When did the package get delivered today?"
+
+Camera Analyst:
+1. search_camera_events(camera_id="front_door", event_types=["person"], start/end=today)
+   → Found person events at 10:30, 14:15, 16:45
+
+2. scan_camera_frames(
+     camera_id="front_door",
+     start_time="14:00", end_time="14:30",
+     query="person carrying or delivering a package",
+     interval_minutes=2,
+     filter_matching=True
+   )
+   → Returns 3 matching frames at 14:12, 14:14, 14:16 with descriptions:
+     - 14:12: "Delivery truck visible in driveway"
+     - 14:14: "Person walking to door carrying brown package"
+     - 14:16: "Package visible on doorstep, person walking away"
+
+3. Report: "Package delivered at approximately 14:14-14:16"
+```
+
+### Comparison with Existing Tools
+
+| Tool                       | Use Case                      | Images to LLM  |
+| -------------------------- | ----------------------------- | -------------- |
+| `get_camera_frame`         | Single specific moment        | 1              |
+| `get_camera_frames_batch`  | Manual review of intervals    | All (up to 10) |
+| `scan_camera_frames` (NEW) | Smart scanning with filtering | Only matches   |
+
+### Implementation Notes
+
+1. Reuses existing `get_frames_batch` from camera backend (already parallelized)
+2. Uses `asyncio.gather` with semaphore for parallel LLM calls
+3. Uses `LLMClientFactory` to create LLM client for analysis
+4. Error handling: Individual frame failures don't fail entire scan
+5. Returns both summary data and filtered attachments
+
+## Alternatives Considered
+
+### Option 2: Modify `get_camera_frames_batch`
+
+Add optional `analyze_query` parameter to existing tool. Rejected because:
+
+- Changes existing behavior
+- Makes the tool more complex
+- Less clear separation of concerns
+
+### Option 3: Script-based approach
+
+Create a script template for parallelization. Rejected because:
+
+- Puts more burden on the LLM
+- Less structured
+- Harder to maintain/test
+
+## Implementation Plan
+
+1. Add `scan_camera_frames_tool` function to `src/family_assistant/tools/camera.py`
+2. Add tool definition to `CAMERA_TOOLS_DEFINITION`
+3. Add tool registration in `src/family_assistant/tools/__init__.py`
+4. Add to camera_analyst profile's `enable_local_tools` in `defaults.yaml`
+5. Update camera_analyst system prompt to mention new tool
+6. Write unit and functional tests

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
 
@@ -17,6 +18,7 @@ from family_assistant.tools.camera import (
     get_camera_frames_batch_tool,
     get_camera_recordings_tool,
     list_cameras_tool,
+    scan_camera_frames_tool,
     search_camera_events_tool,
 )
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
@@ -489,3 +491,370 @@ async def test_get_camera_recordings_no_backend() -> None:
     assert isinstance(data, dict)
     assert "error" in data
     assert "Camera backend not configured" in data["error"]
+
+
+# --- Tests for scan_camera_frames_tool ---
+
+
+@dataclass
+class MockLLMOutput:
+    """Mock LLM output for testing."""
+
+    content: str
+
+
+def create_mock_llm_client(
+    responses: list[str] | None = None,
+) -> Mock:
+    """Create a mock LLM client that returns specified responses.
+
+    Args:
+        responses: List of JSON response strings. If None, generates default matching responses.
+    """
+    if responses is None:
+        # Default: first and third frames match
+        responses = [
+            '{"matches_query": true, "description": "Person visible", "confidence": 0.9, "detected_objects": ["person"]}',
+            '{"matches_query": false, "description": "Empty yard", "confidence": 0.8, "detected_objects": []}',
+            '{"matches_query": true, "description": "Person walking", "confidence": 0.85, "detected_objects": ["person"]}',
+            '{"matches_query": false, "description": "Empty", "confidence": 0.7, "detected_objects": []}',
+            '{"matches_query": false, "description": "Empty", "confidence": 0.7, "detected_objects": []}',
+        ]
+
+    call_count = 0
+
+    async def mock_generate_response(
+        messages: object,
+        tools: object = None,
+        tool_choice: object = None,
+    ) -> MockLLMOutput:
+        nonlocal call_count
+        response = responses[call_count % len(responses)]
+        call_count += 1
+        return MockLLMOutput(content=response)
+
+    mock_client = Mock()
+    mock_client.generate_response = mock_generate_response
+    return mock_client
+
+
+@pytest.fixture
+def mock_processing_service() -> Mock:
+    """Create a mock processing service with LLM client."""
+    mock_service = Mock()
+    mock_service.llm_client = create_mock_llm_client()
+    return mock_service
+
+
+@pytest.fixture
+def exec_context_with_llm(
+    fake_camera_backend: FakeCameraBackend,
+    mock_processing_service: Mock,
+) -> ToolExecutionContext:
+    """Create a ToolExecutionContext with fake camera backend and LLM client."""
+    return ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_conv",
+        user_name="test_user",
+        turn_id=None,
+        db_context=Mock(),
+        processing_service=mock_processing_service,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=fake_camera_backend,
+    )
+
+
+@pytest.mark.asyncio
+async def test_scan_camera_frames_success(
+    exec_context_with_llm: ToolExecutionContext,
+) -> None:
+    """Test scanning camera frames with parallel analysis."""
+    base_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
+    start_time = base_time.isoformat()
+    end_time = (base_time + timedelta(hours=1)).isoformat()
+
+    result = await scan_camera_frames_tool(
+        exec_context_with_llm,
+        camera_id="cam_front",
+        start_time=start_time,
+        end_time=end_time,
+        query="person in the yard",
+        interval_minutes=15,
+        max_frames=10,
+        filter_matching=True,
+        max_concurrent=5,
+    )
+
+    assert isinstance(result, ToolResult)
+    data = result.get_data()
+    assert isinstance(data, dict)
+
+    # Should have scanned frames
+    assert "frames_scanned" in data
+    assert data["frames_scanned"] == 5  # Based on fake backend setup
+
+    # Should have found matches (based on mock responses)
+    assert "matches_found" in data
+    assert data["matches_found"] == 2  # First and third frames match
+
+    # Should have analysis results
+    assert "analysis_results" in data
+    assert len(data["analysis_results"]) == 2  # Only matching frames
+
+    # Should have attachments for matching frames
+    assert result.attachments is not None
+    assert len(result.attachments) == 2
+
+
+@pytest.mark.asyncio
+async def test_scan_camera_frames_no_filtering(
+    exec_context_with_llm: ToolExecutionContext,
+) -> None:
+    """Test scanning camera frames without filtering returns all frames."""
+    base_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
+    start_time = base_time.isoformat()
+    end_time = (base_time + timedelta(hours=1)).isoformat()
+
+    result = await scan_camera_frames_tool(
+        exec_context_with_llm,
+        camera_id="cam_front",
+        start_time=start_time,
+        end_time=end_time,
+        query="person in the yard",
+        interval_minutes=15,
+        max_frames=10,
+        filter_matching=False,  # Return all frames
+        max_concurrent=5,
+    )
+
+    assert isinstance(result, ToolResult)
+    data = result.get_data()
+    assert isinstance(data, dict)
+
+    # Should have all frames in analysis results
+    assert len(data["analysis_results"]) == 5
+
+    # Should have attachments for all frames
+    assert result.attachments is not None
+    assert len(result.attachments) == 5
+
+
+@pytest.mark.asyncio
+async def test_scan_camera_frames_no_matches() -> None:
+    """Test scanning camera frames when nothing matches."""
+    fake_backend = FakeCameraBackend()
+    fake_backend.add_camera("cam_test", "Test Camera", "online")
+
+    base_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
+    for i in range(3):
+        fake_backend.set_frame(
+            "cam_test",
+            base_time + timedelta(minutes=i * 15),
+            f"frame_{i}".encode(),
+        )
+
+    # LLM client that always returns no match
+    no_match_responses = [
+        '{"matches_query": false, "description": "Nothing found", "confidence": 0.9, "detected_objects": []}',
+    ] * 3
+
+    mock_service = Mock()
+    mock_service.llm_client = create_mock_llm_client(no_match_responses)
+
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_conv",
+        user_name="test_user",
+        turn_id=None,
+        db_context=Mock(),
+        processing_service=mock_service,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=fake_backend,
+    )
+
+    result = await scan_camera_frames_tool(
+        exec_context,
+        camera_id="cam_test",
+        start_time=base_time.isoformat(),
+        end_time=(base_time + timedelta(hours=1)).isoformat(),
+        query="something that does not exist",
+        interval_minutes=15,
+        max_frames=10,
+    )
+
+    assert isinstance(result, ToolResult)
+    data = result.get_data()
+    assert isinstance(data, dict)
+
+    assert data["matches_found"] == 0
+    assert "No frames matched" in (result.text or "")
+    assert result.attachments is None or len(result.attachments) == 0
+
+
+@pytest.mark.asyncio
+async def test_scan_camera_frames_no_backend() -> None:
+    """Test scanning frames returns error when camera_backend is None."""
+    mock_service = Mock()
+    mock_service.llm_client = create_mock_llm_client()
+
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_conv",
+        user_name="test_user",
+        turn_id=None,
+        db_context=Mock(),
+        processing_service=mock_service,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+    )
+
+    base_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
+    result = await scan_camera_frames_tool(
+        exec_context,
+        camera_id="cam_front",
+        start_time=base_time.isoformat(),
+        end_time=(base_time + timedelta(hours=1)).isoformat(),
+        query="test query",
+    )
+
+    assert isinstance(result, ToolResult)
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "error" in data
+    assert "Camera backend not configured" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_scan_camera_frames_no_processing_service(
+    fake_camera_backend: FakeCameraBackend,
+) -> None:
+    """Test scanning frames returns error when processing_service is None."""
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_conv",
+        user_name="test_user",
+        turn_id=None,
+        db_context=Mock(),
+        processing_service=None,  # No processing service
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=fake_camera_backend,
+    )
+
+    base_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
+    result = await scan_camera_frames_tool(
+        exec_context,
+        camera_id="cam_front",
+        start_time=base_time.isoformat(),
+        end_time=(base_time + timedelta(hours=1)).isoformat(),
+        query="test query",
+    )
+
+    assert isinstance(result, ToolResult)
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "error" in data
+    assert "Processing service not available" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_scan_camera_frames_no_frames_in_range(
+    exec_context_with_llm: ToolExecutionContext,
+) -> None:
+    """Test scanning frames returns empty result when no frames in range."""
+    # Use a time range with no frames
+    start_time = datetime(2024, 1, 15, 20, 0, 0, tzinfo=UTC).isoformat()
+    end_time = datetime(2024, 1, 15, 21, 0, 0, tzinfo=UTC).isoformat()
+
+    result = await scan_camera_frames_tool(
+        exec_context_with_llm,
+        camera_id="cam_front",
+        start_time=start_time,
+        end_time=end_time,
+        query="person",
+    )
+
+    assert isinstance(result, ToolResult)
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["frames_scanned"] == 0
+    assert data["matches_found"] == 0
+    assert "No frames found" in data.get("message", "")
+
+
+@pytest.mark.asyncio
+async def test_scan_camera_frames_handles_llm_errors() -> None:
+    """Test scanning frames handles LLM errors gracefully."""
+    fake_backend = FakeCameraBackend()
+    fake_backend.add_camera("cam_test", "Test Camera", "online")
+
+    base_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
+    for i in range(3):
+        fake_backend.set_frame(
+            "cam_test",
+            base_time + timedelta(minutes=i * 15),
+            f"frame_{i}".encode(),
+        )
+
+    # Create mock that raises error on second call
+    call_count = 0
+
+    async def mock_generate_with_error(
+        messages: object,
+        tools: object = None,
+        tool_choice: object = None,
+    ) -> MockLLMOutput:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise RuntimeError("LLM error")
+        return MockLLMOutput(
+            content='{"matches_query": true, "description": "Found", "confidence": 0.9, "detected_objects": []}'
+        )
+
+    mock_service = Mock()
+    mock_service.llm_client = Mock()
+    mock_service.llm_client.generate_response = mock_generate_with_error
+
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_conv",
+        user_name="test_user",
+        turn_id=None,
+        db_context=Mock(),
+        processing_service=mock_service,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=fake_backend,
+    )
+
+    result = await scan_camera_frames_tool(
+        exec_context,
+        camera_id="cam_test",
+        start_time=base_time.isoformat(),
+        end_time=(base_time + timedelta(hours=1)).isoformat(),
+        query="test",
+    )
+
+    assert isinstance(result, ToolResult)
+    data = result.get_data()
+    assert isinstance(data, dict)
+
+    # Should still return results for successful frames
+    assert data["frames_scanned"] == 3
+    assert "analysis_errors" in data
+    assert data["analysis_errors"] == 1  # One error
+    assert data["frames_analyzed"] == 2  # Two successful
