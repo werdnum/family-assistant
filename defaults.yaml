@@ -877,6 +877,8 @@ service_profiles:
         - "get_camera_frame"
         - "get_camera_frames_batch"
         - "get_camera_recordings"
+        - "get_live_camera_snapshot"
+        - "scan_camera_frames"
         - "attach_to_response"
         - "get_attachment_info"
       enable_mcp_server_ids: []

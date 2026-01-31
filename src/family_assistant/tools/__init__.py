@@ -40,6 +40,7 @@ from family_assistant.tools.camera import (
     get_camera_recordings_tool,
     get_live_camera_snapshot_tool,
     list_cameras_tool,
+    scan_camera_frames_tool,
     search_camera_events_tool,
 )
 from family_assistant.tools.communication import (
@@ -238,6 +239,7 @@ __all__ = [
     "get_camera_frames_batch_tool",
     "get_camera_recordings_tool",
     "get_live_camera_snapshot_tool",
+    "scan_camera_frames_tool",
     "storage",
     "execute_script_tool",
     "SCRIPT_TOOLS_DEFINITION",
@@ -358,6 +360,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "get_camera_frames_batch": get_camera_frames_batch_tool,
     "get_camera_recordings": get_camera_recordings_tool,
     "get_live_camera_snapshot": get_live_camera_snapshot_tool,
+    "scan_camera_frames": scan_camera_frames_tool,
     "execute_script": execute_script_tool,
     "attach_to_response": attach_to_response_tool,
     "read_text_attachment": read_text_attachment_tool,
