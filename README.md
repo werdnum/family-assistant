@@ -203,7 +203,9 @@ The project uses Alembic for database migrations.
 
 ### For Operators
 
-- **[Production Deployment](docs/deployment/PRODUCTION_DEPLOYMENT.md)** - Deploy to production
+- **[Operator Getting Started](docs/operations/GETTING_STARTED.md)** - **Start here for deployment**
+- **[Production Deployment](docs/deployment/PRODUCTION_DEPLOYMENT.md)** - Advanced Kubernetes
+  deployment
 - **[Configuration Reference](docs/operations/CONFIGURATION_REFERENCE.md)** - All config options
 - **[Monitoring](docs/operations/MONITORING.md)** - Logging and observability
 - **[Backup & Recovery](docs/operations/BACKUP_RECOVERY.md)** - Data protection
