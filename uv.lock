@@ -1586,7 +1586,6 @@ dependencies = [
     { name = "sqlalchemy", version = "2.0.40", source = { registry = "https://pypi.org/simple" }, extra = ["asyncio"], marker = "python_full_version >= '3.13.2' and platform_python_implementation == 'PyPy'" },
     { name = "sqlalchemy", version = "2.0.41", source = { registry = "https://pypi.org/simple" }, extra = ["asyncio"], marker = "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy'" },
     { name = "starlark-pyo3" },
-    { name = "telegram-bot-api-mock", extra = ["dev"] },
     { name = "telegramify-markdown" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "vl-convert-python" },
@@ -1641,6 +1640,7 @@ dev = [
     { name = "radicale" },
     { name = "ruff" },
     { name = "symbex" },
+    { name = "telegram-bot-api-mock", extra = ["dev"] },
     { name = "types-aiofiles" },
     { name = "types-assertpy" },
     { name = "types-passlib" },
@@ -1753,7 +1753,7 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0" },
     { name = "starlark-pyo3", specifier = ">=0.1.0" },
     { name = "symbex", marker = "extra == 'dev'", specifier = ">=2.0" },
-    { name = "telegram-bot-api-mock", extras = ["dev"], git = "https://github.com/werdnum/telegram-bot-api-mock" },
+    { name = "telegram-bot-api-mock", extras = ["dev"], marker = "extra == 'dev'", git = "https://github.com/werdnum/telegram-bot-api-mock" },
     { name = "telegramify-markdown", specifier = ">=0.5.1" },
     { name = "torch", marker = "extra == 'local-embeddings'", specifier = ">=2.4.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "types-aiofiles", marker = "extra == 'dev'" },
@@ -1771,9 +1771,6 @@ requires-dist = [
     { name = "yt-dlp", specifier = ">=2024.0.0" },
 ]
 provides-extras = ["dev", "local-embeddings", "pgserver"]
-
-[package.metadata.requires-dev]
-dev = []
 
 [[package]]
 name = "fastapi"
