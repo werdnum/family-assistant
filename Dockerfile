@@ -37,7 +37,6 @@ ENV UV_CACHE_DIR=/home/appuser/.cache/uv
 # Create virtual environment (still as root for system packages)
 RUN uv venv /app/.venv && \
     chown -R appuser:appuser /app/.venv
-ENV PATH="/app/.venv/bin:$PATH"
 
 # --- Install Deno ---
 ARG DENO_VERSION=v2.2.11
@@ -88,7 +87,7 @@ USER root
 # - PYTHONUNBUFFERED: Ensures Python output (like logs) is sent straight to terminal
 # - UV_TOOL_BIN_DIR/UV_TOOL_DIR: Standard locations for uv tools
 # - UV_CACHE_DIR: Explicit cache location for uv operations
-# - PATH: Ensure uv tool binaries and Deno bin directory are findable
+# - PATH: Ensure venv, uv tool binaries, and Deno bin directory are findable
 # - DOCS_USER_DIR: Path to user documentation directory
 # - PLAYWRIGHT_BROWSERS_PATH: System-wide location for Playwright browsers
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -99,10 +98,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_HTTP_TIMEOUT=300 \
     ALEMBIC_CONFIG=/app/alembic.ini \
     DOCS_USER_DIR=/app/docs/user \
-    PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
+    PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers \
+    VIRTUAL_ENV=/app/.venv
 
-# Update PATH separately (use home directory agnostic path)
-ENV PATH="${UV_TOOL_BIN_DIR}:/home/appuser/.deno/bin:/usr/local/bin:${PATH}"
+# Update PATH (ensure venv and tools are at the front)
+ENV PATH="/app/.venv/bin:${UV_TOOL_BIN_DIR}:/home/appuser/.deno/bin:/usr/local/bin:${PATH}"
 
 # Copy dependency definition files
 COPY --chown=appuser:appuser pyproject.toml uv.lock* ./
@@ -116,11 +116,11 @@ RUN uv sync --no-install-project --extra local-embeddings
 # Install Playwright browsers with system dependencies
 # Switch back to root for system dependencies installation
 USER root
-RUN playwright install-deps chromium
+RUN uv run playwright install-deps chromium
 
 # Switch to appuser for browser installation
 USER appuser
-RUN playwright install chromium && \
+RUN uv run playwright install chromium && \
     # Verify the browser was installed correctly - build should fail if this fails
     ls -la ${PLAYWRIGHT_BROWSERS_PATH}/
 
