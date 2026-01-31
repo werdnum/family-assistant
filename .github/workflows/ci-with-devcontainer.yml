@@ -644,26 +644,12 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Build and load local image
-        uses: docker/build-push-action@v6
+      - name: Run image smoke test
+        uses: ./.github/actions/smoke-test-action
         with:
-          context: .
-          file: Dockerfile
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: family-assistant:smoke-test
-          cache-from: |
-            type=gha
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:main
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:buildcache
-          cache-to: type=gha,mode=max
-      - name: Run smoke test
-        run: |
-          chmod +x scripts/container-smoke-test.sh
-          ./scripts/container-smoke-test.sh family-assistant:smoke-test 8000 /health
+          image-tag: smoke-test
+          registry: ${{ env.REGISTRY }}
+          image-prefix: ${{ env.IMAGE_PREFIX }}
 
   # Require all test jobs to pass
   all-tests:
