@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from playwright.async_api import (
+from rebrowser_playwright.async_api import (
     Browser,
     BrowserContext,
     Page,
