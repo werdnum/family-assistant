@@ -35,9 +35,14 @@ cleanup() {
 trap cleanup EXIT
 
 # Run the container
-# Use GEMINI_API_KEY=dummy to avoid startup failures if it validates keys
+# Use dummy API keys to avoid startup failures from MCP servers that validate keys
 echo "Launching container..."
-docker run -d --name "$CONTAINER_NAME" -p "$PORT:$PORT" -e GEMINI_API_KEY=dummy "$IMAGE_NAME"
+docker run -d --name "$CONTAINER_NAME" -p "$PORT:$PORT" \
+    -e GEMINI_API_KEY=dummy \
+    -e BRAVE_API_KEY=dummy \
+    -e HOMEASSISTANT_API_KEY=dummy \
+    -e GOOGLE_MAPS_API_KEY=dummy \
+    "$IMAGE_NAME"
 
 # Wait for health check
 RETRY_COUNT=0
