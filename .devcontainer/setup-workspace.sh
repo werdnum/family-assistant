@@ -256,14 +256,14 @@ if [ -f "pyproject.toml" ] && grep -q "playwright" pyproject.toml; then
 
     if [ "$IS_CI_CONTAINER" = "true" ]; then
         echo "Verifying Playwright browsers are installed..."
-        # Just verify they exist, don't re-download
-        .venv/bin/playwright install chromium --dry-run || .venv/bin/playwright install chromium || true
+        # Just verify they exist, don't re-download (using rebrowser-playwright)
+        .venv/bin/python -m rebrowser_playwright install chromium --dry-run || .venv/bin/python -m rebrowser_playwright install chromium || true
     else
         echo "Installing Playwright browsers for Python environment..."
         if [ "$RUNNING_AS_ROOT" = "true" ]; then
-            runuser -u claude -- .venv/bin/playwright install chromium || echo "Failed to install browsers"
+            runuser -u claude -- .venv/bin/python -m rebrowser_playwright install chromium || echo "Failed to install browsers"
         else
-            .venv/bin/playwright install chromium || echo "Failed to install browsers"
+            .venv/bin/python -m rebrowser_playwright install chromium || echo "Failed to install browsers"
         fi
     fi
 fi
