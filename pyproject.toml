@@ -109,6 +109,7 @@ dependencies = [
     "reolink-aio>=0.16.0",
     # Media download support
     "yt-dlp>=2024.0.0",
+    "telegram-bot-api-mock[dev]",
 ]
 
 [project.optional-dependencies]
@@ -412,4 +413,8 @@ explicit = true
 
 [tool.uv.sources]
 torch = { index = "torch-cpu" }
+telegram-bot-api-mock = { git = "https://github.com/werdnum/telegram-bot-api-mock" }
+
+[dependency-groups]
+dev = []
 

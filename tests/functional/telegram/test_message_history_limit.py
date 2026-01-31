@@ -7,10 +7,25 @@ import pytest
 from telegram import Chat, Message, Update, User
 from telegram.ext import Application, ContextTypes
 
+from family_assistant.llm.messages import TextContentPart
 from tests.mocks.mock_llm import LLMOutput
 
 from .conftest import TelegramHandlerTestFixture
 from .helpers import wait_for_bot_response
+
+
+def extract_text_from_content(content: str | list[Any] | None) -> str:
+    """Extract text content from message content (handles both str and list of ContentPart)."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    # Handle list of content parts
+    text_parts = []
+    for part in content:
+        if isinstance(part, TextContentPart) or hasattr(part, "text"):
+            text_parts.append(part.text)
+    return " ".join(text_parts)
 
 
 def create_mock_update(
@@ -68,7 +83,7 @@ async def test_message_history_includes_most_recent_when_limited(
         if not user_messages:
             return False
 
-        last_user_msg = user_messages[-1].content or ""
+        last_user_msg = extract_text_from_content(user_messages[-1].content)
 
         # Determine response based on conversation flow
         if "First message" in last_user_msg:
@@ -78,12 +93,14 @@ async def test_message_history_includes_most_recent_when_limited(
         elif "Third message" in last_user_msg:
             return LLMOutput(content="Third response - task completed successfully!")
         elif "New unrelated request" in last_user_msg:
-            # Check if we can see the recent completion
-            messages_str = str(messages)
-            has_completed = "task completed successfully" in messages_str
-            has_old = (
-                "First message" in messages_str or "First response" in messages_str
+            # Check if we can see the recent completion by examining all message contents
+            all_text = " ".join(
+                extract_text_from_content(msg.content)
+                for msg in messages
+                if hasattr(msg, "content")
             )
+            has_completed = "task completed successfully" in all_text
+            has_old = "First message" in all_text or "First response" in all_text
 
             if has_completed and not has_old:
                 return LLMOutput(
@@ -144,14 +161,26 @@ async def test_message_history_includes_most_recent_when_limited(
 
     # Verify the assistant's response acknowledges the completed task
     bot_responses = await wait_for_bot_response(fixture.telegram_client, timeout=5.0)
-    assert len(bot_responses) >= 1, "Expected at least one bot response"
+    assert len(bot_responses) >= 4, (
+        f"Expected at least 4 bot responses, got {len(bot_responses)}"
+    )
 
-    # Get the bot's message text
-    bot_message = bot_responses[-1]
-    response_text = bot_message.get("message", {}).get("text", "")
+    # Find the response that acknowledges the completed task (could be in any position
+    # depending on how the mock server orders responses)
+    found_correct_response = False
+    for resp in bot_responses:
+        text = resp.get("message", {}).get("text", "")
+        if (
+            "successfully completed the previous task" in text
+            and "help with your new request" in text
+        ):
+            found_correct_response = True
+            break
 
-    assert "successfully completed the previous task" in response_text
-    assert "help with your new request" in response_text
+    assert found_correct_response, (
+        f"Expected a response acknowledging the completed task, but got: "
+        f"{[r.get('message', {}).get('text', '') for r in bot_responses]}"
+    )
 
 
 @pytest.mark.asyncio
@@ -174,7 +203,7 @@ async def test_reminder_after_completed_conversation(
         if not user_messages:
             return False
 
-        last_user_msg = user_messages[-1].content or ""
+        last_user_msg = extract_text_from_content(user_messages[-1].content)
 
         if "clobbered" in last_user_msg:
             return LLMOutput(
@@ -240,15 +269,23 @@ async def test_reminder_after_completed_conversation(
 
     # Verify the response is about the reminder, not the old note conversation
     bot_responses = await wait_for_bot_response(fixture.telegram_client, timeout=5.0)
-    assert len(bot_responses) >= 1, "Expected at least one bot response"
+    assert len(bot_responses) >= 3, (
+        f"Expected at least 3 bot responses, got {len(bot_responses)}"
+    )
 
-    # Get the bot's message text
-    bot_message = bot_responses[-1]
-    response_text = bot_message.get("message", {}).get("text", "")
+    # Find the reminder response (could be in any position depending on mock server ordering)
+    reminder_response = None
+    for resp in bot_responses:
+        text = resp.get("message", {}).get("text", "")
+        if "reminder" in text.lower() and "water meter" in text:
+            reminder_response = text
+            break
 
-    assert "reminder" in response_text.lower()
-    assert "water meter" in response_text
+    assert reminder_response is not None, (
+        f"Expected a reminder response about water meter, but got: "
+        f"{[r.get('message', {}).get('text', '') for r in bot_responses]}"
+    )
     # Should NOT mention the note update
-    assert "note" not in response_text.lower()
-    assert "updated" not in response_text.lower()
-    assert "content" not in response_text.lower()
+    assert "note" not in reminder_response.lower()
+    assert "updated" not in reminder_response.lower()
+    assert "content" not in reminder_response.lower()
