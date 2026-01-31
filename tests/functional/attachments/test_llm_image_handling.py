@@ -130,6 +130,18 @@ async def test_image_handling_with_real_db(
         internal_url = f"/api/attachments/{metadata.attachment_id}"
         trigger_content = [{"type": "image_url", "image_url": {"url": internal_url}}]
 
+        # Build trigger_attachments that would be passed by real handlers
+        # This is needed for history reconstruction to include multimodal content
+        trigger_attachments = [
+            {
+                "attachment_id": metadata.attachment_id,
+                "type": "image",
+                "filename": filename,
+                "mime_type": "image/jpeg",
+                "content_url": internal_url,
+            }
+        ]
+
         # Use a database context for the interaction
         async with DatabaseContext(engine=db_engine) as db_context:
             await service.handle_chat_interaction(
@@ -140,6 +152,7 @@ async def test_image_handling_with_real_db(
                 trigger_content_parts=trigger_content,  # type: ignore
                 trigger_interface_message_id="msg_123",
                 user_name="TestUser",
+                trigger_attachments=trigger_attachments,
             )
 
         # 5. Verify what the LLM received
