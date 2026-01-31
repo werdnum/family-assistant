@@ -272,6 +272,49 @@ class AttachmentAPI:
             return None
 
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+    def read(self, attachment_id: str) -> str | None:
+        """
+        Get attachment content as a string.
+
+        Args:
+            attachment_id: UUID of the attachment
+
+        Returns:
+            String with attachment content or None if not found or not text
+        """
+        try:
+            # Starlark scripts run in worker threads, so use run_coroutine_threadsafe
+            if self.main_loop:
+                future = asyncio.run_coroutine_threadsafe(
+                    self._read_async(attachment_id), self.main_loop
+                )
+                return future.result(timeout=30)
+            else:
+                # No main loop provided, use asyncio.run (works in tests and standalone contexts)
+                return asyncio.run(self._read_async(attachment_id))
+
+        except Exception as e:
+            logger.error(f"Error reading attachment {attachment_id}: {e}")
+            return None
+
+    async def _read_async(self, attachment_id: str) -> str | None:
+        """Async implementation of read."""
+
+        async with DatabaseContext(engine=self.db_engine) as db_context:
+            content = await self.attachment_registry.get_attachment_content(
+                db_context, attachment_id
+            )
+
+            if content is None:
+                return None
+
+            try:
+                return content.decode("utf-8")
+            except UnicodeDecodeError:
+                # Fallback to replace for binary files if requested as text
+                return content.decode("utf-8", errors="replace")
+
+    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def _get_async(self, attachment_id: str) -> dict[str, Any] | None:
         """Async implementation of get."""
 
