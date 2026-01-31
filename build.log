@@ -1,0 +1,78 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile:
+#1 transferring dockerfile: 6.55kB 0.0s done
+#1 DONE 0.3s
+
+#2 [internal] load metadata for ghcr.io/astral-sh/uv:debian-slim
+#2 DONE 1.3s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 842B done
+#3 DONE 0.0s
+
+#4 [internal] setting cache mount permissions
+#4 DONE 0.1s
+
+#5 [base  1/22] FROM ghcr.io/astral-sh/uv:debian-slim@sha256:a265bdb0593070eee9dfededde2e9d586917f64cfd297e290d78584e473d81e4
+#5 resolve ghcr.io/astral-sh/uv:debian-slim@sha256:a265bdb0593070eee9dfededde2e9d586917f64cfd297e290d78584e473d81e4 0.1s done
+#5 sha256:119d43eec815e5f9a47da3a7d59454581b1e204b0c34db86f171b7ceb3336533 0B / 29.77MB 0.2s
+#5 sha256:d47fd8360b564416e247fcc8552198e67dc816530580a93ef321443cf0584f79 0B / 22.74MB 0.2s
+#5 sha256:119d43eec815e5f9a47da3a7d59454581b1e204b0c34db86f171b7ceb3336533 2.10MB / 29.77MB 0.6s
+#5 sha256:119d43eec815e5f9a47da3a7d59454581b1e204b0c34db86f171b7ceb3336533 4.19MB / 29.77MB 0.8s
+#5 sha256:d47fd8360b564416e247fcc8552198e67dc816530580a93ef321443cf0584f79 2.10MB / 22.74MB 0.8s
+#5 sha256:119d43eec815e5f9a47da3a7d59454581b1e204b0c34db86f171b7ceb3336533 6.29MB / 29.77MB 1.1s
+#5 sha256:119d43eec815e5f9a47da3a7d59454581b1e204b0c34db86f171b7ceb3336533 8.52MB / 29.77MB 1.2s
+#5 sha256:d47fd8360b564416e247fcc8552198e67dc816530580a93ef321443cf0584f79 3.24MB / 22.74MB 1.2s
+#5 sha256:119d43eec815e5f9a47da3a7d59454581b1e204b0c34db86f171b7ceb3336533 11.08MB / 29.77MB 1.4s
+#5 sha256:d47fd8360b564416e247fcc8552198e67dc816530580a93ef321443cf0584f79 5.24MB / 22.74MB 1.4s
+#5 sha256:119d43eec815e5f9a47da3a7d59454581b1e204b0c34db86f171b7ceb3336533 14.68MB / 29.77MB 1.5s
+#5 sha256:119d43eec815e5f9a47da3a7d59454581b1e204b0c34db86f171b7ceb3336533 19.19MB / 29.77MB 1.8s
+#5 sha256:d47fd8360b564416e247fcc8552198e67dc816530580a93ef321443cf0584f79 7.34MB / 22.74MB 1.8s
+#5 sha256:119d43eec815e5f9a47da3a7d59454581b1e204b0c34db86f171b7ceb3336533 20.87MB / 29.77MB 2.0s
+#5 sha256:119d43eec815e5f9a47da3a7d59454581b1e204b0c34db86f171b7ceb3336533 24.12MB / 29.77MB 2.3s
+#5 sha256:d47fd8360b564416e247fcc8552198e67dc816530580a93ef321443cf0584f79 10.49MB / 22.74MB 2.3s
+#5 sha256:119d43eec815e5f9a47da3a7d59454581b1e204b0c34db86f171b7ceb3336533 27.26MB / 29.77MB 2.4s
+#5 sha256:119d43eec815e5f9a47da3a7d59454581b1e204b0c34db86f171b7ceb3336533 29.77MB / 29.77MB 2.6s
+#5 sha256:d47fd8360b564416e247fcc8552198e67dc816530580a93ef321443cf0584f79 13.63MB / 22.74MB 2.6s
+#5 sha256:119d43eec815e5f9a47da3a7d59454581b1e204b0c34db86f171b7ceb3336533 29.77MB / 29.77MB 2.9s done
+#5 sha256:d47fd8360b564416e247fcc8552198e67dc816530580a93ef321443cf0584f79 16.78MB / 22.74MB 2.9s
+#5 sha256:d47fd8360b564416e247fcc8552198e67dc816530580a93ef321443cf0584f79 18.87MB / 22.74MB 3.0s
+#5 extracting sha256:119d43eec815e5f9a47da3a7d59454581b1e204b0c34db86f171b7ceb3336533
+#5 sha256:d47fd8360b564416e247fcc8552198e67dc816530580a93ef321443cf0584f79 20.97MB / 22.74MB 3.3s
+#5 sha256:d47fd8360b564416e247fcc8552198e67dc816530580a93ef321443cf0584f79 22.74MB / 22.74MB 3.6s
+#5 sha256:d47fd8360b564416e247fcc8552198e67dc816530580a93ef321443cf0584f79 22.74MB / 22.74MB 3.7s done
+#5 extracting sha256:119d43eec815e5f9a47da3a7d59454581b1e204b0c34db86f171b7ceb3336533 4.9s done
+#5 extracting sha256:d47fd8360b564416e247fcc8552198e67dc816530580a93ef321443cf0584f79
+#5 ...
+
+#6 [internal] load build context
+#6 transferring context: 86.90MB 8.6s
+#6 ...
+
+#5 [base  1/22] FROM ghcr.io/astral-sh/uv:debian-slim@sha256:a265bdb0593070eee9dfededde2e9d586917f64cfd297e290d78584e473d81e4
+#5 extracting sha256:d47fd8360b564416e247fcc8552198e67dc816530580a93ef321443cf0584f79 2.3s done
+#5 DONE 10.3s
+
+#6 [internal] load build context
+#6 ...
+
+#7 [base  2/22] RUN groupadd -r -g 1001 appuser && useradd -r -u 1001 -g appuser -m -d /home/appuser -s /bin/bash appuser
+#7 ERROR: process "/bin/sh -c groupadd -r -g 1001 appuser && useradd -r -u 1001 -g appuser -m -d /home/appuser -s /bin/bash appuser" did not complete successfully: mount source: "overlay", target: "/var/lib/docker/buildkit/containerd-overlayfs/cachemounts/buildkit3040498968", fstype: overlay, flags: 0, data: "workdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/7/work,upperdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/7/fs,lowerdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/6/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/5/fs,index=off,redirect_dir=off", err: invalid argument
+
+#6 [internal] load build context
+#6 transferring context: 124.14MB 10.7s done
+#6 CANCELED
+------
+ > [base  2/22] RUN groupadd -r -g 1001 appuser && useradd -r -u 1001 -g appuser -m -d /home/appuser -s /bin/bash appuser:
+------
+Dockerfile:5
+--------------------
+   3 |
+   4 |     # Create non-root user and group early in the build with specific UID/GID
+   5 | >>> RUN groupadd -r -g 1001 appuser && useradd -r -u 1001 -g appuser -m -d /home/appuser -s /bin/bash appuser
+   6 |
+   7 |     # Install system dependencies: npm for Node.js MCP servers and frontend build
+--------------------
+ERROR: failed to build: failed to solve: process "/bin/sh -c groupadd -r -g 1001 appuser && useradd -r -u 1001 -g appuser -m -d /home/appuser -s /bin/bash appuser" did not complete successfully: mount source: "overlay", target: "/var/lib/docker/buildkit/containerd-overlayfs/cachemounts/buildkit3040498968", fstype: overlay, flags: 0, data: "workdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/7/work,upperdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/7/fs,lowerdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/6/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/5/fs,index=off,redirect_dir=off", err: invalid argument
