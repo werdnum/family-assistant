@@ -116,11 +116,11 @@ RUN uv sync --no-install-project --extra local-embeddings
 # Install Playwright browsers with system dependencies
 # Switch back to root for system dependencies installation
 USER root
-RUN .venv/bin/playwright install-deps chromium
+RUN playwright install-deps chromium
 
 # Switch to appuser for browser installation
 USER appuser
-RUN .venv/bin/playwright install chromium && \
+RUN playwright install chromium && \
     # Verify the browser was installed correctly - build should fail if this fails
     ls -la ${PLAYWRIGHT_BROWSERS_PATH}/
 
