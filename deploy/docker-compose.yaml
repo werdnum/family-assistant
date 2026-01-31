@@ -2,8 +2,10 @@ services:
   app:
     image: ghcr.io/werdnum/family-assistant:latest
     restart: always
+    env_file:
+      - ../.env
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://assistant:${POSTGRES_PASSWORD}@db:5432/assistant
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
