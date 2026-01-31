@@ -364,30 +364,14 @@ $CLAUDE_BIN mcp add --scope user serena -- sh -c "$(which uvx) -q --from git+htt
 $CLAUDE_BIN mcp add --scope user playwright $(which npx) -- -y -q @playwright/mcp@latest --no-sandbox --allowed-origins "localhost:8000;localhost:5173;localhost:8001;unpkg.com;cdn.jsdelivr.net;cdnjs.cloudflare.com;cdn.simplecss.org;devcontainer-backend-1" --headless --isolated --browser chromium
 # $CLAUDE_BIN mcp add --scope user github -t http https://api.githubcopilot.com/mcp/ -H "Authorization: Bearer $GITHUB_TOKEN"
 
-# Configure Claude plugin marketplace from local clone
-# Note: Using local path because Claude Code's git auth handler doesn't work with GitHub URLs
-# Use /home/claude explicitly since this script runs as root (not as claude user)
-CLAUDE_HOME="/home/claude"
-PLUGINS_DIR="$CLAUDE_HOME/werdnum-plugins"
+# Configure Claude plugin marketplace from public GitHub repo
 echo "Setting up Claude plugin marketplace..."
-if [ ! -d "$PLUGINS_DIR" ]; then
-    echo "Cloning claude-code-plugins repository..."
-    # GIT_TERMINAL_PROMPT=0 prevents hanging if credentials are needed
-    if [ -n "$GITHUB_TOKEN" ]; then
-        GIT_TERMINAL_PROMPT=0 git clone "https://${GITHUB_TOKEN}@github.com/werdnum/claude-code-plugins.git" "$PLUGINS_DIR"
-    else
-        GIT_TERMINAL_PROMPT=0 git clone "https://github.com/werdnum/claude-code-plugins.git" "$PLUGINS_DIR"
-    fi
-    if [ "$RUNNING_AS_ROOT" = "true" ]; then
-        chown -R claude:claude "$PLUGINS_DIR"
-    fi
-fi
-
-# Add the marketplace by file path (remove first to avoid duplicates)
+# Remove old marketplaces to avoid duplicates
 $CLAUDE_BIN plugin marketplace remove claude-code-plugins 2>/dev/null || true
 $CLAUDE_BIN plugin marketplace remove werdnum-plugins 2>/dev/null || true
-$CLAUDE_BIN plugin marketplace add "$PLUGINS_DIR"
-echo "Claude plugin marketplace configured from local path"
+# Add the marketplace directly from GitHub (repo is now public)
+$CLAUDE_BIN plugin marketplace add werdnum/claude-code-plugins
+echo "Claude plugin marketplace configured from GitHub"
 
 # Ensure proper ownership if running as root
 if [ "$RUNNING_AS_ROOT" = "true" ]; then
