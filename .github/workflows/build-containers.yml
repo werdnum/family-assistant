@@ -70,35 +70,8 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Run smoke test
         run: |
-          docker run -d --name smoke-test -p 8000:8000 -e GEMINI_API_KEY=dummy family-assistant:smoke-test
-
-          # Wait for health check
-          MAX_RETRIES=30
-          RETRY_COUNT=0
-          until [ $RETRY_COUNT -ge $MAX_RETRIES ]
-          do
-            # Fetch status, handle potential curl failures during startup
-            RESPONSE=$(curl -s http://localhost:8000/health || echo '{"status":"failed_to_connect"}')
-            HEALTH=$(echo "$RESPONSE" | jq -r .status)
-
-            if [ "$HEALTH" = "healthy" ] || [ "$HEALTH" = "ok" ]; then
-              echo "Container is $HEALTH!"
-              docker logs smoke-test
-              docker stop smoke-test
-              docker rm smoke-test
-              exit 0
-            fi
-
-            echo "Waiting for container to be healthy... ($RETRY_COUNT/$MAX_RETRIES) Status: $HEALTH"
-            RETRY_COUNT=$((RETRY_COUNT+1))
-            sleep 2
-          done
-
-          echo "Container failed to become healthy. Final response: $RESPONSE"
-          docker logs smoke-test
-          docker stop smoke-test
-          docker rm smoke-test
-          exit 1
+          chmod +x scripts/container-smoke-test.sh
+          ./scripts/container-smoke-test.sh family-assistant:smoke-test 8000 /health
 
   build-devcontainer:
     needs: [prepare, smoke-test]
