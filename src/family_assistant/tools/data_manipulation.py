@@ -91,7 +91,6 @@ async def jq_query_tool(
                 text=f"Error: Attachment with ID {attachment_id} not found."
             )
 
-
         # Get attachment content
         file_path = attachment_registry.get_attachment_path(attachment_id_str)
         if not file_path or not file_path.exists():

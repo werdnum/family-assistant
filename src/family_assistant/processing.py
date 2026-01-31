@@ -1276,7 +1276,6 @@ class ProcessingService:
                         )
                         continue
 
-
                     # Fetch attachment content
                     content = await self.attachment_registry.get_attachment_content(
                         db_context, attachment_id

@@ -283,7 +283,6 @@ class AttachmentAPI:
             if not attachment:
                 return None
 
-
             return {
                 "attachment_id": attachment.attachment_id,
                 "source_type": attachment.source_type,
@@ -397,7 +396,6 @@ class AttachmentAPI:
 
             if not attachment:
                 return f"Attachment {attachment_id} not found"
-
 
             # For now, we'll just return a success message
             # In the future, this could integrate with the chat system to actually display the attachment
