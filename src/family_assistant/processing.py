@@ -975,10 +975,20 @@ class ProcessingService:
 
             # Handle both string and ToolResult
             if isinstance(result, ToolResult):
-                content_for_stream = result.text
+                content_for_stream = result.text or ""
                 auto_attachment_ids: list[
                     str
                 ] = []  # Track attachment IDs for auto-queuing
+
+                # Auto-convert large text result to attachment
+                new_content, auto_att_id = await self._handle_large_tool_result(
+                    content_for_stream, function_name, conversation_id, call_id
+                )
+                if auto_att_id:
+                    content_for_stream = new_content
+                    auto_attachment_ids.append(auto_att_id)
+                    # Update ToolResult so subsequent message creation uses the attachment notice
+                    result.text = new_content
 
                 # Extract attachment metadata for streaming
                 stream_metadata = None
@@ -1084,6 +1094,15 @@ class ProcessingService:
                 # Backward compatible string handling
                 content_for_stream = str(result)
                 auto_attachment_ids = []  # String results don't generate attachments
+
+                # Auto-convert large text result to attachment
+                new_content, auto_att_id = await self._handle_large_tool_result(
+                    content_for_stream, function_name, conversation_id, call_id
+                )
+                if auto_att_id:
+                    content_for_stream = new_content
+                    auto_attachment_ids.append(auto_att_id)
+
                 llm_message = ToolMessage(
                     role="tool",
                     tool_call_id=call_id,
@@ -2564,6 +2583,95 @@ Call attach_to_response with your selected attachment IDs."""
                 message.content.insert(
                     0, TextContentPart(type="text", text=metadata_text)
                 )  # type: ignore[arg-type]
+
+    async def _handle_large_tool_result(
+        self,
+        content: str,
+        tool_name: str,
+        conversation_id: str,
+        call_id: str,
+    ) -> tuple[str, str | None]:
+        """
+        Check if a tool result is too large and convert it to an attachment if necessary.
+
+        Returns:
+            Tuple of (new_content, auto_attachment_id)
+        """
+        # Threshold: 20 KiB
+        THRESHOLD_BYTES = 20 * 1024
+        content_bytes = content.encode("utf-8")
+        if len(content_bytes) < THRESHOLD_BYTES:
+            return content, None
+
+        # Determine MIME type
+        mime_type = "text/plain"
+        try:
+            json.loads(content)
+            mime_type = "application/json"
+        except json.JSONDecodeError:
+            pass
+
+        if not self.attachment_registry:
+            logger.warning(
+                "Large tool result detected but AttachmentRegistry is not available."
+            )
+            return content, None
+
+        try:
+            file_extension = self._get_file_extension_from_mime_type(mime_type)
+            registered_metadata = (
+                await self.attachment_registry.store_and_register_tool_attachment(
+                    file_content=content_bytes,
+                    filename=f"large_result_{tool_name}_{uuid.uuid4()}{file_extension}",
+                    content_type=mime_type,
+                    tool_name=tool_name,
+                    description=f"Large output from {tool_name}",
+                    conversation_id=conversation_id,
+                    metadata={
+                        "tool_call_id": call_id,
+                        "auto_display": True,
+                        "large_result_auto_convert": True,
+                    },
+                )
+            )
+
+            att_id = registered_metadata.attachment_id
+
+            hint = (
+                f"\n\n[NOTE: This result was too large ({len(content_bytes)} bytes) "
+                f"and has been automatically converted to an attachment with ID {att_id}.]"
+            )
+            if mime_type == "application/json":
+                hint += (
+                    f"\nYou can use `jq_query(attachment_id='{att_id}', jq_program='...')` "
+                    f"to process it without loading it all into your context."
+                )
+            else:
+                hint += (
+                    f"\nYou can use `read_text_attachment(attachment_id='{att_id}', ...)` "
+                    f"to read parts of it, or use `execute_script` to process it with a custom script."
+                    f"\nExample script for searching:\n"
+                    f"```starlark\n"
+                    f"content = attachment_read('{att_id}')\n"
+                    f"for line in content.split('\\n'):\n"
+                    f"    if 'search_term' in line:\n"
+                    f"        print(line)\n"
+                    f"```"
+                )
+
+            new_content = f"Tool result from '{tool_name}' was too large and was saved as attachment {att_id}.{hint}"
+            logger.info(
+                f"Auto-converted large tool result ({len(content_bytes)} bytes) from "
+                f"'{tool_name}' to attachment {att_id}"
+            )
+            return new_content, att_id
+
+        except Exception as e:
+            logger.error(
+                f"Failed to auto-convert large tool result to attachment: {e}",
+                exc_info=True,
+            )
+            return content, None
 
     def _get_file_extension_from_mime_type(self, mime_type: str) -> str:
         """
