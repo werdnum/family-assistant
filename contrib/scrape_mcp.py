@@ -3,7 +3,7 @@
 # requires-python = ">=3.8"
 # dependencies = [
 #   "httpx>=0.25.0", # Specify a recent version for better feature support
-#   "playwright",
+#   "rebrowser-playwright",
 #   "markitdown[all]>=0.1.1", # Updated for broader file support and specific version
 #   "mcp.server>=0.1.0", # MCP server library
 # ]

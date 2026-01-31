@@ -104,31 +104,27 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Update PATH separately (use home directory agnostic path)
 ENV PATH="${UV_TOOL_BIN_DIR}:/home/appuser/.deno/bin:/usr/local/bin:${PATH}"
 
-# --- Install Python dependencies for contrib/scrape_mcp.py and Playwright browsers ---
-# Install playwright and markitdown packages first
-# Pin playwright to match pyproject.toml version to ensure browser compatibility
-USER appuser
-RUN uv pip install "playwright==1.55.0" "markitdown[html]>=0.1.0"
-
-# Install Playwright browsers with system dependencies
-# Switch back to root for system dependencies installation
-USER root
-RUN playwright install-deps chromium
-
-# Switch to appuser for browser installation
-USER appuser
-RUN playwright install chromium && \
-    # Verify the browser was installed correctly - build should fail if this fails
-    ls -la ${PLAYWRIGHT_BROWSERS_PATH}/
-
-USER root
-
 # Copy dependency definition files
 COPY --chown=appuser:appuser pyproject.toml uv.lock* ./
 
 # Install Python dependencies (without installing the project itself yet)
+# This includes rebrowser-playwright which provides the playwright module
 USER appuser
 RUN uv sync --no-install-project --extra local-embeddings
+
+# --- Install Playwright browsers with system dependencies ---
+# Install Playwright browsers with system dependencies
+# Switch back to root for system dependencies installation
+USER root
+RUN .venv/bin/playwright install-deps chromium
+
+# Switch to appuser for browser installation
+USER appuser
+RUN .venv/bin/playwright install chromium && \
+    # Verify the browser was installed correctly - build should fail if this fails
+    ls -la ${PLAYWRIGHT_BROWSERS_PATH}/
+
+USER root
 
 # --- Frontend Build Stage ---
 # Copy frontend package files first for layer caching
