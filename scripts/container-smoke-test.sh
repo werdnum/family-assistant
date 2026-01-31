@@ -16,22 +16,42 @@ echo "Health check endpoint: http://localhost:$PORT$HEALTH_PATH"
 
 # Ensure cleanup on exit
 cleanup() {
-    echo "Cleaning up container: $CONTAINER_NAME"
-    docker logs "$CONTAINER_NAME" || true
-    docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    echo "--- Smoke Test Cleanup ---"
+
+    # Check if container exists
+    if docker ps -a --format '{{.Names}}' | grep -q "^$CONTAINER_NAME$"; then
+        echo "Container logs for $CONTAINER_NAME:"
+        docker logs "$CONTAINER_NAME" || true
+
+        echo "Container state:"
+        docker inspect "$CONTAINER_NAME" --format '{{.State.Status}}' || true
+
+        echo "Removing container: $CONTAINER_NAME"
+        docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    else
+        echo "Container $CONTAINER_NAME was not found, no cleanup needed."
+    fi
 }
 trap cleanup EXIT
 
 # Run the container
 # Use GEMINI_API_KEY=dummy to avoid startup failures if it validates keys
+echo "Launching container..."
 docker run -d --name "$CONTAINER_NAME" -p "$PORT:$PORT" -e GEMINI_API_KEY=dummy "$IMAGE_NAME"
 
 # Wait for health check
 RETRY_COUNT=0
 until [ $RETRY_COUNT -ge $MAX_RETRIES ]
 do
+    # Check if container is still running
+    STATE=$(docker inspect "$CONTAINER_NAME" --format '{{.State.Status}}' 2>/dev/null || echo "not_found")
+    if [ "$STATE" != "running" ]; then
+        echo "ERROR: Container is not running! State: $STATE"
+        # The trap will print logs on exit
+        exit 1
+    fi
+
     # Fetch status, handle potential curl failures during startup
-    # Use -s for silent, -f for fail on 4xx/5xx
     RESPONSE=$(curl -s "http://localhost:$PORT$HEALTH_PATH" || echo '{"status":"failed_to_connect"}')
     HEALTH=$(echo "$RESPONSE" | jq -r .status 2>/dev/null || echo "unknown")
 
