@@ -12,7 +12,7 @@ from collections.abc import Callable
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
-from sqlalchemy import TextClause, event  # Result removed
+from sqlalchemy import TextClause, event
 from sqlalchemy.engine import CursorResult  # CursorResult added
 from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine

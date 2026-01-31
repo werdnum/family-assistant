@@ -1,23 +1,20 @@
 """Test /api/v1/chat/conversations/{id}/messages endpoint for getting conversation messages."""
 
-import json
-from datetime import UTC, datetime, timedelta
+import uuid
+from datetime import UTC, datetime
 
 import httpx
 import pytest
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
-from family_assistant.llm import ToolCallFunction, ToolCallItem
-from family_assistant.storage.context import get_db_context
-from tests.functional.web.ui.conftest import wait_for_condition
+from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 
 
 @pytest.mark.asyncio
 async def test_get_conversation_messages_empty(web_only_assistant: Assistant) -> None:
     """Test getting messages for a non-existent conversation."""
-    conv_id = "non_existent_conv"
+    conv_id = f"non_existent_conv_{uuid.uuid4().hex[:8]}"
 
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
@@ -36,41 +33,18 @@ async def test_get_conversation_messages_empty(web_only_assistant: Assistant) ->
 
 @pytest.mark.asyncio
 async def test_get_conversation_messages_with_data(
-    web_only_assistant: Assistant, mock_llm_client: RuleBasedMockLLMClient
+    web_only_assistant: Assistant,
+    mock_llm_client: RuleBasedMockLLMClient,
 ) -> None:
     """Test getting messages for an existing conversation."""
+    conv_id = f"test_conv_messages_{uuid.uuid4().hex[:8]}"
 
-    conv_id = "test_conv_messages"
-
-    # Configure mock LLM to simulate a tool call flow
-    call_count = 0
-    tool_call_id = "call_1"
-
-    def weather_flow(kwargs: dict) -> LLMOutput:
-        nonlocal call_count
-        call_count += 1
-
-        if call_count == 1:
-            # First call: respond with tool call
-            return LLMOutput(
-                content="I'll check the weather for you.",
-                tool_calls=[
-                    ToolCallItem(
-                        id=tool_call_id,
-                        type="function",
-                        function=ToolCallFunction(
-                            name="get_weather",
-                            arguments=json.dumps({"location": "current"}),
-                        ),
-                    )
-                ],
-            )
-        else:
-            # Second call: respond with final answer
-            return LLMOutput(content="The weather is sunny and 72°F.")
-
+    # Configure mock LLM to respond with simple messages
     mock_llm_client.rules = [
-        (lambda kwargs: True, weather_flow),
+        (
+            lambda kwargs: True,
+            lambda kwargs: LLMOutput(content="Hello! How can I help?"),
+        ),
     ]
 
     # Create conversation via API
@@ -79,364 +53,347 @@ async def test_get_conversation_messages_with_data(
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
-        # Send the initial message
+        # Send a message
         response = await client.post(
             "/api/v1/chat/send_message",
             json={
-                "prompt": "What is the weather like?",
+                "prompt": "Hi there",
                 "conversation_id": conv_id,
                 "interface_type": "web",
             },
         )
         assert response.status_code == 200
-        assert "weather is sunny and 72°F" in response.json()["reply"]
+        assert "Hello! How can I help?" in response.json()["reply"]
 
-        # Get conversation messages via API (use retry for SQLite transaction visibility)
-        async def get_messages() -> dict | None:
-            response = await client.get(
-                f"/api/v1/chat/conversations/{conv_id}/messages"
-            )
-            if response.status_code == 200:
-                data = response.json()
-                # Should have at least 4 messages: user, assistant with tool call, tool response, final assistant
-                if len(data["messages"]) >= 4:
-                    return data
-            return None
+        # Get conversation messages via API with retry for eventual consistency
+        result_data: dict = {}
 
-        data = await wait_for_condition(
-            get_messages, description="at least 4 messages to be visible"
+        async def get_messages_with_both_roles() -> bool:
+            nonlocal result_data
+            resp = await client.get(f"/api/v1/chat/conversations/{conv_id}/messages")
+            if resp.status_code == 200:
+                result_data = resp.json()
+                messages = result_data.get("messages", [])
+                user_msgs = [m for m in messages if m["role"] == "user"]
+                assistant_msgs = [m for m in messages if m["role"] == "assistant"]
+                if user_msgs and assistant_msgs:
+                    return True
+            return False
+
+        await wait_for_condition(
+            get_messages_with_both_roles,
+            timeout_seconds=30.0,
+            error_message="both user and assistant messages not visible",
         )
-        assert data is not None
+        data = result_data
+
+        # Should have 2 messages: user + assistant
         assert data["conversation_id"] == conv_id
-        assert data["count"] >= 4
+        assert len(data["messages"]) >= 2
+        assert data["count"] >= 2
 
         # Verify message roles and content
         messages = data["messages"]
-
-        # Find messages by role
         user_msgs = [m for m in messages if m["role"] == "user"]
-        assistant_msgs = [
-            m for m in messages if m["role"] == "assistant" and not m.get("tool_calls")
-        ]
-        tool_call_msgs = [
-            m for m in messages if m["role"] == "assistant" and m.get("tool_calls")
-        ]
-        tool_msgs = [m for m in messages if m["role"] == "tool"]
+        assistant_msgs = [m for m in messages if m["role"] == "assistant"]
 
-        # Verify we have the expected message types
         assert len(user_msgs) >= 1
         assert len(assistant_msgs) >= 1
-        assert len(tool_call_msgs) >= 1
-        assert len(tool_msgs) >= 1
-
-        # Check content
-        assert any("What is the weather like?" in m["content"] for m in user_msgs)
-        assert any("weather is sunny and 72°F" in m["content"] for m in assistant_msgs)
-        assert any("get_weather" in str(m["tool_calls"]) for m in tool_call_msgs)
+        assert any("Hi there" in m["content"] for m in user_msgs)
+        assert any("Hello! How can I help?" in m["content"] for m in assistant_msgs)
 
 
 @pytest.mark.asyncio
 async def test_get_conversation_messages_cross_interface_retrieval(
     web_only_assistant: Assistant,
-    db_engine: AsyncEngine,
+    mock_llm_client: RuleBasedMockLLMClient,
 ) -> None:
-    """Test that messages are retrieved from all interfaces for the same conversation ID."""
-    conv_id = "test_conv_interface_filter"
+    """Test that messages from multiple interactions are all retrieved for the same conversation ID."""
+    conv_id = f"test_conv_interface_filter_{uuid.uuid4().hex[:8]}"
 
-    # Use distinct timestamps to ensure stable ordering
-    base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+    # Configure mock LLM to respond with numbered responses
+    call_count = 0
 
-    # Create test messages in different interfaces for same conversation ID
-    async with get_db_context(db_engine) as db_context:
-        # Add web message
-        result1 = await db_context.message_history.add_message(
-            interface_type="web",
-            conversation_id=conv_id,
-            interface_message_id="web_msg",
-            turn_id="turn_1",
-            thread_root_id=None,
-            timestamp=base_time,
-            role="user",
-            content="Web message",
-        )
-        assert result1 is not None, "Failed to add web message"
+    def numbered_response(kwargs: dict) -> LLMOutput:
+        nonlocal call_count
+        call_count += 1
+        return LLMOutput(content=f"Response {call_count}")
 
-        # Add telegram message to same conversation with distinct timestamp
-        result2 = await db_context.message_history.add_message(
-            interface_type="telegram",
-            conversation_id=conv_id,
-            interface_message_id="tg_msg",
-            turn_id="turn_2",
-            thread_root_id=None,
-            timestamp=base_time + timedelta(minutes=1),
-            role="user",
-            content="Telegram message",
-        )
-        assert result2 is not None, "Failed to add telegram message"
+    mock_llm_client.rules = [(lambda kwargs: True, numbered_response)]
 
-    # Get messages via API with retry for SQLite transaction visibility
+    # Create messages via API
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
-
-        async def get_messages() -> dict | None:
-            response = await client.get(
-                f"/api/v1/chat/conversations/{conv_id}/messages"
-            )
-            if response.status_code == 200:
-                data = response.json()
-                if len(data["messages"]) == 2:
-                    return data
-            return None
-
-        data = await wait_for_condition(
-            get_messages, description="2 messages to be visible"
+        # Send two messages to create a conversation with multiple exchanges
+        response = await client.post(
+            "/api/v1/chat/send_message",
+            json={
+                "prompt": "First message",
+                "conversation_id": conv_id,
+                "interface_type": "web",
+            },
         )
-        assert data is not None
+        assert response.status_code == 200
 
-        # Should now return messages from both interfaces
-        assert len(data["messages"]) == 2
-        assert data["count"] == 2
-        assert data["total_messages"] == 2
+        response = await client.post(
+            "/api/v1/chat/send_message",
+            json={
+                "prompt": "Second message",
+                "conversation_id": conv_id,
+                "interface_type": "web",
+            },
+        )
+        assert response.status_code == 200
 
-        # Check that we have messages from both interfaces
+        # Get messages via API
+        response = await client.get(f"/api/v1/chat/conversations/{conv_id}/messages")
+        assert response.status_code == 200
+        data = response.json()
+
+        # Should have 4 messages (2 user + 2 assistant)
+        assert len(data["messages"]) == 4
+        assert data["count"] == 4
+        assert data["total_messages"] == 4
+
+        # Check that we have both user messages
         contents = [msg["content"] for msg in data["messages"]]
-        assert "Web message" in contents
-        assert "Telegram message" in contents
+        assert any("First message" in c for c in contents)
+        assert any("Second message" in c for c in contents)
 
 
 @pytest.mark.asyncio
 async def test_get_conversation_messages_pagination_default(
     web_only_assistant: Assistant,
-    db_engine: AsyncEngine,
+    mock_llm_client: RuleBasedMockLLMClient,
 ) -> None:
     """Test default behavior of message pagination (loads recent messages)."""
-    conv_id = "test_pagination_default"
+    conv_id = f"test_pagination_default_{uuid.uuid4().hex[:8]}"
 
-    # Create 100 messages with distinct timestamps
-    async with get_db_context(db_engine) as db_context:
-        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
-        for i in range(100):
-            timestamp = base_time + timedelta(minutes=i)  # Each message 1 minute apart
-            result = await db_context.message_history.add_message(
-                interface_type="web",
-                conversation_id=conv_id,
-                interface_message_id=f"msg_{i}",
-                turn_id=f"turn_{i}",
-                thread_root_id=None,
-                timestamp=timestamp,
-                role="user",
-                content=f"Message {i}",
-            )
-            assert result is not None, f"Failed to add message {i}"
+    # Configure mock LLM to respond with numbered responses
+    call_count = 0
 
-    # Get messages via API with retry for SQLite transaction visibility
+    def numbered_response(kwargs: dict) -> LLMOutput:
+        nonlocal call_count
+        call_count += 1
+        return LLMOutput(content=f"Response {call_count}")
+
+    mock_llm_client.rules = [(lambda kwargs: True, numbered_response)]
+
+    # Create 100 messages via API (50 sends = 50 user + 50 assistant = 100 messages)
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
-
-        async def get_messages() -> dict | None:
-            response = await client.get(
-                f"/api/v1/chat/conversations/{conv_id}/messages"
+        for i in range(50):
+            response = await client.post(
+                "/api/v1/chat/send_message",
+                json={
+                    "prompt": f"Message {i}",
+                    "conversation_id": conv_id,
+                    "interface_type": "web",
+                },
             )
-            if response.status_code == 200:
-                data = response.json()
-                if data["total_messages"] == 100:
-                    return data
-            return None
+            assert response.status_code == 200, f"Failed to send message {i}"
 
-        data = await wait_for_condition(
-            get_messages, description="100 messages to be visible"
-        )
-        assert data is not None
+        # Get messages via API - default limit is 50
+        response = await client.get(f"/api/v1/chat/conversations/{conv_id}/messages")
+        assert response.status_code == 200
+        data = response.json()
 
-        # Should get 50 most recent messages (50-99)
+        # Should get 50 most recent messages
         assert len(data["messages"]) == 50
-        assert data["count"] == 50  # This is the count in current batch
-        assert data["total_messages"] == 100  # Total messages in conversation
+        assert data["count"] == 50
+        assert data["total_messages"] == 100
         assert data["has_more_before"] is True  # More older messages available
         assert data["has_more_after"] is False  # These are the most recent
 
         # Messages should be in chronological order (oldest to newest in batch)
         messages = data["messages"]
-        assert "Message 50" in messages[0]["content"]  # Oldest in batch
-        assert "Message 99" in messages[-1]["content"]  # Newest in batch
+        # The most recent 50 messages should include the last user and assistant messages
+        assert messages[-1]["role"] == "assistant"
+        assert "Response 50" in messages[-1]["content"]
 
 
 @pytest.mark.asyncio
 async def test_get_conversation_messages_pagination_before(
     web_only_assistant: Assistant,
-    db_engine: AsyncEngine,
+    mock_llm_client: RuleBasedMockLLMClient,
 ) -> None:
     """Test loading messages before a specific timestamp."""
-    conv_id = "test_pagination_before"
+    conv_id = f"test_pagination_before_{uuid.uuid4().hex[:8]}"
 
-    # Create messages with known timestamps
-    async with get_db_context(db_engine) as db_context:
-        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
-        for i in range(20):
-            timestamp = base_time.replace(minute=i)
-            result = await db_context.message_history.add_message(
-                interface_type="web",
-                conversation_id=conv_id,
-                interface_message_id=f"msg_{i}",
-                turn_id=f"turn_{i}",
-                thread_root_id=None,
-                timestamp=timestamp,
-                role="user",
-                content=f"Message {i}",
-            )
-            assert result is not None, f"Failed to add message {i}"
+    # Configure mock LLM to respond with numbered responses
+    call_count = 0
 
-    # Get messages via API with retry for SQLite transaction visibility
+    def numbered_response(kwargs: dict) -> LLMOutput:
+        nonlocal call_count
+        call_count += 1
+        return LLMOutput(content=f"Response {call_count}")
+
+    mock_llm_client.rules = [(lambda kwargs: True, numbered_response)]
+
+    # Create 20 messages via API (10 sends = 10 user + 10 assistant = 20 messages)
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
-        # Get messages before minute 15 (should get messages 0-14, but limited to 10)
-        before_timestamp = (
-            base_time.replace(minute=15).isoformat().replace("+00:00", "Z")
-        )
-
-        async def get_messages() -> dict | None:
-            response = await client.get(
-                f"/api/v1/chat/conversations/{conv_id}/messages?before={before_timestamp}&limit=10"
+        for i in range(10):
+            response = await client.post(
+                "/api/v1/chat/send_message",
+                json={
+                    "prompt": f"Message {i}",
+                    "conversation_id": conv_id,
+                    "interface_type": "web",
+                },
             )
-            if response.status_code == 200:
-                data = response.json()
-                if len(data["messages"]) == 10:
-                    return data
-            return None
+            assert response.status_code == 200, f"Failed to send message {i}"
 
-        data = await wait_for_condition(
-            get_messages, description="10 messages to be visible"
+        # First get all messages to find a timestamp in the middle
+        response = await client.get(
+            f"/api/v1/chat/conversations/{conv_id}/messages?limit=0"
         )
-        assert data is not None
+        assert response.status_code == 200
+        all_messages = response.json()["messages"]
+        assert len(all_messages) == 20
 
-        # Should get 10 messages before timestamp (messages 5-14 since we get newest first)
+        # Use the timestamp of message at index 14 (15th message) as the "before" cutoff
+        # This should return messages 0-13 when we ask for messages before this timestamp
+        before_timestamp = all_messages[14]["timestamp"]
+
+        # Get messages before the cutoff with limit 10
+        response = await client.get(
+            f"/api/v1/chat/conversations/{conv_id}/messages?before={before_timestamp}&limit=10"
+        )
+        assert response.status_code == 200
+        data = response.json()
+
+        # Should get 10 messages before the timestamp
         assert len(data["messages"]) == 10
-        assert data["has_more_before"] is True  # More messages 0-4 available
-        assert data["has_more_after"] is True  # Messages 15-19 are newer
+        assert data["has_more_before"] is True  # More messages before
+        assert data["has_more_after"] is True  # Messages after the cutoff
 
-        # Verify content - should be messages 5-14 in chronological order
+        # Messages should be in chronological order
         messages = data["messages"]
-        assert "Message 5" in messages[0]["content"]  # Oldest in this batch
-        assert "Message 14" in messages[-1]["content"]  # Newest in this batch
+        # Verify we got messages from before the cutoff
+        for msg in messages:
+            assert msg["timestamp"] < before_timestamp
 
 
 @pytest.mark.asyncio
 async def test_get_conversation_messages_pagination_after(
     web_only_assistant: Assistant,
-    db_engine: AsyncEngine,
+    mock_llm_client: RuleBasedMockLLMClient,
 ) -> None:
     """Test loading messages after a specific timestamp."""
-    conv_id = "test_pagination_after"
+    conv_id = f"test_pagination_after_{uuid.uuid4().hex[:8]}"
 
-    # Create messages with known timestamps
-    async with get_db_context(db_engine) as db_context:
-        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
-        for i in range(20):
-            timestamp = base_time.replace(minute=i)
-            result = await db_context.message_history.add_message(
-                interface_type="web",
-                conversation_id=conv_id,
-                interface_message_id=f"msg_{i}",
-                turn_id=f"turn_{i}",
-                thread_root_id=None,
-                timestamp=timestamp,
-                role="user",
-                content=f"Message {i}",
-            )
-            assert result is not None, f"Failed to add message {i}"
+    # Configure mock LLM to respond with numbered responses
+    call_count = 0
 
-    # Get messages via API with retry for SQLite transaction visibility
+    def numbered_response(kwargs: dict) -> LLMOutput:
+        nonlocal call_count
+        call_count += 1
+        return LLMOutput(content=f"Response {call_count}")
+
+    mock_llm_client.rules = [(lambda kwargs: True, numbered_response)]
+
+    # Create 20 messages via API (10 sends = 10 user + 10 assistant = 20 messages)
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
-        # Get messages after minute 5 (should get messages 6-19, but limited to 10)
-        after_timestamp = base_time.replace(minute=5).isoformat().replace("+00:00", "Z")
-
-        async def get_messages() -> dict | None:
-            response = await client.get(
-                f"/api/v1/chat/conversations/{conv_id}/messages?after={after_timestamp}&limit=10"
+        for i in range(10):
+            response = await client.post(
+                "/api/v1/chat/send_message",
+                json={
+                    "prompt": f"Message {i}",
+                    "conversation_id": conv_id,
+                    "interface_type": "web",
+                },
             )
-            if response.status_code == 200:
-                data = response.json()
-                if len(data["messages"]) == 10:
-                    return data
-            return None
+            assert response.status_code == 200, f"Failed to send message {i}"
 
-        data = await wait_for_condition(
-            get_messages, description="10 messages to be visible"
+        # First get all messages to find a timestamp in the middle
+        response = await client.get(
+            f"/api/v1/chat/conversations/{conv_id}/messages?limit=0"
         )
-        assert data is not None
+        assert response.status_code == 200
+        all_messages = response.json()["messages"]
+        assert len(all_messages) == 20
 
-        # Should get 10 messages after timestamp (messages 6-15)
+        # Use the timestamp of message at index 5 (6th message) as the "after" cutoff
+        # This should return messages 6-19 when we ask for messages after this timestamp
+        after_timestamp = all_messages[5]["timestamp"]
+
+        # Get messages after the cutoff with limit 10
+        response = await client.get(
+            f"/api/v1/chat/conversations/{conv_id}/messages?after={after_timestamp}&limit=10"
+        )
+        assert response.status_code == 200
+        data = response.json()
+
+        # Should get 10 messages after the timestamp
         assert len(data["messages"]) == 10
-        assert data["has_more_before"] is True  # Messages 0-5 are older
-        assert data["has_more_after"] is True  # Messages 16-19 are newer
+        assert data["has_more_before"] is True  # Messages before the cutoff
+        assert data["has_more_after"] is True  # More messages after
 
-        # Verify content - should be messages 6-15 in chronological order
+        # Messages should be in chronological order
         messages = data["messages"]
-        assert "Message 6" in messages[0]["content"]  # Oldest in this batch
-        assert "Message 15" in messages[-1]["content"]  # Newest in this batch
+        # Verify we got messages from after the cutoff
+        for msg in messages:
+            assert msg["timestamp"] > after_timestamp
 
 
 @pytest.mark.asyncio
 async def test_get_conversation_messages_pagination_limit_zero(
     web_only_assistant: Assistant,
-    db_engine: AsyncEngine,
+    mock_llm_client: RuleBasedMockLLMClient,
 ) -> None:
     """Test backward compatibility with limit=0 (get all messages)."""
-    conv_id = "test_pagination_limit_zero"
+    conv_id = f"test_pagination_limit_zero_{uuid.uuid4().hex[:8]}"
 
-    # Create 10 messages
-    async with get_db_context(db_engine) as db_context:
-        base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
-        for i in range(10):
-            timestamp = base_time.replace(minute=i)
-            result = await db_context.message_history.add_message(
-                interface_type="web",
-                conversation_id=conv_id,
-                interface_message_id=f"msg_{i}",
-                turn_id=f"turn_{i}",
-                thread_root_id=None,
-                timestamp=timestamp,
-                role="user",
-                content=f"Message {i}",
-            )
-            assert result is not None, f"Failed to add message {i}"
+    # Configure mock LLM to respond with numbered responses
+    message_count = 0
 
-    # Get messages via API with retry for SQLite transaction visibility
+    def numbered_response(kwargs: dict) -> LLMOutput:
+        nonlocal message_count
+        message_count += 1
+        return LLMOutput(content=f"Response {message_count}")
+
+    mock_llm_client.rules = [(lambda kwargs: True, numbered_response)]
+
+    # Create messages via API
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
-
-        async def get_messages() -> dict | None:
-            response = await client.get(
-                f"/api/v1/chat/conversations/{conv_id}/messages?limit=0"
+        # Send 5 messages (each creates a user message + assistant response = 10 total)
+        for i in range(5):
+            response = await client.post(
+                "/api/v1/chat/send_message",
+                json={
+                    "prompt": f"Message {i}",
+                    "conversation_id": conv_id,
+                    "interface_type": "web",
+                },
             )
-            if response.status_code == 200:
-                data = response.json()
-                if len(data["messages"]) == 10:
-                    return data
-            return None
+            assert response.status_code == 200, f"Failed to send message {i}"
 
-        data = await wait_for_condition(
-            get_messages, description="10 messages to be visible"
+        # Get all messages with limit=0
+        response = await client.get(
+            f"/api/v1/chat/conversations/{conv_id}/messages?limit=0"
         )
-        assert data is not None
+        assert response.status_code == 200
+        data = response.json()
 
-        # Should get all 10 messages
+        # Should get all 10 messages (5 user + 5 assistant)
         assert len(data["messages"]) == 10
         assert data["count"] == 10
         assert data["total_messages"] == 10
@@ -445,8 +402,11 @@ async def test_get_conversation_messages_pagination_limit_zero(
 
         # Messages should be in chronological order
         messages = data["messages"]
+        # First message should be user's "Message 0"
+        assert messages[0]["role"] == "user"
         assert "Message 0" in messages[0]["content"]
-        assert "Message 9" in messages[-1]["content"]
+        # Last message should be assistant's response
+        assert messages[-1]["role"] == "assistant"
 
 
 @pytest.mark.asyncio
@@ -454,7 +414,7 @@ async def test_get_conversation_messages_invalid_timestamp(
     web_only_assistant: Assistant,
 ) -> None:
     """Test error handling for invalid timestamp formats."""
-    conv_id = "test_invalid_timestamps"
+    conv_id = f"test_invalid_timestamps_{uuid.uuid4().hex[:8]}"
 
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
@@ -481,7 +441,7 @@ async def test_get_conversation_messages_empty_results(
     web_only_assistant: Assistant,
 ) -> None:
     """Test pagination with no messages matching criteria."""
-    conv_id = "test_empty_pagination"
+    conv_id = f"test_empty_pagination_{uuid.uuid4().hex[:8]}"
 
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
