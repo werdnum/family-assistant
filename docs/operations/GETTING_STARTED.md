@@ -51,6 +51,18 @@ database (including the required `pgvector` extension) for persistent storage an
    docker compose -f deploy/docker-compose.yaml logs -f
    ```
 
+### ⚠️ Security Warning: Web UI Authentication
+
+By default, the Web UI is **unsecured** in this configuration. Port 8000 is bound to `localhost`
+(`127.0.0.1`) in the `docker-compose.yaml` to prevent accidental public exposure.
+
+To enable secure authentication for the Web UI, you must configure OpenID Connect (OIDC). See the
+[Configuration Reference](CONFIGURATION_REFERENCE.md) for details on setting up:
+
+- `OIDC_CLIENT_ID`
+- `OIDC_CLIENT_SECRET`
+- `OIDC_DISCOVERY_URL`
+
 ______________________________________________________________________
 
 ### Option 2: Native Deployment (Kubernetes)
