@@ -17,7 +17,7 @@ import random
 from typing import TYPE_CHECKING, TypedDict
 
 if TYPE_CHECKING:
-    from playwright.async_api import Browser, BrowserContext, Playwright
+    from rebrowser_playwright.async_api import Browser, BrowserContext, Playwright
 
 
 class ViewportSize(TypedDict):
