@@ -15,6 +15,7 @@ from .notes_api import notes_api_router
 from .tasks_api import tasks_api_router
 from .tools_api import tools_api_router
 from .vector_search_api import vector_search_api_router
+from .version_api import version_router
 
 logger = logging.getLogger(__name__)
 api_router = APIRouter()
@@ -45,3 +46,4 @@ api_router.include_router(debug_api_router, prefix="/debug", tags=["Debug"])
 api_router.include_router(
     diagnostics_api_router, prefix="/diagnostics", tags=["Diagnostics"]
 )
+api_router.include_router(version_router, tags=["Version"])
