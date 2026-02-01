@@ -503,6 +503,13 @@ export const handlers = [
 
     return new HttpResponse(null, { status: 404 });
   }),
+
+  // Mock frontend error reporting endpoint
+  http.post('/api/errors/', async () => {
+    return HttpResponse.json({
+      status: 'reported',
+    });
+  }),
 ];
 
 // Helper function to generate test responses based on input
