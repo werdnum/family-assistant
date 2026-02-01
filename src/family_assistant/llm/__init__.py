@@ -9,8 +9,11 @@ import io
 import json
 import logging
 import os
+import time
+import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field  # Added asdict
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
 
 import aiofiles  # type: ignore[import-untyped] # For async file operations
@@ -40,6 +43,7 @@ from .messages import (
     message_to_json_dict,
     tool_result_to_llm_message,
 )
+from .request_buffer import LLMRequestRecord, get_request_buffer
 from .tool_call import ToolCallFunction, ToolCallItem
 
 # Import for multimodal tool results
@@ -879,33 +883,59 @@ class LiteLLMClient(BaseLLMClient):
                 f"{_format_serialized_messages_for_debug(message_dicts, tools, tool_choice)}"
             )
 
-        if tools:
-            sanitized_tools_arg = _sanitize_tools_for_litellm(tools)
-            logger.debug(
-                f"Calling LiteLLM model {model_id} with {len(message_dicts)} messages. "
-                f"Tools provided. Tool choice: {tool_choice}. Filtered params: {json.dumps(completion_params, default=str)}"
-            )
-            response = await acompletion(
-                model=model_id,
-                messages=message_dicts,
-                tools=sanitized_tools_arg,
-                tool_choice=tool_choice,
-                stream=False,
-                **completion_params,  # type: ignore[reportArgumentType]
-            )
-            response = cast("ModelResponse", response)
-        else:
-            logger.debug(
-                f"Calling LiteLLM model {model_id} with {len(message_dicts)} messages. "
-                f"No tools provided. Filtered params: {json.dumps(completion_params, default=str)}"
-            )
-            _response_obj = await acompletion(
-                model=model_id,
-                messages=message_dicts,
-                stream=False,
-                **completion_params,  # type: ignore[reportArgumentType]
-            )
-            response = cast("ModelResponse", _response_obj)
+        # Prepare for request recording
+        request_id = str(uuid.uuid4())[:8]
+        start_time = time.monotonic()
+        request_timestamp = datetime.now(UTC)
+
+        try:
+            if tools:
+                sanitized_tools_arg = _sanitize_tools_for_litellm(tools)
+                logger.debug(
+                    f"Calling LiteLLM model {model_id} with {len(message_dicts)} messages. "
+                    f"Tools provided. Tool choice: {tool_choice}. Filtered params: {json.dumps(completion_params, default=str)}"
+                )
+                response = await acompletion(
+                    model=model_id,
+                    messages=message_dicts,
+                    tools=sanitized_tools_arg,
+                    tool_choice=tool_choice,
+                    stream=False,
+                    **completion_params,  # type: ignore[reportArgumentType]
+                )
+                response = cast("ModelResponse", response)
+            else:
+                logger.debug(
+                    f"Calling LiteLLM model {model_id} with {len(message_dicts)} messages. "
+                    f"No tools provided. Filtered params: {json.dumps(completion_params, default=str)}"
+                )
+                _response_obj = await acompletion(
+                    model=model_id,
+                    messages=message_dicts,
+                    stream=False,
+                    **completion_params,  # type: ignore[reportArgumentType]
+                )
+                response = cast("ModelResponse", _response_obj)
+        except Exception as e:
+            # Record failed request
+            duration_ms = (time.monotonic() - start_time) * 1000
+            try:
+                get_request_buffer().add(
+                    LLMRequestRecord(
+                        timestamp=request_timestamp,
+                        request_id=request_id,
+                        model_id=model_id,
+                        messages=message_dicts,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        response=None,
+                        duration_ms=duration_ms,
+                        error=str(e),
+                    )
+                )
+            except Exception as record_err:
+                logger.debug(f"Failed to record LLM request error: {record_err}")
+            raise
 
         response_message: Message | None = None
         if response.choices:
@@ -975,11 +1005,32 @@ class LiteLLMClient(BaseLLMClient):
         logger.debug(
             f"LiteLLM response received from model {model_id}. Content: {bool(content)}. Tool Calls: {len(tool_calls_list)}. Reasoning: {bool(reasoning_info)}"
         )
-        return LLMOutput(
+        llm_output = LLMOutput(
             content=content,  # type: ignore
             tool_calls=tool_calls_list if tool_calls_list else None,
             reasoning_info=reasoning_info,
         )
+
+        # Record successful request
+        duration_ms = (time.monotonic() - start_time) * 1000
+        try:
+            get_request_buffer().add(
+                LLMRequestRecord(
+                    timestamp=request_timestamp,
+                    request_id=request_id,
+                    model_id=model_id,
+                    messages=message_dicts,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    response=asdict(llm_output),
+                    duration_ms=duration_ms,
+                    error=None,
+                )
+            )
+        except Exception as record_err:
+            logger.debug(f"Failed to record LLM request: {record_err}")
+
+        return llm_output
 
     async def generate_response(
         self,
