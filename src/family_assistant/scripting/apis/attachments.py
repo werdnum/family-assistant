@@ -271,7 +271,6 @@ class AttachmentAPI:
             logger.error(f"Error getting attachment {attachment_id}: {e}")
             return None
 
-    # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def read(self, attachment_id: str) -> str | None:
         """
         Get attachment content as a string.

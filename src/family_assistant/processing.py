@@ -2638,8 +2638,14 @@ Call attach_to_response with your selected attachment IDs."""
         Returns:
             Tuple of (new_content, auto_attachment_id)
         """
-        # Threshold: 20 KiB
-        THRESHOLD_BYTES = 20 * 1024
+        # Threshold from config (default 20 KiB)
+        threshold_kb = 20
+        if self.app_config and self.app_config.attachment_config:
+            threshold_kb = (
+                self.app_config.attachment_config.large_tool_result_threshold_kb
+            )
+
+        THRESHOLD_BYTES = threshold_kb * 1024
         content_bytes = content.encode("utf-8")
         if len(content_bytes) < THRESHOLD_BYTES:
             return content, None
