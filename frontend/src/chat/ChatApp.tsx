@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NavigationSheet from '../shared/NavigationSheet';
+import { getDiagnosticsUrl } from '../utils/diagnosticsUrl';
 import { parseToolArguments } from '../utils/toolUtils';
 import { generateUUID } from '../utils/uuid';
 import { defaultAttachmentAdapter } from './attachmentAdapter';
@@ -181,25 +182,36 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     }
   }, []);
 
-  const handleStreamingError = useCallback((error: Error | string, _metadata: unknown) => {
-    console.error('Streaming error:', error, _metadata);
-    if (streamingMessageIdRef.current) {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === streamingMessageIdRef.current
-            ? {
-                ...msg,
-                content: [
-                  { type: 'text', text: 'Sorry, I encountered an error processing your message.' },
-                ],
-                isLoading: false, // Remove loading state on error
-              }
-            : msg
-        )
-      );
-      streamingMessageIdRef.current = null;
-    }
-  }, []);
+  const handleStreamingError = useCallback(
+    (error: Error | string, _metadata: unknown) => {
+      console.error('Streaming error:', error, _metadata);
+      if (streamingMessageIdRef.current) {
+        // Build diagnostics URL with conversation context
+        const diagnosticsUrl = getDiagnosticsUrl({
+          conversationId: conversationId ?? undefined,
+        });
+
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === streamingMessageIdRef.current
+              ? {
+                  ...msg,
+                  content: [
+                    {
+                      type: 'text',
+                      text: `Sorry, I encountered an error processing your message. [View diagnostics](${diagnosticsUrl}) for debugging details.`,
+                    },
+                  ],
+                  isLoading: false, // Remove loading state on error
+                }
+              : msg
+          )
+        );
+        streamingMessageIdRef.current = null;
+      }
+    },
+    [conversationId]
+  );
 
   const handleStreamingComplete = useCallback(
     ({
