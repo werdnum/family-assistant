@@ -50,7 +50,7 @@ async def scan_camera_frames_tool(
         interval_minutes: Minutes between frames (default 5)
         max_frames: Maximum frames to scan (default 20)
         filter_matching: If True, only return frames that match the query (default True)
-        model: Model to use for frame analysis (e.g., 'gemini-2.0-flash'). Defaults to profile's model.
+        model: Model to use for frame analysis. Defaults to profile's model.
 
     Returns:
         ToolResult with:
@@ -111,13 +111,10 @@ Each frame is analyzed with this JSON schema:
 ### Model Selection
 
 The per-frame analysis model is configurable via the `model` parameter. If not specified, it uses
-the camera_analyst profile's configured model (gemini-3-flash-preview by default).
+the camera_analyst profile's configured model.
 
-Recommended models for frame analysis:
-
-- `gemini-2.0-flash` - Fast, multimodal capable, cost-effective
-- `gpt-4o-mini` - Good balance of speed and accuracy
-- Any multimodal model supported by the system
+Any multimodal-capable model supported by the system can be used. Choose a fast, cost-effective
+model for frame analysis since many parallel calls will be made.
 
 The provider handles rate limiting automatically with exponential backoff.
 
