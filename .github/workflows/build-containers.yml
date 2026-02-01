@@ -145,7 +145,7 @@ jobs:
           push: ${{ needs.prepare.outputs.should-push }}
           build-args: |
             GIT_COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ needs.prepare.outputs.tag }}
+            BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:${{ needs.prepare.outputs.tag }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:latest
