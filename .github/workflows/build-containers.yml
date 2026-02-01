@@ -51,7 +51,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6.0.1
+        uses: actions/checkout@v6.0.2
       - name: Run image smoke test
         uses: ./.github/actions/smoke-test-action
         with:
@@ -76,7 +76,7 @@ jobs:
           echo "After cleanup:"
           df -h
       - name: Checkout code
-        uses: actions/checkout@v6.0.1
+        uses: actions/checkout@v6.0.2
       - name: Set up QEMU
         if: needs.prepare.outputs.devcontainer-platforms != 'linux/amd64'
         uses: docker/setup-qemu-action@v3
@@ -122,7 +122,7 @@ jobs:
           echo "After cleanup:"
           df -h
       - name: Checkout code
-        uses: actions/checkout@v6.0.1
+        uses: actions/checkout@v6.0.2
       - name: Set up QEMU
         if: needs.prepare.outputs.platforms != 'linux/amd64'
         uses: docker/setup-qemu-action@v3
