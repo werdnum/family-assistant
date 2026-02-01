@@ -281,8 +281,7 @@ async def test_delegate_to_service_cross_conversation_attachment_allowed(
     def tool_result_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
         return any(
-            msg.role == "tool"
-            and "I can see the attachment" in (msg.content or "")
+            msg.role == "tool" and "I can see the attachment" in (msg.content or "")
             for msg in messages
         )
 

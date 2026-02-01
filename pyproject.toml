@@ -109,12 +109,12 @@ dependencies = [
     "reolink-aio>=0.16.0",
     # Media download support
     "yt-dlp>=2024.0.0",
+    "email-validator>=2.3.0",  # Required by litellm at runtime
 ]
 
 [project.optional-dependencies]
 dev = [
     "telegram-bot-api-mock[dev]",  # Mock server for Telegram bot testing
-    "email-validator>=2.3.0",
     "fastapi-sso>=0.18.0",
     "pytest",
     "pytest-asyncio>=0.26.0",
@@ -414,3 +414,4 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "torch-cpu" }
 telegram-bot-api-mock = { git = "https://github.com/werdnum/telegram-bot-api-mock" }
+
