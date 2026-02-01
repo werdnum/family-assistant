@@ -365,6 +365,48 @@ curl -X POST http://devcontainer-backend-1:8000/api/v1/chat/send_message_stream 
 environment variable when running the application. This will log the exact messages being sent to
 the LLM, including system prompts, user messages, tool calls, and tool responses.
 
+**Diagnostics Export:** For comprehensive debugging, use the diagnostics export API to get a
+combined export of error logs, LLM requests, and message history. This is designed for use with
+`curl` and `jq`, and outputs data suitable for passing to Claude Code or other LLMs for debugging.
+
+```bash
+# Get JSON export (default) - requires authentication
+curl -s -H "Authorization: Bearer YOUR_API_TOKEN" \
+  http://localhost:8000/api/diagnostics/export | jq .
+
+# Get just LLM requests from last 30 minutes
+curl -s -H "Authorization: Bearer YOUR_API_TOKEN" \
+  http://localhost:8000/api/diagnostics/export | jq '.llm_requests'
+
+# Get errors from last 5 minutes
+curl -s -H "Authorization: Bearer YOUR_API_TOKEN" \
+  'http://localhost:8000/api/diagnostics/export?minutes=5' | jq '.error_logs'
+
+# Get markdown format for pasting to LLM
+curl -s -H "Authorization: Bearer YOUR_API_TOKEN" \
+  'http://localhost:8000/api/diagnostics/export?format=markdown'
+
+# Filter by conversation
+curl -s -H "Authorization: Bearer YOUR_API_TOKEN" \
+  'http://localhost:8000/api/diagnostics/export?conversation_id=abc123' | jq .
+```
+
+Query parameters:
+
+- `minutes`: Time window (1-120, default: 30)
+- `max_errors`: Max error logs to return (1-100, default: 50)
+- `max_llm_requests`: Max LLM requests to return (1-100, default: 20)
+- `max_messages`: Max message history entries (1-500, default: 100)
+- `conversation_id`: Optional filter for specific conversation
+- `format`: Output format - `json` (default) or `markdown`
+
+The export includes:
+
+- System info (Python version, platform, database type)
+- Error logs with timestamps, levels, and tracebacks
+- LLM requests with messages, tools, responses, and timing
+- Message history with roles, content, and conversation IDs
+
 **API Discovery:** To discover available API endpoints, use jq to parse the OpenAPI spec:
 
 ```bash

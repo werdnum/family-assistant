@@ -5,6 +5,7 @@
 
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { reportErrorFromException } from '../api/errorClient';
+import { getDiagnosticsUrl } from '../utils/diagnosticsUrl';
 import { Button } from './ui/button';
 
 interface ErrorBoundaryProps {
@@ -93,9 +94,16 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
           <p className="text-sm text-muted-foreground">
             {this.state.error?.message || 'An unexpected error occurred'}
           </p>
-          <Button onClick={this.handleRetry} variant="outline">
-            Try Again
-          </Button>
+          <div className="flex gap-2">
+            <Button onClick={this.handleRetry} variant="outline">
+              Try Again
+            </Button>
+            <Button variant="ghost" size="sm" asChild>
+              <a href={getDiagnosticsUrl()} target="_blank" rel="noopener noreferrer">
+                View Diagnostics
+              </a>
+            </Button>
+          </div>
         </div>
       );
     }
