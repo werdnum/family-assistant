@@ -48,6 +48,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   });
   const streamingMessageIdRef = useRef<string | null>(null);
   const toolCallMessageIdRef = useRef<string | null>(null);
+  const initialPromptProcessedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesAbortControllerRef = useRef<AbortController | null>(null);
 
@@ -656,9 +657,16 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
     const urlParams = new URLSearchParams(window.location.search);
     const urlConversationId = urlParams.get('conversation_id');
+    const initialPrompt = urlParams.get('q');
     const lastConversationId = localStorage.getItem('lastConversationId');
 
-    if (urlConversationId) {
+    if (initialPrompt && !initialPromptProcessedRef.current) {
+      // If there's a prompt, start a new chat with it
+      const newConvId = `web_conv_${generateUUID()}`;
+      setConversationId(newConvId);
+      setMessages([]);
+      localStorage.setItem('lastConversationId', newConvId);
+    } else if (urlConversationId) {
       setConversationId(urlConversationId);
       loadConversationMessages(urlConversationId);
     } else if (lastConversationId) {
@@ -669,6 +677,30 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       handleNewChat();
     }
   }, []);
+
+  // Handle initial prompt from query parameter once runtime is ready
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const initialPrompt = urlParams.get('q');
+
+    if (
+      initialPrompt &&
+      runtime &&
+      !initialPromptProcessedRef.current &&
+      conversationId?.startsWith('web_conv_')
+    ) {
+      initialPromptProcessedRef.current = true;
+      handleNew({ content: [{ text: initialPrompt }] });
+
+      // Clean up URL
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.delete('q');
+      if (conversationId) {
+        newUrl.searchParams.set('conversation_id', conversationId);
+      }
+      window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+    }
+  }, [runtime, conversationId, handleNew]);
 
   // Create a stable callback ref for SSE message updates
   const handleLiveMessageUpdate = useCallback(

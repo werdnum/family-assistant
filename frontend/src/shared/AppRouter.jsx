@@ -18,6 +18,7 @@ const TokenManagement = lazy(() => import('../pages/Settings/TokenManagement'));
 const DocumentsPage = lazy(() => import('../pages/Documents/DocumentsPage'));
 const VectorSearchPage = lazy(() => import('../pages/VectorSearch/VectorSearchPage'));
 const VoicePage = lazy(() => import('../voice/VoicePage'));
+const LandingPage = lazy(() => import('../pages/LandingPage'));
 
 // Loading component for Suspense fallback
 const LoadingSpinner = () => (
@@ -118,8 +119,8 @@ const AppRouter = () => {
           }
         />
 
-        {/* Default redirect to chat */}
-        <Route path="/" element={<Navigate to="/chat" replace />} />
+        {/* Default route: Landing Page */}
+        <Route path="/" element={withLayout(<LandingPage />)} />
 
         {/* Catch-all for unmatched routes - redirect to external pages for now */}
         <Route path="*" element={<FallbackRedirect />} />

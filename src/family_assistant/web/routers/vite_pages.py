@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 vite_pages_router = APIRouter()
 
 
-@vite_pages_router.get("/", name="ui_root_redirect")
-async def root_redirect(request: Request) -> RedirectResponse:
-    """Redirects the root path to the chat interface."""
-    return RedirectResponse(url="/chat", status_code=302)
+@vite_pages_router.get("/", name="ui_root")
+async def ui_root(request: Request) -> Response:
+    """Serve the React landing page at the root via router."""
+    return _serve_vite_html_file(request, "router.html")
 
 
 @vite_pages_router.get("/sw.js", name="service_worker")
