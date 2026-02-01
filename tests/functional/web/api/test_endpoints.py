@@ -4,6 +4,7 @@ Tests both basic HTTP accessibility and browser-based rendering.
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -51,39 +52,53 @@ ALL_UI_ENDPOINTS_TO_TEST = BASE_UI_ENDPOINTS
 if AUTH_ENABLED:
     ALL_UI_ENDPOINTS_TO_TEST.extend(AUTH_UI_ENDPOINTS)
 
-# Extended endpoints with expected elements for Playwright tests
+# Extended endpoints with expected elements for Playwright tests.
+# Data structure: (path, description, expected_elements, screenshot_name)
 BASE_UI_ENDPOINTS_WITH_ELEMENTS = [
-    ("/", "Root Redirect Page", ["body"]),  # Now redirects to /chat
-    ("/notes", "Notes List Page", ["h1", "nav"]),
-    ("/notes/add", "Add Note Form Page", ["form", "input", "button"]),
+    ("/", "Root Redirect Page", ["body"], "root"),  # Now redirects to /chat
+    ("/notes", "Notes List Page", ["h1", "nav"], "notes"),
+    ("/notes/add", "Add Note Form Page", ["form", "input", "button"], "notes-add"),
     (
         "/notes/edit/non_existent_note_for_test",
         "Edit Non-Existent Note Form Page",
         ["body"],
+        "notes-edit-404",
     ),
-    ("/docs/", "Documentation Index Page", ["h1", "a"]),
-    ("/docs/USER_GUIDE.md", "USER_GUIDE.md Document Page", ["h1", "p"]),
-    ("/history", "Message History Page", ["h1"]),
-    ("/tools", "Available Tools Page", ["h1", "article"]),
-    ("/tasks", "Tasks List Page", ["h1"]),
-    ("/vector-search", "Vector Search Page", ["h1", "form", "input"]),
-    ("/documents/upload", "Document Upload Page", ["h1", "form"]),
+    ("/docs/", "Documentation Index Page", ["h1", "a"], "docs"),
+    (
+        "/docs/USER_GUIDE.md",
+        "USER_GUIDE.md Document Page",
+        ["h1", "p"],
+        "docs-user-guide",
+    ),
+    ("/history", "Message History Page", ["h1"], "history"),
+    ("/tools", "Available Tools Page", ["h1", "article"], "tools"),
+    ("/tasks", "Tasks List Page", ["h1"], "tasks"),
+    ("/vector-search", "Vector Search Page", ["h1", "form", "input"], "vector-search"),
+    ("/documents/upload", "Document Upload Page", ["h1", "form"], "documents-upload"),
     # Note: tokens page may have issues with auth disabled, but we test it anyway
-    ("/settings/tokens", "Manage API Tokens Page", ["h1"]),
-    ("/events", "Events List Page", ["main h1"]),
+    ("/settings/tokens", "Manage API Tokens Page", ["h1"], "settings-tokens"),
+    ("/events", "Events List Page", ["main h1"], "events"),
     (
         "/events/non_existent_event",
         "Event Detail Page",
         ["body"],
+        "events-404",
     ),  # May show error page
-    ("/event-listeners", "Event Listeners List Page", ["main h1"]),
-    ("/event-listeners/new", "Create Event Listener Page", ["main h1", "form"]),
+    ("/event-listeners", "Event Listeners List Page", ["main h1"], "event-listeners"),
+    (
+        "/event-listeners/new",
+        "Create Event Listener Page",
+        ["main h1", "form"],
+        "event-listeners-new",
+    ),
     (
         "/event-listeners/99999",
         "Event Listener Detail Page",
         ["body"],
+        "event-listeners-404",
     ),  # May show error page
-    ("/errors/", "Error Logs List Page", ["main h1"]),
+    ("/errors/", "Error Logs List Page", ["main h1"], "errors"),
 ]
 
 
@@ -121,10 +136,11 @@ async def test_ui_endpoint_accessibility(web_only_assistant: Assistant) -> None:
 async def check_endpoint(
     browser: Any,  # noqa: ANN401  # playwright browser object
     base_url: str,
-    endpoint_info: tuple[str, str, list[str]],
+    endpoint_info: tuple[str, str, list[str], str],
+    take_screenshot: Callable[[Any, str], Awaitable[None]] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Check a single endpoint and return failures and warnings."""
-    path, description, expected_elements = endpoint_info
+    path, description, expected_elements, screenshot_name = endpoint_info
     failures = []
     warnings = []
 
@@ -164,6 +180,10 @@ async def check_endpoint(
                 warnings.append(
                     f"Expected element '{selector}' not found on {description} at {path}"
                 )
+
+        # Take screenshot if requested
+        if take_screenshot and screenshot_name:
+            await take_screenshot(page, screenshot_name)
     finally:
         await page.close()
 
@@ -174,6 +194,7 @@ async def check_endpoint(
 @pytest.mark.asyncio
 async def test_ui_endpoint_accessibility_playwright(
     web_test_with_console_check: WebTestFixture,
+    take_screenshot: Callable[[Any, str], Awaitable[None]],
 ) -> None:
     """
     Test that all UI endpoints are accessible via Playwright and render without errors.
@@ -193,7 +214,8 @@ async def test_ui_endpoint_accessibility_playwright(
 
         # Run endpoint checks in parallel for this batch
         results = await asyncio.gather(*[
-            check_endpoint(browser, base_url, endpoint_info) for endpoint_info in batch
+            check_endpoint(browser, base_url, endpoint_info, take_screenshot)
+            for endpoint_info in batch
         ])
 
         # Collect results
