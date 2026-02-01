@@ -10,7 +10,7 @@ import os
 import pathlib
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, Response
 
 logger = logging.getLogger(__name__)
 vite_pages_router = APIRouter()

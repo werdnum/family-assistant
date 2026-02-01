@@ -8,7 +8,7 @@ import {
   Zap,
   History,
   Send,
-  ArrowRight
+  ArrowRight,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -74,13 +74,16 @@ const LandingPage: React.FC = () => {
 
   const suggestions = [
     "What's on my schedule today?",
-    "Summarize my recent notes",
-    "Help me write an email to my boss",
-    "Find documents related to 'taxes'"
+    'Summarize my recent notes',
+    'Help me write an email to my boss',
+    "Find documents related to 'taxes'",
   ];
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-6xl min-h-[calc(100vh-4rem)] flex flex-col justify-center" data-app-ready="true">
+    <div
+      className="container mx-auto px-4 py-8 max-w-6xl min-h-[calc(100vh-4rem)] flex flex-col justify-center"
+      data-app-ready="true"
+    >
       <div className="text-center mb-12">
         <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4 bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
           Family Assistant
@@ -131,7 +134,9 @@ const LandingPage: React.FC = () => {
             onClick={() => navigate(item.link)}
           >
             <CardHeader className="pb-2">
-              <div className={`w-12 h-12 rounded-2xl ${item.color} flex items-center justify-center mb-2 group-hover:scale-110 transition-transform`}>
+              <div
+                className={`w-12 h-12 rounded-2xl ${item.color} flex items-center justify-center mb-2 group-hover:scale-110 transition-transform`}
+              >
                 {item.icon}
               </div>
               <CardTitle className="text-xl">{item.title}</CardTitle>

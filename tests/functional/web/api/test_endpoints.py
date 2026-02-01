@@ -56,7 +56,7 @@ if AUTH_ENABLED:
 # Extended endpoints with expected elements for Playwright tests.
 # Data structure: (path, description, expected_elements, screenshot_name)
 BASE_UI_ENDPOINTS_WITH_ELEMENTS = [
-    ("/", "Root Redirect Page", ["body"], "root"),  # Now redirects to /chat
+    ("/", "Landing Page", ["h1", "form", "input"], "root"),
     ("/notes", "Notes List Page", ["h1", "nav"], "notes"),
     ("/notes/add", "Add Note Form Page", ["form", "input", "button"], "notes-add"),
     (

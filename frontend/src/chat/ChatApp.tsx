@@ -678,30 +678,6 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     }
   }, []);
 
-  // Handle initial prompt from query parameter once runtime is ready
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const initialPrompt = urlParams.get('q');
-
-    if (
-      initialPrompt &&
-      runtime &&
-      !initialPromptProcessedRef.current &&
-      conversationId?.startsWith('web_conv_')
-    ) {
-      initialPromptProcessedRef.current = true;
-      handleNew({ content: [{ text: initialPrompt }] });
-
-      // Clean up URL
-      const newUrl = new URL(window.location.href);
-      newUrl.searchParams.delete('q');
-      if (conversationId) {
-        newUrl.searchParams.set('conversation_id', conversationId);
-      }
-      window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
-    }
-  }, [runtime, conversationId, handleNew]);
-
   // Create a stable callback ref for SSE message updates
   const handleLiveMessageUpdate = useCallback(
     (update: {
@@ -879,6 +855,30 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       attachments: defaultAttachmentAdapter,
     },
   });
+
+  // Handle initial prompt from query parameter once runtime is ready
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const initialPrompt = urlParams.get('q');
+
+    if (
+      initialPrompt &&
+      runtime &&
+      !initialPromptProcessedRef.current &&
+      conversationId?.startsWith('web_conv_')
+    ) {
+      initialPromptProcessedRef.current = true;
+      handleNew({ content: [{ text: initialPrompt }] });
+
+      // Clean up URL
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.delete('q');
+      if (conversationId) {
+        newUrl.searchParams.set('conversation_id', conversationId);
+      }
+      window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+    }
+  }, [runtime, conversationId, handleNew]);
 
   // Signal that app is ready (for tests)
   // Only set when runtime is ready AND initial data loading is complete
