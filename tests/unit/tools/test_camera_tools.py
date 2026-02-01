@@ -585,7 +585,6 @@ async def test_scan_camera_frames_success(
         interval_minutes=15,
         max_frames=10,
         filter_matching=True,
-        max_concurrent=5,
     )
 
     assert isinstance(result, ToolResult)
@@ -627,7 +626,6 @@ async def test_scan_camera_frames_no_filtering(
         interval_minutes=15,
         max_frames=10,
         filter_matching=False,  # Return all frames
-        max_concurrent=5,
     )
 
     assert isinstance(result, ToolResult)
