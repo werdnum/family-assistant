@@ -265,9 +265,9 @@ CAMERA_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "type": "boolean",
                         "description": "If true (default), only return frames that match the query. If false, return all frames with their analysis.",
                     },
-                    "max_concurrent": {
-                        "type": "integer",
-                        "description": "Maximum concurrent AI analysis calls (default: 5). Higher values are faster but use more resources.",
+                    "model": {
+                        "type": "string",
+                        "description": "Model to use for frame analysis (e.g., 'gemini-2.0-flash', 'gpt-4o-mini'). Defaults to the profile's configured model.",
                     },
                 },
                 "required": ["camera_id", "start_time", "end_time", "query"],
@@ -622,7 +622,6 @@ async def _analyze_single_frame(
     jpeg_bytes: bytes,
     timestamp: datetime,
     query: str,
-    semaphore: asyncio.Semaphore,
 ) -> FrameAnalysisResult:
     """Analyze a single frame with the LLM.
 
@@ -631,102 +630,96 @@ async def _analyze_single_frame(
         jpeg_bytes: The frame image bytes
         timestamp: The timestamp of this frame
         query: What to look for in the frame
-        semaphore: Semaphore to limit concurrent LLM calls
 
     Returns:
         FrameAnalysisResult with the analysis
     """
-    async with semaphore:
+    try:
+        # Encode image as base64 data URL
+        b64_image = base64.b64encode(jpeg_bytes).decode("utf-8")
+        image_url = f"data:image/jpeg;base64,{b64_image}"
+
+        # Import messages here to avoid circular import
+        from family_assistant.llm.messages import (  # noqa: PLC0415
+            SystemMessage,
+            UserMessage,
+        )
+
+        # Create content parts using TypedDicts
+        image_part: ImageUrlContentPartDict = {
+            "type": "image_url",
+            "image_url": {"url": image_url},
+        }
+        text_part: TextContentPartDict = {
+            "type": "text",
+            "text": f"Query: {query}\n\nAnalyze this frame and respond with JSON.",
+        }
+
+        # Create messages for the LLM
+        messages = [
+            SystemMessage(content=_FRAME_ANALYSIS_SYSTEM_PROMPT),
+            UserMessage(content=[image_part, text_part]),  # type: ignore[list-item]
+        ]
+
+        # Call the LLM
+        response = await llm_client.generate_response(
+            messages=messages,
+            tools=None,
+            tool_choice=None,
+        )
+
+        # Parse the response
+        response_text = response.content.strip() if response.content else ""
+
+        # Try to extract JSON from the response
+        # Handle case where LLM wraps JSON in markdown code blocks
+        if response_text.startswith("```"):
+            # Extract content between code fences
+            lines = response_text.split("\n")
+            json_lines = []
+            in_code = False
+            for line in lines:
+                if line.startswith("```"):
+                    in_code = not in_code
+                    continue
+                if in_code:
+                    json_lines.append(line)
+            response_text = "\n".join(json_lines)
+
         try:
-            # Encode image as base64 data URL
-            b64_image = base64.b64encode(jpeg_bytes).decode("utf-8")
-            image_url = f"data:image/jpeg;base64,{b64_image}"
-
-            # Import messages here to avoid circular import
-            from family_assistant.llm.messages import (  # noqa: PLC0415
-                SystemMessage,
-                UserMessage,
-            )
-
-            # Create content parts using TypedDicts
-            image_part: ImageUrlContentPartDict = {
-                "type": "image_url",
-                "image_url": {"url": image_url},
-            }
-            text_part: TextContentPartDict = {
-                "type": "text",
-                "text": f"Query: {query}\n\nAnalyze this frame and respond with JSON.",
-            }
-
-            # Create messages for the LLM
-            messages = [
-                SystemMessage(content=_FRAME_ANALYSIS_SYSTEM_PROMPT),
-                UserMessage(content=[image_part, text_part]),  # type: ignore[list-item]
-            ]
-
-            # Call the LLM
-            response = await llm_client.generate_response(
-                messages=messages,
-                tools=None,
-                tool_choice=None,
-            )
-
-            # Parse the response
-            response_text = response.content.strip() if response.content else ""
-
-            # Try to extract JSON from the response
-            # Handle case where LLM wraps JSON in markdown code blocks
-            if response_text.startswith("```"):
-                # Extract content between code fences
-                lines = response_text.split("\n")
-                json_lines = []
-                in_code = False
-                for line in lines:
-                    if line.startswith("```"):
-                        in_code = not in_code
-                        continue
-                    if in_code:
-                        json_lines.append(line)
-                response_text = "\n".join(json_lines)
-
-            try:
-                # ast-grep-ignore: no-dict-any - JSON parsing produces dynamic types
-                result_data: dict[str, Any] = json.loads(response_text)
-                return FrameAnalysisResult(
-                    timestamp=timestamp,
-                    matches_query=bool(result_data.get("matches_query", False)),
-                    description=str(result_data.get("description", "No description")),
-                    confidence=float(result_data.get("confidence", 0.5)),
-                    detected_objects=list(result_data.get("detected_objects", [])),
-                    jpeg_bytes=jpeg_bytes,
-                )
-            except json.JSONDecodeError:
-                # If JSON parsing fails, try to infer from text
-                matches = (
-                    "yes" in response_text.lower() or "true" in response_text.lower()
-                )
-                return FrameAnalysisResult(
-                    timestamp=timestamp,
-                    matches_query=matches,
-                    description=response_text[:200]
-                    if response_text
-                    else "Analysis failed",
-                    confidence=0.3,  # Low confidence since we couldn't parse properly
-                    detected_objects=[],
-                    jpeg_bytes=jpeg_bytes,
-                )
-
-        except Exception as e:
-            logger.warning(f"Error analyzing frame at {timestamp}: {e}")
+            # ast-grep-ignore: no-dict-any - JSON parsing produces dynamic types
+            result_data: dict[str, Any] = json.loads(response_text)
             return FrameAnalysisResult(
                 timestamp=timestamp,
-                matches_query=False,
-                description="",
-                confidence=0.0,
+                matches_query=bool(result_data.get("matches_query", False)),
+                description=str(result_data.get("description", "No description")),
+                confidence=float(result_data.get("confidence", 0.5)),
+                detected_objects=list(result_data.get("detected_objects", [])),
+                jpeg_bytes=jpeg_bytes,
+            )
+        except json.JSONDecodeError:
+            # If JSON parsing fails, try to infer from text
+            matches = "yes" in response_text.lower() or "true" in response_text.lower()
+            return FrameAnalysisResult(
+                timestamp=timestamp,
+                matches_query=matches,
+                description=response_text[:200] if response_text else "Analysis failed",
+                confidence=0.3,  # Low confidence since we couldn't parse properly
                 detected_objects=[],
                 jpeg_bytes=jpeg_bytes,
-                error=str(e),
             )
+
+    except Exception as e:
+        logger.warning(f"Error analyzing frame at {timestamp}: {e}")
+        return FrameAnalysisResult(
+            timestamp=timestamp,
+            matches_query=False,
+            description="",
+            confidence=0.0,
+            detected_objects=[],
+            jpeg_bytes=jpeg_bytes,
+            error=str(e),
+        )
 
 
 async def scan_camera_frames_tool(
@@ -738,7 +731,7 @@ async def scan_camera_frames_tool(
     interval_minutes: int = 5,
     max_frames: int = 20,
     filter_matching: bool = True,
-    max_concurrent: int = 5,
+    model: str | None = None,
 ) -> ToolResult:
     """Scan camera frames in parallel with per-frame LLM analysis.
 
@@ -754,7 +747,7 @@ async def scan_camera_frames_tool(
         interval_minutes: Minutes between each frame
         max_frames: Maximum number of frames to scan
         filter_matching: If True, only return frames that match the query
-        max_concurrent: Maximum concurrent LLM analysis calls
+        model: Model to use for frame analysis. Defaults to profile's model.
 
     Returns:
         ToolResult with analysis summary and matching frame attachments
@@ -773,7 +766,14 @@ async def scan_camera_frames_tool(
             data={"error": "Processing service not available for frame analysis."}
         )
 
-    llm_client = exec_context.processing_service.llm_client
+    # Create LLM client - use custom model if specified, otherwise use profile's model
+    if model:
+        from family_assistant.llm import LLMClientFactory  # noqa: PLC0415
+
+        llm_client = LLMClientFactory.create_client({"model": model})
+        logger.info(f"Using custom model for frame analysis: {model}")
+    else:
+        llm_client = exec_context.processing_service.llm_client
 
     # Parse time range
     try:
@@ -786,8 +786,6 @@ async def scan_camera_frames_tool(
     interval_minutes = max(interval_minutes, 1)
     max_frames = max(max_frames, 1)
     max_frames = min(max_frames, 50)  # Cap at reasonable limit
-    max_concurrent = max(max_concurrent, 1)
-    max_concurrent = min(max_concurrent, 10)  # Cap concurrent requests
 
     try:
         # Get frames from camera backend (already parallelized internally)
@@ -817,17 +815,13 @@ async def scan_camera_frames_tool(
 
         logger.info(f"Got {len(frames)} frames, starting parallel analysis")
 
-        # Create semaphore for limiting concurrent LLM calls
-        semaphore = asyncio.Semaphore(max_concurrent)
-
-        # Analyze all frames in parallel
+        # Analyze all frames in parallel (provider handles rate limiting)
         analysis_tasks = [
             _analyze_single_frame(
                 llm_client=llm_client,
                 jpeg_bytes=frame.jpeg_bytes,
                 timestamp=frame.timestamp,
                 query=query,
-                semaphore=semaphore,
             )
             for frame in frames
         ]
