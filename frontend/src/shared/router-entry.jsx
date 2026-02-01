@@ -2,9 +2,13 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import AppRouter from './AppRouter';
 import { ThemeProvider } from './ThemeProvider';
+import { initializeErrorHandlers } from '../errors/errorHandlers';
 
 // Import Tailwind CSS and custom styles
 import '../styles/globals.css';
+
+// Initialize global error handlers to capture uncaught errors
+initializeErrorHandlers();
 
 // Ensure the DOM is ready before mounting
 function mountApp() {
