@@ -7,6 +7,7 @@ import {
   HelpCircle,
   History,
   Home,
+  Info,
   MessageCircle,
   Mic,
   Search,
@@ -76,4 +77,10 @@ export const getNavigationItems = (currentPage?: string): NavigationItem[] => [
   },
   { type: 'section', title: 'Help' },
   { type: 'external', href: '/docs/', title: 'Help', icon: HelpCircle },
+  {
+    type: currentPage === 'about' ? 'current' : 'link',
+    to: '/about',
+    title: 'About',
+    icon: Info,
+  },
 ];

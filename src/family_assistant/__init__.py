@@ -8,4 +8,6 @@ LOGGING_CONFIG = os.getenv("LOGGING_CONFIG", "logging.conf")
 if os.path.exists(LOGGING_CONFIG):
     logging.config.fileConfig(LOGGING_CONFIG, disable_existing_loggers=False)
 
+__version__ = "0.1.0"
+
 # You can optionally define __version__ here or import key components

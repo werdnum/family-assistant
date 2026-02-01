@@ -19,6 +19,7 @@ const DocumentsPage = lazy(() => import('../pages/Documents/DocumentsPage'));
 const VectorSearchPage = lazy(() => import('../pages/VectorSearch/VectorSearchPage'));
 const VoicePage = lazy(() => import('../voice/VoicePage'));
 const LandingPage = lazy(() => import('../pages/LandingPage'));
+const AboutPage = lazy(() => import('../pages/About/AboutPage'));
 
 // Loading component for Suspense fallback
 const LoadingSpinner = () => (
@@ -118,6 +119,9 @@ const AppRouter = () => {
             </Suspense>
           }
         />
+
+        {/* About page */}
+        <Route path="/about" element={withLayout(<AboutPage />)} />
 
         {/* Default route: Landing Page */}
         <Route path="/" element={withLayout(<LandingPage />)} />

@@ -35,6 +35,9 @@ runs:
         push: false
         load: true
         tags: family-assistant:${{ inputs.image-tag }}
+        build-args: |
+          GIT_COMMIT=smoke-test
+          BUILD_DATE=smoke-test
         cache-from: |
           type=gha
           type=registry,ref=${{ inputs.registry }}/${{ inputs.image-prefix }}:main

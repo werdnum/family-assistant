@@ -143,6 +143,9 @@ jobs:
           file: Dockerfile
           platforms: ${{ needs.prepare.outputs.platforms }}
           push: ${{ needs.prepare.outputs.should-push }}
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ needs.prepare.outputs.tag }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:${{ needs.prepare.outputs.tag }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:latest
