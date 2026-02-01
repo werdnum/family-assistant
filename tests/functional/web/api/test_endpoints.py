@@ -4,6 +4,7 @@ Tests both basic HTTP accessibility and browser-based rendering.
 """
 
 import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -149,11 +150,25 @@ async def check_endpoint(
     try:
         base_page = BasePage(page, base_url)
 
-        # Navigate to the endpoint (using fast DOM load only, not React-specific)
-        # These are diverse endpoints, not all are React apps
+        # Navigate to the endpoint
+        # We try to wait for the React app to be ready, but fall back if it's not a React app
         print(f"Test: Navigating to {base_url}{path}")
         response = await base_page.navigate_to(path, wait_for_app_ready=False)
         print(f"Response status: {response.status if response else 'None'}")
+
+        # Try to wait for React app readiness if applicable
+        try:
+            # Wait for data-app-ready="true" to appear, indicating React has mounted and finished initial loading
+            await page.wait_for_selector('[data-app-ready="true"]', timeout=5000)
+        except Exception:
+            # Not a React app or timed out, just continue
+            pass
+
+        # Wait for any generic loading indicators to disappear
+        with contextlib.suppress(Exception):
+            loading_indicator = page.locator('[data-loading-indicator="true"], .loading, .spinner')
+            if await loading_indicator.count() > 0:
+                await loading_indicator.first.wait_for(state="hidden", timeout=5000)
 
         # Check response status
         if response is None:
