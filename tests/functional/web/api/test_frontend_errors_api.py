@@ -270,5 +270,6 @@ async def test_frontend_error_extra_data_stored_correctly(
         assert error["extra_data"]["url"] == "http://localhost:3000/extra-data-test"
         assert error["extra_data"]["component_name"] == "TestComponent"
         assert error["extra_data"]["error_type"] == "component_error"
-        assert error["extra_data"]["custom_field"] == "custom_value"
-        assert error["extra_data"]["nested"]["key"] == "value"
+        # Client-provided extra_data is nested under "details" to prevent key collision
+        assert error["extra_data"]["details"]["custom_field"] == "custom_value"
+        assert error["extra_data"]["details"]["nested"]["key"] == "value"

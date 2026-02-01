@@ -84,21 +84,25 @@ async function flushErrors(): Promise<void> {
   // Take up to MAX_ERRORS_PER_BATCH errors from the queue
   const batch = errorQueue.splice(0, MAX_ERRORS_PER_BATCH);
 
-  // Send each error individually (backend expects single error per request)
-  for (const error of batch) {
-    try {
-      await fetch('/api/errors/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(error),
-      });
-    } catch {
-      // Silent failure - we don't want error reporting to cause more errors
-      // Errors in error reporting should not propagate or cause infinite loops
-    }
-  }
+  // Send errors in parallel for better performance
+  await Promise.all(
+    batch.map(async (error) => {
+      try {
+        await fetch('/api/errors/', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(error),
+          // keepalive ensures request completes even during page unload
+          keepalive: true,
+        });
+      } catch {
+        // Silent failure - we don't want error reporting to cause more errors
+        // Errors in error reporting should not propagate or cause infinite loops
+      }
+    })
+  );
 }
 
 /**

@@ -71,6 +71,11 @@ async def report_frontend_error(
     This endpoint receives error reports from the web client and logs them
     using Python's logging system. The SQLAlchemyErrorHandler automatically
     stores ERROR-level logs in the database.
+
+    Note: This endpoint is intentionally unauthenticated to allow error
+    capture before user login or when auth state is broken. The /api/* paths
+    are in PUBLIC_PATHS (auth.py). Rate limiting via batching and deduplication
+    is implemented in the frontend errorClient.ts.
     """
     extra_data = {
         "url": error_report.url,
@@ -78,7 +83,7 @@ async def report_frontend_error(
         "component_name": error_report.component_name,
         "error_type": error_report.error_type,
         "stack": error_report.stack,
-        **(error_report.extra_data or {}),
+        "details": error_report.extra_data,
     }
 
     frontend_logger.error(
