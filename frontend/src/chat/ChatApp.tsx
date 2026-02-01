@@ -1,6 +1,7 @@
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
 import { Menu } from 'lucide-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -51,6 +52,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const initialPromptProcessedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesAbortControllerRef = useRef<AbortController | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Fetch conversations list
   const fetchConversations = useCallback(async () => {
@@ -858,8 +860,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
 
   // Handle initial prompt from query parameter once runtime is ready
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const initialPrompt = urlParams.get('q');
+    const initialPrompt = searchParams.get('q');
 
     if (
       initialPrompt &&
@@ -870,15 +871,20 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       initialPromptProcessedRef.current = true;
       handleNew({ content: [{ text: initialPrompt }] });
 
-      // Clean up URL
-      const newUrl = new URL(window.location.href);
-      newUrl.searchParams.delete('q');
-      if (conversationId) {
-        newUrl.searchParams.set('conversation_id', conversationId);
-      }
-      window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+      // Clean up URL using React Router's setSearchParams
+      setSearchParams(
+        (prev) => {
+          const newParams = new URLSearchParams(prev);
+          newParams.delete('q');
+          if (conversationId) {
+            newParams.set('conversation_id', conversationId);
+          }
+          return newParams;
+        },
+        { replace: true }
+      );
     }
-  }, [runtime, conversationId, handleNew]);
+  }, [runtime, conversationId, handleNew, searchParams, setSearchParams]);
 
   // Signal that app is ready (for tests)
   // Only set when runtime is ready AND initial data loading is complete
