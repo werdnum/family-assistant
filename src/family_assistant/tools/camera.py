@@ -267,7 +267,7 @@ CAMERA_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                     "model": {
                         "type": "string",
-                        "description": "Model to use for frame analysis (e.g., 'gemini-2.0-flash', 'gpt-4o-mini'). Defaults to the profile's configured model.",
+                        "description": "Model to use for frame analysis. Defaults to the profile's configured model.",
                     },
                 },
                 "required": ["camera_id", "start_time", "end_time", "query"],
