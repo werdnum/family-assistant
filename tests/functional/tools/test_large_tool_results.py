@@ -53,6 +53,8 @@ async def test_large_tool_result_auto_attachment(
     # Mock AppConfig for attachment threshold
     mock_app_config = Mock()
     mock_app_config.attachment_selection_threshold = 5
+    mock_app_config.attachment_config = Mock()
+    mock_app_config.attachment_config.large_tool_result_threshold_kb = 20
 
     service = ProcessingService(
         llm_client=mock_llm,

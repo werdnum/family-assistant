@@ -340,6 +340,9 @@ class AttachmentConfig(BaseModel):
     max_file_size: int = 104857600  # 100MB
     max_multimodal_size: int = 20971520  # 20MB
     storage_path: str = "/tmp/chat_attachments"
+    large_tool_result_threshold_kb: int = (
+        20  # Auto-convert to attachment if > this size
+    )
     allowed_mime_types: list[str] = Field(
         default_factory=lambda: [
             "image/jpeg",
