@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import time
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
+from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from unittest.mock import AsyncMock
@@ -584,40 +584,6 @@ async def web_only_assistant(
         mock_llm_client,
     ):
         yield assistant
-
-
-@pytest_asyncio.fixture
-async def take_screenshot(
-    request: pytest.FixtureRequest,
-) -> Callable[[Page, str], Awaitable[None]]:
-    """Fixture that provides a function to take screenshots.
-
-    Usage:
-        async def test_something(page, take_screenshot):
-            await page.goto("/page")
-            await take_screenshot(page, "my-screenshot")
-    """
-
-    async def _take(page: Page, name: str) -> None:
-        if not request.config.getoption("--take-screenshots"):
-            return
-
-        # Get the project root - tests/functional/web/conftest.py is 4 levels deep
-        project_root = Path(__file__).parent.parent.parent.parent
-        screenshots_dir = project_root / "screenshots"
-        screenshots_dir.mkdir(exist_ok=True)
-
-        # Ensure filename is safe and has .png extension
-        safe_name = "".join([c if c.isalnum() or c in "-_" else "_" for c in name])
-        if not safe_name.endswith(".png"):
-            safe_name += ".png"
-
-        filepath = screenshots_dir / safe_name
-        await page.screenshot(path=str(filepath), full_page=True)
-        # Use print to ensure it shows up in pytest output with -s
-        print(f"\n[Screenshot] Saved to {filepath}")
-
-    return _take
 
 
 @pytest_asyncio.fixture(scope="function")

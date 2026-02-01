@@ -651,33 +651,6 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Initialize conversation ID from URL or localStorage
-  useEffect(() => {
-    fetchConversations();
-
-    const urlParams = new URLSearchParams(window.location.search);
-    const urlConversationId = urlParams.get('conversation_id');
-    const initialPrompt = urlParams.get('q');
-    const lastConversationId = localStorage.getItem('lastConversationId');
-
-    if (initialPrompt && !initialPromptProcessedRef.current) {
-      // If there's a prompt, start a new chat with it
-      const newConvId = `web_conv_${generateUUID()}`;
-      setConversationId(newConvId);
-      setMessages([]);
-      localStorage.setItem('lastConversationId', newConvId);
-    } else if (urlConversationId) {
-      setConversationId(urlConversationId);
-      loadConversationMessages(urlConversationId);
-    } else if (lastConversationId) {
-      setConversationId(lastConversationId);
-      loadConversationMessages(lastConversationId);
-      window.history.replaceState({}, '', `/chat?conversation_id=${lastConversationId}`);
-    } else {
-      handleNewChat();
-    }
-  }, []);
-
   // Create a stable callback ref for SSE message updates
   const handleLiveMessageUpdate = useCallback(
     (update: {
@@ -855,6 +828,33 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       attachments: defaultAttachmentAdapter,
     },
   });
+
+  // Initialize conversation ID from URL or localStorage
+  useEffect(() => {
+    fetchConversations();
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlConversationId = urlParams.get('conversation_id');
+    const initialPrompt = urlParams.get('q');
+    const lastConversationId = localStorage.getItem('lastConversationId');
+
+    if (initialPrompt && !initialPromptProcessedRef.current) {
+      // If there's a prompt, start a new chat with it
+      const newConvId = `web_conv_${generateUUID()}`;
+      setConversationId(newConvId);
+      setMessages([]);
+      localStorage.setItem('lastConversationId', newConvId);
+    } else if (urlConversationId) {
+      setConversationId(urlConversationId);
+      loadConversationMessages(urlConversationId);
+    } else if (lastConversationId) {
+      setConversationId(lastConversationId);
+      loadConversationMessages(lastConversationId);
+      window.history.replaceState({}, '', `/chat?conversation_id=${lastConversationId}`);
+    } else {
+      handleNewChat();
+    }
+  }, []);
 
   // Handle initial prompt from query parameter once runtime is ready
   useEffect(() => {
