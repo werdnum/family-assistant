@@ -157,16 +157,15 @@ async def check_endpoint(
         print(f"Response status: {response.status if response else 'None'}")
 
         # Try to wait for React app readiness if applicable
-        try:
+        with contextlib.suppress(Exception):
             # Wait for data-app-ready="true" to appear, indicating React has mounted and finished initial loading
             await page.wait_for_selector('[data-app-ready="true"]', timeout=5000)
-        except Exception:
-            # Not a React app or timed out, just continue
-            pass
 
         # Wait for any generic loading indicators to disappear
         with contextlib.suppress(Exception):
-            loading_indicator = page.locator('[data-loading-indicator="true"], .loading, .spinner')
+            loading_indicator = page.locator(
+                '[data-loading-indicator="true"], .loading, .spinner'
+            )
             if await loading_indicator.count() > 0:
                 await loading_indicator.first.wait_for(state="hidden", timeout=5000)
 
