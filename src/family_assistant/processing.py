@@ -53,7 +53,7 @@ from .llm.messages import (
 )
 
 # Import DatabaseContext for type hinting
-from .storage.context import DatabaseContext
+from .storage.context import DatabaseContext, get_db_context
 
 # Import ToolsProvider interface and context
 from .tools import ToolExecutionContext, ToolNotFoundError, ToolsProvider
@@ -2323,7 +2323,8 @@ Call attach_to_response with your selected attachment IDs."""
             # On SQLite, we avoid nested transactions due to connection sharing in StaticPool.
             if db_context.engine.dialect.name == "postgresql":
                 async with get_db_context(
-                    engine=db_context.engine, message_notifier=db_context.message_notifier
+                    engine=db_context.engine,
+                    message_notifier=db_context.message_notifier,
                 ) as user_msg_db:
                     saved_user_msg_record = await user_msg_db.message_history.add(
                         interface_type=interface_type,
