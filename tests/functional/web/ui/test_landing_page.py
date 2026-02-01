@@ -10,7 +10,9 @@ from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_landing_page_rendering(web_test_fixture_readonly: WebTestFixture) -> None:
+async def test_landing_page_rendering(
+    web_test_fixture_readonly: WebTestFixture,
+) -> None:
     """Test that the landing page renders correctly."""
     page = web_test_fixture_readonly.page
     base_url = web_test_fixture_readonly.base_url
@@ -26,12 +28,20 @@ async def test_landing_page_rendering(web_test_fixture_readonly: WebTestFixture)
     await expect(page.locator("main").get_by_text("Chat", exact=True)).to_be_visible()
     await expect(page.locator("main").get_by_text("Voice Mode")).to_be_visible()
     await expect(page.locator("main").get_by_text("Notes", exact=True)).to_be_visible()
-    await expect(page.locator("main").get_by_text("Documents", exact=True)).to_be_visible()
-    await expect(page.locator("main").get_by_text("Automations", exact=True)).to_be_visible()
-    await expect(page.locator("main").get_by_text("History", exact=True)).to_be_visible()
+    await expect(
+        page.locator("main").get_by_text("Documents", exact=True)
+    ).to_be_visible()
+    await expect(
+        page.locator("main").get_by_text("Automations", exact=True)
+    ).to_be_visible()
+    await expect(
+        page.locator("main").get_by_text("History", exact=True)
+    ).to_be_visible()
 
     # Check for chat input
-    await expect(page.locator("input[placeholder='How can I help you today?']")).to_be_visible()
+    await expect(
+        page.locator("input[placeholder='How can I help you today?']")
+    ).to_be_visible()
 
 
 @pytest.mark.playwright
