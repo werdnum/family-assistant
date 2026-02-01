@@ -32,7 +32,7 @@ async def scan_camera_frames_tool(
     interval_minutes: int = 5,
     max_frames: int = 20,
     filter_matching: bool = True,
-    max_concurrent: int = 5,
+    model: str | None = None,
 ) -> ToolResult:
     """
     Scan camera frames in parallel with per-frame LLM analysis.
@@ -50,7 +50,7 @@ async def scan_camera_frames_tool(
         interval_minutes: Minutes between frames (default 5)
         max_frames: Maximum frames to scan (default 20)
         filter_matching: If True, only return frames that match the query (default True)
-        max_concurrent: Maximum concurrent LLM analysis calls (default 5)
+        model: Model to use for frame analysis (e.g., 'gemini-2.0-flash'). Defaults to profile's model.
 
     Returns:
         ToolResult with:
@@ -70,7 +70,7 @@ async def scan_camera_frames_tool(
 │     │ t=0 │ │ t=5 │ │t=10 │ │t=15 │ │t=20 │  ...                        │
 │     └──┬──┘ └──┬──┘ └──┬──┘ └──┬──┘ └──┬──┘                             │
 │        │       │       │       │       │                                 │
-│  2. Parallel LLM analysis (semaphore-limited, default 5 concurrent)      │
+│  2. Parallel LLM analysis (provider handles rate limiting)               │
 │        │       │       │       │       │                                 │
 │        ▼       ▼       ▼       ▼       ▼                                 │
 │     ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐                             │
@@ -110,12 +110,16 @@ Each frame is analyzed with this JSON schema:
 
 ### Model Selection
 
-The per-frame analysis uses the camera_analyst profile's configured model (gemini-3-flash-preview by
-default), which is:
+The per-frame analysis model is configurable via the `model` parameter. If not specified, it uses
+the camera_analyst profile's configured model (gemini-3-flash-preview by default).
 
-- Fast (good for parallel processing)
-- Multimodal capable
-- Cost-effective for many small calls
+Recommended models for frame analysis:
+
+- `gemini-2.0-flash` - Fast, multimodal capable, cost-effective
+- `gpt-4o-mini` - Good balance of speed and accuracy
+- Any multimodal model supported by the system
+
+The provider handles rate limiting automatically with exponential backoff.
 
 ### Benefits
 
@@ -160,8 +164,8 @@ Camera Analyst:
 ### Implementation Notes
 
 1. Reuses existing `get_frames_batch` from camera backend (already parallelized)
-2. Uses `asyncio.gather` with semaphore for parallel LLM calls
-3. Uses `LLMClientFactory` to create LLM client for analysis
+2. Uses `asyncio.gather` for parallel LLM calls (provider handles rate limiting)
+3. Uses `LLMClientFactory` to create custom LLM client when `model` parameter is specified
 4. Error handling: Individual frame failures don't fail entire scan
 5. Returns both summary data and filtered attachments
 
