@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   MessageSquare,
@@ -17,6 +17,14 @@ import { Button } from '@/components/ui/button';
 const LandingPage: React.FC = () => {
   const [prompt, setPrompt] = useState('');
   const navigate = useNavigate();
+
+  // Signal that app is ready (for tests)
+  useEffect(() => {
+    document.documentElement.setAttribute('data-app-ready', 'true');
+    return () => {
+      document.documentElement.removeAttribute('data-app-ready');
+    };
+  }, []);
 
   const handleSearch = (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -80,10 +88,7 @@ const LandingPage: React.FC = () => {
   ];
 
   return (
-    <div
-      className="container mx-auto px-4 py-8 max-w-6xl min-h-[calc(100vh-4rem)] flex flex-col justify-center"
-      data-app-ready="true"
-    >
+    <div className="container mx-auto px-4 py-8 max-w-6xl min-h-[calc(100vh-4rem)] flex flex-col justify-center">
       <div className="text-center mb-12">
         <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4 bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
           Family Assistant

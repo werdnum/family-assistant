@@ -1,0 +1,10 @@
+
+> family-assistant-frontend@0.1.0 dev
+> vite --host 0.0.0.0
+
+
+  VITE v7.1.4  ready in 503 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: http://192.168.0.2:5173/
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
