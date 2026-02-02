@@ -6,6 +6,9 @@ architecture built with Python, FastAPI, and SQLAlchemy. The goal of this projec
 centralized, intelligent assistant that can help with a variety of tasks, from scheduling and
 reminders to answering questions based on your personal documents.
 
+![Family Assistant Web Interface](screenshots/desktop/landing-page.png) *The Family Assistant web
+interface provides easy access to chat, notes, documents, and more*
+
 ## Features
 
 - **Multiple Interfaces**: Interact with the assistant via Telegram, a responsive web UI, or by
@@ -21,6 +24,31 @@ reminders to answering questions based on your personal documents.
   modular and easy to extend.
 - **Configurable**: Fine-tune the assistant's behavior with a flexible configuration system using
   `config.yaml` and environment variables.
+
+### Key Interface Screenshots
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="screenshots/desktop/chat-empty.png" alt="Chat Interface">
+      <p align="center"><em>Chat with real-time streaming responses</em></p>
+    </td>
+    <td width="50%">
+      <img src="screenshots/desktop/notes-list.png" alt="Notes Management">
+      <p align="center"><em>Organize and manage your notes</em></p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="screenshots/desktop/documents.png" alt="Document Management">
+      <p align="center"><em>Search and manage indexed documents</em></p>
+    </td>
+    <td width="50%">
+      <img src="screenshots/desktop/automations.png" alt="Automations">
+      <p align="center"><em>Create event and schedule-based automations</em></p>
+    </td>
+  </tr>
+</table>
 
 ## Architecture
 
@@ -114,6 +142,9 @@ poe dev
 
 This will start both the backend and frontend servers. You can access the web UI at
 `http://localhost:5173`.
+
+![Chat Interface in Action](screenshots/desktop/chat-with-messages.png) *Interactive chat with the
+assistant showing tool usage and streaming responses*
 
 ### Development Commands
 
