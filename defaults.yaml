@@ -883,6 +883,31 @@ service_profiles:
     slash_commands:
       - "/camera"
       - "/investigate"
+  - id: "sms_assistant"
+    description: "Assistant profile for SMS interactions. Restricted tool access due to the potential for source number spoofing."
+    processing_config:
+      prompts:
+        system_prompt: |
+          You are a helpful family assistant responding via SMS.
+          Since SMS is a limited text-only medium, keep your responses concise and focused.
+          Only use the tools available to you. Some sensitive tools are restricted in this profile for security.
+          Current time: {current_time}
+      delegation_security_level: "blocked"
+    tools_config:
+      enable_local_tools:
+        - "add_or_update_note"
+        - "get_note"
+        - "list_notes"
+        - "search_calendar_events"
+        - "get_calendar_events"
+        - "list_pending_callbacks"
+        - "search_documents"
+        - "get_full_document_content"
+        - "query_recent_events"
+      enable_mcp_server_ids:
+        - "time"
+      confirm_tools: []
+    slash_commands: []
 # Other global settings like llm_parameters, indexing_pipeline_config remain at top level.
 # Attachment handling configuration
 attachment_config:
@@ -915,6 +940,16 @@ attachment_config:
     - "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     - "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     - "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+# SMS interface configuration
+sms:
+  enabled: false
+  backend: "crazytel"
+  crazytel:
+    api_key: ""
+    from_number: ""
+  allowed_numbers: []
+  profile_id: "sms_assistant"
 
 # AI Worker Sandbox configuration
 # Enables spawning isolated AI coding agents for complex computing tasks
