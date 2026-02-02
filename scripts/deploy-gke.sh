@@ -4,7 +4,7 @@
 # This script automates the deployment of Family Assistant to Google Kubernetes Engine (GKE).
 # It sets up:
 # - A GKE Autopilot cluster
-# - A managed PostgreSQL instance with pgvector
+# - Managed PostgreSQL (Cloud SQL) OR in-cluster PostgreSQL
 # - The Family Assistant application
 # - Managed SSL certificates (if a domain is provided)
 # - Ingress and Static IP
@@ -39,6 +39,11 @@ DEVELOPER_CHAT_ID=""
 TIMEZONE="UTC"
 DB_PASSWORD=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 24)
 
+# Cloud SQL Variables
+USE_CLOUD_SQL=false
+SQL_INSTANCE_NAME="family-assistant-db"
+SQL_TIER="db-f1-micro"
+
 # OIDC Variables
 OIDC_CLIENT_ID=""
 OIDC_CLIENT_SECRET=""
@@ -65,6 +70,9 @@ Options:
   --dev-chat-id ID          Telegram User ID for error notifications
   --timezone TZ             Timezone (default: $TIMEZONE)
   --db-password PWD         Password for PostgreSQL (generated if not provided)
+  --use-cloud-sql           Use Google Cloud SQL instead of in-cluster Postgres
+  --sql-instance NAME       Cloud SQL Instance Name (default: $SQL_INSTANCE_NAME)
+  --sql-tier TIER           Cloud SQL Machine Tier (default: $SQL_TIER)
   --oidc-client-id ID       OIDC Client ID
   --oidc-client-secret SEC  OIDC Client Secret
   --oidc-discovery URL      OIDC Discovery URL
@@ -94,6 +102,9 @@ while [[ $# -gt 0 ]]; do
         --dev-chat-id) DEVELOPER_CHAT_ID="$2"; shift 2 ;;
         --timezone) TIMEZONE="$2"; TIMEZONE_SET=1; shift 2 ;;
         --db-password) DB_PASSWORD="$2"; shift 2 ;;
+        --use-cloud-sql) USE_CLOUD_SQL=true; shift ;;
+        --sql-instance) SQL_INSTANCE_NAME="$2"; shift 2 ;;
+        --sql-tier) SQL_TIER="$2"; shift 2 ;;
         --oidc-client-id) OIDC_CLIENT_ID="$2"; shift 2 ;;
         --oidc-client-secret) OIDC_CLIENT_SECRET="$2"; shift 2 ;;
         --oidc-discovery) OIDC_DISCOVERY_URL="$2"; shift 2 ;;
@@ -140,6 +151,13 @@ if [[ -z "${TIMEZONE_SET:-}" ]]; then
     [[ -n "$USER_TZ" ]] && TIMEZONE="$USER_TZ"
 fi
 
+if [ "$USE_CLOUD_SQL" = false ]; then
+    read -p "Use managed Google Cloud SQL instead of in-cluster PostgreSQL? (y/N): " WANT_SQL
+    if [[ "$WANT_SQL" =~ ^[Yy]$ ]]; then
+        USE_CLOUD_SQL=true
+    fi
+fi
+
 # OIDC Interactive Prompts
 if [[ -z "$OIDC_CLIENT_ID" ]]; then
     read -p "Enable OIDC Authentication? (y/N): " ENABLE_OIDC
@@ -171,11 +189,16 @@ log "Configuring gcloud project..."
 gcloud config set project "$PROJECT_ID" --quiet
 
 log "Enabling required APIs (this may take a minute)..."
-gcloud services enable \
-    container.googleapis.com \
-    compute.googleapis.com \
-    containerregistry.googleapis.com \
-    --quiet
+APIS=(
+    container.googleapis.com
+    compute.googleapis.com
+    containerregistry.googleapis.com
+    iam.googleapis.com
+)
+if [ "$USE_CLOUD_SQL" = true ]; then
+    APIS+=(sqladmin.googleapis.com)
+fi
+gcloud services enable "${APIS[@]}" --quiet
 
 log "Checking for existing GKE cluster..."
 if gcloud container clusters describe "$CLUSTER_NAME" --region "$REGION" >/dev/null 2>&1; then
@@ -189,6 +212,32 @@ fi
 
 log "Getting cluster credentials..."
 gcloud container clusters get-credentials "$CLUSTER_NAME" --region "$REGION"
+
+# --- Cloud SQL Provisioning (Optional) ---
+
+SQL_CONNECTION_NAME=""
+if [ "$USE_CLOUD_SQL" = true ]; then
+    log "Checking for existing Cloud SQL instance '$SQL_INSTANCE_NAME'..."
+    if gcloud sql instances describe "$SQL_INSTANCE_NAME" >/dev/null 2>&1; then
+        log "Cloud SQL instance '$SQL_INSTANCE_NAME' already exists."
+    else
+        log "Creating Cloud SQL instance '$SQL_INSTANCE_NAME' (this can take 10-15 minutes)..."
+        gcloud sql instances create "$SQL_INSTANCE_NAME" \
+            --database-version=POSTGRES_16 \
+            --tier="$SQL_TIER" \
+            --region="$REGION" \
+            --quiet
+    fi
+
+    log "Ensuring database 'family_assistant' exists..."
+    gcloud sql databases create family_assistant --instance="$SQL_INSTANCE_NAME" --quiet || true
+
+    log "Creating database user 'postgres'..."
+    gcloud sql users create postgres --instance="$SQL_INSTANCE_NAME" --password="$DB_PASSWORD" --quiet || true
+
+    SQL_CONNECTION_NAME=$(gcloud sql instances describe "$SQL_INSTANCE_NAME" --format='value(connectionName)')
+    log "Cloud SQL Connection Name: $SQL_CONNECTION_NAME"
+fi
 
 # --- Kubernetes Deployment ---
 
@@ -211,8 +260,9 @@ kubectl create secret generic family-assistant \
     --from-literal=SESSION_SECRET_KEY="${SESSION_SECRET_KEY:-}" \
     --dry-run=client -o yaml | kubectl apply -f -
 
-log "Deploying PostgreSQL with pgvector..."
-cat <<EOF | kubectl apply -f -
+if [ "$USE_CLOUD_SQL" = false ]; then
+    log "Deploying in-cluster PostgreSQL with pgvector..."
+    cat <<EOF | kubectl apply -f -
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -268,8 +318,48 @@ spec:
   - port: 5432
     targetPort: 5432
 EOF
+fi
+
+# --- IAM for Cloud SQL Proxy (if needed) ---
+if [ "$USE_CLOUD_SQL" = true ]; then
+    log "Configuring Workload Identity for Cloud SQL access..."
+    GSA_NAME="family-assistant-db-sa"
+    KSA_NAME="family-assistant-sa"
+
+    if ! gcloud iam service-accounts describe "${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" >/dev/null 2>&1; then
+        log "Creating Google Service Account '$GSA_NAME'..."
+        gcloud iam service-accounts create "$GSA_NAME" --display-name="Family Assistant DB Service Account"
+    fi
+
+    log "Assigning Cloud SQL Client role to GSA..."
+    gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+        --member="serviceAccount:${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+        --role="roles/cloudsql.client" --quiet >/dev/null
+
+    log "Allowing KSA to impersonate GSA..."
+    gcloud iam service-accounts add-iam-policy-binding "${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+        --role="roles/iam.workloadIdentityUser" \
+        --member="serviceAccount:${PROJECT_ID}.svc.id.goog[${NAMESPACE}/${KSA_NAME}]" --quiet >/dev/null
+
+    log "Creating Kubernetes Service Account '$KSA_NAME'..."
+    cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: $KSA_NAME
+  namespace: $NAMESPACE
+  annotations:
+    iam.gke.io/gcp-service-account: ${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com
+EOF
+fi
 
 log "Deploying Family Assistant application..."
+DB_HOST="postgres"
+if [ "$USE_CLOUD_SQL" = true ]; then
+    DB_HOST="127.0.0.1" # Connect via sidecar proxy
+fi
+
+# Construct Deployment Manifest
 cat <<EOF | kubectl apply -f -
 apiVersion: apps/v1
 kind: Deployment
@@ -286,6 +376,7 @@ spec:
       labels:
         app: family-assistant
     spec:
+      serviceAccountName: ${KSA_NAME:-"default"}
       containers:
       - name: family-assistant
         image: $IMAGE
@@ -301,7 +392,7 @@ spec:
               name: family-assistant
               key: POSTGRES_PASSWORD
         - name: DATABASE_URL
-          value: "postgresql+asyncpg://postgres:\$(POSTGRES_PASSWORD)@postgres:5432/family_assistant"
+          value: "postgresql+asyncpg://postgres:\$(POSTGRES_PASSWORD)@${DB_HOST}:5432/family_assistant"
         - name: TIMEZONE
           value: "$TIMEZONE"
         livenessProbe:
@@ -316,7 +407,29 @@ spec:
             port: 8000
           initialDelaySeconds: 15
           periodSeconds: 10
----
+EOF
+
+# Add Cloud SQL Sidecar if enabled
+if [ "$USE_CLOUD_SQL" = true ]; then
+    log "Injecting Cloud SQL Auth Proxy sidecar..."
+    # We use kubectl patch to add the sidecar to avoid complex HEREDOC logic
+    kubectl patch deployment family-assistant -n "$NAMESPACE" --type='json' -p="[
+      {\"op\": \"add\", \"path\": \"/spec/template/spec/containers/-\", \"value\": {
+        \"name\": \"cloud-sql-proxy\",
+        \"image\": \"gcr.io/cloud-sql-connectors/cloud-sql-proxy:latest\",
+        \"args\": [
+          \"--port=5432\",
+          \"$SQL_CONNECTION_NAME\"
+        ],
+        \"securityContext\": {
+          \"runAsNonRoot\": true
+        }
+      }}
+    ]"
+fi
+
+log "Creating application service..."
+cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: Service
 metadata:
