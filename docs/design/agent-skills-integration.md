@@ -483,9 +483,138 @@ class SkillRegistry:
         return meta.include_in_prompt_default
 ```
 
-## 4. Example Skills for Family Assistant
+### 3.10. Skill Discovery via Vector Search
 
-### 4.1. Home Automation Skill
+Skills stored as notes are **automatically indexed** via the existing `NotesIndexer`. This means:
+
+1. **Semantic search works out of the box**: The `search_documents` tool can find skills
+
+   ```python
+   # Search for skills related to "home automation"
+   results = await search_documents_tool(
+       query="controlling smart home devices lights temperature",
+       source_types=["note"],  # Filter to notes only
+       context=exec_context,
+   )
+   ```
+
+2. **No additional indexing needed**: When a skill note is created/updated, `NotesIndexer`
+   automatically generates embeddings for vector search
+
+3. **Skill-specific search** (future enhancement): Could add a `search_skills` tool that filters to
+   notes with valid skill frontmatter
+
+**Current limitation**: Vector search finds the note, but doesn't distinguish skills from regular
+notes. The registry handles this by parsing frontmatter on load.
+
+### 3.11. Bundling Built-in Skills
+
+Built-in skills can be shipped with the application using a pattern similar to
+`include_system_docs`:
+
+**Directory structure:**
+
+```
+src/family_assistant/skills/
+├── home-automation.md
+├── calendar-management.md
+├── research-assistant.md
+└── meeting-notes.md
+```
+
+**Loading mechanism** (similar to `load_user_documentation()`):
+
+```python
+SKILLS_DIR = Path(__file__).parent / "skills"
+
+def load_builtin_skills() -> list[Skill]:
+    """Load skills from the built-in skills directory."""
+    skills = []
+    if not SKILLS_DIR.exists():
+        return skills
+
+    for skill_file in SKILLS_DIR.glob("*.md"):
+        try:
+            content = skill_file.read_text()
+            frontmatter, body = parse_frontmatter(content)
+            if "name" in frontmatter and "description" in frontmatter:
+                skills.append(Skill(
+                    metadata=SkillMetadata(
+                        id=skill_file.stem,  # filename without extension
+                        name=frontmatter["name"],
+                        description=frontmatter["description"],
+                        # ... other fields from frontmatter
+                    ),
+                    instructions=body,
+                    source_path=skill_file,
+                ))
+        except Exception as e:
+            logger.warning(f"Failed to load skill from {skill_file}: {e}")
+    return skills
+```
+
+**Configuration-based skill directory** (for user customization):
+
+```yaml
+# config.yaml
+skills:
+  builtin_dir: "src/family_assistant/skills" # Default
+  user_dir: "/config/skills" # Custom skills directory (e.g., in container volume)
+```
+
+This allows:
+
+- **Prepackaged skills**: Ship common skills with the application
+- **User skill directory**: Mount a volume with custom skills in containerized deployments
+- **Override mechanism**: User notes override built-in skills with the same ID
+
+## 4. Notes-v2 Integration Status
+
+### 4.1. What's Already Implemented
+
+| Feature                  | Status | Notes                                           |
+| ------------------------ | ------ | ----------------------------------------------- |
+| Basic CRUD               | ✅     | `add_or_update_note`, `delete_note`, etc.       |
+| `include_in_prompt` flag | ✅     | Simple boolean, works today                     |
+| Vector indexing          | ✅     | `NotesIndexer` auto-indexes on create/update    |
+| Semantic search          | ✅     | `search_documents` with `source_types=['note']` |
+| `NotesContextProvider`   | ✅     | Respects `include_in_prompt` flag               |
+
+### 4.2. What's NOT Implemented (from notes-v2 design)
+
+| Feature                           | Status | Needed for Skills?                        |
+| --------------------------------- | ------ | ----------------------------------------- |
+| `proactive_for_profile_ids`       | ❌     | **No** - handle in skill frontmatter      |
+| `exclude_from_prompt_profile_ids` | ❌     | **No** - handle in skill frontmatter      |
+| `include_in_prompt_default`       | ❌     | **No** - use existing `include_in_prompt` |
+| Direct note access tool           | ❌     | **Yes** - useful for `load_skill`         |
+| Web UI visibility control         | ❌     | Nice to have                              |
+| Access control                    | ❌     | Out of scope for skills MVP               |
+
+### 4.3. Skills-Specific Profile Affinity
+
+Rather than implementing full notes-v2 profile columns, skills can handle profile affinity
+**entirely in frontmatter**:
+
+```markdown
+---
+name: My Skill
+description: ...
+proactive_for_profile_ids: ["default_assistant"]
+exclude_from_prompt_profile_ids: ["untrusted_readonly"]
+---
+```
+
+The `SkillRegistry` parses these fields and applies the rules. This approach:
+
+- **Requires no schema changes** to the notes table
+- **Is self-contained** within the skill definition
+- **Works today** with current notes infrastructure
+- **Can be migrated** to notes-v2 columns later if desired
+
+## 5. Example Skills for Family Assistant
+
+### 5.1. Home Automation Skill
 
 ```markdown
 ---
@@ -524,7 +653,7 @@ You have access to Home Assistant for smart home control.
 Delegate to the `automation_creation` profile for complex automations.
 ```
 
-### 4.2. Calendar Management Skill
+### 5.2. Calendar Management Skill
 
 ```markdown
 ---
@@ -555,7 +684,7 @@ description: Manage calendar events, check schedules, and find free time. Use wh
 - Display times in user's local timezone
 ```
 
-### 4.3. Research Assistant Skill
+### 5.3. Research Assistant Skill
 
 ```markdown
 ---
@@ -595,7 +724,7 @@ Present research findings with:
 - **Confidence**: How certain are these findings?
 ```
 
-## 5. Implementation Plan
+## 6. Implementation Plan
 
 ### Phase 1: Core Infrastructure
 
@@ -625,9 +754,9 @@ Present research findings with:
 3. **Usage analytics**: Track which skills are used and when
 4. **External skill sources**: Load skills from git repos or registries
 
-## 6. Alternatives Considered
+## 7. Alternatives Considered
 
-### 6.1. Embedding-Based Routing
+### 8.1. Embedding-Based Routing
 
 **Status: Probably overkill for our use case.**
 
@@ -655,7 +784,7 @@ async def select_skills_by_embedding(
 - **Verdict**: Skip for now. Lightweight LLM routing is simpler and more accurate for our scale.
   Revisit if skill count grows significantly.
 
-### 6.2. Keyword/Rule-Based Fast Path
+### 8.2. Keyword/Rule-Based Fast Path
 
 For obvious cases, we could bypass the preflight LLM entirely:
 
@@ -679,7 +808,7 @@ def fast_path_selection(user_message: str, skills: list[Skill]) -> list[Skill]:
 **Recommendation**: Could be useful as an optimization layer, but not required initially. The LLM
 preflight is cheap enough (~100ms, ~$0.0001) that the complexity isn't justified yet.
 
-### 6.3. No Preflight (Agent-Only Selection)
+### 8.3. No Preflight (Agent-Only Selection)
 
 The simplest approach: include skill catalog in system prompt, let main model decide via tool call.
 
@@ -692,9 +821,9 @@ skill catalog, and preflight is an optional enhancement for reliability/speed.
 - Very low latency requirements
 - Cost-sensitive deployments with many requests
 
-## 7. Security Considerations
+## 8. Security Considerations
 
-### 7.1. Skill Source Trust
+### 8.1. Skill Source Trust
 
 Skills from different sources have different trust levels:
 
@@ -704,7 +833,7 @@ Skills from different sources have different trust levels:
 | User notes     | Medium      | Audited before use  |
 | External repos | Low         | Sandboxed execution |
 
-### 7.2. Tool Allowlisting
+### 8.2. Tool Allowlisting
 
 Skills can declare `allowed-tools` in frontmatter, but the processing profile has final say:
 
@@ -721,7 +850,7 @@ def get_allowed_tools_for_skill(
     return list(skill_tools & profile_tools)
 ```
 
-### 7.3. Skill Injection Attacks
+### 8.3. Skill Injection Attacks
 
 Since skills are loaded into the system prompt, malicious skills could attempt prompt injection.
 Mitigations:
@@ -731,7 +860,7 @@ Mitigations:
 3. **Sandboxed profiles**: Run untrusted skills in restricted profiles
 4. **Human review**: Require approval for external skills
 
-## 8. Open Questions
+## 9. Open Questions
 
 1. **Preflight model selection**: Is gemini-2.5-flash-lite the best choice? Need to benchmark
    accuracy vs latency for alternatives (claude-3-haiku, gpt-4o-mini).
@@ -761,7 +890,7 @@ Mitigations:
    skills? (e.g., "This looks like an automation request, should I use automation_creation
    profile?")
 
-## 9. References
+## 10. References
 
 - [Agent Skills Specification](https://agentskills.io/specification)
 - [Agent Skills GitHub](https://github.com/agentskills/agentskills)
