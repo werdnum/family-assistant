@@ -36,6 +36,7 @@ GEMINI_API_KEY=""
 OPENROUTER_API_KEY=""
 ALLOWED_USER_IDS=""
 DEVELOPER_CHAT_ID=""
+TIMEZONE="UTC"
 DB_PASSWORD=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 24)
 
 # OIDC Variables
@@ -62,6 +63,7 @@ Options:
   --openrouter-key KEY      OpenRouter API Key
   --allowed-users IDS       Comma-separated Telegram User IDs
   --dev-chat-id ID          Telegram User ID for error notifications
+  --timezone TZ             Timezone (default: $TIMEZONE)
   --db-password PWD         Password for PostgreSQL (generated if not provided)
   --oidc-client-id ID       OIDC Client ID
   --oidc-client-secret SEC  OIDC Client Secret
@@ -90,6 +92,7 @@ while [[ $# -gt 0 ]]; do
         --openrouter-key) OPENROUTER_API_KEY="$2"; shift 2 ;;
         --allowed-users) ALLOWED_USER_IDS="$2"; shift 2 ;;
         --dev-chat-id) DEVELOPER_CHAT_ID="$2"; shift 2 ;;
+        --timezone) TIMEZONE="$2"; TIMEZONE_SET=1; shift 2 ;;
         --db-password) DB_PASSWORD="$2"; shift 2 ;;
         --oidc-client-id) OIDC_CLIENT_ID="$2"; shift 2 ;;
         --oidc-client-secret) OIDC_CLIENT_SECRET="$2"; shift 2 ;;
@@ -130,6 +133,11 @@ fi
 
 if [[ -z "$DEVELOPER_CHAT_ID" ]]; then
     read -p "Enter Developer Chat ID (for error notifications): " DEVELOPER_CHAT_ID
+fi
+
+if [[ -z "${TIMEZONE_SET:-}" ]]; then
+    read -p "Enter Timezone (default: $TIMEZONE): " USER_TZ
+    [[ -n "$USER_TZ" ]] && TIMEZONE="$USER_TZ"
 fi
 
 # OIDC Interactive Prompts
@@ -295,7 +303,7 @@ spec:
         - name: DATABASE_URL
           value: "postgresql+asyncpg://postgres:\$(POSTGRES_PASSWORD)@postgres:5432/family_assistant"
         - name: TIMEZONE
-          value: "Australia/Sydney"
+          value: "$TIMEZONE"
         livenessProbe:
           httpGet:
             path: /health

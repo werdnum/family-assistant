@@ -84,6 +84,7 @@ You can also provide all parameters via command line flags to skip the interacti
 | `--openrouter-key`    | OpenRouter API Key                                  | Prompted                   |
 | `--allowed-users`     | Comma-separated list of authorized Telegram IDs     | Prompted                   |
 | `--dev-chat-id`       | Telegram ID for receiving system error logs         | Prompted                   |
+| `--timezone`         | Timezone for date/time operations                    | `UTC` (or prompted)        |
 | `--db-password`       | Password for the PostgreSQL database                | Randomly generated         |
 | `--oidc-client-id`    | OIDC Client ID                                      | Prompted                   |
 | `--oidc-client-secret`| OIDC Client Secret                                  | Prompted                   |
