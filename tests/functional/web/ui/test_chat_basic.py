@@ -1,5 +1,8 @@
 """End-to-end tests for the chat UI - Basic chat flows."""
 
+from collections.abc import Awaitable, Callable
+from typing import Any
+
 import pytest
 
 from tests.functional.web.conftest import WebTestFixture
@@ -10,7 +13,9 @@ from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_basic_chat_conversation(
-    web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
+    web_test_fixture: WebTestFixture,
+    mock_llm_client: RuleBasedMockLLMClient,
+    take_screenshot: Callable[[Any, str, str], Awaitable[None]],
 ) -> None:
     """Test basic chat conversation functionality."""
     page = web_test_fixture.page
@@ -67,6 +72,10 @@ async def test_basic_chat_conversation(
     # Verify chat input is enabled
     assert await chat_page.is_chat_input_enabled()
 
+    # Take screenshot of empty chat
+    for viewport in ["desktop", "mobile"]:
+        await take_screenshot(page, "chat-empty", viewport)
+
     # Send a message
     await chat_page.send_message("Hello, assistant!")
 
@@ -90,6 +99,10 @@ async def test_basic_chat_conversation(
     # Verify chat input is re-enabled after streaming
     await page.wait_for_selector('[data-testid="chat-input"]:enabled', timeout=10000)
     assert await chat_page.is_chat_input_enabled()
+
+    # Take screenshot of chat with conversation
+    for viewport in ["desktop", "mobile"]:
+        await take_screenshot(page, "chat-with-messages", viewport)
 
     # Get the actual response text
     response = await chat_page.get_last_assistant_message()
@@ -130,7 +143,9 @@ async def test_basic_chat_conversation(
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_sidebar_functionality(
-    web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
+    web_test_fixture: WebTestFixture,
+    mock_llm_client: RuleBasedMockLLMClient,
+    take_screenshot: Callable[[Any, str, str], Awaitable[None]],
 ) -> None:
     """Test sidebar toggle and conversation list functionality."""
     page = web_test_fixture.page
@@ -155,6 +170,10 @@ async def test_sidebar_functionality(
     # Create a conversation
     await chat_page.send_message("Test message for sidebar")
     await chat_page.wait_for_assistant_response()
+
+    # Take screenshot with sidebar open
+    for viewport in ["desktop", "mobile"]:
+        await take_screenshot(page, "chat-sidebar-open", viewport)
 
     # Wait for conversation to be saved
     await chat_page.wait_for_conversation_saved()

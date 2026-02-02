@@ -52,6 +52,44 @@ Example page objects:
 - `pages/notes.py` - NotesPage for notes UI interactions
 - `pages/sidebar.py` - SidebarPage for navigation
 
+### Documentation Screenshots
+
+Screenshots for documentation are captured throughout the test suite using the `take_screenshot`
+fixture. Tests can call this fixture at key points to capture both desktop (1920x1080) and mobile
+(393x852, iPhone 15 Pro) viewport screenshots.
+
+**Usage in tests:**
+
+```python
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_example(
+    web_test_fixture: WebTestFixture,
+    take_screenshot: Callable[[Any, str, str], Awaitable[None]],
+) -> None:
+    page = web_test_fixture.page
+
+    # After navigating to a page
+    await page.goto("/some-page")
+
+    # Capture screenshots
+    for viewport in ["desktop", "mobile"]:
+        await take_screenshot(page, "page-name", viewport)
+```
+
+**Generating screenshots:**
+
+```bash
+# Run tests with screenshot capture enabled
+pytest tests/functional/web/ui/ --take-screenshots -xvs
+
+# Run specific test with screenshots
+pytest tests/functional/web/ui/test_chat_basic.py --take-screenshots -xvs
+```
+
+Screenshots are saved to `screenshots/{desktop,mobile}/` and can be used in documentation. See
+[screenshots/README.md](../../../screenshots/README.md) for details.
+
 ## Playwright UI Testing Guide
 
 End-to-end tests for the web UI are written using Playwright and can be found in
