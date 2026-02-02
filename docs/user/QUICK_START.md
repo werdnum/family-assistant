@@ -10,6 +10,9 @@ You can interact with your assistant through:
 - **Telegram** (Primary) - Find the bot in your Telegram app and start chatting
 - **Web Interface** - Access at the URL provided by your administrator
 
+![Web Interface](../../screenshots/desktop/landing-page.png) *The web interface provides easy access
+to chat, notes, documents, and more*
+
 Just type naturally, like you would text a friend.
 
 ## Your First Conversations
