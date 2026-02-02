@@ -1,5 +1,6 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from family_assistant.sms.backends.crazytel import CrazyTelBackend
@@ -15,13 +16,34 @@ async def test_mock_sms_backend() -> None:
 
 
 @pytest.mark.asyncio
-async def test_crazytel_backend_failure() -> None:
-    # Test failure when httpx fails
+async def test_crazytel_backend_success() -> None:
     backend = CrazyTelBackend(api_key="test_key", from_number="987654321")
-    # We don't want to actually call the API, so we'd normally mock httpx.
-    # For now, just a basic check that it's instantiated correctly.
-    assert backend.api_key == "test_key"
-    assert backend.from_number == "987654321"
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"status": "success", "message_id": "12345"}
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_response
+        result = await backend.send_sms("0491570006", "Testing")
+
+        assert result == "12345"
+        mock_post.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_crazytel_backend_failure() -> None:
+    backend = CrazyTelBackend(api_key="test_key", from_number="987654321")
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.side_effect = httpx.HTTPStatusError(
+            "Error", request=MagicMock(), response=MagicMock(text="Failed")
+        )
+        result = await backend.send_sms("0491570006", "Testing")
+
+        assert result is None
+        mock_post.assert_called_once()
 
 
 @pytest.mark.asyncio

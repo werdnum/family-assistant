@@ -79,12 +79,6 @@ class SMSService:
         )
 
         if result.text_reply:
-            # Result is already sent via chat_interface.send_message inside handle_chat_interaction?
-            # NO, handle_chat_interaction returns the text reply, but doesn't send it.
-            # Wait, let me check handle_chat_interaction again.
-            # I checked it before, and it returns ChatInteractionResult.
-            # The caller of handle_chat_interaction is responsible for sending the reply.
-
             logger.info(f"Sending SMS reply to {from_number}")
             await self.chat_interface.send_message(
                 conversation_id=conversation_id, text=result.text_reply
