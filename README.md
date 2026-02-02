@@ -1,5 +1,7 @@
 # Family Assistant
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/werdnum/family-assistant)
+
 Family Assistant is an LLM-powered application designed for family information management and task
 automation. It provides multiple interfaces (Telegram, Web UI, Email webhooks) and uses a modular
 architecture built with Python, FastAPI, and SQLAlchemy. The goal of this project is to create a
@@ -204,6 +206,7 @@ The project uses Alembic for database migrations.
 ### For Operators
 
 - **[Operator Getting Started](docs/operations/GETTING_STARTED.md)** - **Start here for deployment**
+- **[Render Deployment](docs/deployment/RENDER_DEPLOYMENT.md)** - One-click cloud deployment
 - **[Production Deployment](docs/deployment/PRODUCTION_DEPLOYMENT.md)** - Advanced Kubernetes
   deployment
 - **[Configuration Reference](docs/operations/CONFIGURATION_REFERENCE.md)** - All config options
