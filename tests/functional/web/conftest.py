@@ -593,6 +593,7 @@ def take_screenshot(
     """Fixture that provides a function to take screenshots.
 
     Captures screenshots in both desktop and mobile viewports for documentation.
+    The viewport is restored to its original size after taking the screenshot.
 
     Usage:
         async def test_something(page, take_screenshot):
@@ -607,15 +608,17 @@ def take_screenshot(
         if not request.config.getoption("--take-screenshots", default=False):
             return
 
+        # Store original viewport size to restore later
+        original_viewport = page.viewport_size
+
         # Set viewport size
         if viewport == "mobile":
             await page.set_viewport_size({"width": 393, "height": 852})  # iPhone 15 Pro
         else:  # desktop
             await page.set_viewport_size({"width": 1920, "height": 1080})
 
-        # Get the project root - tests/functional/web/conftest.py is 4 levels deep
-        project_root = Path(__file__).parent.parent.parent.parent
-        screenshots_dir = project_root / "screenshots" / viewport
+        # Use pytest's rootpath instead of brittle relative path calculation
+        screenshots_dir = request.config.rootpath / "screenshots" / viewport
         screenshots_dir.mkdir(parents=True, exist_ok=True)
 
         # Ensure filename is safe and has .png extension
@@ -627,6 +630,10 @@ def take_screenshot(
         await page.screenshot(path=str(filepath), full_page=True)
         # Use print to ensure it shows up in pytest output with -s
         print(f"\n[Screenshot] Saved {viewport} screenshot to {filepath}")
+
+        # Restore original viewport size
+        if original_viewport:
+            await page.set_viewport_size(original_viewport)
 
     return _take
 
