@@ -12,7 +12,9 @@ requiring real Gemini API credentials.
 """
 
 import json
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from playwright.async_api import Page, Route
@@ -24,6 +26,7 @@ from tests.functional.web.conftest import WebTestFixture
 @pytest.mark.asyncio
 async def test_voice_page_loads_with_start_button(
     web_test_fixture_readonly: WebTestFixture,
+    take_screenshot: Callable[[Any, str, str], Awaitable[None]],
 ) -> None:
     """Test that the voice page loads correctly with a visible Start button."""
     page = web_test_fixture_readonly.page
@@ -35,6 +38,10 @@ async def test_voice_page_loads_with_start_button(
     start_button = page.locator("button:has-text('Start')")
     await start_button.wait_for(timeout=10000)
     assert await start_button.is_visible()
+
+    # Take screenshot of voice page
+    for viewport in ["desktop", "mobile"]:
+        await take_screenshot(page, "voice-page", viewport)
 
 
 @pytest.mark.playwright

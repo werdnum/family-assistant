@@ -1,6 +1,7 @@
 """Playwright-based functional tests for chat history React UI - Basic display and navigation."""
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
@@ -47,6 +48,7 @@ async def wait_for_history_page_loaded(page: Page, timeout: int = 15000) -> bool
 @pytest.mark.asyncio
 async def test_history_page_basic_loading(
     web_test_fixture_readonly: WebTestFixture,
+    take_screenshot: Callable[[Any, str, str], Awaitable[None]],
 ) -> None:
     """Test basic functionality of the history page React interface."""
     page = web_test_fixture_readonly.page
@@ -152,6 +154,10 @@ async def test_history_page_basic_loading(
     summary_text = await results_summary.text_content()
     assert summary_text is not None
     assert "Found" in summary_text and "conversation" in summary_text
+
+    # Take screenshot of history page
+    for viewport in ["desktop", "mobile"]:
+        await take_screenshot(page, "history-list", viewport)
 
     # Final check for errors
     assert not console_errors, f"Console errors detected during test: {console_errors}"

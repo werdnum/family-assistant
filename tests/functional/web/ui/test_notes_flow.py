@@ -1,6 +1,8 @@
 """Test complete notes management flows using Playwright and Page Object Model."""
 
 import uuid
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import pytest
 from playwright.async_api import expect
@@ -11,7 +13,10 @@ from tests.functional.web.pages.notes_page import NotesPage
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_create_note_full_flow(web_test_fixture: WebTestFixture) -> None:
+async def test_create_note_full_flow(
+    web_test_fixture: WebTestFixture,
+    take_screenshot: Callable[[Any, str, str], Awaitable[None]],
+) -> None:
     """Test complete note creation flow from UI."""
     page = web_test_fixture.page
     notes_page = NotesPage(page, web_test_fixture.base_url)
@@ -37,9 +42,17 @@ async def test_create_note_full_flow(web_test_fixture: WebTestFixture) -> None:
     new_count = await notes_page.get_note_count()
     assert new_count == initial_count + 1
 
+    # Take screenshot of notes list with created note
+    for viewport in ["desktop", "mobile"]:
+        await take_screenshot(page, "notes-list-with-note", viewport)
+
     # Click the note to edit and verify content
     await notes_page.click_edit_note_link(test_title)
     note_data = await notes_page.get_note_content_from_edit_page(test_title)
+
+    # Take screenshot of edit note form
+    for viewport in ["desktop", "mobile"]:
+        await take_screenshot(page, "notes-edit-form", viewport)
 
     assert note_data["title"] == test_title
     assert note_data["content"] == test_content

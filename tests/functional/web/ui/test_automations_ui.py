@@ -1,5 +1,8 @@
 """Playwright-based functional tests for unified automations React UI."""
 
+from collections.abc import Awaitable, Callable
+from typing import Any
+
 import pytest
 
 from tests.functional.web.conftest import WebTestFixture
@@ -9,6 +12,7 @@ from tests.functional.web.conftest import WebTestFixture
 @pytest.mark.asyncio
 async def test_automations_page_basic_functionality(
     web_test_with_console_check: WebTestFixture,
+    take_screenshot: Callable[[Any, str, str], Awaitable[None]],
 ) -> None:
     """Test basic functionality of the automations React interface."""
     page = web_test_with_console_check.page
@@ -67,6 +71,10 @@ async def test_automations_page_basic_functionality(
         error_elem = page.locator("text=/Error:/")
         error_text = await error_elem.text_content()
         raise AssertionError(f"Component displayed error: {error_text}")
+
+    # Take screenshot of automations page
+    for viewport in ["desktop", "mobile"]:
+        await take_screenshot(page, "automations-list", viewport)
 
 
 @pytest.mark.playwright

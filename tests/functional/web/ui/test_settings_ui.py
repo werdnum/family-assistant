@@ -1,5 +1,8 @@
 """Playwright-based functional tests for Settings/Tokens React UI."""
 
+from collections.abc import Awaitable, Callable
+from typing import Any
+
 import pytest
 
 from tests.functional.web.conftest import WebTestFixture
@@ -9,6 +12,7 @@ from tests.functional.web.conftest import WebTestFixture
 @pytest.mark.asyncio
 async def test_token_management_page_loads(
     web_test_fixture_readonly: WebTestFixture,
+    take_screenshot: Callable[[Any, str, str], Awaitable[None]],
 ) -> None:
     """Test that token management page loads successfully."""
     page = web_test_fixture_readonly.page
@@ -42,6 +46,10 @@ async def test_token_management_page_loads(
 
     assert has_tokens or has_empty, "Should show token list or empty state"
     assert has_create, "Should have create token button"
+
+    # Take screenshot of settings/tokens page
+    for viewport in ["desktop", "mobile"]:
+        await take_screenshot(page, "settings-tokens", viewport)
 
 
 @pytest.mark.playwright
