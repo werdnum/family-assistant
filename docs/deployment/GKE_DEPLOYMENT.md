@@ -8,14 +8,15 @@ automated deployment script.
 The `scripts/deploy-gke.sh` script provides a "one-shot" interactive experience to set up a
 production-ready Family Assistant instance on GKE. It automates the following:
 
-1.  **GKE Cluster**: Creates a GKE Autopilot cluster (recommended for most users).
-2.  **PostgreSQL**: Deploys a StatefulSet running PostgreSQL 16 with the `pgvector` extension.
-3.  **Application**: Deploys the Family Assistant container with all necessary environment variables
-    and secrets.
-4.  **Networking**:
-    - **With Domain**: Sets up a Static IP, Managed SSL Certificate (Google-managed), and GCE Ingress.
-    - **Without Domain**: Sets up a standard LoadBalancer for quick access (unsecured).
-5.  **Authentication**: Optionally configures OpenID Connect (OIDC) with an email allowlist.
+1. **GKE Cluster**: Creates a GKE Autopilot cluster (recommended for most users).
+2. **PostgreSQL**: Deploys a StatefulSet running PostgreSQL 16 with the `pgvector` extension.
+3. **Application**: Deploys the Family Assistant container with all necessary environment variables
+   and secrets.
+4. **Networking**:
+   - **With Domain**: Sets up a Static IP, Managed SSL Certificate (Google-managed), and GCE
+     Ingress.
+   - **Without Domain**: Sets up a standard LoadBalancer for quick access (unsecured).
+5. **Authentication**: Optionally configures OpenID Connect (OIDC) with an email allowlist.
 
 ## Prerequisites
 
@@ -45,12 +46,12 @@ The script will ask for:
 
 You can enable OIDC to secure the Web UI. Google is the recommended provider.
 
-1.  **Create OIDC Credentials**: In the Google Cloud Console, go to **APIs & Services > Credentials**
-    and create an **OAuth client ID** for a "Web application".
-2.  **Authorized Redirect URIs**: If you have a domain, use `https://your-domain.com/auth`.
-3.  **Email Allowlist**: When prompted by the script, you can provide a comma-separated list of
-    authorized emails (e.g., `user1@gmail.com, user2@example.com`). Only these users will be able to
-    log in.
+1. **Create OIDC Credentials**: In the Google Cloud Console, go to **APIs & Services > Credentials**
+   and create an **OAuth client ID** for a "Web application".
+2. **Authorized Redirect URIs**: If you have a domain, use `https://your-domain.com/auth`.
+3. **Email Allowlist**: When prompted by the script, you can provide a comma-separated list of
+   authorized emails (e.g., `user1@gmail.com, user2@example.com`). Only these users will be able to
+   log in.
 
 ## Command Line Options
 
@@ -71,37 +72,37 @@ You can also provide all parameters via command line flags to skip the interacti
 
 ### All Available Options
 
-| Option                | Description                                         | Default                    |
-| --------------------- | --------------------------------------------------- | -------------------------- |
-| `--project`           | GCP Project ID (required)                           | Current gcloud project     |
-| `--region`            | GCP Region for the cluster and resources            | `us-central1`              |
-| `--cluster`           | Name of the GKE cluster                             | `family-assistant-cluster` |
-| `--namespace`         | Kubernetes namespace for deployment                 | `family-assistant`         |
-| `--image`             | Container image to deploy                           | GHCR latest                |
-| `--domain`            | Domain name for HTTPS access (requires DNS config)  | None (uses LoadBalancer)   |
-| `--telegram-token`    | Telegram Bot API Token                              | Prompted                   |
-| `--gemini-key`        | Google Gemini API Key                               | Prompted                   |
-| `--openrouter-key`    | OpenRouter API Key                                  | Prompted                   |
-| `--allowed-users`     | Comma-separated list of authorized Telegram IDs     | Prompted                   |
-| `--dev-chat-id`       | Telegram ID for receiving system error logs         | Prompted                   |
-| `--timezone`         | Timezone for date/time operations                    | `UTC` (or prompted)        |
-| `--db-password`       | Password for the PostgreSQL database                | Randomly generated         |
-| `--oidc-client-id`    | OIDC Client ID                                      | Prompted                   |
-| `--oidc-client-secret`| OIDC Client Secret                                  | Prompted                   |
-| `--oidc-discovery`    | OIDC Discovery URL                                  | Prompted                   |
-| `--allowed-emails`    | Comma-separated allowed OIDC Emails                 | Prompted                   |
-| `--session-secret`    | Secret key for sessions                             | Randomly generated         |
+| Option                 | Description                                        | Default                    |
+| ---------------------- | -------------------------------------------------- | -------------------------- |
+| `--project`            | GCP Project ID (required)                          | Current gcloud project     |
+| `--region`             | GCP Region for the cluster and resources           | `us-central1`              |
+| `--cluster`            | Name of the GKE cluster                            | `family-assistant-cluster` |
+| `--namespace`          | Kubernetes namespace for deployment                | `family-assistant`         |
+| `--image`              | Container image to deploy                          | GHCR latest                |
+| `--domain`             | Domain name for HTTPS access (requires DNS config) | None (uses LoadBalancer)   |
+| `--telegram-token`     | Telegram Bot API Token                             | Prompted                   |
+| `--gemini-key`         | Google Gemini API Key                              | Prompted                   |
+| `--openrouter-key`     | OpenRouter API Key                                 | Prompted                   |
+| `--allowed-users`      | Comma-separated list of authorized Telegram IDs    | Prompted                   |
+| `--dev-chat-id`        | Telegram ID for receiving system error logs        | Prompted                   |
+| `--timezone`           | Timezone for date/time operations                  | `UTC` (or prompted)        |
+| `--db-password`        | Password for the PostgreSQL database               | Randomly generated         |
+| `--oidc-client-id`     | OIDC Client ID                                     | Prompted                   |
+| `--oidc-client-secret` | OIDC Client Secret                                 | Prompted                   |
+| `--oidc-discovery`     | OIDC Discovery URL                                 | Prompted                   |
+| `--allowed-emails`     | Comma-separated allowed OIDC Emails                | Prompted                   |
+| `--session-secret`     | Secret key for sessions                            | Randomly generated         |
 
 ## Post-Deployment
 
 ### If using a Domain
 
-1.  **Configure DNS**: The script will output a static IP address. Create an **A record** in your
-    DNS provider pointing your domain to this IP.
-2.  **Wait for SSL**: Google-managed certificates can take **30 to 60 minutes** to become active
-    after the DNS is configured.
-3.  **Authorized Redirect URI**: Ensure your OIDC provider has `https://<domain>/auth` in its allowed
-    callback list.
+1. **Configure DNS**: The script will output a static IP address. Create an **A record** in your DNS
+   provider pointing your domain to this IP.
+2. **Wait for SSL**: Google-managed certificates can take **30 to 60 minutes** to become active
+   after the DNS is configured.
+3. **Authorized Redirect URI**: Ensure your OIDC provider has `https://<domain>/auth` in its allowed
+   callback list.
 
 ### If NOT using a Domain
 

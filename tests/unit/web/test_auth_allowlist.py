@@ -35,6 +35,7 @@ async def test_handle_auth_callback_no_allowlist(
         user_info = {"email": "test@example.com", "sub": "123"}
 
         # authlib authorize_access_token is async
+        # ast-grep-ignore: no-dict-any
         async def mock_authorize(*args: object, **kwargs: object) -> dict[str, Any]:  # noqa: ARG001
             return {"userinfo": user_info}
 
@@ -63,6 +64,7 @@ async def test_handle_auth_callback_with_allowlist_success(
             "sub": "123",
         }  # Case insensitive check
 
+        # ast-grep-ignore: no-dict-any
         async def mock_authorize(*args: object, **kwargs: object) -> dict[str, Any]:  # noqa: ARG001
             return {"userinfo": user_info}
 
@@ -84,6 +86,7 @@ async def test_handle_auth_callback_with_allowlist_denied(
     with patch("family_assistant.web.auth.ALLOWED_OIDC_EMAILS", "allowed@example.com"):
         user_info = {"email": "hacker@example.com", "sub": "123"}
 
+        # ast-grep-ignore: no-dict-any
         async def mock_authorize(*args: object, **kwargs: object) -> dict[str, Any]:  # noqa: ARG001
             return {"userinfo": user_info}
 
@@ -104,6 +107,7 @@ async def test_handle_auth_callback_with_allowlist_no_email(
     with patch("family_assistant.web.auth.ALLOWED_OIDC_EMAILS", "allowed@example.com"):
         user_info = {"sub": "123"}  # No email
 
+        # ast-grep-ignore: no-dict-any
         async def mock_authorize(*args: object, **kwargs: object) -> dict[str, Any]:  # noqa: ARG001
             return {"userinfo": user_info}
 
