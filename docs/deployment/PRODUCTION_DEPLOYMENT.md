@@ -22,6 +22,17 @@ deployment options (like Docker Compose), see the
 - `kubectl` - Kubernetes command-line tool
 - `git` - For cloning the repository and accessing manifests
 
+### One-Shot GKE Deployment
+
+If you are deploying to Google Kubernetes Engine (GKE), you can use our automated script to set up
+the cluster, database, and application in one go:
+
+```bash
+./scripts/deploy-gke.sh
+```
+
+See the [GKE Deployment Guide](GKE_DEPLOYMENT.md) for full details.
+
 ### External Service Accounts
 
 The following external services may be required depending on enabled features:
