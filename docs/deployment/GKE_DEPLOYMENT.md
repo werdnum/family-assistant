@@ -9,7 +9,10 @@ The `scripts/deploy-gke.sh` script provides a "one-shot" interactive experience 
 production-ready Family Assistant instance on GKE. It automates the following:
 
 1. **GKE Cluster**: Creates a GKE Autopilot cluster (recommended for most users).
-2. **PostgreSQL**: Deploys a StatefulSet running PostgreSQL 16 with the `pgvector` extension.
+2. **PostgreSQL**:
+   - **Cloud SQL (Recommended)**: Provisions a managed Google Cloud SQL for PostgreSQL instance.
+     Includes automated backups, high availability, and secure access via Workload Identity.
+   - **In-Cluster**: Deploys a StatefulSet running PostgreSQL 16 with the `pgvector` extension.
 3. **Application**: Deploys the Family Assistant container with all necessary environment variables
    and secrets.
 4. **Networking**:
@@ -40,7 +43,24 @@ The script will ask for:
 - **Telegram Token**: Your bot's API token.
 - **LLM Key**: Your Gemini or OpenRouter key.
 - **Allowed Users**: Comma-separated list of Telegram user IDs authorized to use the bot.
+- **Database Choice**: Prompts to use managed Cloud SQL instead of in-cluster Postgres.
 - **OIDC Configuration**: (Optional) Prompts to enable OIDC and provide client details.
+
+## Managed Database (Cloud SQL)
+
+For a production-grade setup with "all the trimmings," we recommend using **Cloud SQL**.
+
+- **Benefits**: Automatic patching, backups, 99.95% availability, and vertical scaling.
+- **Security**: The script configures **Workload Identity**, allowing the application to connect
+  securely to the database without managing raw credentials for the proxy.
+- **Cost**: Cloud SQL has a minimum monthly cost (approx. $10-15/mo for a micro instance).
+- **Setup Time**: Creating a Cloud SQL instance can take **10 to 15 minutes**.
+
+To enable Cloud SQL via command line:
+
+```bash
+./scripts/deploy-gke.sh --use-cloud-sql --sql-tier db-f1-micro ...
+```
 
 ## OpenID Connect (OIDC) Authentication
 
@@ -64,6 +84,7 @@ You can also provide all parameters via command line flags to skip the interacti
   --gemini-key "your-gemini-key" \
   --allowed-users "12345678,87654321" \
   --domain "assistant.example.com" \
+  --use-cloud-sql \
   --oidc-client-id "your-client-id" \
   --oidc-client-secret "your-client-secret" \
   --oidc-discovery "https://accounts.google.com/.well-known/openid-configuration" \
@@ -87,6 +108,9 @@ You can also provide all parameters via command line flags to skip the interacti
 | `--dev-chat-id`        | Telegram ID for receiving system error logs        | Prompted                   |
 | `--timezone`           | Timezone for date/time operations                  | `UTC` (or prompted)        |
 | `--db-password`        | Password for the PostgreSQL database               | Randomly generated         |
+| `--use-cloud-sql`      | Use managed Google Cloud SQL instead of in-cluster | `false`                    |
+| `--sql-instance`       | Name for the Cloud SQL instance                    | `family-assistant-db`      |
+| `--sql-tier`           | Machine type for Cloud SQL                         | `db-f1-micro`              |
 | `--oidc-client-id`     | OIDC Client ID                                     | Prompted                   |
 | `--oidc-client-secret` | OIDC Client Secret                                 | Prompted                   |
 | `--oidc-discovery`     | OIDC Discovery URL                                 | Prompted                   |
@@ -117,7 +141,7 @@ to an `http` URL except for `localhost`.
 ### Viewing Logs
 
 ```bash
-kubectl logs -f deployment/family-assistant -n family-assistant
+kubectl logs -f deployment/family-assistant -c family-assistant -n family-assistant
 ```
 
 ### Updating the Application
@@ -130,12 +154,13 @@ kubectl set image deployment/family-assistant family-assistant=ghcr.io/werdnum/f
 
 ### Accessing the Database
 
-```bash
-kubectl exec -it statefulset/postgres -n family-assistant -- psql -U postgres -d family_assistant
-```
+- **Cloud SQL**: Use the Google Cloud Console or `gcloud sql connect`.
+- **In-Cluster**:
+  `kubectl exec -it statefulset/postgres -n family-assistant -- psql -U postgres -d family_assistant`
 
 ## Troubleshooting
 
 - **Cluster Creation Fails**: Ensure you have sufficient quota in your GCP project.
+- **Cloud SQL Creation Fails**: Check the Cloud SQL Admin API and billing status.
 - **403 Access Denied (OIDC)**: Ensure your email is in the `ALLOWED_OIDC_EMAILS` list.
 - **SSL Certificate Pending**: Ensure your A record is correctly pointed to the Static IP.
