@@ -2,6 +2,7 @@
 
 import asyncio  # noqa: F401
 import time  # noqa: F401
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
@@ -74,6 +75,7 @@ async def test_events_page_basic_loading(
 @pytest.mark.asyncio
 async def test_events_list_page_loads(
     web_test_fixture_readonly: WebTestFixture,
+    take_screenshot: Callable[[Any, str, str], Awaitable[None]],
 ) -> None:
     """Test that events list page loads successfully."""
     page = web_test_fixture_readonly.page
@@ -94,6 +96,10 @@ async def test_events_list_page_loads(
     filters_form = page.locator("form[class*='filtersForm'], .filtersForm")
     assert await filters_form.count() > 0
     assert await filters_form.is_visible()
+
+    # Take screenshot of events list page
+    for viewport in ["desktop", "mobile"]:
+        await take_screenshot(page, "events-list", viewport)
 
 
 @pytest.mark.playwright

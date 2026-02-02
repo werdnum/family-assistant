@@ -1,5 +1,8 @@
 """Playwright tests for the React-based tools UI."""
 
+from collections.abc import Awaitable, Callable
+from typing import Any
+
 import pytest
 
 from tests.functional.web.conftest import WebTestFixture
@@ -7,7 +10,10 @@ from tests.functional.web.conftest import WebTestFixture
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_tools_page_loads(web_test_fixture_readonly: WebTestFixture) -> None:
+async def test_tools_page_loads(
+    web_test_fixture_readonly: WebTestFixture,
+    take_screenshot: Callable[[Any, str, str], Awaitable[None]],
+) -> None:
     """Test that the tools page loads successfully."""
     page = web_test_fixture_readonly.page
     base_url = web_test_fixture_readonly.base_url
@@ -61,6 +67,10 @@ async def test_tools_page_loads(web_test_fixture_readonly: WebTestFixture) -> No
         "h1:has-text('Tool Explorer')", state="visible", timeout=5000
     )
     assert header is not None, "Tool Explorer header should be visible"
+
+    # Take screenshot of tools page
+    for viewport in ["desktop", "mobile"]:
+        await take_screenshot(page, "tools-list", viewport)
 
 
 @pytest.mark.playwright
