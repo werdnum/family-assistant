@@ -1,0 +1,100 @@
+# Render Blueprint for Family Assistant
+# https://render.com/docs/blueprint-spec
+#
+# Deploy with one click: https://render.com/deploy?repo=https://github.com/werdnum/family-assistant
+#
+# This blueprint creates:
+# - A web service running the Family Assistant application
+# - A PostgreSQL database with pgvector extension for vector storage
+# - A persistent disk for document and attachment storage
+
+databases:
+  - name: family-assistant-db
+    plan: starter # Upgrade to standard or higher for production
+    databaseName: family_assistant
+    user: assistant
+    postgresMajorVersion: "16" # PostgreSQL 16 supports pgvector
+
+services:
+  - type: web
+    name: family-assistant
+    runtime: docker
+    plan: starter # Upgrade to standard or higher for production
+    region: oregon # Change to your preferred region
+    healthCheckPath: /health
+    envVars:
+      # Database connection (automatically configured from the database)
+      - key: DATABASE_URL
+        fromDatabase:
+          name: family-assistant-db
+          property: connectionString
+      # Session secret (auto-generated)
+      - key: SESSION_SECRET_KEY
+        generateValue: true
+      # Timezone configuration
+      - key: TIMEZONE
+        value: UTC
+      # LLM API Keys - at least one is required
+      # Users will be prompted to enter these during deployment
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      # Telegram Bot Configuration
+      # Get your token from https://t.me/BotFather
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      # Comma-separated list of Telegram user IDs allowed to use the bot
+      # Find your ID by messaging @userinfobot on Telegram
+      - key: ALLOWED_USER_IDS
+        sync: false
+      # Telegram user ID for error notifications
+      - key: DEVELOPER_CHAT_ID
+        sync: false
+      # OIDC Authentication (optional)
+      # Configure these if you want to use OIDC for web UI authentication
+      - key: OIDC_CLIENT_ID
+        sync: false
+      - key: OIDC_CLIENT_SECRET
+        sync: false
+      - key: OIDC_DISCOVERY_URL
+        sync: false
+      - key: ALLOWED_OIDC_EMAILS
+        sync: false
+      # Push Notifications (optional)
+      # Generate with: python scripts/generate_vapid_keys.py
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_CONTACT_EMAIL
+        sync: false
+      # Calendar Integration (optional)
+      - key: CALDAV_URL
+        sync: false
+      - key: CALDAV_USERNAME
+        sync: false
+      - key: CALDAV_PASSWORD
+        sync: false
+      - key: CALDAV_CALENDAR_URLS
+        sync: false
+      - key: ICAL_URLS
+        sync: false
+      # Optional Integrations
+      - key: BRAVE_API_KEY
+        sync: false
+      - key: HOMEASSISTANT_API_KEY
+        sync: false
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
+      # Storage paths (using persistent disk)
+      - key: DOCUMENT_STORAGE_PATH
+        value: /data/documents
+      - key: ATTACHMENT_STORAGE_PATH
+        value: /data/attachments
+      - key: CHAT_ATTACHMENT_STORAGE_PATH
+        value: /data/chat_attachments
+    disk:
+      name: family-assistant-data
+      mountPath: /data
+      sizeGB: 10 # Adjust based on your needs

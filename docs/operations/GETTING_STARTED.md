@@ -65,7 +65,26 @@ To enable secure authentication for the Web UI, you must configure OpenID Connec
 
 ______________________________________________________________________
 
-### Option 2: Native Deployment (Kubernetes)
+### Option 2: One-Click Cloud Deployment (Render)
+
+For a quick, hassle-free cloud deployment, use Render's one-click deploy:
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/werdnum/family-assistant)
+
+This automatically provisions:
+
+- A web service running Family Assistant
+- A PostgreSQL database with pgvector extension
+- A persistent disk for document storage
+
+You'll be prompted to enter your Telegram bot token, LLM API keys, and allowed user IDs during
+setup.
+
+For detailed instructions, see the [Render Deployment Guide](../deployment/RENDER_DEPLOYMENT.md).
+
+______________________________________________________________________
+
+### Option 3: Native Deployment (Kubernetes)
 
 Family Assistant is natively designed to run on Kubernetes. This is the most robust deployment
 method, suitable for high availability and advanced scaling.
@@ -85,7 +104,7 @@ The Kubernetes manifests are located in the `deploy/` directory:
 
 ______________________________________________________________________
 
-### Option 3: Development/Testing (SQLite)
+### Option 4: Development/Testing (SQLite)
 
 For quick testing or development, you can run the application with SQLite.
 
