@@ -1,5 +1,8 @@
 """End-to-end tests for the landing page and navigation."""
 
+from collections.abc import Awaitable, Callable
+from typing import Any
+
 import pytest
 from playwright.async_api import expect
 
@@ -12,6 +15,7 @@ from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 @pytest.mark.asyncio
 async def test_landing_page_rendering(
     web_test_fixture_readonly: WebTestFixture,
+    take_screenshot: Callable[[Any, str, str], Awaitable[None]],
 ) -> None:
     """Test that the landing page renders correctly."""
     page = web_test_fixture_readonly.page
@@ -42,6 +46,10 @@ async def test_landing_page_rendering(
     await expect(
         page.locator("input[placeholder='How can I help you today?']")
     ).to_be_visible()
+
+    # Take screenshot of landing page
+    for viewport in ["desktop", "mobile"]:
+        await take_screenshot(page, "landing-page", viewport)
 
 
 @pytest.mark.playwright

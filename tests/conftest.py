@@ -111,6 +111,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         choices=("sqlite", "postgres", "all"),
         help="Database backend to test against: sqlite, postgres, or all (default)",
     )
+    parser.addoption(
+        "--take-screenshots",
+        action="store_true",
+        default=False,
+        help="Capture screenshots during Playwright tests for documentation",
+    )
 
 
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:

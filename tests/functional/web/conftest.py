@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import time
 import uuid
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from unittest.mock import AsyncMock
@@ -584,6 +584,51 @@ async def web_only_assistant(
         mock_llm_client,
     ):
         yield assistant
+
+
+@pytest.fixture
+def take_screenshot(
+    request: pytest.FixtureRequest,
+) -> Callable[[Page, str, str], Awaitable[None]]:
+    """Fixture that provides a function to take screenshots.
+
+    Captures screenshots in both desktop and mobile viewports for documentation.
+
+    Usage:
+        async def test_something(page, take_screenshot):
+            await page.goto("/page")
+            await take_screenshot(page, "my-screenshot", "desktop")
+            # Or for both viewports:
+            for viewport in ["desktop", "mobile"]:
+                await take_screenshot(page, "my-screenshot", viewport)
+    """
+
+    async def _take(page: Page, name: str, viewport: str = "desktop") -> None:
+        if not request.config.getoption("--take-screenshots", default=False):
+            return
+
+        # Set viewport size
+        if viewport == "mobile":
+            await page.set_viewport_size({"width": 393, "height": 852})  # iPhone 15 Pro
+        else:  # desktop
+            await page.set_viewport_size({"width": 1920, "height": 1080})
+
+        # Get the project root - tests/functional/web/conftest.py is 4 levels deep
+        project_root = Path(__file__).parent.parent.parent.parent
+        screenshots_dir = project_root / "screenshots" / viewport
+        screenshots_dir.mkdir(parents=True, exist_ok=True)
+
+        # Ensure filename is safe and has .png extension
+        safe_name = "".join([c if c.isalnum() or c in "-_" else "_" for c in name])
+        if not safe_name.endswith(".png"):
+            safe_name += ".png"
+
+        filepath = screenshots_dir / safe_name
+        await page.screenshot(path=str(filepath), full_page=True)
+        # Use print to ensure it shows up in pytest output with -s
+        print(f"\n[Screenshot] Saved {viewport} screenshot to {filepath}")
+
+    return _take
 
 
 @pytest_asyncio.fixture(scope="function")
