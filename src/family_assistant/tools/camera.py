@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 from zoneinfo import ZoneInfo
+
+from pydantic import BaseModel, Field, ValidationError
 
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
@@ -29,6 +30,64 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
+
+
+# --- Pydantic model for structured LLM output ---
+
+
+class FrameAnalysisLLMResponse(BaseModel):
+    """Pydantic model for parsing LLM frame analysis response."""
+
+    matches_query: bool = Field(
+        description="Whether the frame shows what the user is looking for"
+    )
+    description: str = Field(
+        description="Brief description of what is visible in the frame"
+    )
+    confidence: float = Field(
+        ge=0.0, le=1.0, description="Confidence score from 0.0 to 1.0"
+    )
+    detected_objects: list[str] = Field(
+        default_factory=list, description="Key objects/entities visible in the frame"
+    )
+
+
+# --- TypedDicts for result structures ---
+
+
+class AnalysisSummaryDict(TypedDict):
+    """TypedDict for individual frame analysis summary."""
+
+    timestamp: str
+    matches_query: bool
+    description: str
+    confidence: float
+    detected_objects: list[str]
+
+
+class TimeRangeDict(TypedDict):
+    """TypedDict for time range in scan results."""
+
+    start: str
+    end: str
+    interval_minutes: int
+
+
+class ScanResultDict(TypedDict, total=False):
+    """TypedDict for scan_camera_frames result data.
+
+    Uses total=False for optional fields (analysis_errors, warning).
+    """
+
+    camera_id: str
+    query: str
+    time_range: TimeRangeDict
+    frames_scanned: int
+    frames_analyzed: int
+    matches_found: int
+    analysis_results: list[AnalysisSummaryDict]
+    analysis_errors: int  # Optional
+    warning: str  # Optional
 
 
 # Tool Definitions
@@ -668,13 +727,11 @@ async def _analyze_single_frame(
             tool_choice=None,
         )
 
-        # Parse the response
+        # Parse the response using Pydantic for validation
         response_text = response.content.strip() if response.content else ""
 
-        # Try to extract JSON from the response
-        # Handle case where LLM wraps JSON in markdown code blocks
+        # Extract JSON from markdown code blocks if present
         if response_text.startswith("```"):
-            # Extract content between code fences
             lines = response_text.split("\n")
             json_lines = []
             in_code = False
@@ -687,26 +744,28 @@ async def _analyze_single_frame(
             response_text = "\n".join(json_lines)
 
         try:
-            # ast-grep-ignore: no-dict-any - JSON parsing produces dynamic types
-            result_data: dict[str, Any] = json.loads(response_text)
+            # Use Pydantic for validated parsing
+            parsed = FrameAnalysisLLMResponse.model_validate_json(response_text)
             return FrameAnalysisResult(
                 timestamp=timestamp,
-                matches_query=bool(result_data.get("matches_query", False)),
-                description=str(result_data.get("description", "No description")),
-                confidence=float(result_data.get("confidence", 0.5)),
-                detected_objects=list(result_data.get("detected_objects", [])),
+                matches_query=parsed.matches_query,
+                description=parsed.description,
+                confidence=parsed.confidence,
+                detected_objects=parsed.detected_objects,
                 jpeg_bytes=jpeg_bytes,
             )
-        except json.JSONDecodeError:
-            # If JSON parsing fails, try to infer from text
-            matches = "yes" in response_text.lower() or "true" in response_text.lower()
+        except ValidationError as e:
+            logger.warning(
+                f"Failed to parse LLM response for frame at {timestamp}: {e}"
+            )
             return FrameAnalysisResult(
                 timestamp=timestamp,
-                matches_query=matches,
-                description=response_text[:200] if response_text else "Analysis failed",
-                confidence=0.3,  # Low confidence since we couldn't parse properly
+                matches_query=False,
+                description=response_text[:200] if response_text else "Parse failed",
+                confidence=0.0,
                 detected_objects=[],
                 jpeg_bytes=jpeg_bytes,
+                error=f"Invalid response format: {e}",
             )
 
     except Exception as e:
@@ -841,20 +900,20 @@ async def scan_camera_frames_tool(
         # Sort by timestamp
         matching_results.sort(key=lambda r: r.timestamp)
 
-        # Build response data
-        # ast-grep-ignore: no-dict-any - Building dynamic result dict
-        analysis_summaries: list[dict[str, Any]] = []
+        # Build response data with typed structures
+        analysis_summaries: list[AnalysisSummaryDict] = []
         attachments: list[ToolAttachment] = []
 
         for result in matching_results:
             ts_str = result.timestamp.isoformat()
-            analysis_summaries.append({
+            summary: AnalysisSummaryDict = {
                 "timestamp": ts_str,
                 "matches_query": result.matches_query,
                 "description": result.description,
                 "confidence": result.confidence,
                 "detected_objects": result.detected_objects,
-            })
+            }
+            analysis_summaries.append(summary)
 
             # Include attachments for matching frames (or all if not filtering)
             if filter_matching and result.matches_query:
@@ -875,18 +934,19 @@ async def scan_camera_frames_tool(
                     )
                 )
 
-        # Build summary
+        # Build summary with typed structures
         match_count = len([r for r in successful_results if r.matches_query])
 
-        # ast-grep-ignore: no-dict-any - Building dynamic result dict
-        result_data: dict[str, Any] = {
+        time_range: TimeRangeDict = {
+            "start": start_time,
+            "end": end_time,
+            "interval_minutes": interval_minutes,
+        }
+
+        result_data: ScanResultDict = {
             "camera_id": camera_id,
             "query": query,
-            "time_range": {
-                "start": start_time,
-                "end": end_time,
-                "interval_minutes": interval_minutes,
-            },
+            "time_range": time_range,
             "frames_scanned": len(frames),
             "frames_analyzed": len(successful_results),
             "matches_found": match_count,
@@ -918,7 +978,7 @@ async def scan_camera_frames_tool(
 
         return ToolResult(
             text=text_summary,
-            data=result_data,
+            data=cast("dict[str, Any]", result_data),
             attachments=attachments if attachments else None,
         )
 
