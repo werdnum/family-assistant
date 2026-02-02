@@ -135,6 +135,8 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set build date
+        run: echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
       - name: Build and conditionally push main application image
         id: build
         uses: docker/build-push-action@v6
@@ -145,7 +147,7 @@ jobs:
           push: ${{ needs.prepare.outputs.should-push }}
           build-args: |
             GIT_COMMIT=${{ github.sha }}
-            BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            BUILD_DATE=${{ env.BUILD_DATE }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:${{ needs.prepare.outputs.tag }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:latest
