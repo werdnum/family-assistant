@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 import aiofiles
 from dateutil.parser import parse as parse_datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from family_assistant.storage.context import DatabaseContext
@@ -223,11 +223,52 @@ async def handle_mail_webhook(
         ) from e
 
 
+class SMSWebhookPayload(BaseModel):
+    """Payload for SMS webhook."""
+
+    from_number: str = Field(alias="from")
+    to_number: str = Field(alias="to")
+    text: str
+
+
 class WebhookEventResponse(BaseModel):
     """Response for webhook event endpoint."""
 
     status: str
     event_id: str
+
+
+@webhooks_router.post("/webhook/sms")
+async def handle_sms_webhook(
+    request: Request,
+    payload: SMSWebhookPayload,
+    db_context: Annotated[DatabaseContext, Depends(get_db)],
+) -> Response:
+    """
+    Receives incoming SMS via webhook from CrazyTel or similar.
+    """
+    logger.info(f"Received SMS webhook from {payload.from_number}")
+
+    sms_service = getattr(request.app.state, "sms_service", None)
+    if not sms_service:
+        logger.error("SMSService not found in app.state")
+        raise HTTPException(status_code=503, detail="SMS service not available")
+
+    # Get chat_interfaces from app state for cross-interface messaging
+    chat_interfaces = getattr(request.app.state, "chat_interfaces", None)
+
+    try:
+        await sms_service.handle_inbound_sms(
+            db_context=db_context,
+            from_number=payload.from_number,
+            to_number=payload.to_number,
+            text=payload.text,
+            chat_interfaces=chat_interfaces,
+        )
+        return Response(status_code=200, content="SMS received")
+    except Exception as e:
+        logger.error(f"Error handling SMS webhook: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @webhooks_router.post("/webhook/event")

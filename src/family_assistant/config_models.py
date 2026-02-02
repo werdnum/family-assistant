@@ -512,6 +512,30 @@ class DockerBackendConfig(BaseModel):
     resources: WorkerResourceLimits = Field(default_factory=WorkerResourceLimits)
 
 
+class CrazyTelConfig(BaseModel):
+    """Configuration for CrazyTel SMS backend."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    api_key: str = ""
+    from_number: str = ""
+
+
+class SMSConfig(BaseModel):
+    """Configuration for SMS interface."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    backend: Literal["crazytel", "mock"] = "crazytel"
+    crazytel: CrazyTelConfig = Field(default_factory=CrazyTelConfig)
+    allowed_numbers: list[str] = Field(
+        default_factory=list,
+        description="List of phone numbers allowed to interact with the SMS interface.",
+    )
+    profile_id: str = "sms_assistant"
+
+
 class AIWorkerConfig(BaseModel):
     """AI Worker Sandbox configuration.
 
@@ -634,6 +658,7 @@ class AppConfig(BaseModel):
         default_factory=MessageBatchingConfig
     )
     ai_worker_config: AIWorkerConfig = Field(default_factory=AIWorkerConfig)
+    sms: SMSConfig = Field(default_factory=SMSConfig)
 
     # LLM parameters (pattern -> parameters mapping)
     # ast-grep-ignore: no-dict-any - LLM params are provider-specific and genuinely arbitrary

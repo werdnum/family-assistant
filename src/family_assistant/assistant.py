@@ -82,6 +82,9 @@ from family_assistant.utils.scraping import PlaywrightScraper
 from family_assistant.web.app_creator import configure_app_auth, create_app
 from family_assistant.web.message_notifier import MessageNotifier
 
+from .sms.backends.crazytel import CrazyTelBackend
+from .sms.backends.mock import MockSMSBackend
+from .sms.service import SMSService
 from .telegram.service import TelegramService
 
 if TYPE_CHECKING:
@@ -201,6 +204,9 @@ class Assistant:
         self.health_monitor_task: asyncio.Task | None = None  # Track health monitor
         self.event_processor_task: asyncio.Task | None = None  # Track event processor
         self._is_shutdown_complete = False
+
+        # SMS service
+        self.sms_service: SMSService | None = None
 
         # Event system
         self.event_processor: EventProcessor | None = None
@@ -956,6 +962,41 @@ class Assistant:
             self.telegram_service = None
             self.fastapi_app.state.telegram_service = None
             logger.info("Telegram service disabled (telegram_enabled=False)")
+
+        # Initialize SMS service if enabled
+        if self.config.sms.enabled:
+            sms_backend = None
+            if self.config.sms.backend == "crazytel":
+                sms_backend = CrazyTelBackend(
+                    api_key=self.config.sms.crazytel.api_key,
+                    from_number=self.config.sms.crazytel.from_number,
+                )
+            elif self.config.sms.backend == "mock":
+                sms_backend = MockSMSBackend()
+
+            if sms_backend:
+                self.sms_service = SMSService(
+                    backend=sms_backend,
+                    processing_service=self.default_processing_service,
+                    allowed_numbers=self.config.sms.allowed_numbers,
+                    profile_id=self.config.sms.profile_id,
+                    processing_services_registry=self.processing_services_registry,
+                )
+                self.fastapi_app.state.sms_service = self.sms_service
+                self.fastapi_app.state.chat_interfaces["sms"] = (
+                    self.sms_service.chat_interface
+                )
+                logger.info(
+                    f"SMSService initialized with '{self.config.sms.backend}' backend."
+                )
+            else:
+                logger.warning(
+                    f"SMS enabled but backend '{self.config.sms.backend}' not configured correctly."
+                )
+        else:
+            self.sms_service = None
+            self.fastapi_app.state.sms_service = None
+            logger.info("SMS service disabled.")
 
         # Initialize event system if enabled
         event_config = self.config.event_system
