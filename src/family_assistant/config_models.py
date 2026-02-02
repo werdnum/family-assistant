@@ -561,6 +561,7 @@ class OIDCConfig(BaseModel):
     client_id: str = ""
     client_secret: str = ""
     discovery_url: str = ""
+    allowed_emails: list[str] = Field(default_factory=list)
 
 
 class AppConfig(BaseModel):
