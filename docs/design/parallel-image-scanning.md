@@ -29,7 +29,7 @@ async def scan_camera_frames_tool(
     start_time: str,
     end_time: str,
     query: str,
-    interval_minutes: int = 5,
+    interval_seconds: float = 300,
     max_frames: int = 20,
     filter_matching: bool = True,
     model: str | None = None,
@@ -47,8 +47,8 @@ async def scan_camera_frames_tool(
         start_time: Start of time range in LOCAL TIME
         end_time: End of time range in LOCAL TIME
         query: What to look for (e.g., "person entering the yard", "package delivery")
-        interval_minutes: Minutes between frames (default 5)
-        max_frames: Maximum frames to scan (default 20)
+        interval_seconds: Seconds between frames (default 300 = 5 minutes, min 1)
+        max_frames: Maximum frames to scan (default 20, max 50)
         filter_matching: If True, only return frames that match the query (default True)
         model: Model to use for frame analysis. Defaults to profile's model.
 

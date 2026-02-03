@@ -600,7 +600,7 @@ async def test_scan_camera_frames_success(
         start_time=start_time,
         end_time=end_time,
         query="person in the yard",
-        interval_minutes=15,
+        interval_seconds=900,
         max_frames=10,
         filter_matching=True,
     )
@@ -641,7 +641,7 @@ async def test_scan_camera_frames_no_filtering(
         start_time=start_time,
         end_time=end_time,
         query="person in the yard",
-        interval_minutes=15,
+        interval_seconds=900,
         max_frames=10,
         filter_matching=False,  # Return all frames
     )
@@ -705,7 +705,7 @@ async def test_scan_camera_frames_no_matches() -> None:
         start_time=base_time.isoformat(),
         end_time=(base_time + timedelta(hours=1)).isoformat(),
         query="something that does not exist",
-        interval_minutes=15,
+        interval_seconds=900,
         max_frames=10,
     )
 
