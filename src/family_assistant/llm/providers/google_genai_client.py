@@ -7,8 +7,11 @@ import json
 import logging
 import mimetypes
 import os
+import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -39,7 +42,9 @@ from family_assistant.llm.messages import (
     TextContentPart,
     ToolMessage,
     UserMessage,
+    message_to_json_dict,
 )
+from family_assistant.llm.request_buffer import LLMRequestRecord, get_request_buffer
 
 from ..base import (
     AuthenticationError,
@@ -760,6 +765,14 @@ class GoogleGenAIClient(BaseLLMClient):
         # Validate user input before processing
         self._validate_user_input(messages)
 
+        # Request tracking for diagnostics
+        start_time = time.monotonic()
+        request_timestamp = datetime.now(UTC)
+        request_id = f"google_{uuid.uuid4().hex[:16]}"
+
+        # Convert messages to dict format for request buffer recording
+        message_dicts = [message_to_json_dict(msg) for msg in messages]
+
         try:
             # Keep messages as typed objects for processing
             typed_messages = list(messages)
@@ -989,14 +1002,53 @@ class GoogleGenAIClient(BaseLLMClient):
                     reasoning_info = {}
                 reasoning_info["thought_summaries"] = thought_summaries
 
-            return LLMOutput(
+            llm_output = LLMOutput(
                 content=content,
                 tool_calls=tool_calls,
                 reasoning_info=reasoning_info,
                 provider_metadata=None,  # Thought signatures are now on individual tool calls
             )
 
+            # Record successful request to diagnostics buffer
+            duration_ms = (time.monotonic() - start_time) * 1000
+            try:
+                get_request_buffer().add(
+                    LLMRequestRecord(
+                        timestamp=request_timestamp,
+                        request_id=request_id,
+                        model_id=self.model_name,
+                        messages=message_dicts,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        response=asdict(llm_output),
+                        duration_ms=duration_ms,
+                        error=None,
+                    )
+                )
+            except Exception as record_err:
+                logger.debug(f"Failed to record LLM request: {record_err}")
+
+            return llm_output
+
         except Exception as e:
+            # Record failed request to diagnostics buffer
+            duration_ms = (time.monotonic() - start_time) * 1000
+            try:
+                get_request_buffer().add(
+                    LLMRequestRecord(
+                        timestamp=request_timestamp,
+                        request_id=request_id,
+                        model_id=self.model_name,
+                        messages=message_dicts,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        response=None,
+                        duration_ms=duration_ms,
+                        error=str(e),
+                    )
+                )
+            except Exception as record_err:
+                logger.debug(f"Failed to record LLM request error: {record_err}")
             # Map Google exceptions to our exception hierarchy
             error_message = str(e)
 
@@ -1266,6 +1318,12 @@ class GoogleGenAIClient(BaseLLMClient):
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses using Google GenAI."""
+        # Request tracking for diagnostics
+        start_time = time.monotonic()
+        request_timestamp = datetime.now(UTC)
+        request_id = f"google_stream_{uuid.uuid4().hex[:16]}"
+        message_dicts = [message_to_json_dict(msg) for msg in messages]
+
         try:
             # Keep messages as typed objects for processing
             typed_messages = list(messages)
@@ -1485,9 +1543,49 @@ class GoogleGenAIClient(BaseLLMClient):
                     done_metadata["reasoning_info"] = {}
                 done_metadata["reasoning_info"]["thought_summaries"] = thought_summaries
 
+            # Record successful streaming request to diagnostics buffer
+            duration_ms = (time.monotonic() - start_time) * 1000
+            try:
+                get_request_buffer().add(
+                    LLMRequestRecord(
+                        timestamp=request_timestamp,
+                        request_id=request_id,
+                        model_id=self.model_name,
+                        messages=message_dicts,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        response={"streaming": True, "metadata": done_metadata},
+                        duration_ms=duration_ms,
+                        error=None,
+                    )
+                )
+            except Exception as record_err:
+                logger.debug(f"Failed to record streaming LLM request: {record_err}")
+
             yield LLMStreamEvent(type="done", metadata=done_metadata)
 
         except Exception as e:
+            # Record failed streaming request to diagnostics buffer
+            duration_ms = (time.monotonic() - start_time) * 1000
+            try:
+                get_request_buffer().add(
+                    LLMRequestRecord(
+                        timestamp=request_timestamp,
+                        request_id=request_id,
+                        model_id=self.model_name,
+                        messages=message_dicts,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        response=None,
+                        duration_ms=duration_ms,
+                        error=str(e),
+                    )
+                )
+            except Exception as record_err:
+                logger.debug(
+                    f"Failed to record streaming LLM request error: {record_err}"
+                )
+
             # Handle errors the same way as non-streaming
             error_message = str(e)
 
