@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
 
@@ -14,6 +13,7 @@ from family_assistant.camera.protocol import (
     Recording,
 )
 from family_assistant.tools.camera import (
+    FrameAnalysisLLMResponse,
     get_camera_frame_tool,
     get_camera_frames_batch_tool,
     get_camera_recordings_tool,
@@ -496,45 +496,63 @@ async def test_get_camera_recordings_no_backend() -> None:
 # --- Tests for scan_camera_frames_tool ---
 
 
-@dataclass
-class MockLLMOutput:
-    """Mock LLM output for testing."""
-
-    content: str
-
-
 def create_mock_llm_client(
-    responses: list[str] | None = None,
+    responses: list[FrameAnalysisLLMResponse] | None = None,
 ) -> Mock:
     """Create a mock LLM client that returns specified responses.
 
     Args:
-        responses: List of JSON response strings. If None, generates default matching responses.
+        responses: List of FrameAnalysisLLMResponse objects. If None, generates default responses.
     """
     if responses is None:
         # Default: first and third frames match
         responses = [
-            '{"matches_query": true, "description": "Person visible", "confidence": 0.9, "detected_objects": ["person"]}',
-            '{"matches_query": false, "description": "Empty yard", "confidence": 0.8, "detected_objects": []}',
-            '{"matches_query": true, "description": "Person walking", "confidence": 0.85, "detected_objects": ["person"]}',
-            '{"matches_query": false, "description": "Empty", "confidence": 0.7, "detected_objects": []}',
-            '{"matches_query": false, "description": "Empty", "confidence": 0.7, "detected_objects": []}',
+            FrameAnalysisLLMResponse(
+                matches_query=True,
+                description="Person visible",
+                confidence=0.9,
+                detected_objects=["person"],
+            ),
+            FrameAnalysisLLMResponse(
+                matches_query=False,
+                description="Empty yard",
+                confidence=0.8,
+                detected_objects=[],
+            ),
+            FrameAnalysisLLMResponse(
+                matches_query=True,
+                description="Person walking",
+                confidence=0.85,
+                detected_objects=["person"],
+            ),
+            FrameAnalysisLLMResponse(
+                matches_query=False,
+                description="Empty",
+                confidence=0.7,
+                detected_objects=[],
+            ),
+            FrameAnalysisLLMResponse(
+                matches_query=False,
+                description="Empty",
+                confidence=0.7,
+                detected_objects=[],
+            ),
         ]
 
     call_count = 0
 
-    async def mock_generate_response(
+    async def mock_generate_structured(
         messages: object,
-        tools: object = None,
-        tool_choice: object = None,
-    ) -> MockLLMOutput:
+        response_model: type[FrameAnalysisLLMResponse],
+        max_retries: int = 2,
+    ) -> FrameAnalysisLLMResponse:
         nonlocal call_count
         response = responses[call_count % len(responses)]
         call_count += 1
-        return MockLLMOutput(content=response)
+        return response
 
     mock_client = Mock()
-    mock_client.generate_response = mock_generate_response
+    mock_client.generate_structured = mock_generate_structured
     return mock_client
 
 
@@ -656,7 +674,12 @@ async def test_scan_camera_frames_no_matches() -> None:
 
     # LLM client that always returns no match
     no_match_responses = [
-        '{"matches_query": false, "description": "Nothing found", "confidence": 0.9, "detected_objects": []}',
+        FrameAnalysisLLMResponse(
+            matches_query=False,
+            description="Nothing found",
+            confidence=0.9,
+            detected_objects=[],
+        ),
     ] * 3
 
     mock_service = Mock()
@@ -810,20 +833,23 @@ async def test_scan_camera_frames_handles_llm_errors() -> None:
 
     async def mock_generate_with_error(
         messages: object,
-        tools: object = None,
-        tool_choice: object = None,
-    ) -> MockLLMOutput:
+        response_model: type[FrameAnalysisLLMResponse],
+        max_retries: int = 2,
+    ) -> FrameAnalysisLLMResponse:
         nonlocal call_count
         call_count += 1
         if call_count == 2:
             raise RuntimeError("LLM error")
-        return MockLLMOutput(
-            content='{"matches_query": true, "description": "Found", "confidence": 0.9, "detected_objects": []}'
+        return FrameAnalysisLLMResponse(
+            matches_query=True,
+            description="Found",
+            confidence=0.9,
+            detected_objects=[],
         )
 
     mock_service = Mock()
     mock_service.llm_client = Mock()
-    mock_service.llm_client.generate_response = mock_generate_with_error
+    mock_service.llm_client.generate_structured = mock_generate_with_error
 
     exec_context = ToolExecutionContext(
         interface_type="test",
