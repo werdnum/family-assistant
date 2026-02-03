@@ -1618,6 +1618,7 @@ dev = [
     { name = "mdformat-frontmatter" },
     { name = "mdformat-gfm" },
     { name = "mdformat-tables" },
+    { name = "monkeytype" },
     { name = "pixeltable-pgserver" },
     { name = "playwright" },
     { name = "poethepoet" },
@@ -1710,6 +1711,7 @@ requires-dist = [
     { name = "mdformat-gfm", marker = "extra == 'dev'", specifier = ">=0.3.5" },
     { name = "mdformat-tables", marker = "extra == 'dev'", specifier = ">=0.4.1" },
     { name = "mdit-py-plugins", specifier = ">=0.4.0" },
+    { name = "monkeytype", marker = "extra == 'dev'", specifier = ">=23.3.0" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "openai", specifier = ">=1.0.0,<1.93.0" },
     { name = "passlib", extras = ["bcrypt"], specifier = ">=1.7" },
@@ -3346,6 +3348,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/11/96/ea46a376a7c4cd56955ecdfff0ea68de43996a4e6d1aee4599729453bd11/mistletoe-1.4.0.tar.gz", hash = "sha256:1630f906e5e4bbe66fdeb4d29d277e2ea515d642bb18a9b49b136361a9818c9d", size = 107203, upload-time = "2024-07-14T10:17:35.212Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2a/0f/b5e545f0c7962be90366af3418989b12cf441d9da1e5d89d88f2f3e5cf8f/mistletoe-1.4.0-py3-none-any.whl", hash = "sha256:44a477803861de1237ba22e375c6b617690a31d2902b47279d1f8f7ed498a794", size = 51304, upload-time = "2024-07-14T10:17:33.243Z" },
+]
+
+[[package]]
+name = "monkeytype"
+version = "23.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "libcst" },
+    { name = "mypy-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/de/66/7006d51ed537648107c28086f8c390030b4b4c5524b77598a3bbb657d3ec/MonkeyType-23.3.0.tar.gz", hash = "sha256:f2595db34d57cdddbde5a990117a50a22f373dbb917a2a0fa91ffbe07dfe0313", size = 34847, upload-time = "2023-03-20T14:08:01.69Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0c/6d/de1fd4624ba300a98cc22f4db38f24bf89e660b6fc0be2740406347e5bca/MonkeyType-23.3.0-py3-none-any.whl", hash = "sha256:38ce8ad6568190f54c334b9fe835608af29b40a33ad448ecae749ae8790cdbf9", size = 40850, upload-time = "2023-03-20T14:07:58.815Z" },
 ]
 
 [[package]]
