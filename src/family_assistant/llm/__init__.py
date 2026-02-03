@@ -9,6 +9,7 @@ import io
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
@@ -278,6 +279,32 @@ class BaseLLMClient:
 
         return processed
 
+    def _extract_json_from_response(self, raw_response: str) -> str:
+        """
+        Extract JSON content from an LLM response.
+
+        Handles two formats:
+        - Plain JSON (response starts with { or [)
+        - JSON in the first markdown code block (```json or ```)
+
+        We intentionally don't try to find arbitrary JSON in the response -
+        the LLM is prompted to return ONLY JSON, so we trust that format.
+        """
+        content = raw_response.strip()
+
+        # If it looks like plain JSON, return as-is
+        if content.startswith("{") or content.startswith("["):
+            return content
+
+        # Try to extract from the first code block
+        code_block_pattern = r"```(?:json)?\s*\n([\s\S]*?)\n```"
+        match = re.search(code_block_pattern, content)
+        if match:
+            return match.group(1).strip()
+
+        # Fall back to original content (let JSON parser give the error)
+        return content
+
     async def generate_structured(
         self,
         messages: Sequence[LLMMessage],
@@ -347,18 +374,7 @@ class BaseLLMClient:
                 raw_response = response.content
 
                 # Try to extract JSON from the response
-                # Handle potential markdown code blocks
-                content: str = raw_response
-                if content.startswith("```"):
-                    # Extract content between code blocks
-                    lines = content.split("\n")
-                    # Remove first line (```json or ```)
-                    if lines[0].startswith("```"):
-                        lines = lines[1:]
-                    # Remove last line (```)
-                    if lines and lines[-1].strip() == "```":
-                        lines = lines[:-1]
-                    content = "\n".join(lines)
+                content = self._extract_json_from_response(raw_response)
 
                 # Parse and validate with Pydantic
                 return response_model.model_validate_json(content)
