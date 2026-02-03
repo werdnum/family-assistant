@@ -23,8 +23,13 @@ def kubernetes_config() -> KubernetesBackendConfig:
         service_account="test-sa",
         runtime_class="test-runtime",
         job_ttl_seconds=7200,
-        claude_settings_secret="test-claude-secret",
-        gemini_settings_secret="test-gemini-secret",
+        api_keys_secret="test-api-keys",
+        claude_config_volume={
+            "persistentVolumeClaim": {"claimName": "claude-config-pvc"}
+        },
+        gemini_config_volume={
+            "persistentVolumeClaim": {"claimName": "gemini-config-pvc"}
+        },
     )
 
 
@@ -170,14 +175,13 @@ class TestKubernetesBackendBuildJobManifest:
         assert env_vars["MAX_TURNS"]["value"] == "50"
         assert env_vars["TASK_TIMEOUT_MINUTES"]["value"] == "45"
 
-        # Check API key from secret
-        assert "ANTHROPIC_API_KEY" in env_vars
-        api_key_env = env_vars["ANTHROPIC_API_KEY"]
-        assert "valueFrom" in api_key_env
-        assert api_key_env["valueFrom"]["secretKeyRef"]["name"] == "test-claude-secret"
+        # Check envFrom includes the API keys secret
+        env_from = container["envFrom"]
+        assert len(env_from) == 1
+        assert env_from[0]["secretRef"]["name"] == "test-api-keys"
 
     def test_build_manifest_gemini_model(self, backend: KubernetesBackend) -> None:
-        """Test job manifest for gemini model."""
+        """Test job manifest for gemini model uses gemini config volume."""
         manifest = backend._build_job_manifest(
             job_name="worker-task-123",
             task_id="task-123",
@@ -190,10 +194,25 @@ class TestKubernetesBackendBuildJobManifest:
 
         container = manifest["spec"]["template"]["spec"]["containers"][0]
         env_vars = {e["name"]: e for e in container["env"]}
-
         assert env_vars["AI_AGENT"]["value"] == "gemini"
-        assert "GOOGLE_API_KEY" in env_vars
-        assert "ANTHROPIC_API_KEY" not in env_vars
+
+        # Check envFrom is still present (same secret for all API keys)
+        env_from = container["envFrom"]
+        assert len(env_from) == 1
+        assert env_from[0]["secretRef"]["name"] == "test-api-keys"
+
+        # Check gemini config volume is mounted instead of claude
+        pod_spec = manifest["spec"]["template"]["spec"]
+        volume_mounts = {v["name"]: v for v in container["volumeMounts"]}
+        assert "gemini-config" in volume_mounts
+        assert volume_mounts["gemini-config"]["mountPath"] == "/home/user/.gemini"
+        assert "claude-config" not in volume_mounts
+
+        volumes = {v["name"]: v for v in pod_spec["volumes"]}
+        assert (
+            volumes["gemini-config"]["persistentVolumeClaim"]["claimName"]
+            == "gemini-config-pvc"
+        )
 
     def test_build_manifest_security_context(self, backend: KubernetesBackend) -> None:
         """Test job manifest includes security context."""
@@ -239,15 +258,16 @@ class TestKubernetesBackendBuildJobManifest:
         assert volume_mounts["workspace"]["mountPath"] == "/task"
         assert volume_mounts["workspace"]["subPath"] == "tasks/task-123"
 
-        # Claude settings mount
-        assert "claude-settings" in volume_mounts
-        assert volume_mounts["claude-settings"]["mountPath"] == "/home/user/.claude"
-        assert volume_mounts["claude-settings"]["readOnly"] is True
+        # Claude config mount from PVC
+        assert "claude-config" in volume_mounts
+        assert volume_mounts["claude-config"]["mountPath"] == "/home/user/.claude"
+        assert volume_mounts["claude-config"]["readOnly"] is True
 
         volumes = {v["name"]: v for v in pod_spec["volumes"]}
         assert volumes["workspace"]["persistentVolumeClaim"]["claimName"] == "test-pvc"
         assert (
-            volumes["claude-settings"]["secret"]["secretName"] == "test-claude-secret"
+            volumes["claude-config"]["persistentVolumeClaim"]["claimName"]
+            == "claude-config-pvc"
         )
 
 

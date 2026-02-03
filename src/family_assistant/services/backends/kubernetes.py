@@ -242,41 +242,16 @@ class KubernetesBackend:
         if callback_token:
             env_vars.append({"name": "TASK_CALLBACK_TOKEN", "value": callback_token})
 
-        # Add API key from secret based on model
-        if model == "claude":
-            secret_name = (
-                self._config.claude_settings_secret
-                if self._config
-                else "ai-coder-claude-settings"
-            )
-            if secret_name:
-                env_vars.append({
-                    "name": "ANTHROPIC_API_KEY",
-                    "valueFrom": {
-                        "secretKeyRef": {
-                            "name": secret_name,
-                            "key": "api-key",
-                            "optional": True,
-                        }
-                    },
-                })
-        elif model == "gemini":
-            secret_name = (
-                self._config.gemini_settings_secret
-                if self._config
-                else "ai-coder-gemini-settings"
-            )
-            if secret_name:
-                env_vars.append({
-                    "name": "GOOGLE_API_KEY",
-                    "valueFrom": {
-                        "secretKeyRef": {
-                            "name": secret_name,
-                            "key": "api-key",
-                            "optional": True,
-                        }
-                    },
-                })
+        # Build envFrom to inject all API keys from the secret
+        # ast-grep-ignore: no-dict-any - Kubernetes envFrom has nested optional fields
+        env_from: list[dict[str, Any]] = []
+        if self._config and self._config.api_keys_secret:
+            env_from.append({
+                "secretRef": {
+                    "name": self._config.api_keys_secret,
+                    "optional": True,
+                }
+            })
 
         # Volume mounts with isolation - mount only the task's directory at /task
         # ast-grep-ignore: no-dict-any - Kubernetes volume mounts have mixed types (str vs bool for readOnly)
@@ -288,44 +263,35 @@ class KubernetesBackend:
             }
         ]
 
-        # Add auth config mounts
-        if model == "claude" and self._config and self._config.claude_settings_secret:
-            volume_mounts.append({
-                "name": "claude-settings",
-                "mountPath": "/home/user/.claude",
-                "readOnly": True,
-            })
-        elif model == "gemini" and self._config and self._config.gemini_settings_secret:
-            volume_mounts.append({
-                "name": "gemini-settings",
-                "mountPath": "/home/user/.gemini",
-                "readOnly": True,
-            })
-
         # Volumes
-        volumes = [
+        # ast-grep-ignore: no-dict-any - Kubernetes volume specs have mixed types
+        volumes: list[dict[str, Any]] = [
             {
                 "name": "workspace",
                 "persistentVolumeClaim": {"claimName": self._workspace_pvc_name},
             }
         ]
 
-        # Add secret volumes for auth configs
-        if model == "claude" and self._config and self._config.claude_settings_secret:
-            volumes.append({
-                "name": "claude-settings",
-                "secret": {
-                    "secretName": self._config.claude_settings_secret,
-                    "optional": True,
-                },
+        # Add optional config volume mounts (for full ~/.claude or ~/.gemini directories)
+        if model == "claude" and self._config and self._config.claude_config_volume:
+            volume_mounts.append({
+                "name": "claude-config",
+                "mountPath": "/home/user/.claude",
+                "readOnly": True,
             })
-        elif model == "gemini" and self._config and self._config.gemini_settings_secret:
             volumes.append({
-                "name": "gemini-settings",
-                "secret": {
-                    "secretName": self._config.gemini_settings_secret,
-                    "optional": True,
-                },
+                "name": "claude-config",
+                **self._config.claude_config_volume,
+            })
+        elif model == "gemini" and self._config and self._config.gemini_config_volume:
+            volume_mounts.append({
+                "name": "gemini-config",
+                "mountPath": "/home/user/.gemini",
+                "readOnly": True,
+            })
+            volumes.append({
+                "name": "gemini-config",
+                **self._config.gemini_config_volume,
             })
 
         # Build the Job manifest
@@ -368,6 +334,7 @@ class KubernetesBackend:
                                 "image": self.image,
                                 "command": ["run-task"],
                                 "env": env_vars,
+                                "envFrom": env_from,
                                 "volumeMounts": volume_mounts,
                                 "securityContext": {
                                     "allowPrivilegeEscalation": False,

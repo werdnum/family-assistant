@@ -18,8 +18,10 @@ def docker_config() -> DockerBackendConfig:
     return DockerBackendConfig(
         image="test-image:latest",
         network="test-network",
-        claude_config_path=None,
-        gemini_config_path=None,
+        anthropic_api_key_env="ANTHROPIC_API_KEY",
+        gemini_api_key_env="GOOGLE_API_KEY",
+        claude_config_volume=None,
+        gemini_config_volume=None,
     )
 
 
@@ -171,16 +173,14 @@ class TestDockerBackendBuildCommand:
         assert f"{tmp_path}/tasks/task-123:/task" in cmd_str
 
     @pytest.mark.asyncio
-    async def test_build_command_with_claude_config(self, tmp_path: Path) -> None:
-        """Test command includes Claude config mount when configured."""
-        # Create a mock claude config directory
-        claude_config_dir = tmp_path / ".claude"
-        claude_config_dir.mkdir()
-
+    async def test_build_command_with_claude_config_volume(
+        self, tmp_path: Path
+    ) -> None:
+        """Test command includes Claude config volume mount when configured."""
         config = DockerBackendConfig(
             image="test-image:latest",
             network="test-network",
-            claude_config_path=str(claude_config_dir),
+            claude_config_volume="claude-config:/home/user/.claude:ro",
         )
         backend = DockerBackend(config=config, workspace_root=str(tmp_path))
 
@@ -194,7 +194,31 @@ class TestDockerBackendBuildCommand:
         )
 
         cmd_str = " ".join(cmd)
-        assert f"{claude_config_dir}:/home/user/.claude:ro" in cmd_str
+        assert "claude-config:/home/user/.claude:ro" in cmd_str
+
+    @pytest.mark.asyncio
+    async def test_build_command_with_api_key_env(self, tmp_path: Path) -> None:
+        """Test command includes API key env var from host when available."""
+        config = DockerBackendConfig(
+            image="test-image:latest",
+            network="test-network",
+            anthropic_api_key_env="ANTHROPIC_API_KEY",
+        )
+        backend = DockerBackend(config=config, workspace_root=str(tmp_path))
+
+        # Patch os.environ.get to return a fake API key
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-ant-test123"}):
+            cmd = await backend._build_docker_command(
+                task_id="task-123",
+                prompt_path="tasks/task-123/prompt.md",
+                output_dir="tasks/task-123/output",
+                webhook_url="http://localhost:8000/webhook/event",
+                model="claude",
+                timeout_minutes=30,
+            )
+
+        cmd_str = " ".join(cmd)
+        assert "ANTHROPIC_API_KEY=sk-ant-test123" in cmd_str
 
 
 class TestDockerBackendGetTaskStatus:
