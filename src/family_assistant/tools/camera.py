@@ -14,8 +14,9 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
+from family_assistant.llm.base import StructuredOutputError
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 # Threshold for warning about old dates (likely model confusion about current date)
@@ -651,16 +652,8 @@ async def get_live_camera_snapshot_tool(
 _FRAME_ANALYSIS_SYSTEM_PROMPT = """You are analyzing a single frame from a security camera recording.
 Your task is to determine if this frame matches the user's query and provide a brief description.
 
-Respond with a JSON object containing:
-- "matches_query": true if the frame shows what the user is looking for, false otherwise
-- "description": A brief (1-2 sentence) description of what you see in the frame
-- "confidence": A number from 0.0 to 1.0 indicating how confident you are in the match
-- "detected_objects": A list of key objects/entities visible in the frame
-
 Be specific about what you observe. If the query asks for "person entering yard" and you see a person
-already in the yard (not entering), that may or may not match depending on context.
-
-Respond ONLY with valid JSON, no other text."""
+already in the yard (not entering), that may or may not match depending on context."""
 
 
 @dataclass
@@ -682,7 +675,7 @@ async def _analyze_single_frame(
     timestamp: datetime,
     query: str,
 ) -> FrameAnalysisResult:
-    """Analyze a single frame with the LLM.
+    """Analyze a single frame with the LLM using structured output.
 
     Args:
         llm_client: The LLM client to use for analysis
@@ -711,7 +704,7 @@ async def _analyze_single_frame(
         }
         text_part: TextContentPartDict = {
             "type": "text",
-            "text": f"Query: {query}\n\nAnalyze this frame and respond with JSON.",
+            "text": f"Query: {query}\n\nAnalyze this frame.",
         }
 
         # Create messages for the LLM
@@ -720,53 +713,32 @@ async def _analyze_single_frame(
             UserMessage(content=[image_part, text_part]),  # type: ignore[list-item]
         ]
 
-        # Call the LLM
-        response = await llm_client.generate_response(
+        # Use structured output to get validated response
+        parsed = await llm_client.generate_structured(
             messages=messages,
-            tools=None,
-            tool_choice=None,
+            response_model=FrameAnalysisLLMResponse,
         )
 
-        # Parse the response using Pydantic for validation
-        response_text = response.content.strip() if response.content else ""
+        return FrameAnalysisResult(
+            timestamp=timestamp,
+            matches_query=parsed.matches_query,
+            description=parsed.description,
+            confidence=parsed.confidence,
+            detected_objects=parsed.detected_objects,
+            jpeg_bytes=jpeg_bytes,
+        )
 
-        # Extract JSON from markdown code blocks if present
-        if response_text.startswith("```"):
-            lines = response_text.split("\n")
-            json_lines = []
-            in_code = False
-            for line in lines:
-                if line.startswith("```"):
-                    in_code = not in_code
-                    continue
-                if in_code:
-                    json_lines.append(line)
-            response_text = "\n".join(json_lines)
-
-        try:
-            # Use Pydantic for validated parsing
-            parsed = FrameAnalysisLLMResponse.model_validate_json(response_text)
-            return FrameAnalysisResult(
-                timestamp=timestamp,
-                matches_query=parsed.matches_query,
-                description=parsed.description,
-                confidence=parsed.confidence,
-                detected_objects=parsed.detected_objects,
-                jpeg_bytes=jpeg_bytes,
-            )
-        except ValidationError as e:
-            logger.warning(
-                f"Failed to parse LLM response for frame at {timestamp}: {e}"
-            )
-            return FrameAnalysisResult(
-                timestamp=timestamp,
-                matches_query=False,
-                description=response_text[:200] if response_text else "Parse failed",
-                confidence=0.0,
-                detected_objects=[],
-                jpeg_bytes=jpeg_bytes,
-                error=f"Invalid response format: {e}",
-            )
+    except StructuredOutputError as e:
+        logger.warning(f"Structured output failed for frame at {timestamp}: {e}")
+        return FrameAnalysisResult(
+            timestamp=timestamp,
+            matches_query=False,
+            description="",
+            confidence=0.0,
+            detected_objects=[],
+            jpeg_bytes=jpeg_bytes,
+            error=f"Structured output failed: {e}",
+        )
 
     except Exception as e:
         logger.warning(f"Error analyzing frame at {timestamp}: {e}")
