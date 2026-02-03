@@ -71,7 +71,7 @@ class TimeRangeDict(TypedDict):
 
     start: str
     end: str
-    interval_minutes: int
+    interval_seconds: float
 
 
 class ScanResultDict(TypedDict, total=False):
@@ -313,13 +313,13 @@ CAMERA_TOOLS_DEFINITION: list[ToolDefinition] = [
                             "'car in driveway', 'animal near the fence'"
                         ),
                     },
-                    "interval_minutes": {
-                        "type": "integer",
-                        "description": "Minutes between each frame (default: 5). Use smaller intervals for precise timing.",
+                    "interval_seconds": {
+                        "type": "number",
+                        "description": "Seconds between each frame (default: 300 = 5 minutes). Use smaller intervals (e.g., 30) for precise timing.",
                     },
                     "max_frames": {
                         "type": "integer",
-                        "description": "Maximum number of frames to scan (default: 20). Higher values scan more thoroughly.",
+                        "description": "Maximum number of frames to scan (default: 20, max: 50). Higher values scan more thoroughly.",
                     },
                     "filter_matching": {
                         "type": "boolean",
@@ -759,7 +759,7 @@ async def scan_camera_frames_tool(
     start_time: str,
     end_time: str,
     query: str,
-    interval_minutes: int = 5,
+    interval_seconds: float = 300,
     max_frames: int = 20,
     filter_matching: bool = True,
     model: str | None = None,
@@ -775,8 +775,8 @@ async def scan_camera_frames_tool(
         start_time: Start of time range in local time
         end_time: End of time range in local time
         query: What to look for in each frame
-        interval_minutes: Minutes between each frame
-        max_frames: Maximum number of frames to scan
+        interval_seconds: Seconds between each frame (default 300 = 5 minutes)
+        max_frames: Maximum number of frames to scan (max 50)
         filter_matching: If True, only return frames that match the query
         model: Model to use for frame analysis. Defaults to profile's model.
 
@@ -814,7 +814,7 @@ async def scan_camera_frames_tool(
         return ToolResult(data={"error": f"Invalid timestamp format: {e}"})
 
     # Validate parameters
-    interval_minutes = max(interval_minutes, 1)
+    interval_seconds = max(interval_seconds, 1.0)  # Minimum 1 second
     max_frames = max(max_frames, 1)
     max_frames = min(max_frames, 50)  # Cap at reasonable limit
 
@@ -822,14 +822,14 @@ async def scan_camera_frames_tool(
         # Get frames from camera backend (already parallelized internally)
         logger.info(
             f"Scanning {camera_id} from {start_time} to {end_time} "
-            f"(interval={interval_minutes}m, max_frames={max_frames})"
+            f"(interval={interval_seconds}s, max_frames={max_frames})"
         )
 
         frames = await exec_context.camera_backend.get_frames_batch(
             camera_id=camera_id,
             start_time=start_dt,
             end_time=end_dt,
-            interval_seconds=interval_minutes * 60,
+            interval_seconds=int(interval_seconds),
             max_frames=max_frames,
         )
 
@@ -912,7 +912,7 @@ async def scan_camera_frames_tool(
         time_range: TimeRangeDict = {
             "start": start_time,
             "end": end_time,
-            "interval_minutes": interval_minutes,
+            "interval_seconds": interval_seconds,
         }
 
         result_data: ScanResultDict = {
