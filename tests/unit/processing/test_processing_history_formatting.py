@@ -3,20 +3,18 @@ Unit tests for the history formatting logic in ProcessingService.
 """
 
 import json
-from collections.abc import AsyncIterator
 from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock
 
 import pytest
 from PIL import Image
 
 if TYPE_CHECKING:
-    from family_assistant.tools.types import ToolAttachment, ToolDefinition
+    from family_assistant.tools.types import ToolDefinition
 
 from family_assistant.config_models import AppConfig
-from family_assistant.llm import LLMStreamEvent
 from family_assistant.llm.messages import (
     AssistantMessage,
     LLMMessage,
@@ -33,44 +31,7 @@ from tests.factories.messages import (
     create_tool_message,
     create_user_message,
 )
-
-
-# Mock interfaces required by ProcessingService constructor
-class MockLLMClient:
-    async def generate_response(self, *args: Any, **kwargs: Any) -> Mock:  # noqa: ANN401 # Mock needs flexibility
-        return Mock()  # Not used in the tested method
-
-    def generate_response_stream(
-        self,
-        *args: Any,  # noqa: ANN401  # Mock needs flexibility
-        **kwargs: Any,  # noqa: ANN401 # Mock needs flexibility
-    ) -> AsyncIterator[LLMStreamEvent]:
-        # Return an async generator that yields nothing
-        async def empty_generator() -> AsyncIterator[LLMStreamEvent]:
-            return
-            yield  # Make it a generator
-
-        return empty_generator()
-
-    async def format_user_message_with_file(
-        self,
-        prompt_text: str | None,
-        file_path: str | None,
-        mime_type: str | None,
-        max_text_length: int | None,
-        # Add any other params from the protocol if necessary, though not used here
-        **_kwargs: Any,  # noqa: ANN401 # Capture other potential arguments from protocol
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-    ) -> dict[str, Any]:
-        # Return a simple dict structure, content not important for these tests
-        return {"role": "user", "content": prompt_text or ""}
-
-    def create_attachment_injection(
-        self,
-        attachment: "ToolAttachment",
-    ) -> UserMessage:
-        """Mock implementation - not needed for these tests."""
-        return UserMessage(content="[System: File from previous tool response]")
+from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 
 class MockToolsProvider:
@@ -113,7 +74,7 @@ def processing_service() -> ProcessingService:
         id="history_formatting_test_profile",  # Added
     )
     return ProcessingService(
-        llm_client=MockLLMClient(),
+        llm_client=RuleBasedMockLLMClient(rules=[]),
         tools_provider=MockToolsProvider(),
         service_config=mock_service_config,  # Use the config object
         context_providers=[],
@@ -334,7 +295,7 @@ def test_web_specific_history_configuration() -> None:
     )
 
     processing_service = ProcessingService(
-        llm_client=MockLLMClient(),
+        llm_client=RuleBasedMockLLMClient(rules=[]),
         tools_provider=MockToolsProvider(),
         service_config=mock_service_config,
         context_providers=[],
@@ -377,7 +338,7 @@ def test_web_history_configuration_fallback() -> None:
     )
 
     processing_service = ProcessingService(
-        llm_client=MockLLMClient(),
+        llm_client=RuleBasedMockLLMClient(rules=[]),
         tools_provider=MockToolsProvider(),
         service_config=mock_service_config,
         context_providers=[],
@@ -410,7 +371,7 @@ def test_web_history_configuration_with_zero_values() -> None:
     )
 
     processing_service = ProcessingService(
-        llm_client=MockLLMClient(),
+        llm_client=RuleBasedMockLLMClient(rules=[]),
         tools_provider=MockToolsProvider(),
         service_config=mock_service_config,
         context_providers=[],

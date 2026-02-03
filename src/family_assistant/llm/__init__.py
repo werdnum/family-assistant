@@ -14,7 +14,7 @@ import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field  # Added asdict
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, TypeVar, cast
 
 import aiofiles  # type: ignore[import-untyped] # For async file operations
 import litellm  # Import litellm
@@ -28,8 +28,9 @@ from litellm.exceptions import (
     ServiceUnavailableError,
     Timeout,
 )
+from pydantic import BaseModel, ValidationError
 
-from .base import InvalidRequestError
+from .base import InvalidRequestError, StructuredOutputError
 from .factory import LLMClientFactory
 from .google_types import GeminiProviderMetadata
 from .messages import (
@@ -62,6 +63,9 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+# TypeVar for generic structured output support
+T = TypeVar("T", bound=BaseModel)
 
 
 class ParsedChoice(TypedDict, total=False):
@@ -273,6 +277,146 @@ class BaseLLMClient:
                 pending_attachments = []
 
         return processed
+
+    async def generate_structured(
+        self,
+        messages: Sequence[LLMMessage],
+        response_model: type[T],
+        max_retries: int = 2,
+    ) -> T:
+        """
+        Generate a structured response matching the given Pydantic model.
+
+        This is a fallback implementation that:
+        1. Asks the LLM to generate JSON matching the schema
+        2. Parses and validates the response with Pydantic
+        3. Retries on validation failure with error feedback
+
+        Subclasses can override this to use native structured output support.
+
+        Args:
+            messages: Conversation messages
+            response_model: Pydantic model class defining the expected response schema
+            max_retries: Maximum number of retry attempts on validation failure
+
+        Returns:
+            Instance of response_model populated with the LLM's response
+
+        Raises:
+            StructuredOutputError: If response cannot be parsed/validated after retries
+        """
+        # Generate JSON schema from Pydantic model
+        schema = response_model.model_json_schema()
+
+        # Build schema instruction message
+        schema_instruction = (
+            "You must respond with valid JSON that matches this schema:\n"
+            f"```json\n{json.dumps(schema, indent=2)}\n```\n\n"
+            "Respond ONLY with the JSON object, no additional text or markdown."
+        )
+
+        # Create messages with schema instruction
+        messages_with_schema: list[LLMMessage] = list(messages)
+
+        # Add schema instruction as a system message at the beginning
+        # or append to existing system message
+        if messages_with_schema and isinstance(messages_with_schema[0], SystemMessage):
+            # Append to existing system message
+            original_content = messages_with_schema[0].content
+            updated_system = SystemMessage(
+                content=f"{original_content}\n\n{schema_instruction}"
+            )
+            messages_with_schema[0] = updated_system
+        else:
+            # Insert new system message at the beginning
+            messages_with_schema.insert(0, SystemMessage(content=schema_instruction))
+
+        last_error: Exception | None = None
+        raw_response: str | None = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                # Generate response - cast self to LLMInterface since BaseLLMClient
+                # is always used as a mixin with classes implementing LLMInterface
+                llm_client = cast("LLMInterface", self)
+                response = await llm_client.generate_response(messages_with_schema)
+
+                if not response.content:
+                    raise ValueError("LLM returned empty response")
+
+                raw_response = response.content
+
+                # Try to extract JSON from the response
+                # Handle potential markdown code blocks
+                content: str = raw_response
+                if content.startswith("```"):
+                    # Extract content between code blocks
+                    lines = content.split("\n")
+                    # Remove first line (```json or ```)
+                    if lines[0].startswith("```"):
+                        lines = lines[1:]
+                    # Remove last line (```)
+                    if lines and lines[-1].strip() == "```":
+                        lines = lines[:-1]
+                    content = "\n".join(lines)
+
+                # Parse and validate with Pydantic
+                return response_model.model_validate_json(content)
+
+            except ValidationError as e:
+                last_error = e
+                logger.warning(
+                    f"Structured output validation failed (attempt {attempt + 1}/{max_retries + 1}): {e}"
+                )
+
+                if attempt < max_retries:
+                    # Add error feedback for retry
+                    error_feedback = UserMessage(
+                        content=(
+                            f"Your response was not valid JSON matching the required schema. "
+                            f"Error: {e}\n\n"
+                            f"Please try again. Respond ONLY with valid JSON matching the schema."
+                        )
+                    )
+                    messages_with_schema.append(
+                        AssistantMessage(content=raw_response or "")
+                    )
+                    messages_with_schema.append(error_feedback)
+
+            except json.JSONDecodeError as e:
+                last_error = e
+                logger.warning(
+                    f"Structured output JSON parsing failed (attempt {attempt + 1}/{max_retries + 1}): {e}"
+                )
+
+                if attempt < max_retries:
+                    # Add error feedback for retry
+                    error_feedback = UserMessage(
+                        content=(
+                            f"Your response was not valid JSON. "
+                            f"Parse error: {e}\n\n"
+                            f"Please try again. Respond ONLY with valid JSON, no markdown or extra text."
+                        )
+                    )
+                    messages_with_schema.append(
+                        AssistantMessage(content=raw_response or "")
+                    )
+                    messages_with_schema.append(error_feedback)
+
+            except Exception as e:
+                # For other errors, don't retry
+                last_error = e
+                logger.error(f"Unexpected error in structured output generation: {e}")
+                break
+
+        # All retries exhausted
+        raise StructuredOutputError(
+            message=f"Failed to generate valid structured output after {max_retries + 1} attempts",
+            provider=getattr(self, "model", "unknown").split("/")[0],
+            model=getattr(self, "model", "unknown"),
+            raw_response=raw_response,
+            validation_error=last_error,
+        )
 
 
 # --- Conditionally Enable LiteLLM Debug Logging ---
@@ -682,6 +826,30 @@ class LLMInterface(Protocol):
 
         Returns:
             A UserMessage containing the formatted attachment content
+        """
+        ...
+
+    async def generate_structured(
+        self,
+        messages: Sequence[LLMMessage],
+        response_model: type[T],
+    ) -> T:
+        """
+        Generate a structured response matching the given Pydantic model.
+
+        This method asks the LLM to generate output conforming to a specific
+        schema defined by a Pydantic model. The response is automatically
+        parsed and validated.
+
+        Args:
+            messages: Conversation messages
+            response_model: Pydantic model class defining the expected response schema
+
+        Returns:
+            Instance of response_model populated with the LLM's response
+
+        Raises:
+            StructuredOutputError: If response cannot be parsed/validated after retries
         """
         ...
 
@@ -1812,6 +1980,137 @@ class LiteLLMClient(BaseLLMClient):
                 metadata={"error_id": str(last_exception.__class__.__name__)},
             )
 
+    async def generate_structured(
+        self,
+        messages: Sequence[LLMMessage],
+        response_model: type[T],
+        max_retries: int = 2,
+    ) -> T:
+        """
+        Generate a structured response using LiteLLM's native response_format support.
+
+        LiteLLM automatically translates response_format to the appropriate provider
+        format (OpenAI JSON schema, Anthropic tool use, etc.).
+
+        Args:
+            messages: Conversation messages
+            response_model: Pydantic model class defining the expected response schema
+            max_retries: Maximum number of retry attempts on validation failure
+
+        Returns:
+            Instance of response_model populated with the LLM's response
+
+        Raises:
+            StructuredOutputError: If response cannot be parsed/validated after retries
+        """
+        # Convert messages to dict format for LiteLLM
+        messages_list = list(messages)
+        messages_list = self._process_tool_messages(messages_list)
+        message_dicts = [message_to_json_dict(msg) for msg in messages_list]
+
+        last_error: Exception | None = None
+        raw_response: str | None = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                # Use LiteLLM's native response_format with Pydantic model
+                # LiteLLM automatically handles conversion to provider-specific format
+                completion_params = self.default_kwargs.copy()
+
+                response_obj = await acompletion(
+                    model=self.model,
+                    messages=message_dicts,
+                    response_format=response_model,
+                    **completion_params,  # type: ignore[reportArgumentType] # LiteLLM accepts dynamic kwargs
+                )
+                response = cast("ModelResponse", response_obj)
+
+                # Extract the response content
+                # type: ignore needed - LiteLLM's ModelResponse type hints don't fully reflect
+                # that non-streaming responses have .message on choices
+                if not response.choices or not response.choices[0].message:  # type: ignore[attr-defined]
+                    raise ValueError("LLM returned empty response")
+
+                message = response.choices[0].message  # type: ignore[attr-defined]
+                content = message.content
+
+                if not content:
+                    raise ValueError("LLM returned empty content")
+
+                raw_response = content
+
+                # LiteLLM should return valid JSON, but we still validate with Pydantic
+                return response_model.model_validate_json(content)
+
+            except ValidationError as e:
+                last_error = e
+                logger.warning(
+                    f"Structured output validation failed (attempt {attempt + 1}/{max_retries + 1}): {e}"
+                )
+
+                if attempt < max_retries:
+                    # Add error feedback for retry
+                    message_dicts.append({
+                        "role": "assistant",
+                        "content": raw_response or "",
+                    })
+                    message_dicts.append({
+                        "role": "user",
+                        "content": (
+                            f"Your response was not valid JSON matching the required schema. "
+                            f"Error: {e}\n\n"
+                            f"Please try again with valid JSON."
+                        ),
+                    })
+
+            except json.JSONDecodeError as e:
+                last_error = e
+                logger.warning(
+                    f"Structured output JSON parsing failed (attempt {attempt + 1}/{max_retries + 1}): {e}"
+                )
+
+                if attempt < max_retries:
+                    message_dicts.append({
+                        "role": "assistant",
+                        "content": raw_response or "",
+                    })
+                    message_dicts.append({
+                        "role": "user",
+                        "content": (
+                            f"Your response was not valid JSON. "
+                            f"Parse error: {e}\n\n"
+                            f"Please respond with valid JSON only."
+                        ),
+                    })
+
+            except (
+                APIConnectionError,
+                APIError,
+                BadRequestError,
+                RateLimitError,
+                ServiceUnavailableError,
+                Timeout,
+            ) as e:
+                # For provider errors, don't retry at this level
+                # (the caller can use RetryingLLMClient for that)
+                last_error = e
+                logger.error(f"LLM provider error in structured output generation: {e}")
+                break
+
+            except Exception as e:
+                last_error = e
+                logger.error(f"Unexpected error in structured output generation: {e}")
+                break
+
+        # All retries exhausted
+        raise StructuredOutputError(
+            message=f"Failed to generate valid structured output after {max_retries + 1} attempts",
+            provider=self.model.split("/")[0],
+            model=self.model,
+            raw_response=raw_response,
+            validation_error=last_error,
+        )
+
 
 class RecordingLLMClient:
     """
@@ -1953,6 +2252,40 @@ class RecordingLLMClient:
                 f"Failed to write interaction to recording file {self.recording_path}: {file_err}",
                 exc_info=True,
             )
+
+    async def generate_structured(
+        self,
+        messages: Sequence[LLMMessage],
+        response_model: type[T],
+    ) -> T:
+        """Calls the wrapped client's generate_structured, records, and returns."""
+        # Convert messages to dict for recording
+        messages_dict = [message_to_json_dict(msg) for msg in messages]
+        input_data = {
+            "method": "generate_structured",
+            "messages": messages_dict,
+            "response_model_name": response_model.__name__,
+            "response_model_schema": response_model.model_json_schema(),
+        }
+        try:
+            output_data = await self.wrapped_client.generate_structured(
+                messages=messages, response_model=response_model
+            )
+            # Serialize the Pydantic model to JSON for recording
+            record = {
+                "input": input_data,
+                "output": {
+                    "model_name": response_model.__name__,
+                    "model_data": output_data.model_dump(),
+                },
+            }
+            await self._write_record_to_file(record)
+            return output_data
+        except Exception as e:
+            logger.error(
+                f"Error in RecordingLLMClient.generate_structured: {e}", exc_info=True
+            )
+            raise
 
 
 class PlaybackLLMClient:
@@ -2202,6 +2535,56 @@ class PlaybackLLMClient:
             failed_input_str = str(current_input_args)
         logger.error(f"Failed Input Args:\n{failed_input_str}")
 
+    async def generate_structured(
+        self,
+        messages: Sequence[LLMMessage],
+        response_model: type[T],
+    ) -> T:
+        """Plays back for the generate_structured method."""
+        # Convert messages to dict for playback matching
+        messages_dict = [message_to_json_dict(msg) for msg in messages]
+        current_input_args = {
+            "method": "generate_structured",
+            "messages": messages_dict,
+            "response_model_name": response_model.__name__,
+            "response_model_schema": response_model.model_json_schema(),
+        }
+
+        logger.debug(
+            f"PlaybackLLMClient attempting to find structured output match for input args: "
+            f"{json.dumps(current_input_args, indent=2, default=str)[:500]}..."
+        )
+
+        for record in self.recorded_interactions:
+            if record.get("input") == current_input_args:
+                logger.info(
+                    f"Found matching structured output interaction in {self.recording_path}."
+                )
+                output_data = record["output"]
+                if not isinstance(output_data, dict):
+                    logger.error(
+                        f"Recorded output for matched structured input is not a dict: {output_data}"
+                    )
+                    raise LookupError("Matched recorded output is not a dictionary.")
+
+                # Reconstruct the Pydantic model from the recorded data
+                model_data = output_data.get("model_data")
+                if model_data is None:
+                    raise LookupError(
+                        "Recorded structured output missing 'model_data' field."
+                    )
+
+                logger.debug(
+                    f"Playing back matched structured output for model {response_model.__name__}"
+                )
+                return response_model.model_validate(model_data)
+
+        await self._log_no_match_error(current_input_args)
+        raise LookupError(
+            f"No matching structured output recorded interaction found in {self.recording_path} "
+            f"for model {response_model.__name__}."
+        )
+
 
 # Export all public classes and interfaces
 __all__ = [
@@ -2223,5 +2606,5 @@ __all__ = [
     "SystemMessage",
     "ToolMessage",
     "UserMessage",
-    "message_to_json_dict",
+    "StructuredOutputError",
 ]
