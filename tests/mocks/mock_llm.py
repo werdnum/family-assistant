@@ -6,8 +6,10 @@ import asyncio
 import json
 import logging
 import os
-from collections.abc import AsyncIterator, Callable
-from typing import TYPE_CHECKING, Any
+from collections.abc import AsyncIterator, Callable, Sequence
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment
@@ -18,8 +20,11 @@ from family_assistant.llm import (
     LLMMessage,
     LLMOutput,
     LLMStreamEvent,
+    StructuredOutputError,
 )
 from family_assistant.llm.messages import UserMessage, message_to_json_dict
+
+T = TypeVar("T", bound=BaseModel)
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +40,14 @@ MatcherFunction = Callable[[MatcherArgs], bool]
 # ResponseGenerator can be either a static LLMOutput or a callable that returns LLMOutput
 ResponseGenerator = LLMOutput | Callable[[MatcherArgs], LLMOutput]
 Rule = tuple[MatcherFunction, ResponseGenerator]
+
+# Type aliases for structured output rules
+# StructuredMatcherArgs includes the response_model type
+# ast-grep-ignore: no-dict-any - Legacy code - needs structured types
+StructuredMatcherArgs = dict[str, Any]
+# StructuredResponseGenerator can return any BaseModel subclass
+StructuredResponseGenerator = BaseModel | Callable[[StructuredMatcherArgs], BaseModel]
+StructuredRule = tuple[MatcherFunction, StructuredResponseGenerator]
 
 
 class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
@@ -52,6 +65,7 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
         rules: list[Rule],
         default_response: LLMOutput | None = None,
         model_name: str = "mock-llm-model",
+        structured_rules: list[StructuredRule] | None = None,
     ) -> None:
         """
         Initializes the mock client with rules.
@@ -63,8 +77,12 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
             default_response: An optional LLMOutput to return if no rules match.
                               If None, a basic default response is used.
             model_name: A name for this mock model, can be used by processors.
+            structured_rules: Optional list of rules for generate_structured method.
+                              Each rule is a tuple of (matcher_function, response_generator).
+                              The response_generator should return a Pydantic model instance.
         """
         self.rules: list[Rule] = list(rules)
+        self.structured_rules: list[StructuredRule] = list(structured_rules or [])
         self.model = model_name  # For getattr(llm_client, "model", "unknown")
         if default_response is None:
             self.default_response = LLMOutput(
@@ -314,6 +332,85 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
 
         return {"role": "user", "content": user_message_content}
 
+    async def generate_structured(
+        self,
+        messages: Sequence[LLMMessage],
+        response_model: type[T],
+    ) -> T:
+        """
+        Mock implementation of generate_structured for testing.
+
+        Uses structured_rules if configured, otherwise falls back to default behavior.
+        The mock can be configured with structured_rules that return Pydantic model instances.
+        """
+        actual_kwargs: StructuredMatcherArgs = {
+            "messages": list(messages),
+            "response_model": response_model,
+            "response_model_name": response_model.__name__,
+        }
+        self._record_call("generate_structured", actual_kwargs)
+
+        logger.debug(
+            f"RuleBasedMockLLM (generate_structured) evaluating {len(self.structured_rules)} structured rules..."
+        )
+
+        for i, (matcher, response_generator) in enumerate(self.structured_rules):
+            try:
+                if matcher(actual_kwargs):
+                    actual_response: BaseModel
+                    # Check if it's a static BaseModel instance or a callable
+                    if isinstance(response_generator, BaseModel):
+                        actual_response = response_generator
+                    else:
+                        # It's a callable that returns a BaseModel
+                        logger.debug(
+                            f"Structured rule {i + 1} matched. Response generator is callable. Calling it."
+                        )
+                        actual_response = response_generator(actual_kwargs)
+
+                    logger.info(
+                        f"Structured rule {i + 1} matched for 'generate_structured'. "
+                        f"Returning {type(actual_response).__name__}."
+                    )
+
+                    # Validate that the response matches the expected model type
+                    if not isinstance(actual_response, response_model):
+                        raise StructuredOutputError(
+                            message=(
+                                f"Mock returned {type(actual_response).__name__} but "
+                                f"expected {response_model.__name__}"
+                            ),
+                            provider="mock",
+                            model=self.model,
+                            raw_response=str(actual_response),
+                            validation_error=None,
+                        )
+
+                    # Type is validated by isinstance check above
+                    return actual_response  # type: ignore[return-value] # validated by isinstance
+
+            except StructuredOutputError:
+                raise
+            except Exception as e:
+                logger.error(
+                    f"Error processing structured rule {i + 1}: {e}",
+                    exc_info=True,
+                )
+                continue
+
+        # No rule matched - raise an error (unlike generate_response which has a default)
+        logger.warning(
+            f"No mock LLM structured rule matched for 'generate_structured' "
+            f"with model {response_model.__name__}."
+        )
+        raise StructuredOutputError(
+            message=f"No matching structured rule found for model {response_model.__name__}",
+            provider="mock",
+            model=self.model,
+            raw_response=None,
+            validation_error=None,
+        )
+
 
 # --- Helper functions for working with typed messages in matchers ---
 
@@ -385,6 +482,8 @@ __all__ = [
     "RuleBasedMockLLMClient",
     "Rule",
     "MatcherFunction",
+    "StructuredRule",
+    "StructuredResponseGenerator",
     "get_last_message_text",
     "get_system_prompt",
     "get_message_role",
