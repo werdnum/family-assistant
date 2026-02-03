@@ -129,6 +129,39 @@ async def test_large_tool_result_auto_attachment(
         assert metadata is not None
         assert metadata.mime_type == "application/json"
 
+        # 3. Test read_text_attachment is EXEMPT from auto-conversion
+        # Even if it returns large content, it should NOT be converted to an attachment
+        # because the user explicitly requested to read that content
+        large_read_result = "C" * (20 * 1024 + 100)
+        mock_tools_provider.execute_tool.return_value = large_read_result
+
+        tool_call = ToolCallItem(
+            id="call_3",
+            type="function",
+            function=ToolCallFunction(
+                name="read_text_attachment", arguments={"attachment_id": "some-id"}
+            ),
+        )
+
+        result = await service._execute_single_tool(
+            tool_call,
+            interface_type="test",
+            conversation_id="conv_1",
+            user_name="test_user",
+            turn_id="turn_3",
+            db_context=db,
+            chat_interface=None,
+        )
+
+        assert result.llm_message.content is not None
+        # read_text_attachment should NOT be converted to attachment
+        assert "was too large" not in result.llm_message.content
+        assert (
+            result.auto_attachment_ids is None or len(result.auto_attachment_ids) == 0
+        )
+        # The original content should be preserved
+        assert large_read_result == result.llm_message.content
+
 
 @pytest.mark.asyncio
 async def test_read_text_attachment_tool(
@@ -229,3 +262,77 @@ content
         result = await execute_script_tool(exec_ctx, script)
         assert result.text is not None
         assert text_content in result.text
+
+
+@pytest.mark.asyncio
+async def test_starlark_attachment_read_same_transaction(
+    db_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    """
+    Test reading attachment from Starlark when created in the same transaction.
+
+    This test exposes a transaction isolation bug: when an attachment is created
+    within a transaction (like during tool processing), and then a script tries
+    to read it using attachment_read(), the script opens a NEW database connection
+    that cannot see the uncommitted attachment.
+
+    This simulates what happens in production when:
+    1. A tool returns a large result
+    2. ProcessingService auto-converts it to an attachment (within the request transaction)
+    3. LLM calls execute_script with attachment_read() to process it
+    4. The script fails because it can't see the uncommitted attachment
+    """
+    storage_path = tmp_path / "attachments"
+    storage_path.mkdir()
+    attachment_registry = AttachmentRegistry(
+        storage_path=str(storage_path), db_engine=db_engine, config=None
+    )
+
+    async with DatabaseContext(engine=db_engine) as db:
+        # Create attachment WITHIN the transaction (passing db_context)
+        # This simulates what happens during tool processing
+        text_content = "Content created in same transaction"
+        reg_metadata = await attachment_registry.store_and_register_tool_attachment(
+            file_content=text_content.encode("utf-8"),
+            filename="same_txn.txt",
+            content_type="text/plain",
+            tool_name="test",
+            description="test",
+            conversation_id="conv_same_txn",
+            db_context=db,  # KEY: Use same transaction
+        )
+        att_id = reg_metadata.attachment_id
+
+        # Verify the attachment exists in this transaction
+        metadata = await attachment_registry.get_attachment(db, att_id)
+        assert metadata is not None, "Attachment should exist in same transaction"
+
+        exec_ctx = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="conv_same_txn",
+            user_name="test",
+            turn_id=None,
+            db_context=db,
+            processing_service=None,
+            clock=SystemClock(),
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=attachment_registry,
+            camera_backend=None,
+        )
+
+        # Try to read the attachment from a Starlark script
+        # This should work but currently fails due to transaction isolation
+        script = f"""
+content = attachment_read('{att_id}')
+content
+"""
+        result = await execute_script_tool(exec_ctx, script)
+        assert result.text is not None
+
+        # The bug: attachment_read() opens a NEW connection that can't see
+        # the uncommitted attachment, so it returns None
+        assert "Content created in same transaction" in result.text, (
+            f"Script should be able to read attachment created in same transaction. "
+            f"Got: {result.text}"
+        )

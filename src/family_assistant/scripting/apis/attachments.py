@@ -230,6 +230,7 @@ class AttachmentAPI:
         conversation_id: str | None = None,
         main_loop: asyncio.AbstractEventLoop | None = None,
         db_engine: AsyncEngine | None = None,
+        db_context: DatabaseContext | None = None,
     ) -> None:
         """
         Initialize the attachment API.
@@ -238,12 +239,15 @@ class AttachmentAPI:
             attachment_registry: The attachment registry service
             conversation_id: Current conversation ID for scoping
             main_loop: Main event loop for async operations
-            db_engine: Database engine for DatabaseContext
+            db_engine: Database engine for DatabaseContext (used as fallback)
+            db_context: Existing database context to reuse (preferred over engine)
+                       This allows reading attachments created in the same transaction.
         """
         self.attachment_registry = attachment_registry
         self.conversation_id = conversation_id
         self.main_loop = main_loop
         self.db_engine = db_engine
+        self.db_context = db_context
 
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     def get(self, attachment_id: str) -> dict[str, Any] | None:
@@ -299,9 +303,9 @@ class AttachmentAPI:
     async def _read_async(self, attachment_id: str) -> str | None:
         """Async implementation of read."""
 
-        async with DatabaseContext(engine=self.db_engine) as db_context:
+        async def _do_read(db_ctx: DatabaseContext) -> str | None:
             content = await self.attachment_registry.get_attachment_content(
-                db_context, attachment_id
+                db_ctx, attachment_id
             )
 
             if content is None:
@@ -313,13 +317,22 @@ class AttachmentAPI:
                 # Fallback to replace for binary files if requested as text
                 return content.decode("utf-8", errors="replace")
 
+        # Use existing db_context if available (allows reading uncommitted attachments)
+        if self.db_context:
+            return await _do_read(self.db_context)
+
+        # Fallback: create new context (for standalone use cases)
+        async with DatabaseContext(engine=self.db_engine) as db_context:
+            return await _do_read(db_context)
+
     # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
     async def _get_async(self, attachment_id: str) -> dict[str, Any] | None:
         """Async implementation of get."""
 
-        async with DatabaseContext(engine=self.db_engine) as db_context:
+        # ast-grep-ignore: no-dict-any - Inner helper shares return type with parent _get_async
+        async def _do_get(db_ctx: DatabaseContext) -> dict[str, Any] | None:
             attachment = await self.attachment_registry.get_attachment(
-                db_context, attachment_id
+                db_ctx, attachment_id
             )
 
             if not attachment:
@@ -337,6 +350,14 @@ class AttachmentAPI:
                 "conversation_id": attachment.conversation_id,
                 "message_id": attachment.message_id,
             }
+
+        # Use existing db_context if available (allows reading uncommitted attachments)
+        if self.db_context:
+            return await _do_get(self.db_context)
+
+        # Fallback: create new context (for standalone use cases)
+        async with DatabaseContext(engine=self.db_engine) as db_context:
+            return await _do_get(db_context)
 
     def list(
         self,
@@ -377,9 +398,10 @@ class AttachmentAPI:
     ) -> list[dict[str, Any]]:
         """Async implementation of list."""
 
-        async with DatabaseContext(engine=self.db_engine) as db_context:
+        # ast-grep-ignore: no-dict-any - Inner helper shares return type with parent
+        async def _do_list(db_ctx: DatabaseContext) -> list[dict[str, Any]]:
             attachments = await self.attachment_registry.list_attachments(
-                db_context,
+                db_ctx,
                 conversation_id=self.conversation_id,
                 source_type=source_type,
                 limit=limit,
@@ -400,6 +422,14 @@ class AttachmentAPI:
                 }
                 for att in attachments
             ]
+
+        # Use existing db_context if available (allows seeing uncommitted attachments)
+        if self.db_context:
+            return await _do_list(self.db_context)
+
+        # Fallback: create new context (for standalone use cases)
+        async with DatabaseContext(engine=self.db_engine) as db_context:
+            return await _do_list(db_context)
 
     def send(self, attachment_id: str, message: str | None = None) -> str:
         """
@@ -518,10 +548,9 @@ class AttachmentAPI:
             content_type=mime_type,
         )
 
-        # Register it in the database with source_type="script"
-        async with DatabaseContext(engine=self.db_engine) as db_context:
-            attachment_metadata = await self.attachment_registry.register_attachment(
-                db_context=db_context,
+        async def _do_register(db_ctx: DatabaseContext) -> AttachmentMetadata:
+            return await self.attachment_registry.register_attachment(
+                db_context=db_ctx,
                 attachment_id=file_metadata.attachment_id,
                 source_type="script",
                 source_id="script_execution",
@@ -535,11 +564,13 @@ class AttachmentAPI:
                 metadata={"original_filename": filename, "created_by": "script"},
             )
 
-        logger.info(
-            f"Script created attachment {attachment_metadata.attachment_id}: {filename}"
-        )
+        # Use existing db_context if available (allows rollback on failure)
+        if self.db_context:
+            return await _do_register(self.db_context)
 
-        return attachment_metadata
+        # Fallback: create new context (for standalone use cases)
+        async with DatabaseContext(engine=self.db_engine) as db_context:
+            return await _do_register(db_context)
 
 
 def create_attachment_api(
@@ -573,4 +604,6 @@ def create_attachment_api(
         conversation_id=conversation_id,
         main_loop=main_loop,
         db_engine=execution_context.db_context.engine,
+        # Pass db_context to allow reading attachments created in the same transaction
+        db_context=execution_context.db_context,
     )

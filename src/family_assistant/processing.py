@@ -2638,8 +2638,8 @@ Call attach_to_response with your selected attachment IDs."""
         Returns:
             Tuple of (new_content, auto_attachment_id)
         """
-        # Threshold from config (default 20 KiB)
-        threshold_kb = 20
+        # Threshold from config (default 100 KiB)
+        threshold_kb = 100
         if self.app_config and self.app_config.attachment_config:
             threshold_kb = (
                 self.app_config.attachment_config.large_tool_result_threshold_kb
@@ -2648,6 +2648,15 @@ Call attach_to_response with your selected attachment IDs."""
         THRESHOLD_BYTES = threshold_kb * 1024
         content_bytes = content.encode("utf-8")
         if len(content_bytes) < THRESHOLD_BYTES:
+            return content, None
+
+        # Exempt certain tools from auto-conversion - they already handle attachments
+        # or the user explicitly requested the content
+        EXEMPT_TOOLS = {"read_text_attachment"}
+        if tool_name in EXEMPT_TOOLS:
+            logger.debug(
+                f"Tool '{tool_name}' is exempt from large result auto-conversion"
+            )
             return content, None
 
         # Determine MIME type
