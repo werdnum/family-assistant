@@ -6,7 +6,11 @@ import base64
 import json
 import logging
 import os
+import time
+import uuid
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -30,6 +34,7 @@ from family_assistant.llm.messages import (
     UserMessage,
     message_to_json_dict,
 )
+from family_assistant.llm.request_buffer import LLMRequestRecord, get_request_buffer
 
 from ..base import (
     AuthenticationError,
@@ -174,17 +179,27 @@ class OpenAIClient(BaseLLMClient):
         # Validate user input before processing
         self._validate_user_input(messages)
 
+        # Request tracking for diagnostics
+        start_time = time.monotonic()
+        request_timestamp = datetime.now(UTC)
+        request_id = f"openai_{uuid.uuid4().hex[:16]}"
+
+        # Convert messages to dict format for request buffer recording (before try block)
+        message_dicts = [message_to_json_dict(msg) for msg in messages]
+
         try:
             # Process tool attachments before sending
             processed_messages = self._process_tool_messages(list(messages))
 
-            # Convert typed messages to dicts
-            message_dicts = [message_to_json_dict(msg) for msg in processed_messages]
+            # Convert typed messages to dicts for API call
+            api_message_dicts = [
+                message_to_json_dict(msg) for msg in processed_messages
+            ]
 
             # Build parameters with defaults, then model-specific overrides
             params = {
                 "model": self.model,
-                "messages": message_dicts,
+                "messages": api_message_dicts,
                 **self.default_kwargs,
                 **self._get_model_specific_params(self.model),
             }
@@ -231,13 +246,52 @@ class OpenAIClient(BaseLLMClient):
                     if details and hasattr(details, "reasoning_tokens"):
                         reasoning_info["reasoning_tokens"] = details.reasoning_tokens
 
-            return LLMOutput(
+            llm_output = LLMOutput(
                 content=content,
                 tool_calls=tool_calls,
                 reasoning_info=reasoning_info,
             )
 
+            # Record successful request to diagnostics buffer
+            duration_ms = (time.monotonic() - start_time) * 1000
+            try:
+                get_request_buffer().add(
+                    LLMRequestRecord(
+                        timestamp=request_timestamp,
+                        request_id=request_id,
+                        model_id=self.model,
+                        messages=message_dicts,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        response=asdict(llm_output),
+                        duration_ms=duration_ms,
+                        error=None,
+                    )
+                )
+            except Exception as record_err:
+                logger.debug(f"Failed to record LLM request: {record_err}")
+
+            return llm_output
+
         except Exception as e:
+            # Record failed request to diagnostics buffer
+            duration_ms = (time.monotonic() - start_time) * 1000
+            try:
+                get_request_buffer().add(
+                    LLMRequestRecord(
+                        timestamp=request_timestamp,
+                        request_id=request_id,
+                        model_id=self.model,
+                        messages=message_dicts,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        response=None,
+                        duration_ms=duration_ms,
+                        error=str(e),
+                    )
+                )
+            except Exception as record_err:
+                logger.debug(f"Failed to record LLM request error: {record_err}")
             # Map OpenAI exceptions to our exception hierarchy
             error_message = str(e)
 
@@ -357,17 +411,27 @@ class OpenAIClient(BaseLLMClient):
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses."""
+        # Request tracking for diagnostics
+        start_time = time.monotonic()
+        request_timestamp = datetime.now(UTC)
+        request_id = f"openai_stream_{uuid.uuid4().hex[:16]}"
+
+        # Convert messages to dict format for request buffer recording (before try block)
+        message_dicts = [message_to_json_dict(msg) for msg in messages]
+
         try:
             # Process tool attachments before sending
             processed_messages = self._process_tool_messages(list(messages))
 
             # Convert typed messages to dicts for SDK boundary
-            message_dicts = [message_to_json_dict(msg) for msg in processed_messages]
+            api_message_dicts = [
+                message_to_json_dict(msg) for msg in processed_messages
+            ]
 
             # Build parameters with defaults, then model-specific overrides
             params = {
                 "model": self.model,
-                "messages": message_dicts,
+                "messages": api_message_dicts,
                 "stream": True,  # Enable streaming
                 **self.default_kwargs,
                 **self._get_model_specific_params(self.model),
@@ -471,10 +535,50 @@ class OpenAIClient(BaseLLMClient):
                     "total_tokens": last_chunk_with_usage.usage.total_tokens,
                 }
 
+            # Record successful streaming request to diagnostics buffer
+            duration_ms = (time.monotonic() - start_time) * 1000
+            try:
+                get_request_buffer().add(
+                    LLMRequestRecord(
+                        timestamp=request_timestamp,
+                        request_id=request_id,
+                        model_id=self.model,
+                        messages=message_dicts,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        response={"streaming": True, "metadata": metadata},
+                        duration_ms=duration_ms,
+                        error=None,
+                    )
+                )
+            except Exception as record_err:
+                logger.debug(f"Failed to record streaming LLM request: {record_err}")
+
             # Signal completion
             yield LLMStreamEvent(type="done", metadata=metadata)
 
         except Exception as e:
+            # Record failed streaming request to diagnostics buffer
+            duration_ms = (time.monotonic() - start_time) * 1000
+            try:
+                get_request_buffer().add(
+                    LLMRequestRecord(
+                        timestamp=request_timestamp,
+                        request_id=request_id,
+                        model_id=self.model,
+                        messages=message_dicts,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        response=None,
+                        duration_ms=duration_ms,
+                        error=str(e),
+                    )
+                )
+            except Exception as record_err:
+                logger.debug(
+                    f"Failed to record streaming LLM request error: {record_err}"
+                )
+
             # Handle errors the same way as non-streaming
             error_message = str(e)
 

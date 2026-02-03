@@ -14,7 +14,22 @@ from family_assistant.storage.error_logs import error_logs_table
 
 
 class SQLAlchemyErrorHandler(logging.Handler):
-    """Async handler that writes ERROR and above to database."""
+    """Async handler that writes ERROR and above to database.
+
+    Includes filtering for known noisy loggers (e.g., LiteLLM optional dependency errors).
+    """
+
+    # Logger name prefixes to filter out (these produce noise, not actionable errors)
+    FILTERED_LOGGER_PREFIXES = (
+        "LiteLLM",  # LiteLLM produces ModuleNotFoundError for optional deps
+        "litellm",
+    )
+
+    # Message patterns to filter out (regex-free for performance)
+    FILTERED_MESSAGE_PATTERNS = (
+        "ModuleNotFoundError",  # Optional dependency missing (e.g., fastapi_sso)
+        "No module named",
+    )
 
     def __init__(
         self,
@@ -28,9 +43,35 @@ class SQLAlchemyErrorHandler(logging.Handler):
         self.circuit_breaker_threshold = 5
         self._pending_tasks: set[asyncio.Task] = set()
 
+    def _should_filter(self, record: logging.LogRecord) -> bool:
+        """Check if this log record should be filtered out.
+
+        Filters known noisy log sources that don't represent actionable errors.
+        """
+        # Filter by logger name prefix
+        if record.name.startswith(self.FILTERED_LOGGER_PREFIXES):
+            # Check if it's a known noise pattern
+            message = record.getMessage()
+            for pattern in self.FILTERED_MESSAGE_PATTERNS:
+                if pattern in message:
+                    return True
+
+            # Also check exception info for noise patterns
+            if record.exc_info and record.exc_info[1]:
+                exc_str = str(record.exc_info[1])
+                for pattern in self.FILTERED_MESSAGE_PATTERNS:
+                    if pattern in exc_str:
+                        return True
+
+        return False
+
     def emit(self, record: logging.LogRecord) -> None:
         """Write log record to database asynchronously."""
         if record.levelno < self.min_level:
+            return
+
+        # Filter known noise
+        if self._should_filter(record):
             return
 
         # Circuit breaker
