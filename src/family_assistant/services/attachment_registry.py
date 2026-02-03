@@ -41,6 +41,7 @@ DEFAULT_ALLOWED_MIME_TYPES: set[str] = {
     "image/gif",
     "image/webp",
     "text/plain",
+    "application/json",
     "application/pdf",
     "video/mp4",
     "video/webm",
@@ -714,6 +715,7 @@ class AttachmentRegistry:
         message_id: int | None = None,
         # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
         metadata: dict[str, Any] | None = None,
+        db_context: DatabaseContext | None = None,
     ) -> AttachmentMetadata:
         """
         Store file content and register as a tool attachment in one operation.
@@ -729,6 +731,7 @@ class AttachmentRegistry:
             conversation_id: Associated conversation
             message_id: Associated message
             metadata: Additional metadata
+            db_context: Optional DatabaseContext to use for registration
 
         Returns:
             AttachmentMetadata for the stored and registered attachment
@@ -746,21 +749,39 @@ class AttachmentRegistry:
             final_metadata.update(metadata)
 
         # Then register it in the database
-        return await self.register_tool_attachment_with_context(
-            attachment_id=file_metadata.attachment_id,
-            tool_name=tool_name,
-            mime_type=content_type,
-            description=description or f"Tool attachment from {tool_name}",
-            size=len(file_content),
-            content_url=file_metadata.content_url
-            or f"/api/attachments/{file_metadata.attachment_id}",
-            storage_path=str(file_metadata.storage_path)
-            if file_metadata.storage_path
-            else None,
-            conversation_id=conversation_id,
-            message_id=message_id,
-            metadata=final_metadata,
-        )
+        if db_context:
+            return await self.register_tool_attachment(
+                db_context=db_context,
+                attachment_id=file_metadata.attachment_id,
+                tool_name=tool_name,
+                mime_type=content_type,
+                description=description or f"Output from {tool_name}",
+                size=len(file_content),
+                content_url=file_metadata.content_url
+                or f"/api/attachments/{file_metadata.attachment_id}",
+                storage_path=str(file_metadata.storage_path)
+                if file_metadata.storage_path
+                else None,
+                conversation_id=conversation_id,
+                message_id=message_id,
+                metadata=final_metadata,
+            )
+        else:
+            return await self.register_tool_attachment_with_context(
+                attachment_id=file_metadata.attachment_id,
+                tool_name=tool_name,
+                mime_type=content_type,
+                description=description or f"Output from {tool_name}",
+                size=len(file_content),
+                content_url=file_metadata.content_url
+                or f"/api/attachments/{file_metadata.attachment_id}",
+                storage_path=str(file_metadata.storage_path)
+                if file_metadata.storage_path
+                else None,
+                conversation_id=conversation_id,
+                message_id=message_id,
+                metadata=final_metadata,
+            )
 
     # File storage methods (previously from AttachmentService)
 

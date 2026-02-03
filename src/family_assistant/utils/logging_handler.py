@@ -85,6 +85,7 @@ class SQLAlchemyErrorHandler(logging.Handler):
             "traceback": tb_text,
             "module": record.module,
             "function_name": record.funcName,
+            "extra_data": getattr(record, "extra_data", None),
         }
 
     async def wait_for_pending_logs(self, timeout: float = 5.0) -> None:

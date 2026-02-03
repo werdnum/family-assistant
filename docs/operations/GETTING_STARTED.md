@@ -70,7 +70,10 @@ ______________________________________________________________________
 Family Assistant is natively designed to run on Kubernetes. This is the most robust deployment
 method, suitable for high availability and advanced scaling.
 
-For detailed instructions on Kubernetes deployment, see the
+For a streamlined "one-shot" deployment on Google Cloud, see the
+[GKE Deployment Guide](../deployment/GKE_DEPLOYMENT.md).
+
+For general instructions on Kubernetes deployment, see the
 [Production Deployment Guide](../deployment/PRODUCTION_DEPLOYMENT.md).
 
 The Kubernetes manifests are located in the `deploy/` directory:

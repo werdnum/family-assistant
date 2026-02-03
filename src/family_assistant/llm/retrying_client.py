@@ -9,12 +9,14 @@ This implementation mimics LiteLLM's simple retry strategy:
 
 import logging
 from collections.abc import AsyncIterator, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment
 
-from . import LLMInterface, LLMMessage, LLMOutput, LLMStreamEvent
+from . import LLMInterface, LLMMessage, LLMOutput, LLMStreamEvent, StructuredOutputError
 from .base import (
     LLMProviderError,
     ProviderConnectionError,
@@ -23,6 +25,8 @@ from .base import (
     ServiceUnavailableError,
 )
 from .messages import UserMessage
+
+T = TypeVar("T", bound=BaseModel)
 
 logger = logging.getLogger(__name__)
 
@@ -264,3 +268,128 @@ class RetryingLLMClient:
     ) -> UserMessage:
         """Create attachment injection - delegates to primary client."""
         return self.primary_client.create_attachment_injection(attachment)
+
+    async def generate_structured(
+        self,
+        messages: Sequence[LLMMessage],
+        response_model: type[T],
+    ) -> T:
+        """Generate structured response with retry and fallback logic.
+
+        Note: The underlying client handles validation retries. This method only
+        handles provider-level retries (connection errors, rate limits, etc.).
+        """
+        retriable_errors = (
+            ProviderConnectionError,
+            ProviderTimeoutError,
+            RateLimitError,
+            ServiceUnavailableError,
+        )
+
+        last_exception: Exception | None = None
+
+        # Attempt 1: Primary model
+        try:
+            logger.info(
+                f"Structured output attempt 1: Primary model ({self.primary_model})"
+            )
+            return await self.primary_client.generate_structured(
+                messages=messages,
+                response_model=response_model,
+            )
+        except retriable_errors as e:
+            logger.warning(
+                f"Structured output attempt 1 (Primary model {self.primary_model}) "
+                f"failed with retriable error: {e}. Retrying primary model."
+            )
+            last_exception = e
+        except StructuredOutputError as e:
+            # Structured output errors are not retriable at this level
+            # The underlying client already retried validation errors
+            logger.warning(
+                f"Structured output attempt 1 (Primary model {self.primary_model}) "
+                f"failed with structured output error: {e}. Proceeding to fallback."
+            )
+            last_exception = e
+        except LLMProviderError as e:
+            logger.warning(
+                f"Structured output attempt 1 (Primary model {self.primary_model}) "
+                f"failed with provider error: {e}. Proceeding to fallback."
+            )
+            last_exception = e
+        except Exception as e:
+            logger.error(
+                f"Structured output attempt 1 (Primary model {self.primary_model}) "
+                f"failed with unexpected error: {e}",
+                exc_info=True,
+            )
+            last_exception = e
+
+        # Attempt 2: Retry Primary model (if Attempt 1 was a retriable error)
+        if isinstance(last_exception, retriable_errors):
+            try:
+                logger.info(
+                    f"Structured output attempt 2: Retrying primary model ({self.primary_model})"
+                )
+                return await self.primary_client.generate_structured(
+                    messages=messages,
+                    response_model=response_model,
+                )
+            except retriable_errors as e:
+                logger.warning(
+                    f"Structured output attempt 2 (Retry Primary model {self.primary_model}) "
+                    f"failed with retriable error: {e}. Proceeding to fallback."
+                )
+                last_exception = e
+            except LLMProviderError as e:
+                logger.warning(
+                    f"Structured output attempt 2 (Retry Primary model {self.primary_model}) "
+                    f"failed with provider error: {e}. Proceeding to fallback."
+                )
+                last_exception = e
+            except Exception as e:
+                logger.error(
+                    f"Structured output attempt 2 (Retry Primary model {self.primary_model}) "
+                    f"failed with unexpected error: {e}",
+                    exc_info=True,
+                )
+                last_exception = e
+
+        # Attempt 3: Fallback model (if configured and primary attempts failed)
+        if self.fallback_client and last_exception:
+            if self.fallback_model == self.primary_model:
+                logger.warning(
+                    f"Fallback model '{self.fallback_model}' is the same as the primary model "
+                    f"'{self.primary_model}'. Skipping fallback."
+                )
+                raise last_exception
+
+            logger.info(
+                f"Structured output attempt 3: Fallback model ({self.fallback_model})"
+            )
+            try:
+                return await self.fallback_client.generate_structured(
+                    messages=messages,
+                    response_model=response_model,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Structured output attempt 3 (Fallback model {self.fallback_model}) "
+                    f"also failed: {e}",
+                    exc_info=True,
+                )
+                raise last_exception from e
+
+        # If all attempts failed, raise the last exception
+        if last_exception:
+            logger.error(
+                f"All structured output attempts failed. "
+                f"Raising last recorded exception: {last_exception}"
+            )
+            raise last_exception
+        else:
+            raise LLMProviderError(
+                message="All structured output attempts failed without a specific exception.",
+                provider="unknown",
+                model=self.primary_model,
+            )

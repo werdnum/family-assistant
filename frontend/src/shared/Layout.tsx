@@ -6,6 +6,7 @@ import {
   FolderOpen,
   HelpCircle,
   History,
+  Info,
   Menu,
   MessageCircle,
   Search,
@@ -220,6 +221,19 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 </NavigationMenuLink>
               </NavigationMenuItem>
 
+              <NavigationMenuItem>
+                <NavigationMenuLink asChild>
+                  <NavLink
+                    to="/about"
+                    isActive={currentPage === 'about'}
+                    className="whitespace-nowrap inline-flex items-center"
+                  >
+                    <Info className="mr-2 h-4 w-4 flex-shrink-0" />
+                    <span className="whitespace-nowrap">About</span>
+                  </NavLink>
+                </NavigationMenuLink>
+              </NavigationMenuItem>
+
               <Separator orientation="vertical" className="h-6" />
 
               {/* Automations */}
@@ -336,7 +350,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       <footer className="border-t bg-muted/50 py-6 md:py-0">
         <div className="container flex flex-col items-center justify-between gap-4 md:h-24 md:flex-row">
           <p className="text-center text-sm leading-loose text-muted-foreground md:text-left">
-            &copy; {new Date().getFullYear()} Family Assistant
+            &copy; {new Date().getFullYear()} Family Assistant •{' '}
+            <Link to="/about" className="underline underline-offset-4">
+              About
+            </Link>
           </p>
         </div>
       </footer>

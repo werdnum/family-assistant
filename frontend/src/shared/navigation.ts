@@ -6,6 +6,8 @@ import {
   FolderOpen,
   HelpCircle,
   History,
+  Home,
+  Info,
   MessageCircle,
   Mic,
   Search,
@@ -23,6 +25,13 @@ export interface NavigationItem {
 }
 
 export const getNavigationItems = (currentPage?: string): NavigationItem[] => [
+  { type: 'section', title: 'Main' },
+  {
+    type: currentPage === 'home' ? 'current' : 'link',
+    to: '/',
+    title: 'Home',
+    icon: Home,
+  },
   { type: 'section', title: 'Data' },
   { type: 'external', href: '/notes', title: 'Notes', icon: FileText },
   { type: 'link', to: '/context', title: 'Context', icon: FileText },
@@ -68,4 +77,10 @@ export const getNavigationItems = (currentPage?: string): NavigationItem[] => [
   },
   { type: 'section', title: 'Help' },
   { type: 'external', href: '/docs/', title: 'Help', icon: HelpCircle },
+  {
+    type: currentPage === 'about' ? 'current' : 'link',
+    to: '/about',
+    title: 'About',
+    icon: Info,
+  },
 ];

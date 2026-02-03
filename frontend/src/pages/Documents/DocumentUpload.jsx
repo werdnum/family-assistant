@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { getDiagnosticsUrl } from '@/utils/diagnosticsUrl';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -158,7 +159,17 @@ const DocumentUpload = () => {
 
       {error && (
         <Alert variant="destructive" className="mb-4">
-          <AlertDescription>Error: {error}</AlertDescription>
+          <AlertDescription>
+            Error: {error}{' '}
+            <a
+              href={getDiagnosticsUrl()}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:no-underline"
+            >
+              View diagnostics
+            </a>
+          </AlertDescription>
         </Alert>
       )}
       {success && (

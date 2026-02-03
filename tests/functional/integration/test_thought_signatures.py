@@ -1,7 +1,7 @@
 """Functional tests for thought signature round-trip through ProcessingService."""
 
 from collections.abc import AsyncIterator, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -9,11 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment
 
+from pydantic import BaseModel
+
 from family_assistant.config_models import AppConfig
 from family_assistant.llm import (
     LLMMessage,
     LLMOutput,
     LLMStreamEvent,
+    StructuredOutputError,
     ToolCallFunction,
     ToolCallItem,
 )
@@ -25,6 +28,8 @@ from family_assistant.llm.messages import UserMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import get_db_context
 from family_assistant.tools.types import ToolResult
+
+T = TypeVar("T", bound=BaseModel)
 
 
 class SimpleToolsProvider:
@@ -155,6 +160,18 @@ class MockLLMWithThoughtSignatures:
         """Mock implementation - not needed for these tests."""
         return UserMessage(content="[System: File from previous tool response]")
 
+    async def generate_structured(
+        self,
+        messages: Sequence[LLMMessage],
+        response_model: type[T],
+    ) -> T:
+        """Mock implementation - raises error as not used in these tests."""
+        raise StructuredOutputError(
+            message="generate_structured not implemented in mock",
+            provider="mock",
+            model="mock",
+        )
+
 
 class MockLLMWithThoughtSignaturesNoToolCalls:
     """Mock LLM client that returns thought signatures without tool calls."""
@@ -223,6 +240,18 @@ class MockLLMWithThoughtSignaturesNoToolCalls:
     ) -> "UserMessage":
         """Mock implementation - not needed for these tests."""
         return UserMessage(content="[System: File from previous tool response]")
+
+    async def generate_structured(
+        self,
+        messages: Sequence[LLMMessage],
+        response_model: type[T],
+    ) -> T:
+        """Mock implementation - raises error as not used in these tests."""
+        raise StructuredOutputError(
+            message="generate_structured not implemented in mock",
+            provider="mock",
+            model="mock",
+        )
 
 
 @pytest.mark.asyncio

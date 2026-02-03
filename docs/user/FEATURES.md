@@ -177,6 +177,9 @@ A responsive web application for interacting with the assistant and managing you
 - Dark mode support
 - Mobile-optimized design
 
+![Web Interface Landing Page](../../screenshots/desktop/landing-page.png) *The web interface
+provides a centralized dashboard for all assistant features*
+
 **Documentation:** [User Guide - Web Interface](USER_GUIDE.md#7-using-the-web-interface)
 
 ______________________________________________________________________
@@ -654,6 +657,9 @@ Interact with the assistant using voice through the Gemini Live API.
 - Voice activity detection (VAD)
 - Configurable voices
 - Telephone integration (Asterisk)
+
+![Voice Interface](../../screenshots/desktop/voice.png) *The voice interface enables real-time voice
+conversations with the assistant*
 
 **Requirements:** Gemini API key with Live API access
 

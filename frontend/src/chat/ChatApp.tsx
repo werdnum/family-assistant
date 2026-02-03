@@ -1,10 +1,12 @@
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
 import { Menu } from 'lucide-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NavigationSheet from '../shared/NavigationSheet';
+import { getDiagnosticsUrl } from '../utils/diagnosticsUrl';
 import { parseToolArguments } from '../utils/toolUtils';
 import { generateUUID } from '../utils/uuid';
 import { defaultAttachmentAdapter } from './attachmentAdapter';
@@ -48,8 +50,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   });
   const streamingMessageIdRef = useRef<string | null>(null);
   const toolCallMessageIdRef = useRef<string | null>(null);
+  const initialPromptProcessedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesAbortControllerRef = useRef<AbortController | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Fetch conversations list
   const fetchConversations = useCallback(async () => {
@@ -178,25 +182,36 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     }
   }, []);
 
-  const handleStreamingError = useCallback((error: Error | string, _metadata: unknown) => {
-    console.error('Streaming error:', error, _metadata);
-    if (streamingMessageIdRef.current) {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === streamingMessageIdRef.current
-            ? {
-                ...msg,
-                content: [
-                  { type: 'text', text: 'Sorry, I encountered an error processing your message.' },
-                ],
-                isLoading: false, // Remove loading state on error
-              }
-            : msg
-        )
-      );
-      streamingMessageIdRef.current = null;
-    }
-  }, []);
+  const handleStreamingError = useCallback(
+    (error: Error | string, _metadata: unknown) => {
+      console.error('Streaming error:', error, _metadata);
+      if (streamingMessageIdRef.current) {
+        // Build diagnostics URL with conversation context
+        const diagnosticsUrl = getDiagnosticsUrl({
+          conversationId: conversationId ?? undefined,
+        });
+
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === streamingMessageIdRef.current
+              ? {
+                  ...msg,
+                  content: [
+                    {
+                      type: 'text',
+                      text: `Sorry, I encountered an error processing your message. [View diagnostics](${diagnosticsUrl}) for debugging details.`,
+                    },
+                  ],
+                  isLoading: false, // Remove loading state on error
+                }
+              : msg
+          )
+        );
+        streamingMessageIdRef.current = null;
+      }
+    },
+    [conversationId]
+  );
 
   const handleStreamingComplete = useCallback(
     ({
@@ -650,26 +665,6 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Initialize conversation ID from URL or localStorage
-  useEffect(() => {
-    fetchConversations();
-
-    const urlParams = new URLSearchParams(window.location.search);
-    const urlConversationId = urlParams.get('conversation_id');
-    const lastConversationId = localStorage.getItem('lastConversationId');
-
-    if (urlConversationId) {
-      setConversationId(urlConversationId);
-      loadConversationMessages(urlConversationId);
-    } else if (lastConversationId) {
-      setConversationId(lastConversationId);
-      loadConversationMessages(lastConversationId);
-      window.history.replaceState({}, '', `/chat?conversation_id=${lastConversationId}`);
-    } else {
-      handleNewChat();
-    }
-  }, []);
-
   // Create a stable callback ref for SSE message updates
   const handleLiveMessageUpdate = useCallback(
     (update: {
@@ -847,6 +842,61 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       attachments: defaultAttachmentAdapter,
     },
   });
+
+  // Initialize conversation ID from URL or localStorage
+  useEffect(() => {
+    fetchConversations();
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlConversationId = urlParams.get('conversation_id');
+    const initialPrompt = urlParams.get('q');
+    const lastConversationId = localStorage.getItem('lastConversationId');
+
+    if (initialPrompt && !initialPromptProcessedRef.current) {
+      // If there's a prompt, start a new chat with it
+      const newConvId = `web_conv_${generateUUID()}`;
+      setConversationId(newConvId);
+      setMessages([]);
+      localStorage.setItem('lastConversationId', newConvId);
+    } else if (urlConversationId) {
+      setConversationId(urlConversationId);
+      loadConversationMessages(urlConversationId);
+    } else if (lastConversationId) {
+      setConversationId(lastConversationId);
+      loadConversationMessages(lastConversationId);
+      window.history.replaceState({}, '', `/chat?conversation_id=${lastConversationId}`);
+    } else {
+      handleNewChat();
+    }
+  }, []);
+
+  // Handle initial prompt from query parameter once runtime is ready
+  useEffect(() => {
+    const initialPrompt = searchParams.get('q');
+
+    if (
+      initialPrompt &&
+      runtime &&
+      !initialPromptProcessedRef.current &&
+      conversationId?.startsWith('web_conv_')
+    ) {
+      initialPromptProcessedRef.current = true;
+      handleNew({ content: [{ text: initialPrompt }] });
+
+      // Clean up URL using React Router's setSearchParams
+      setSearchParams(
+        (prev) => {
+          const newParams = new URLSearchParams(prev);
+          newParams.delete('q');
+          if (conversationId) {
+            newParams.set('conversation_id', conversationId);
+          }
+          return newParams;
+        },
+        { replace: true }
+      );
+    }
+  }, [runtime, conversationId, handleNew, searchParams, setSearchParams]);
 
   // Signal that app is ready (for tests)
   // Only set when runtime is ready AND initial data loading is complete

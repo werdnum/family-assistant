@@ -2,6 +2,8 @@
 
 import json
 import uuid
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import httpx
 import pytest
@@ -34,6 +36,7 @@ TEST_DOC_METADATA_JSON = json.dumps(TEST_DOC_METADATA)
 @pytest.mark.asyncio
 async def test_react_documents_page_loads(
     web_test_fixture_readonly: WebTestFixture,
+    take_screenshot: Callable[[Any, str, str], Awaitable[None]],
 ) -> None:
     """Test that the React Documents page loads successfully."""
     page = web_test_fixture_readonly.page
@@ -67,6 +70,10 @@ async def test_react_documents_page_loads(
     assert content is not None and len(content.strip()) > 0, (
         "Page content should not be empty"
     )
+
+    # Take screenshot of documents page
+    for viewport in ["desktop", "mobile"]:
+        await take_screenshot(page, "documents-list", viewport)
 
 
 @pytest.mark.playwright

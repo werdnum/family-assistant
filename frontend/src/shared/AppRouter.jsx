@@ -1,5 +1,5 @@
 import React, { lazy, Suspense, useEffect } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Route, Routes } from 'react-router-dom';
 
 // Lazy load all route components for code splitting
 const Layout = lazy(() => import('./Layout.tsx'));
@@ -18,6 +18,8 @@ const TokenManagement = lazy(() => import('../pages/Settings/TokenManagement'));
 const DocumentsPage = lazy(() => import('../pages/Documents/DocumentsPage'));
 const VectorSearchPage = lazy(() => import('../pages/VectorSearch/VectorSearchPage'));
 const VoicePage = lazy(() => import('../voice/VoicePage'));
+const LandingPage = lazy(() => import('../pages/LandingPage'));
+const AboutPage = lazy(() => import('../pages/About/AboutPage'));
 
 // Loading component for Suspense fallback
 const LoadingSpinner = () => (
@@ -118,8 +120,11 @@ const AppRouter = () => {
           }
         />
 
-        {/* Default redirect to chat */}
-        <Route path="/" element={<Navigate to="/chat" replace />} />
+        {/* About page */}
+        <Route path="/about" element={withLayout(<AboutPage />)} />
+
+        {/* Default route: Landing Page */}
+        <Route path="/" element={withLayout(<LandingPage />)} />
 
         {/* Catch-all for unmatched routes - redirect to external pages for now */}
         <Route path="*" element={<FallbackRedirect />} />

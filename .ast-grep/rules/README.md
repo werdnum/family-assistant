@@ -32,8 +32,8 @@ from tests.helpers import wait_for_condition
 # Use:
 await wait_for_condition(
     lambda: check_some_state(),
-    timeout_seconds=5.0,
-    poll_interval_seconds=0.1
+    timeout=5.0,
+    interval=0.1
 )
 ```
 

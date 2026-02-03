@@ -7,6 +7,10 @@ import './styles/globals.css';
 // Import our custom CSS
 import './custom.css';
 
+// Initialize global error handlers early to capture any errors during initialization
+import { initializeErrorHandlers } from './errors/errorHandlers';
+initializeErrorHandlers();
+
 // Log that the frontend is loaded (for development)
 // console.log('Family Assistant frontend loaded');
 

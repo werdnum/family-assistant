@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { getDiagnosticsUrl } from '@/utils/diagnosticsUrl';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -376,7 +377,17 @@ const VectorSearch = () => {
 
       {error && (
         <Alert variant="destructive" className="mb-4">
-          <AlertDescription>Error: {error}</AlertDescription>
+          <AlertDescription>
+            Error: {error}{' '}
+            <a
+              href={getDiagnosticsUrl()}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:no-underline"
+            >
+              View diagnostics
+            </a>
+          </AlertDescription>
         </Alert>
       )}
 

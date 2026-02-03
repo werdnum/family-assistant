@@ -1,5 +1,6 @@
 """API endpoints for error logs."""
 
+import logging
 from datetime import datetime, timedelta
 from typing import Annotated
 
@@ -10,6 +11,9 @@ from family_assistant.storage.context import DatabaseContext
 from family_assistant.web.dependencies import get_db
 
 errors_api_router = APIRouter()
+
+# Logger for frontend JavaScript errors
+frontend_logger = logging.getLogger("frontend.javascript")
 
 
 class ErrorLogResponse(BaseModel):
@@ -36,6 +40,58 @@ class ErrorLogsListResponse(BaseModel):
     total_pages: int
     total_count: int
     limit: int
+
+
+class FrontendErrorReport(BaseModel):
+    """Request model for frontend error reports."""
+
+    message: str
+    stack: str | None = None
+    url: str
+    user_agent: str | None = None
+    component_name: str | None = None
+    error_type: str | None = (
+        None  # uncaught, promise_rejection, component_error, manual
+    )
+    extra_data: dict | None = None
+
+
+class FrontendErrorReportResponse(BaseModel):
+    """Response model for frontend error report."""
+
+    status: str
+
+
+@errors_api_router.post("/")
+async def report_frontend_error(
+    error_report: FrontendErrorReport,
+) -> FrontendErrorReportResponse:
+    """Report a frontend JavaScript error.
+
+    This endpoint receives error reports from the web client and logs them
+    using Python's logging system. The SQLAlchemyErrorHandler automatically
+    stores ERROR-level logs in the database.
+
+    Note: This endpoint is intentionally unauthenticated to allow error
+    capture before user login or when auth state is broken. The /api/* paths
+    are in PUBLIC_PATHS (auth.py). Rate limiting via batching and deduplication
+    is implemented in the frontend errorClient.ts.
+    """
+    extra_data = {
+        "url": error_report.url,
+        "user_agent": error_report.user_agent,
+        "component_name": error_report.component_name,
+        "error_type": error_report.error_type,
+        "stack": error_report.stack,
+        "details": error_report.extra_data,
+    }
+
+    frontend_logger.error(
+        error_report.message,
+        extra={"extra_data": extra_data},
+    )
+
+    return FrontendErrorReportResponse(status="reported")
 
 
 @errors_api_router.get("/")

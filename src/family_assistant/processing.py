@@ -975,10 +975,24 @@ class ProcessingService:
 
             # Handle both string and ToolResult
             if isinstance(result, ToolResult):
-                content_for_stream = result.text
+                content_for_stream = result.text or ""
                 auto_attachment_ids: list[
                     str
                 ] = []  # Track attachment IDs for auto-queuing
+
+                # Auto-convert large text result to attachment
+                new_content, auto_att_id = await self._handle_large_tool_result(
+                    db_context,
+                    content_for_stream,
+                    function_name,
+                    conversation_id,
+                    call_id,
+                )
+                if auto_att_id:
+                    content_for_stream = new_content
+                    auto_attachment_ids.append(auto_att_id)
+                    # Update ToolResult so subsequent message creation uses the attachment notice
+                    result.text = new_content
 
                 # Extract attachment metadata for streaming
                 stream_metadata = None
@@ -1084,6 +1098,19 @@ class ProcessingService:
                 # Backward compatible string handling
                 content_for_stream = str(result)
                 auto_attachment_ids = []  # String results don't generate attachments
+
+                # Auto-convert large text result to attachment
+                new_content, auto_att_id = await self._handle_large_tool_result(
+                    db_context,
+                    content_for_stream,
+                    function_name,
+                    conversation_id,
+                    call_id,
+                )
+                if auto_att_id:
+                    content_for_stream = new_content
+                    auto_attachment_ids.append(auto_att_id)
+
                 llm_message = ToolMessage(
                     role="tool",
                     tool_call_id=call_id,
@@ -2290,9 +2317,34 @@ Call attach_to_response with your selected attachment IDs."""
             if actual_interface_message_id is None:
                 actual_interface_message_id = f"temp_{turn_id}"
 
-            # Save user message in its own transaction to avoid long-running transactions
-            async with get_db_context(engine=db_context.engine) as user_msg_db:
-                saved_user_msg_record = await user_msg_db.message_history.add(
+            # Save user message
+            # On PostgreSQL, use a separate transaction so the message is committed and visible immediately
+            # to other requests (like UI polling) while the LLM continues processing.
+            # On SQLite, we avoid nested transactions due to connection sharing in StaticPool.
+            if db_context.engine.dialect.name == "postgresql":
+                async with get_db_context(
+                    engine=db_context.engine,
+                    message_notifier=db_context.message_notifier,
+                ) as user_msg_db:
+                    saved_user_msg_record = await user_msg_db.message_history.add(
+                        interface_type=interface_type,
+                        conversation_id=conversation_id,
+                        interface_message_id=actual_interface_message_id,
+                        turn_id=turn_id,
+                        thread_root_id=thread_root_id_for_turn,
+                        timestamp=user_message_timestamp,
+                        role="user",
+                        content=user_content_for_history,
+                        tool_calls=None,
+                        reasoning_info=None,
+                        error_traceback=None,
+                        tool_call_id=None,
+                        processing_profile_id=self.service_config.id,
+                        attachments=trigger_attachments,
+                        user_id=user_id,
+                    )
+            else:
+                saved_user_msg_record = await db_context.message_history.add(
                     interface_type=interface_type,
                     conversation_id=conversation_id,
                     interface_message_id=actual_interface_message_id,
@@ -2307,7 +2359,7 @@ Call attach_to_response with your selected attachment IDs."""
                     tool_call_id=None,
                     processing_profile_id=self.service_config.id,
                     attachments=trigger_attachments,
-                    user_id=user_id,  # Pass user_id
+                    user_id=user_id,
                 )
 
             if saved_user_msg_record and not thread_root_id_for_turn:
@@ -2477,9 +2529,16 @@ Call attach_to_response with your selected attachment IDs."""
                     # Remove fields that shouldn't be saved to database
                     msg_to_save.pop("_attachment", None)  # Remove raw attachment data
 
-                    # Save each message in its own transaction to avoid PostgreSQL transaction issues
-                    async with get_db_context(engine=db_context.engine) as msg_db:
-                        await msg_db.message_history.add(**msg_to_save)
+                    # Save each message
+                    if db_context.engine.dialect.name == "postgresql":
+                        # Use separate transaction for intermediate messages on Postgres
+                        async with get_db_context(
+                            engine=db_context.engine,
+                            message_notifier=db_context.message_notifier,
+                        ) as msg_db:
+                            await msg_db.message_history.add(**msg_to_save)
+                    else:
+                        await db_context.message_history.add(**msg_to_save)
 
         except Exception as e:
             logger.error(f"Error in streaming chat interaction: {e}", exc_info=True)
@@ -2564,6 +2623,103 @@ Call attach_to_response with your selected attachment IDs."""
                 message.content.insert(
                     0, TextContentPart(type="text", text=metadata_text)
                 )  # type: ignore[arg-type]
+
+    async def _handle_large_tool_result(
+        self,
+        db_context: DatabaseContext,
+        content: str,
+        tool_name: str,
+        conversation_id: str,
+        call_id: str,
+    ) -> tuple[str, str | None]:
+        """
+        Check if a tool result is too large and convert it to an attachment if necessary.
+
+        Returns:
+            Tuple of (new_content, auto_attachment_id)
+        """
+        # Threshold from config (default 20 KiB)
+        threshold_kb = 20
+        if self.app_config and self.app_config.attachment_config:
+            threshold_kb = (
+                self.app_config.attachment_config.large_tool_result_threshold_kb
+            )
+
+        THRESHOLD_BYTES = threshold_kb * 1024
+        content_bytes = content.encode("utf-8")
+        if len(content_bytes) < THRESHOLD_BYTES:
+            return content, None
+
+        # Determine MIME type
+        mime_type = "text/plain"
+        try:
+            json.loads(content)
+            mime_type = "application/json"
+        except json.JSONDecodeError:
+            pass
+
+        if not self.attachment_registry:
+            logger.warning(
+                "Large tool result detected but AttachmentRegistry is not available."
+            )
+            return content, None
+
+        try:
+            file_extension = self._get_file_extension_from_mime_type(mime_type)
+            registered_metadata = (
+                await self.attachment_registry.store_and_register_tool_attachment(
+                    file_content=content_bytes,
+                    filename=f"large_result_{tool_name}_{uuid.uuid4()}{file_extension}",
+                    content_type=mime_type,
+                    tool_name=tool_name,
+                    description=f"Large output from {tool_name}",
+                    conversation_id=conversation_id,
+                    metadata={
+                        "tool_call_id": call_id,
+                        "auto_display": True,
+                        "large_result_auto_convert": True,
+                    },
+                    db_context=db_context,
+                )
+            )
+
+            att_id = registered_metadata.attachment_id
+
+            hint = (
+                f"\n\n[NOTE: This result was too large ({len(content_bytes)} bytes) "
+                f"and has been automatically converted to an attachment with ID {att_id}.]"
+            )
+            if mime_type == "application/json":
+                hint += (
+                    f"\nYou can use `jq_query(attachment_id='{att_id}', jq_program='...')` "
+                    f"to process it without loading it all into your context."
+                )
+            else:
+                hint += (
+                    f"\nYou can use `read_text_attachment(attachment_id='{att_id}', ...)` "
+                    f"to read parts of it, or use `execute_script` to process it with a custom script."
+                    f"\nExample script for searching:\n"
+                    f"```starlark\n"
+                    f"content = attachment_read('{att_id}')\n"
+                    f"for line in content.split('\\n'):\n"
+                    f"    if 'search_term' in line:\n"
+                    f"        print(line)\n"
+                    f"```"
+                )
+
+            new_content = f"Tool result from '{tool_name}' was too large and was saved as attachment {att_id}.{hint}"
+            logger.info(
+                f"Auto-converted large tool result ({len(content_bytes)} bytes) from "
+                f"'{tool_name}' to attachment {att_id}"
+            )
+            return new_content, att_id
+
+        except Exception as e:
+            logger.error(
+                f"Failed to auto-convert large tool result to attachment: {e}",
+                exc_info=True,
+            )
+            return content, None
 
     def _get_file_extension_from_mime_type(self, mime_type: str) -> str:
         """

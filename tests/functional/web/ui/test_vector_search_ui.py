@@ -2,6 +2,8 @@
 
 import json
 import uuid
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import httpx
 import pytest
@@ -31,6 +33,7 @@ TEST_DOC_3_METADATA = {"category": "methodology", "difficulty": "intermediate"}
 @pytest.mark.asyncio
 async def test_react_vector_search_page_loads(
     web_test_fixture_readonly: WebTestFixture,
+    take_screenshot: Callable[[Any, str, str], Awaitable[None]],
 ) -> None:
     """Test that the React Vector Search page loads successfully."""
     page = web_test_fixture_readonly.page
@@ -52,6 +55,11 @@ async def test_react_vector_search_page_loads(
 
     # Check for the search button
     search_button = page.locator("button:has-text('Search')")
+
+    # Take screenshot
+    for viewport in ["desktop", "mobile"]:
+        await take_screenshot(page, "vector-search-empty", viewport)
+
     assert await search_button.is_visible(), "Search button should be visible"
 
 

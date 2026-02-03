@@ -13,6 +13,7 @@ from family_assistant import storage
 from family_assistant.tools.attachments import (
     ATTACHMENT_TOOLS_DEFINITION,
     attach_to_response_tool,
+    read_text_attachment_tool,
 )
 from family_assistant.tools.automations import (
     AUTOMATIONS_TOOLS_DEFINITION,
@@ -362,6 +363,7 @@ AVAILABLE_FUNCTIONS: dict[str, Callable] = {
     "scan_camera_frames": scan_camera_frames_tool,
     "execute_script": execute_script_tool,
     "attach_to_response": attach_to_response_tool,
+    "read_text_attachment": read_text_attachment_tool,
     # Mock image processing tools (for testing)
     "annotate_image": annotate_image_tool,
     "mock_camera_snapshot": mock_camera_snapshot_tool,

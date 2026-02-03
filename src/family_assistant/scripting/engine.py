@@ -197,6 +197,7 @@ class StarlarkEngine:
 
                     # Add attachment functions (excluding list and send for security/architecture)
                     module.add_callable("attachment_get", attachment_api.get)
+                    module.add_callable("attachment_read", attachment_api.read)
                     module.add_callable("attachment_create", attachment_api.create)
                     # NOTE: attachment_list intentionally excluded to prevent ID enumeration
                     # NOTE: attachment_send removed - scripts should use LLM tools:

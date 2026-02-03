@@ -3,12 +3,14 @@ Utility functions for testing.
 """
 
 import asyncio
+import inspect
 import logging
 import os
 import random
 import socket
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from typing import TypeVar
 
 import httpx
 import sqlalchemy as sa
@@ -20,6 +22,8 @@ from sqlalchemy.sql.functions import (
 
 from family_assistant.storage.context import get_db_context
 from family_assistant.storage.tasks import tasks_table
+
+T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
 
@@ -268,42 +272,50 @@ async def wait_for_tasks_to_complete(
     )
 
 
-async def wait_for_condition(
-    condition: Callable[[], bool | Awaitable[bool]],
-    timeout_seconds: float = 5.0,
-    poll_interval_seconds: float = 0.1,
-    error_message: str = "Condition not met within timeout",
-) -> None:
-    """
-    Waits for a condition to become true.
+async def wait_for_condition(  # noqa: UP047 - Use TypeVar for pylint compatibility
+    condition: Callable[[], T | Awaitable[T]],
+    timeout: float = 30.0,
+    interval: float = 0.1,
+    description: str = "condition",
+) -> T:
+    """Wait for a condition to be truthy, with retries.
 
     Args:
-        condition: A callable that returns True when the condition is met.
-                   Can be async.
-        timeout_seconds: Maximum time to wait.
-        poll_interval_seconds: Time to sleep between checks.
-        error_message: Message to include in TimeoutError.
+        condition: Callable that returns a value. Can be async. Retries until truthy.
+        timeout: Maximum time to wait in seconds.
+        interval: Time between retries in seconds.
+        description: Description for error message if timeout is reached.
+
+    Returns:
+        The truthy result from the condition.
 
     Raises:
-        asyncio.TimeoutError: If timeout is reached.
+        TimeoutError: If condition doesn't become truthy within timeout.
     """
-    start_time = datetime.now(UTC)
-    end_time = start_time + timedelta(seconds=timeout_seconds)
+    deadline = asyncio.get_running_loop().time() + timeout
+    last_result = None
 
-    while datetime.now(UTC) < end_time:
+    while asyncio.get_running_loop().time() < deadline:
         try:
-            result = condition()
-            if asyncio.iscoroutine(result):
-                result = await result
+            maybe_awaitable = condition()
+            if inspect.isawaitable(maybe_awaitable):
+                result = await maybe_awaitable
+            else:
+                result = maybe_awaitable
 
             if result:
-                return
+                return result  # type: ignore
+            last_result = result
         except Exception as e:
             logger.warning(f"Condition check raised exception: {e}")
+            last_result = e
 
-        await asyncio.sleep(poll_interval_seconds)
+        # ast-grep-ignore: no-asyncio-sleep-in-tests - This IS the wait_for_condition implementation
+        await asyncio.sleep(interval)
 
-    raise TimeoutError(f"{error_message} (waited {timeout_seconds}s)")
+    raise TimeoutError(
+        f"Timed out waiting for {description} after {timeout}s. Last result: {last_result}"
+    )
 
 
 def find_free_port() -> int:

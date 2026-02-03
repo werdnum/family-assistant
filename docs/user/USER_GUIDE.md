@@ -31,6 +31,9 @@ services to respond or perform actions.
   here: `{{ SERVER_URL }}` (This link will be replaced with the actual URL). The interface
   automatically opens to the chat page for quick access.
 
+  ![Landing Page](../../screenshots/desktop/landing-page.png) *The Family Assistant landing page
+  provides quick access to all major features*
+
 - **Email (Future):** \*Soon, you might be able to forward emails (like flight confirmations or
   event invitations) to a special address so the assistant can automatically store the information.
   Stay tuned!
@@ -346,33 +349,57 @@ various tasks with dark mode support and mobile optimization.
 
 - **Accessing it:**`{{ SERVER_URL }}` (This link will be replaced with the actual URL). The
   interface automatically opens to the chat page for immediate access.
+
 - \*\*Chat Features:\*\*
+
   - Real-time streaming responses - see the assistant's replies as they're being generated
   - Live tool usage display - watch what tools are being used during responses
   - Easy conversation management and switching
   - Clear message formatting and display
+
+  ![Chat Interface](../../screenshots/desktop/chat-empty.png) *The web chat interface provides
+  real-time streaming responses and conversation management*
+
 - \*\*Navigation:\*\*The web interface features a dropdown menu organized into clear sections:
+
   - **Information**- View and manage your notes, documents, and conversation history with enhanced
     filtering
   - **Operations**- Access background tasks and tool testing
   - **Settings**- Manage API tokens and other configuration
+
 - **What it's for:**
+
   - \*\*Viewing/Managing Notes:\*\*The Notes page has been enhanced with: \*A clean, organized list
     of all your notes \*Easy editing - click on any note to modify its content \*Control whether
     notes are automatically included in conversations \*Delete notes that are no longer needed
     \*Search through notes quickly
 
+    ![Notes List](../../screenshots/desktop/notes-list.png) *The Notes page shows all your saved
+    notes with editing and management options*
+
+    ![Add Note Form](../../screenshots/desktop/notes-add-form.png) *Creating a new note with title,
+    content, and visibility options*
+
   - \*\*Document Management:\*\*The Documents section provides: \*A comprehensive list of all
     indexed documents \*Document details including type, source, and metadata \*Direct links to view
     full document content \*Search capabilities across all document types
+
+    ![Documents Page](../../screenshots/desktop/documents.png) *The Documents page displays all
+    indexed documents with search and filtering*
 
   - \*\*Viewing History:\*\*Look back through past conversations the assistant has had across all
     interfaces (Telegram, Web, Email). Use enhanced filtering options to find specific conversations
     or messages.
 
+    ![History Page](../../screenshots/desktop/history.png) *The History page shows past
+    conversations with filtering and search options*
+
   - \*\*Viewing Background Tasks:\*\*See a log of tasks the assistant has performed automatically in
     the background (like fetching calendar updates or future scheduled actions). You can also
     manually retry failed tasks from this page.
+
+    ![Tasks Page](../../screenshots/desktop/tasks.png) *The Tasks page displays background
+    operations and scheduled actions*
 
   - \*\*Searching Documents:\*\*Use the "Vector Search" page to search through all indexed documents
     (notes, emails, uploaded files, web pages). Results are grouped by document, and you can click
@@ -380,14 +407,23 @@ various tasks with dark mode support and mobile optimization.
     full text at the top for easy reading, along with all metadata and search snippets. Even
     documents that were too large to fully index for search are displayed in their entirety.
 
+    ![Vector Search](../../screenshots/desktop/vector-search.png) *The Vector Search page allows
+    semantic search across all indexed documents*
+
   - \*\*Uploading Documents:\*\*Use the "Upload Document" page to add new files (PDFs, text files,
     etc.) for the assistant to index and learn from.
 
   - \*\*Managing API Tokens:\*\*If you need programmatic access to the assistant, you can manage
     your API tokens on the "API Tokens" page under "Settings".
 
+    ![Settings Page](../../screenshots/desktop/settings.png) *The Settings page for managing API
+    tokens and configuration*
+
   - \*\*Tool Testing:\*\*A "Tools" page allows developers to test and debug tool interactions
     directly from the web interface.
+
+    ![Tools Page](../../screenshots/desktop/tools.png) *The Tools Explorer shows all available tools
+    with their descriptions and parameters*
 
   - \*\*Automations Management:\*\*The Automations page provides: \*A comprehensive list of all
     automations (both event-based and schedule-based) \*Create new automations directly from the UI
@@ -396,6 +432,9 @@ various tasks with dark mode support and mobile optimization.
     script action types) \*Live script validation for script-based automations \*Enable/disable and
     delete controls for managing automations \*Filter by automation type (event or schedule) and
     enabled status
+
+    ![Automations Page](../../screenshots/desktop/automations.png) *The Automations page for
+    managing event and schedule-based automations*
 
 ## 8. Tips for Best Results
 

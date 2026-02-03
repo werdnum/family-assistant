@@ -1,6 +1,6 @@
 """Error log storage models and queries."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import (
@@ -24,7 +24,13 @@ error_logs_table = Table(
     "error_logs",
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("timestamp", DateTime, nullable=False, default=func.now(), index=True),
+    Column(
+        "timestamp",
+        DateTime(timezone=True),
+        nullable=False,
+        default=func.now(),
+        index=True,
+    ),
     Column("logger_name", String(255), nullable=False, index=True),
     Column("level", String(50), nullable=False, index=True),
     Column("message", Text, nullable=False),
@@ -103,7 +109,7 @@ async def cleanup_old_error_logs(
     db_context: DatabaseContext, retention_days: int = 30
 ) -> int:
     """Remove error logs older than retention period. Returns number of deleted rows."""
-    cutoff_date = datetime.now() - timedelta(days=retention_days)
+    cutoff_date = datetime.now(UTC) - timedelta(days=retention_days)
 
     stmt = delete(error_logs_table).where(error_logs_table.c.timestamp < cutoff_date)
     result = await db_context.execute_with_retry(stmt)

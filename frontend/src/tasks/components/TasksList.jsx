@@ -1,6 +1,7 @@
 import { AlertCircle } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { getDiagnosticsUrl } from '@/utils/diagnosticsUrl';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import TaskCard from './TaskCard';
@@ -193,7 +194,15 @@ const TasksList = ({ onLoadingChange }) => {
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Error</AlertTitle>
           <AlertDescription>
-            {actionError}
+            {actionError}{' '}
+            <a
+              href={getDiagnosticsUrl()}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:no-underline"
+            >
+              View diagnostics
+            </a>
             <Button onClick={() => setActionError(null)} variant="ghost" size="sm" className="ml-2">
               Dismiss
             </Button>

@@ -12,10 +12,10 @@ async def test_base_page_navigation(web_test_fixture_readonly: WebTestFixture) -
     """Test that the base page can navigate to different routes."""
     page = BasePage(web_test_fixture_readonly.page, web_test_fixture_readonly.base_url)
 
-    # Navigate to homepage (which shows notes)
+    # Navigate to homepage (Landing Page)
     await page.navigate_to("/")
-    # Check that we're on the notes page (homepage)
-    assert await page.is_element_visible('h2:has-text("Family Assistant Chat")')
+    # Check that we're on the landing page
+    assert await page.is_element_visible('h1:has-text("Family Assistant")')
 
     # Navigate to notes page
     await page.navigate_to("/notes")

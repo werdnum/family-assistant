@@ -188,6 +188,13 @@ RUN uv sync --extra local-embeddings
 # Expose the port the web server listens on
 EXPOSE 8000
 
+# --- Versioning Information ---
+# These are passed as build arguments and set as environment variables
+ARG GIT_COMMIT=unknown
+ARG BUILD_DATE=unknown
+ENV GIT_COMMIT=$GIT_COMMIT
+ENV BUILD_DATE=$BUILD_DATE
+
 # Run as non-root user for security
 # The application will run with reduced privileges
 USER appuser
