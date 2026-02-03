@@ -48,3 +48,6 @@ frontend/dev-dist
 .cache
 .python-versions
 .poe-test-summary.txt
+
+# MonkeyType
+monkeytype.sqlite3

@@ -167,6 +167,7 @@ dev = [
     "playwright==1.52.0",  # Pin to match rebrowser-playwright version for shared browser binaries
     "homeassistant>=2025.4.4",
     "pixeltable-pgserver>=0.4.0",
+    "monkeytype>=23.3.0",  # Runtime type inference from tests
 ]
 local-embeddings = [
     "sentence-transformers>=3.0.1",
@@ -303,6 +304,19 @@ shell = "cd frontend && npm run check"
 help = "Format and lint both Python and JavaScript/TypeScript code"
 shell = "scripts/format-and-lint.sh"
 
+# --- MonkeyType Type Inference Workflow ---
+[tool.poe.tasks.trace]
+help = "Run tests through MonkeyType to collect type information"
+cmd = "monkeytype run -m pytest"
+
+[tool.poe.tasks.apply-types]
+help = "Apply MonkeyType-inferred types to untyped code (safe, won't overwrite existing types)"
+shell = "for mod in $(monkeytype list-modules); do monkeytype apply $mod; done"
+
+[tool.poe.tasks.apply-types-force]
+help = "Apply MonkeyType-inferred types, overwriting existing annotations (use with caution)"
+shell = "for mod in $(monkeytype list-modules); do monkeytype apply --ignore-existing-annotations $mod; done"
+
 
 [tool.ruff.lint.isort]
 known-first-party = ["family_assistant"]
@@ -414,4 +428,5 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "torch-cpu" }
 telegram-bot-api-mock = { git = "https://github.com/werdnum/telegram-bot-api-mock" }
+
 

@@ -289,6 +289,64 @@ python scripts/generate_vapid_keys.py
 poe symbols
 ```
 
+### Type Inference with MonkeyType
+
+MonkeyType traces test execution to infer types from actual runtime values. This is useful for:
+
+- Adding type hints to **untyped** functions
+- Generating stubs to understand what types are actually used
+
+**Commands:**
+
+```bash
+# Trace tests to collect type information
+poe trace tests/unit/
+
+# List modules with collected type data
+monkeytype list-modules
+
+# View inferred types as stubs (read-only, for inspection)
+monkeytype stub family_assistant.module_name
+
+# Apply types to untyped code only (safe - won't overwrite existing types)
+monkeytype apply family_assistant.module_name
+```
+
+**When to use `--ignore-existing-annotations`:**
+
+Use with caution. This flag overwrites existing type annotations with what MonkeyType observed
+during test execution. This is problematic for:
+
+- Protocol/interface types (e.g., `LLMInterface` gets replaced with `MockLLMClient`)
+- Optional parameters (e.g., `Clock | None` becomes `None` if tests don't use the parameter)
+- Production code with proper types (test mocks get added as imports)
+
+Only use `--ignore-existing-annotations` for narrowing overly broad `Any` types in code that you've
+verified is only called with specific types.
+
+**Safe workflow:**
+
+```bash
+# 1. Trace specific tests
+poe trace tests/unit/test_my_module.py
+
+# 2. Inspect the stubs first
+monkeytype stub family_assistant.my_module
+
+# 3. Apply only to untyped code (no --ignore-existing-annotations)
+monkeytype apply family_assistant.my_module
+
+# 4. Run linting to fix imports
+poe lint
+```
+
+**Caveats:**
+
+- MonkeyType only sees types used during test execution—test coverage determines accuracy
+- Test mocks may pollute inferred types (e.g., `RuleBasedMockLLMClient` instead of `LLMInterface`)
+- The `monkeytype.sqlite3` database file is gitignored
+- Run `rm monkeytype.sqlite3` to clear the trace database between runs
+
 ### Finding Symbol Definitions and Signatures
 
 ```bash
