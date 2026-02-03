@@ -96,15 +96,32 @@ async def scan_camera_frames_tool(
 
 ### Structured Output Schema
 
-Each frame is analyzed with this JSON schema:
+Each frame is analyzed using LLM structured output with a Pydantic model:
+
+```python
+class FrameAnalysisLLMResponse(BaseModel):
+    matches_query: bool = Field(
+        description="Whether the frame shows what the user is looking for"
+    )
+    description: str = Field(
+        description="Brief description of what is visible in the frame"
+    )
+    confidence: float = Field(
+        ge=0.0, le=1.0, description="Confidence score from 0.0 to 1.0"
+    )
+    detected_objects: list[str] = Field(
+        default_factory=list, description="Key objects/entities visible in the frame"
+    )
+```
+
+Example response:
 
 ```json
 {
   "matches_query": true,
   "description": "Person walking up driveway toward front door carrying a package",
   "confidence": 0.85,
-  "detected_objects": ["person", "package", "car"],
-  "activity": "delivery"
+  "detected_objects": ["person", "package", "car"]
 }
 ```
 
@@ -163,8 +180,10 @@ Camera Analyst:
 1. Reuses existing `get_frames_batch` from camera backend (already parallelized)
 2. Uses `asyncio.gather` for parallel LLM calls (provider handles rate limiting)
 3. Uses `LLMClientFactory` to create custom LLM client when `model` parameter is specified
-4. Error handling: Individual frame failures don't fail entire scan
-5. Returns both summary data and filtered attachments
+4. Uses LLM structured output via `generate_structured()` with Pydantic schema for type-safe
+   responses
+5. Error handling: Individual frame failures don't fail entire scan
+6. Returns both summary data and filtered attachments
 
 ## Alternatives Considered
 
