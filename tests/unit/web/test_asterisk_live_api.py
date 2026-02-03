@@ -1,8 +1,10 @@
+import asyncio
 import unittest
 from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock
 
 from google.genai.types import Blob, Part
+from starlette.websockets import WebSocketState
 
 from family_assistant.web.routers.asterisk_live_api import AsteriskLiveHandler
 
@@ -12,9 +14,10 @@ class TestAsteriskLiveHandler(unittest.IsolatedAsyncioTestCase):
         self.mock_websocket = AsyncMock()
         self.mock_client = MagicMock()
         self.mock_config = MagicMock()
+        self.mock_config.vad = MagicMock(automatic=True)
 
         # Configure default behavior for websocket
-        self.mock_websocket.client_state = "CONNECTED"
+        self.mock_websocket.client_state = WebSocketState.CONNECTED
 
         self.handler = AsteriskLiveHandler(
             websocket=self.mock_websocket,
@@ -38,6 +41,7 @@ class TestAsteriskLiveHandler(unittest.IsolatedAsyncioTestCase):
 
         mock_response = MagicMock()
         mock_response.server_content.model_turn.parts = [part]
+        mock_response.tool_call = None
 
         # Configure receive to yield the response then cancel
         async def mock_receive() -> AsyncGenerator[MagicMock]:
@@ -81,6 +85,7 @@ class TestAsteriskLiveHandler(unittest.IsolatedAsyncioTestCase):
 
         mock_response = MagicMock()
         mock_response.server_content.model_turn.parts = [part]
+        mock_response.tool_call = None
 
         async def mock_receive() -> AsyncGenerator[MagicMock]:
             yield mock_response
@@ -90,6 +95,8 @@ class TestAsteriskLiveHandler(unittest.IsolatedAsyncioTestCase):
         # No resampler for simplicity (or simplistic one)
         self.handler.gemini_to_asterisk_resampler = None
         self.handler.optimal_frame_size = 1  # Force send immediately
+        self.handler.send_frame_size = 1
+        self.handler.send_frame_duration_ms = 0.0
 
         await self.handler._receive_from_gemini()
 
@@ -106,6 +113,44 @@ class TestAsteriskLiveHandler(unittest.IsolatedAsyncioTestCase):
         # Reconstruct sent data
         sent_data = b"".join([c[0][0] for c in calls])
         self.assertEqual(sent_data, raw_audio)
+
+    async def test_receive_from_gemini_respects_flow_control(self) -> None:
+        """Ensure MEDIA_XOFF halts sends until MEDIA_XON is received."""
+        mock_session = MagicMock()
+        self.handler.gemini_session = mock_session
+
+        raw_audio = b"\x00\x01" * 50
+        blob = Blob(data=raw_audio, mime_type="audio/pcm;rate=24000")
+        part = Part(inline_data=blob)
+
+        mock_response = MagicMock()
+        mock_response.server_content.model_turn.parts = [part]
+        mock_response.tool_call = None
+
+        async def mock_receive() -> AsyncGenerator[MagicMock]:
+            yield mock_response
+
+        mock_session.receive.return_value = mock_receive()
+
+        self.handler.gemini_to_asterisk_resampler = None
+        self.handler.optimal_frame_size = 20
+        self.handler.send_frame_size = 20
+        self.handler.send_frame_duration_ms = 0.0
+
+        # Simulate MEDIA_XOFF before audio arrives
+        self.handler.media_send_allowed.clear()
+
+        loop = asyncio.get_running_loop()
+        xon_handle = loop.call_later(0.01, self.handler.media_send_allowed.set)
+        start = loop.time()
+        try:
+            await self.handler._receive_from_gemini()
+        finally:
+            xon_handle.cancel()
+
+        elapsed = loop.time() - start
+        self.assertGreaterEqual(elapsed, 0.009)
+        self.assertGreater(len(self.mock_websocket.send_bytes.call_args_list), 0)
 
 
 if __name__ == "__main__":
