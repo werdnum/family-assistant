@@ -35,7 +35,7 @@ from pydantic import BaseModel
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.llm.messages import SystemMessage, UserMessage
 
-DEFAULT_MODEL = "gemini-2.5-flash-preview-05-20"
+DEFAULT_MODEL = "gemini-3-flash-preview"
 
 
 async def one_shot(
@@ -50,7 +50,7 @@ async def one_shot(
     Args:
         prompt: The user prompt to send to the LLM.
         system: Optional system message to set context.
-        model: Model to use (default: gemini-2.5-flash-preview-05-20).
+        model: Model to use (default: gemini-3-flash-preview).
 
     Returns:
         The LLM's text response.
@@ -91,7 +91,7 @@ async def one_shot_structured[T: BaseModel](
         prompt: The user prompt to send to the LLM.
         response_model: Pydantic model class for the expected response structure.
         system: Optional system message to set context.
-        model: Model to use (default: gemini-2.5-flash-preview-05-20).
+        model: Model to use (default: gemini-3-flash-preview).
 
     Returns:
         An instance of response_model populated with the LLM's response.
