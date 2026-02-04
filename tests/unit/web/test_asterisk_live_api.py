@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+from array import array
 from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock
 
@@ -151,6 +152,51 @@ class TestAsteriskLiveHandler(unittest.IsolatedAsyncioTestCase):
         elapsed = loop.time() - start
         self.assertGreaterEqual(elapsed, 0.009)
         self.assertGreater(len(self.mock_websocket.send_bytes.call_args_list), 0)
+
+    def test_apply_ducking_attenuates_audio(self) -> None:
+        self.handler.assistant_duck_gain = 0.5
+        self.handler.format = "slin"
+        samples = array("h", [1000, -1000])
+        audio_data = samples.tobytes()
+
+        output = self.handler._apply_ducking(audio_data)
+        output_samples = array("h")
+        output_samples.frombytes(output)
+
+        self.assertEqual(list(output_samples), [500, -500])
+
+    def test_apply_ducking_preserves_bounds(self) -> None:
+        self.handler.assistant_duck_gain = 0.5
+        self.handler.format = "slin16"
+        samples = array("h", [32767, -32768])
+        audio_data = samples.tobytes()
+
+        output = self.handler._apply_ducking(audio_data)
+        output_samples = array("h")
+        output_samples.frombytes(output)
+
+        self.assertTrue(all(-32768 <= s <= 32767 for s in output_samples))
+
+    def test_apply_ducking_handles_odd_length(self) -> None:
+        self.handler.assistant_duck_gain = 0.5
+        self.handler.format = "slin"
+        audio_data = b"\x01\x02\x03"
+
+        output = self.handler._apply_ducking(audio_data)
+
+        self.assertEqual(len(output), 2)
+
+    def test_apply_ducking_skips_non_linear_formats(self) -> None:
+        self.handler.assistant_duck_gain = 0.5
+        audio_data = b"\x00\x01\x02\x03"
+
+        self.handler.format = "ulaw"
+        output_ulaw = self.handler._apply_ducking(audio_data)
+        self.assertEqual(output_ulaw, audio_data)
+
+        self.handler.format = "alaw"
+        output_alaw = self.handler._apply_ducking(audio_data)
+        self.assertEqual(output_alaw, audio_data)
 
 
 if __name__ == "__main__":

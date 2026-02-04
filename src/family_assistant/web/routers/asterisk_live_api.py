@@ -223,6 +223,8 @@ class AsteriskLiveHandler:
         return base64.b64encode(bytes(data)).decode("ascii")
 
     def _apply_ducking(self, audio_data: bytes) -> bytes:
+        if self.format not in {"slin", "slin16"}:
+            return audio_data
         if self.assistant_duck_gain >= 0.999:
             return audio_data
         if len(audio_data) % 2 != 0:
