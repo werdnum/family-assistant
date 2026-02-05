@@ -131,30 +131,35 @@ for _all_ of them. More labels = more restricted. No labels = unrestricted (visi
 
 **Configuration:**
 
-On notes (frontmatter):
+On notes (database column):
+
+Visibility labels are stored as a JSON list in the `visibility_labels` column on the notes table,
+alongside existing columns like `include_in_prompt`. This requires a migration to add the column
+(default: empty list `[]`).
+
+```sql
+-- Migration
+ALTER TABLE notes ADD COLUMN visibility_labels JSON NOT NULL DEFAULT '[]';
+```
+
+Examples of stored values:
+
+- `[]` — unrestricted (visible to all profiles)
+- `["sensitive"]` — only profiles with `sensitive` grant
+- `["private_to_andrew"]` — only profiles with `private_to_andrew` grant
+- `["private_to_andrew", "sensitive"]` — requires both grants
+
+For file-based notes/skills, visibility labels are specified in frontmatter (since there is no DB
+row). File-based labels should be conservative — most bundled skills should have no labels
+(unrestricted).
 
 ```yaml
 ---
-visibility_labels: [sensitive]
+name: Home Automation
+description: Control smart home devices...
+visibility_labels: [skill_internal]
 ---
-Family medical information...
 ```
-
-```yaml
----
-visibility_labels: [private_to_andrew]
----
-Andrew's personal notes...
-```
-
-```yaml
----
-visibility_labels: [external_input]
----
-Email from stranger@example.com: ...
-```
-
-Notes without `visibility_labels` (or with an empty list) have no restrictions.
 
 On profiles (config.yaml):
 
@@ -502,8 +507,8 @@ class NoteRegistry:
 
         is_skill = bool(frontmatter and "name" in frontmatter and "description" in frontmatter)
 
-        # Parse visibility labels from frontmatter (list → set)
-        raw_labels = (frontmatter or {}).get("visibility_labels", [])
+        # Visibility labels come from DB column, not frontmatter
+        raw_labels = note_dict.get("visibility_labels", [])
         visibility_labels = set(raw_labels) if isinstance(raw_labels, list) else set()
 
         return ParsedNote(
@@ -739,14 +744,14 @@ src/family_assistant/skills/        # Built-in skills (shipped with app)
 
 ### 4.1. notes-v2 Milestones Superseded
 
-| notes-v2 Milestone                       | Status in This Design                           |
-| ---------------------------------------- | ----------------------------------------------- |
-| Milestone 1: Note indexing               | Done (keep as-is)                               |
-| Milestone 2: include_in_prompt           | Done (keep as-is)                               |
-| Milestone 2.5: Tool/UI enhancements      | Partially superseded by `get_note` tool         |
-| **Milestone 3: Profile-based filtering** | **Replaced by frontmatter** (no schema changes) |
-| Milestone 4: Web UI enhancements         | Deferred (not blocking)                         |
-| **Milestone 5: Direct note access tool** | **Replaced by `get_note` tool**                 |
+| notes-v2 Milestone                       | Status in This Design                                      |
+| ---------------------------------------- | ---------------------------------------------------------- |
+| Milestone 1: Note indexing               | Done (keep as-is)                                          |
+| Milestone 2: include_in_prompt           | Done (keep as-is)                                          |
+| Milestone 2.5: Tool/UI enhancements      | Partially superseded by `get_note` tool                    |
+| **Milestone 3: Profile-based filtering** | **Replaced by `visibility_labels` column + config grants** |
+| Milestone 4: Web UI enhancements         | Deferred (not blocking)                                    |
+| **Milestone 5: Direct note access tool** | **Replaced by `get_note` tool**                            |
 
 ### 4.2. Key Simplification
 
@@ -759,28 +764,31 @@ The notes-v2 plan called for:
 
 This design achieves the same outcome with:
 
-- **No schema changes** - frontmatter in existing `content` column
-- **No migrations** - existing `include_in_prompt` column used as-is
-- **Python-side filtering** - parse frontmatter on load, filter in memory (fine for \<100 notes)
+- **One new column** (`visibility_labels` JSON) + simple migration
+- **No renames** - existing `include_in_prompt` column used as-is
+- **Python-side filtering** - parse frontmatter for skill metadata, filter by labels in memory (fine
+  for \<100 notes)
 - **One new tool** (`get_note`) that serves both direct access and skill loading
 
-### 4.3. Trade-offs
+### 4.3. Where Metadata Lives
 
-**Frontmatter instead of columns:**
+| Metadata                          | Storage             | Rationale                                           |
+| --------------------------------- | ------------------- | --------------------------------------------------- |
+| `visibility_labels`               | DB column (JSON)    | Security boundary — must not be in editable content |
+| `include_in_prompt`               | DB column (boolean) | Already exists                                      |
+| Skill `name`                      | Frontmatter         | Intrinsic to content — describes what the skill is  |
+| Skill `description`               | Frontmatter         | Intrinsic to content — describes what the skill is  |
+| `proactive_for_profile_ids`       | Frontmatter         | Prompt UX, not security; rare per-note override     |
+| `exclude_from_prompt_profile_ids` | Frontmatter         | Prompt UX, not security; rare per-note override     |
 
-| Aspect            | Columns (notes-v2)      | Frontmatter (this design)             |
-| ----------------- | ----------------------- | ------------------------------------- |
-| SQL filtering     | Efficient at DB level   | Must load all, filter in Python       |
-| Adding new fields | Migration per field     | Just parse more frontmatter           |
-| Portability       | Locked to our schema    | Compatible with Agent Skills standard |
-| User editing      | Needs UI for each field | Edit content directly                 |
-| Performance       | Better at 1000+ notes   | Fine for \<100 notes                  |
+The principle: **security-critical metadata goes in the database**, content-intrinsic metadata goes
+in frontmatter. `visibility_labels` controls who can see a note at all — a parsing bug or malformed
+frontmatter must not be able to change that. Skill names and descriptions are part of the content
+itself and are harmless if parsed incorrectly.
 
-**Python-side filtering is acceptable** because:
-
-- Family Assistant typically has \<50 notes
-- Notes are cached in the registry, not re-queried per request
-- Frontmatter parsing is fast (~microseconds per note)
+For file-based notes (no DB row), `visibility_labels` can be specified in frontmatter as a fallback.
+File-based skills are typically bundled with the application (trusted source), so the risk is lower.
+Most should have no labels (unrestricted).
 
 ## 5. Example Skills
 
@@ -841,18 +849,22 @@ description: Help with research tasks including web searches, document analysis,
 
 ### Phase 1: Core Infrastructure
 
-1. **Frontmatter parser**: Extract YAML frontmatter from note content
-2. **`ParsedNote` dataclass**: Unified representation with parsed metadata
-3. **`NoteRegistry`**: Load from DB + files, parse frontmatter, cache
-4. **File loading**: `load_notes_from_directory()` for built-in skills
-5. **Configuration**: `skills.builtin_dir` and `skills.user_dir` in config
+1. **DB migration**: Add `visibility_labels` JSON column to notes table (default: `[]`)
+2. **Frontmatter parser**: Extract YAML frontmatter from note content (for skill metadata)
+3. **`ParsedNote` dataclass**: Unified representation with parsed metadata
+4. **`NoteRegistry`**: Load from DB + files, parse frontmatter, cache
+5. **File loading**: `load_notes_from_directory()` for built-in skills
+6. **Configuration**: `skills.builtin_dir`, `skills.user_dir`, and profile `visibility_grants` in
+   config
 
-**Deliverable**: Notes and file-based skills loaded into a unified registry.
+**Deliverable**: Notes and file-based skills loaded into a unified registry with label-based access
+control.
 
 ### Phase 2: Profile-Aware Context
 
 1. **Refactor `NotesContextProvider`**: Use `NoteRegistry` instead of direct DB queries
-2. **Profile visibility**: Apply frontmatter rules in context provider
+2. **Profile visibility**: Apply label/grant access control + frontmatter prompt rules in context
+   provider
 3. **Skill catalog**: Generate catalog listing for skill notes
 4. **Pass profile_id** through context provider initialization
 
@@ -953,7 +965,12 @@ trust model as regular notes. External skill registries are explicitly out of sc
    in the system prompt like "To create a skill, use `add_or_update_note` with YAML frontmatter
    containing `name` and `description` fields."
 
-4. **Profile auto-detection**: Should preflight also suggest which profile to use? This extends
+4. **Label management UX**: How do users set visibility labels? Options: (a) explicit tool parameter
+   on `add_or_update_note`, (b) web UI checkbox/tag interface, (c) assistant infers from context
+   (e.g., email-originated notes auto-labeled `external_input`). Programmatic labeling (e.g., email
+   webhook auto-labels incoming content) is likely more important than manual labeling.
+
+5. **Profile auto-detection**: Should preflight also suggest which profile to use? This extends
    beyond skills into general routing.
 
 ## 9. References
