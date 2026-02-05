@@ -40,23 +40,29 @@ serve both use cases identically. We don't need separate systems.
 
 ## 2. Architecture
 
-### 2.1. The Frontmatter Convention
+### 2.1. Note Metadata
 
-Notes can optionally begin with YAML frontmatter. Frontmatter controls visibility and, for skills,
-provides discovery metadata:
+All note metadata that drives application behavior lives in the database as columns:
 
-**Regular note with profile affinity** (not a skill, no `name`/`description`):
+- **`visibility_labels`** (JSON list) — access control labels (Section 2.2)
+- **`include_in_prompt`** (boolean) — whether the note appears in the system prompt (existing)
+- **`proactive_for_profile_ids`** (JSON list) — profile-specific prompt inclusion overrides
+- **`exclude_from_prompt_profile_ids`** (JSON list) — profile-specific prompt exclusion overrides
 
-```markdown
----
-proactive_for_profile_ids: ["automation_creation"]
----
+Note content is stored as-is. Regular notes have no special formatting:
 
-Starlark scripts in this project use the `event_listener` pattern.
-The standard entry point is `on_event(event_type, payload)`.
+```
+Our family prefers vegetarian meals on weekdays.
 ```
 
-**Skill note** (has `name` and `description`):
+### 2.1.1. Frontmatter for Agent Skills Format
+
+File-based skills use YAML frontmatter following the
+[Agent Skills](https://agentskills.io/specification) convention. Frontmatter is **only** parsed for
+file-based notes (which have no DB row) and for detecting skill metadata (`name` and `description`).
+It does not leak into the rest of the application.
+
+**File-based skill** (has `name` and `description`):
 
 ```markdown
 ---
@@ -76,11 +82,9 @@ When the user asks to take meeting notes, use this structure:
 - **Action Items**: ...
 ```
 
-**Regular note without frontmatter** (behaves exactly as today):
-
-```
-Our family prefers vegetarian meals on weekdays.
-```
+A note is detected as a skill when its content (DB note) or frontmatter (file-based note) contains
+both `name` and `description` fields. For DB notes, skill detection uses frontmatter in the content
+column — this is read-only parsing, not a place to store application metadata.
 
 ### 2.2. Visibility and Access Control
 
@@ -140,6 +144,8 @@ alongside existing columns like `include_in_prompt`. This requires a migration t
 ```sql
 -- Migration
 ALTER TABLE notes ADD COLUMN visibility_labels JSON NOT NULL DEFAULT '[]';
+ALTER TABLE notes ADD COLUMN proactive_for_profile_ids JSON;
+ALTER TABLE notes ADD COLUMN exclude_from_prompt_profile_ids JSON;
 ```
 
 Examples of stored values:
@@ -393,17 +399,16 @@ class ParsedNote:
     raw_content: str                  # Original content (with frontmatter)
     include_in_prompt: bool           # From DB column
     attachment_ids: list[str]
-    # Access control: set of visibility labels (empty = unrestricted)
+    # Access control: set of visibility labels from DB column (empty = unrestricted)
     visibility_labels: set[str] = field(default_factory=set)
-    # Parsed from frontmatter (None if no frontmatter)
-    frontmatter: dict[str, Any] | None = None
-    # Derived from frontmatter
-    is_skill: bool = False            # Has name + description
-    skill_name: str | None = None     # From frontmatter "name"
-    skill_description: str | None = None  # From frontmatter "description"
-    # Prompt visibility overrides (not security, just UX)
+    # Prompt visibility overrides from DB columns (not security, just UX)
     proactive_for_profile_ids: list[str] | None = None
     exclude_from_prompt_profile_ids: list[str] | None = None
+    # Skill detection: parsed from frontmatter (Agent Skills format, file-based only)
+    frontmatter: dict[str, Any] | None = None
+    is_skill: bool = False            # Has name + description in frontmatter
+    skill_name: str | None = None
+    skill_description: str | None = None
     # Source tracking
     source: str = "database"          # "database" or "file"
     note_id: int | None = None        # DB id (for database notes)
@@ -507,7 +512,7 @@ class NoteRegistry:
 
         is_skill = bool(frontmatter and "name" in frontmatter and "description" in frontmatter)
 
-        # Visibility labels come from DB column, not frontmatter
+        # All behavioral metadata from DB columns, not frontmatter
         raw_labels = note_dict.get("visibility_labels", [])
         visibility_labels = set(raw_labels) if isinstance(raw_labels, list) else set()
 
@@ -518,12 +523,13 @@ class NoteRegistry:
             include_in_prompt=note_dict.get("include_in_prompt", True),
             attachment_ids=note_dict.get("attachment_ids", []),
             visibility_labels=visibility_labels,
+            proactive_for_profile_ids=note_dict.get("proactive_for_profile_ids"),
+            exclude_from_prompt_profile_ids=note_dict.get("exclude_from_prompt_profile_ids"),
+            # Frontmatter only for skill detection (Agent Skills format)
             frontmatter=frontmatter,
             is_skill=is_skill,
             skill_name=frontmatter.get("name") if frontmatter else None,
             skill_description=frontmatter.get("description") if frontmatter else None,
-            proactive_for_profile_ids=frontmatter.get("proactive_for_profile_ids") if frontmatter else None,
-            exclude_from_prompt_profile_ids=frontmatter.get("exclude_from_prompt_profile_ids") if frontmatter else None,
             source=source,
             note_id=note_dict.get("id"),
         )
@@ -701,8 +707,9 @@ def load_notes_from_directory(directory: Path) -> list[ParsedNote]:
             # Use frontmatter name or filename as title
             title = (frontmatter or {}).get("name", md_file.stem)
 
-            # Parse visibility labels from frontmatter
-            raw_labels = (frontmatter or {}).get("visibility_labels", [])
+            # File-based notes: all metadata from frontmatter (no DB row)
+            fm = frontmatter or {}
+            raw_labels = fm.get("visibility_labels", [])
             visibility_labels = set(raw_labels) if isinstance(raw_labels, list) else set()
 
             notes.append(ParsedNote(
@@ -712,12 +719,12 @@ def load_notes_from_directory(directory: Path) -> list[ParsedNote]:
                 include_in_prompt=True,  # File-based notes default to visible
                 attachment_ids=[],
                 visibility_labels=visibility_labels,
+                proactive_for_profile_ids=fm.get("proactive_for_profile_ids"),
+                exclude_from_prompt_profile_ids=fm.get("exclude_from_prompt_profile_ids"),
                 frontmatter=frontmatter,
-                is_skill=bool(frontmatter and "name" in frontmatter and "description" in frontmatter),
-                skill_name=(frontmatter or {}).get("name"),
-                skill_description=(frontmatter or {}).get("description"),
-                proactive_for_profile_ids=(frontmatter or {}).get("proactive_for_profile_ids"),
-                exclude_from_prompt_profile_ids=(frontmatter or {}).get("exclude_from_prompt_profile_ids"),
+                is_skill=bool("name" in fm and "description" in fm),
+                skill_name=fm.get("name"),
+                skill_description=fm.get("description"),
                 source="file",
                 source_path=md_file,
             ))
@@ -764,7 +771,8 @@ The notes-v2 plan called for:
 
 This design achieves the same outcome with:
 
-- **One new column** (`visibility_labels` JSON) + simple migration
+- **Three new columns** (`visibility_labels`, `proactive_for_profile_ids`,
+  `exclude_from_prompt_profile_ids`) + simple migration
 - **No renames** - existing `include_in_prompt` column used as-is
 - **Python-side filtering** - parse frontmatter for skill metadata, filter by labels in memory (fine
   for \<100 notes)
@@ -772,25 +780,28 @@ This design achieves the same outcome with:
 
 ### 4.3. Where Metadata Lives
 
-| Metadata                          | Storage             | Rationale                                           |
-| --------------------------------- | ------------------- | --------------------------------------------------- |
-| `visibility_labels`               | DB column (JSON)    | Security boundary — must not be in editable content |
-| `include_in_prompt`               | DB column (boolean) | Already exists                                      |
-| Skill `name`                      | Frontmatter         | Intrinsic to content — describes what the skill is  |
-| Skill `description`               | Frontmatter         | Intrinsic to content — describes what the skill is  |
-| `proactive_for_profile_ids`       | Frontmatter         | Prompt UX, not security; rare per-note override     |
-| `exclude_from_prompt_profile_ids` | Frontmatter         | Prompt UX, not security; rare per-note override     |
+**Principle**: All note metadata that drives application behavior lives in the database. Frontmatter
+is only parsed for Agent Skills format compatibility (detecting skill `name` and `description` in
+file-based skills). It does not leak into the rest of the application.
 
-The principle: **security-critical metadata goes in the database**, content-intrinsic metadata goes
-in frontmatter. `visibility_labels` controls who can see a note at all — a parsing bug or malformed
-frontmatter must not be able to change that. Skill names and descriptions are part of the content
-itself and are harmless if parsed incorrectly.
+| Metadata                          | Storage          | Rationale                                            |
+| --------------------------------- | ---------------- | ---------------------------------------------------- |
+| `visibility_labels`               | DB column (JSON) | Security boundary                                    |
+| `include_in_prompt`               | DB column (bool) | Already exists                                       |
+| `proactive_for_profile_ids`       | DB column (JSON) | Application behavior — profile-specific prompt logic |
+| `exclude_from_prompt_profile_ids` | DB column (JSON) | Application behavior — profile-specific prompt logic |
+| Skill `name`                      | Frontmatter      | Agent Skills format — file-based skills only         |
+| Skill `description`               | Frontmatter      | Agent Skills format — file-based skills only         |
 
-For file-based notes (no DB row), `visibility_labels` can be specified in frontmatter as a fallback.
-File-based skills are typically bundled with the application (trusted source), so the risk is lower.
-Most should have no labels (unrestricted).
+For file-based notes (no DB row), all metadata comes from frontmatter since there is no database
+record. File-based skills are bundled with the application (trusted source). When a DB note
+overrides a file-based skill (same title), the DB columns take precedence over frontmatter for all
+behavioral metadata.
 
 ## 5. Example Skills
+
+These are file-based skills (in `src/family_assistant/skills/` or `/config/skills/`). All metadata
+is in frontmatter since there is no DB row.
 
 ### 5.1. Home Automation
 
@@ -799,7 +810,6 @@ Most should have no labels (unrestricted).
 name: Home Automation
 description: Control smart home devices, check sensor states, and create automations. Activate when user mentions lights, temperature, locks, sensors, or home automation.
 proactive_for_profile_ids: ["default_assistant", "automation_creation"]
-# No visibility_labels → unrestricted (any profile can use this skill)
 ---
 
 # Home Automation Skill
@@ -849,7 +859,8 @@ description: Help with research tasks including web searches, document analysis,
 
 ### Phase 1: Core Infrastructure
 
-1. **DB migration**: Add `visibility_labels` JSON column to notes table (default: `[]`)
+1. **DB migration**: Add `visibility_labels`, `proactive_for_profile_ids`, and
+   `exclude_from_prompt_profile_ids` JSON columns to notes table
 2. **Frontmatter parser**: Extract YAML frontmatter from note content (for skill metadata)
 3. **`ParsedNote` dataclass**: Unified representation with parsed metadata
 4. **`NoteRegistry`**: Load from DB + files, parse frontmatter, cache
