@@ -46,8 +46,20 @@ All note metadata that drives application behavior lives in the database as colu
 
 - **`visibility_labels`** (JSON list) — access control labels (Section 2.2)
 - **`include_in_prompt`** (boolean) — whether the note appears in the system prompt (existing)
-- **`proactive_for_profile_ids`** (JSON list) — profile-specific prompt inclusion overrides
-- **`exclude_from_prompt_profile_ids`** (JSON list) — profile-specific prompt exclusion overrides
+
+Per-profile prompt overrides (`proactive_for_profile_ids`, `exclude_from_prompt_profile_ids`) are
+deferred. The combination of `include_in_prompt` + `visibility_labels` + preflight routing covers
+the practical cases:
+
+- Note in prompt for everyone who can see it → `include_in_prompt: true`
+- Note hidden from a profile entirely → `visibility_labels`
+- Note available on demand but not in prompt → `include_in_prompt: false` (reactive via `get_note`)
+- Skill should be pre-loaded for a specific request → preflight router selects it dynamically
+
+The one gap is "same note, different prompt behavior per profile" (e.g., a skill proactive for one
+profile but reactive for another). If that becomes a concrete need, we can add per-profile overrides
+at that point — and decide whether labels or explicit profile IDs are the right shape based on real
+usage patterns.
 
 Note content is stored as-is. Regular notes have no special formatting:
 
@@ -144,8 +156,6 @@ alongside existing columns like `include_in_prompt`. This requires a migration t
 ```sql
 -- Migration
 ALTER TABLE notes ADD COLUMN visibility_labels JSON NOT NULL DEFAULT '[]';
-ALTER TABLE notes ADD COLUMN proactive_for_profile_ids JSON;
-ALTER TABLE notes ADD COLUMN exclude_from_prompt_profile_ids JSON;
 ```
 
 Examples of stored values:
@@ -236,30 +246,20 @@ achieving proper segregation in both directions.
 
 #### Prompt Visibility (Within Accessible Notes)
 
-Among notes a profile can access, prompt visibility works as before:
+Among notes a profile can access, prompt visibility is straightforward:
 
 ```
-1. Access check          →  note.visibility_labels ⊆ profile.visibility_grants?
-                              NO  → RESTRICTED (as if it doesn't exist)
-                              YES → continue
+1. Access check       →  note.visibility_labels ⊆ profile.visibility_grants?
+                            NO  → RESTRICTED (as if it doesn't exist)
+                            YES → continue
 
-2. Prompt exclusion?     →  exclude_from_prompt_profile_ids contains profile?
-                              YES → REACTIVE (loadable on demand, not in prompt)
-                              NO  → continue
-
-3. Prompt inclusion?     →  proactive_for_profile_ids contains profile?
-                              YES → PROACTIVE (in prompt / catalog)
-                              NO  → continue
-
-4. Database default      →  include_in_prompt = true?
-                              YES → PROACTIVE
-                              NO  → REACTIVE
+2. Prompt inclusion   →  include_in_prompt = true?
+                            YES → PROACTIVE (in prompt; for skills, catalog entry)
+                            NO  → REACTIVE (loadable on demand via get_note)
 ```
 
-Note: `proactive_for_profile_ids` and `exclude_from_prompt_profile_ids` are **prompt management**
-tools, not security. They control whether an accessible note appears in the system prompt
-automatically. A profile-specific prompt override on a note you have ~5 of is fine; per-note
-enumeration for security on every sensitive note is not.
+This is intentionally simple: two checks, both using existing or new DB columns. Per-profile prompt
+overrides are deferred (Section 2.1).
 
 #### How Each State Behaves
 
@@ -401,9 +401,6 @@ class ParsedNote:
     attachment_ids: list[str]
     # Access control: set of visibility labels from DB column (empty = unrestricted)
     visibility_labels: set[str] = field(default_factory=set)
-    # Prompt visibility overrides from DB columns (not security, just UX)
-    proactive_for_profile_ids: list[str] | None = None
-    exclude_from_prompt_profile_ids: list[str] | None = None
     # Skill detection: parsed from frontmatter (Agent Skills format, file-based only)
     frontmatter: dict[str, Any] | None = None
     is_skill: bool = False            # Has name + description in frontmatter
@@ -493,16 +490,8 @@ class NoteRegistry:
 
     def _is_visible(self, note: ParsedNote, profile_id: str) -> bool:
         """Apply visibility rules for prompt inclusion (Section 2.2)."""
-        # Access control first
         if not self._is_accessible(note, profile_id):
             return False
-        # Prompt visibility overrides
-        if note.exclude_from_prompt_profile_ids:
-            if profile_id in note.exclude_from_prompt_profile_ids:
-                return False
-        if note.proactive_for_profile_ids:
-            if profile_id in note.proactive_for_profile_ids:
-                return True
         return note.include_in_prompt
 
     def _parse_note(self, note_dict: dict, source: str = "database") -> ParsedNote:
@@ -523,8 +512,6 @@ class NoteRegistry:
             include_in_prompt=note_dict.get("include_in_prompt", True),
             attachment_ids=note_dict.get("attachment_ids", []),
             visibility_labels=visibility_labels,
-            proactive_for_profile_ids=note_dict.get("proactive_for_profile_ids"),
-            exclude_from_prompt_profile_ids=note_dict.get("exclude_from_prompt_profile_ids"),
             # Frontmatter only for skill detection (Agent Skills format)
             frontmatter=frontmatter,
             is_skill=is_skill,
@@ -719,8 +706,6 @@ def load_notes_from_directory(directory: Path) -> list[ParsedNote]:
                 include_in_prompt=True,  # File-based notes default to visible
                 attachment_ids=[],
                 visibility_labels=visibility_labels,
-                proactive_for_profile_ids=fm.get("proactive_for_profile_ids"),
-                exclude_from_prompt_profile_ids=fm.get("exclude_from_prompt_profile_ids"),
                 frontmatter=frontmatter,
                 is_skill=bool("name" in fm and "description" in fm),
                 skill_name=fm.get("name"),
@@ -771,8 +756,7 @@ The notes-v2 plan called for:
 
 This design achieves the same outcome with:
 
-- **Three new columns** (`visibility_labels`, `proactive_for_profile_ids`,
-  `exclude_from_prompt_profile_ids`) + simple migration
+- **One new column** (`visibility_labels` JSON) + simple migration
 - **No renames** - existing `include_in_prompt` column used as-is
 - **Python-side filtering** - parse frontmatter for skill metadata, filter by labels in memory (fine
   for \<100 notes)
@@ -784,14 +768,12 @@ This design achieves the same outcome with:
 is only parsed for Agent Skills format compatibility (detecting skill `name` and `description` in
 file-based skills). It does not leak into the rest of the application.
 
-| Metadata                          | Storage          | Rationale                                            |
-| --------------------------------- | ---------------- | ---------------------------------------------------- |
-| `visibility_labels`               | DB column (JSON) | Security boundary                                    |
-| `include_in_prompt`               | DB column (bool) | Already exists                                       |
-| `proactive_for_profile_ids`       | DB column (JSON) | Application behavior — profile-specific prompt logic |
-| `exclude_from_prompt_profile_ids` | DB column (JSON) | Application behavior — profile-specific prompt logic |
-| Skill `name`                      | Frontmatter      | Agent Skills format — file-based skills only         |
-| Skill `description`               | Frontmatter      | Agent Skills format — file-based skills only         |
+| Metadata            | Storage          | Rationale                                    |
+| ------------------- | ---------------- | -------------------------------------------- |
+| `visibility_labels` | DB column (JSON) | Security boundary                            |
+| `include_in_prompt` | DB column (bool) | Already exists                               |
+| Skill `name`        | Frontmatter      | Agent Skills format — file-based skills only |
+| Skill `description` | Frontmatter      | Agent Skills format — file-based skills only |
 
 For file-based notes (no DB row), all metadata comes from frontmatter since there is no database
 record. File-based skills are bundled with the application (trusted source). When a DB note
@@ -809,7 +791,6 @@ is in frontmatter since there is no DB row.
 ---
 name: Home Automation
 description: Control smart home devices, check sensor states, and create automations. Activate when user mentions lights, temperature, locks, sensors, or home automation.
-proactive_for_profile_ids: ["default_assistant", "automation_creation"]
 ---
 
 # Home Automation Skill
@@ -859,8 +840,7 @@ description: Help with research tasks including web searches, document analysis,
 
 ### Phase 1: Core Infrastructure
 
-1. **DB migration**: Add `visibility_labels`, `proactive_for_profile_ids`, and
-   `exclude_from_prompt_profile_ids` JSON columns to notes table
+1. **DB migration**: Add `visibility_labels` JSON column to notes table (default: `[]`)
 2. **Frontmatter parser**: Extract YAML frontmatter from note content (for skill metadata)
 3. **`ParsedNote` dataclass**: Unified representation with parsed metadata
 4. **`NoteRegistry`**: Load from DB + files, parse frontmatter, cache
