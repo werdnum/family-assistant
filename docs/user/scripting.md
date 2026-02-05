@@ -409,6 +409,44 @@ json_str = json_encode(data)
 parsed = json_decode('{"name": "test", "value": 42}')
 ```
 
+### LLM API Functions
+
+One-shot LLM calls for summarisation, data extraction, and text generation:
+
+```starlark
+# Simple text generation
+summary = llm("Summarise this text: " + long_text)
+
+# With system prompt for context
+translation = llm("Translate to French: " + text, system="You are a professional translator.")
+
+# Override the default model
+response = llm("Explain this", model="gpt-4o")
+```
+
+For structured data extraction, use `llm_json()` which returns parsed JSON:
+
+```starlark
+# Extract structured data
+data = llm_json("Extract contacts from: " + email_text)
+for contact in data["contacts"]:
+    print(contact["name"], contact["email"])
+
+# With a JSON schema for precise output
+schema = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "key_points": {"type": "array", "items": {"type": "string"}},
+        "sentiment": {"type": "string", "enum": ["positive", "negative", "neutral"]}
+    }
+}
+analysis = llm_json("Analyse this article: " + article, schema=schema)
+print(analysis["sentiment"])
+```
+
+**Default model**: `gemini-3-flash-preview`. Override with the `model` parameter.
+
 ### Time API Functions
 
 A comprehensive time API is available for working with dates, times, and timezones:

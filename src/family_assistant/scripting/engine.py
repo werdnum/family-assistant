@@ -166,6 +166,14 @@ class StarlarkEngine:
                 module["DAY"] = time_api.DAY
                 module["WEEK"] = time_api.WEEK
 
+                # Add LLM API functions (deferred import to avoid circular dependency
+                # via scripting -> llm.messages -> tools -> scripting)
+                from .apis.llm import create_llm_api  # noqa: PLC0415
+
+                llm_api = create_llm_api(main_loop=self._main_loop)
+                module.add_callable("llm", llm_api.call)
+                module.add_callable("llm_json", llm_api.call_json)
+
             # Add user-provided globals to module
             if globals_dict:
                 for key, value in globals_dict.items():
