@@ -180,6 +180,59 @@ indexing_pipeline_config:
 #     similarity_threshold: 0.30  # Similarity threshold (0.0-1.0). Events above this are considered duplicates
 #     time_window_hours: 2  # Time window in hours to search for duplicates around the event time
 
+# --- MCP (Model Context Protocol) Servers ---
+# Configuration for external MCP servers that provide additional tools.
+mcp_config:
+  mcpServers:
+    time:
+      command: "uvx"
+      args: ["mcp-server-time", "--local-timezone=Australia/Sydney"]
+    browser:
+      command: "deno"
+      args:
+        - "run"
+        - "-A"
+        - "npm:@playwright/mcp@latest"
+        - "--headless"
+        - "--browser"
+        - "chromium"
+    brave:
+      command: "deno"
+      args:
+        - "run"
+        - "--allow-net"
+        - "--allow-env"
+        - "npm:@modelcontextprotocol/server-brave-search"
+      env:
+        BRAVE_API_KEY: "$BRAVE_API_KEY"
+    python:
+      command: "deno"
+      args:
+        - "run"
+        - "-N"
+        - "-R=node_modules"
+        - "-W=node_modules"
+        - "--node-modules-dir=auto"
+        - "jsr:@pydantic/mcp-run-python"
+        - "stdio"
+    homeassistant:
+      transport: "sse"
+      url: "https://homeassistant.example.com/mcp_server/sse"
+      token: "$HOMEASSISTANT_API_KEY"
+    scrape:
+      command: "python"
+      args:
+        - "contrib/scrape_mcp.py"
+    google-maps:
+      command: "deno"
+      args:
+        - "run"
+        - "--allow-net"
+        - "--allow-env"
+        - "npm:@modelcontextprotocol/server-google-maps"
+      env:
+        GOOGLE_MAPS_API_KEY: "$GOOGLE_MAPS_API_KEY"
+
 # --- Default Service Profile Configuration ---
 # Settings for the primary, default assistant behavior.
 default_profile_settings:
