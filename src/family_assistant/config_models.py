@@ -15,9 +15,19 @@ Configuration priority (lowest to highest):
 
 from __future__ import annotations
 
-from typing import Any, Literal
+import contextlib
+from contextvars import ContextVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+    from pydantic_settings import PydanticBaseSettingsSource
+
+from .config_sources import DeepMergedYamlSource
 
 
 class RetryModelConfig(BaseModel):
@@ -564,14 +574,51 @@ class OIDCConfig(BaseModel):
     allowed_emails: list[str] = Field(default_factory=list)
 
 
-class AppConfig(BaseModel):
+class AppConfig(BaseSettings):
     """Main application configuration.
 
     This is the root configuration model that contains all application settings.
     Property access is type-safe - misspelled property names will raise AttributeError.
+
+    Inherits from BaseSettings to support layered configuration sources
+    (YAML files, env vars) via pydantic-settings.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = SettingsConfigDict(
+        extra="forbid",
+        nested_model_default_partial_update=True,
+    )
+
+    # ContextVar used to pass YAML file paths to settings_customise_sources thread-safely.
+    _yaml_files_ctx: ClassVar[ContextVar[list[str] | None]] = ContextVar(
+        "yaml_files", default=None
+    )
+
+    @classmethod
+    @contextlib.contextmanager
+    def yaml_source_context(cls, yaml_files: list[str]) -> Generator[None]:
+        """Context manager to set YAML file paths for AppConfig construction."""
+        token = cls._yaml_files_ctx.set(yaml_files)
+        try:
+            yield
+        finally:
+            cls._yaml_files_ctx.reset(token)
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Only use init_settings + optional YAML source. Env vars are handled as post-processing."""
+        sources: list[PydanticBaseSettingsSource] = [init_settings]
+        yaml_files = cls._yaml_files_ctx.get()
+        if yaml_files:
+            sources.append(DeepMergedYamlSource(settings_cls, yaml_files))
+        return tuple(sources)
 
     # Secrets and API keys (primarily from environment)
     telegram_token: str | None = None

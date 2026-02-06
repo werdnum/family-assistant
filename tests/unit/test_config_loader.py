@@ -1,10 +1,11 @@
 """Tests for the configuration loading module.
 
 These tests verify the configuration loading hierarchy:
-1. Code defaults (lowest priority)
-2. config.yaml file
-3. Environment variables
-4. CLI arguments (highest priority - tested in integration tests)
+1. Pydantic model field defaults (lowest priority)
+2. defaults.yaml file (shipped with app)
+3. config.yaml file (operator-provided)
+4. Environment variables
+5. CLI arguments (highest priority - tested in integration tests)
 """
 
 # ast-grep-ignore-block: no-dict-any - Test utilities for dynamically loaded config dicts
@@ -23,17 +24,19 @@ from family_assistant.config_loader import (
     ENV_VAR_MAPPINGS,
     apply_calendar_env_vars,
     apply_env_var_overrides,
-    deep_merge_dicts,
-    get_code_defaults,
     get_nested_value,
     load_config,
-    load_yaml_file,
-    merge_yaml_config,
     parse_env_value,
     resolve_all_service_profiles,
     resolve_service_profile,
     set_nested_value,
     validate_timezone,
+)
+from family_assistant.config_models import AppConfig
+from family_assistant.config_sources import (
+    DeepMergedYamlSource,
+    deep_merge_dicts,
+    load_yaml_file,
 )
 
 if TYPE_CHECKING:
@@ -72,6 +75,13 @@ class TestDeepMergeDicts:
         merge = {"a": "replaced"}
         result = deep_merge_dicts(base, merge)
         assert result == {"a": "replaced"}
+
+    def test_dict_replaces_scalar(self) -> None:
+        """Test that dict values replace scalar values."""
+        base = {"a": "scalar"}
+        merge = {"a": {"x": 1}}
+        result = deep_merge_dicts(base, merge)
+        assert result == {"a": {"x": 1}}
 
     def test_empty_dicts(self) -> None:
         """Test merging with empty dicts."""
@@ -212,38 +222,239 @@ class TestLoadYamlFile:
         assert result == {}
 
 
-class TestGetCodeDefaults:
-    """Tests for get_code_defaults function."""
+class TestDeepMergedYamlSource:
+    """Tests for DeepMergedYamlSource."""
 
-    def test_returns_dict(self) -> None:
-        """Test that defaults are returned as a dict."""
-        defaults = get_code_defaults()
-        assert isinstance(defaults, dict)
+    def test_single_file(self, tmp_path: Path) -> None:
+        """Test loading a single YAML file."""
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text(yaml.dump({"model": "test-model", "server_port": 9000}))
 
-    def test_has_required_keys(self) -> None:
-        """Test that required keys are present."""
-        defaults = get_code_defaults()
-        required_keys = [
-            "telegram_token",
-            "model",
-            "embedding_model",
-            "database_url",
-            "server_url",
-            "default_service_profile_id",
-            "service_profiles",
-            "default_profile_settings",
+        source = DeepMergedYamlSource(AppConfig, [str(yaml_file)])
+        result = source()
+        assert result["model"] == "test-model"
+        assert result["server_port"] == 9000
+
+    def test_two_files_deep_merge(self, tmp_path: Path) -> None:
+        """Test that two files are deep-merged (later overrides earlier)."""
+        defaults = tmp_path / "defaults.yaml"
+        defaults.write_text(
+            yaml.dump({
+                "model": "default-model",
+                "gemini_live_config": {
+                    "voice": {"name": "Puck"},
+                    "vad": {"automatic": True},
+                },
+            })
+        )
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            yaml.dump({
+                "model": "operator-model",
+                "gemini_live_config": {"voice": {"name": "Kore"}},
+            })
+        )
+
+        source = DeepMergedYamlSource(AppConfig, [str(defaults), str(config)])
+        result = source()
+        assert result["model"] == "operator-model"
+        assert result["gemini_live_config"]["voice"]["name"] == "Kore"
+        # VAD settings from defaults should be preserved
+        assert result["gemini_live_config"]["vad"]["automatic"] is True
+
+    def test_missing_files_skipped(self, tmp_path: Path) -> None:
+        """Test that missing files are silently skipped."""
+        yaml_file = tmp_path / "exists.yaml"
+        yaml_file.write_text(yaml.dump({"model": "test"}))
+
+        source = DeepMergedYamlSource(
+            AppConfig, [str(tmp_path / "missing.yaml"), str(yaml_file)]
+        )
+        result = source()
+        assert result["model"] == "test"
+
+    def test_empty_files_produce_empty_dict(self, tmp_path: Path) -> None:
+        """Test that empty YAML files produce empty dict."""
+        yaml_file = tmp_path / "empty.yaml"
+        yaml_file.write_text("")
+
+        source = DeepMergedYamlSource(AppConfig, [str(yaml_file)])
+        assert source() == {}
+
+    def test_no_files(self) -> None:
+        """Test with no files at all."""
+        source = DeepMergedYamlSource(AppConfig, [])
+        assert source() == {}
+
+
+class TestMcpConfigDeepMerge:
+    """Regression tests for MCP config deep merging.
+
+    This is the motivating use case: config.yaml should be able to add MCP
+    servers without losing defaults from defaults.yaml.
+    """
+
+    def test_config_yaml_adds_mcp_servers_to_defaults(self, tmp_path: Path) -> None:
+        """Adding MCP servers in config.yaml preserves defaults.yaml servers."""
+        defaults = tmp_path / "defaults.yaml"
+        defaults.write_text(
+            yaml.dump({
+                "mcp_config": {
+                    "mcpServers": {
+                        "time": {"command": "uvx", "args": ["mcp-server-time"]},
+                        "browser": {"command": "deno", "args": ["run", "-A"]},
+                        "brave": {
+                            "command": "deno",
+                            "args": ["run", "--allow-net"],
+                        },
+                    }
+                }
+            })
+        )
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            yaml.dump({
+                "mcp_config": {
+                    "mcpServers": {
+                        "custom": {"command": "my-server", "args": ["--port=8080"]},
+                    }
+                }
+            })
+        )
+
+        source = DeepMergedYamlSource(AppConfig, [str(defaults), str(config)])
+        result = source()
+        servers = result["mcp_config"]["mcpServers"]
+        assert "time" in servers
+        assert "browser" in servers
+        assert "brave" in servers
+        assert "custom" in servers
+        assert len(servers) == 4
+
+    def test_config_yaml_overrides_existing_server_args(self, tmp_path: Path) -> None:
+        """config.yaml can override an existing server's configuration."""
+        defaults = tmp_path / "defaults.yaml"
+        defaults.write_text(
+            yaml.dump({
+                "mcp_config": {
+                    "mcpServers": {
+                        "time": {
+                            "command": "uvx",
+                            "args": ["mcp-server-time", "--tz=UTC"],
+                        },
+                    }
+                }
+            })
+        )
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            yaml.dump({
+                "mcp_config": {
+                    "mcpServers": {
+                        "time": {
+                            "command": "uvx",
+                            "args": ["mcp-server-time", "--tz=US/Eastern"],
+                        },
+                    }
+                }
+            })
+        )
+
+        source = DeepMergedYamlSource(AppConfig, [str(defaults), str(config)])
+        result = source()
+        assert result["mcp_config"]["mcpServers"]["time"]["args"] == [
+            "mcp-server-time",
+            "--tz=US/Eastern",
         ]
-        for key in required_keys:
-            assert key in defaults, f"Missing required key: {key}"
 
-    def test_default_profile_settings_structure(self) -> None:
-        """Test default_profile_settings has expected structure."""
-        defaults = get_code_defaults()
-        dps = defaults["default_profile_settings"]
-        assert "processing_config" in dps
-        assert "tools_config" in dps
-        assert "chat_id_to_name_map" in dps
-        assert "slash_commands" in dps
+
+class TestNestedConfigPartialOverride:
+    """Tests for partial override of nested config via YAML layering."""
+
+    def test_partial_override_preserves_other_fields(self, tmp_path: Path) -> None:
+        """Overriding timezone in config.yaml preserves other processing_config fields."""
+        defaults = tmp_path / "defaults.yaml"
+        defaults.write_text(
+            yaml.dump({
+                "default_profile_settings": {
+                    "processing_config": {
+                        "timezone": "UTC",
+                        "max_history_messages": 10,
+                        "max_iterations": 5,
+                    }
+                }
+            })
+        )
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            yaml.dump({
+                "default_profile_settings": {
+                    "processing_config": {
+                        "timezone": "America/New_York",
+                    }
+                }
+            })
+        )
+
+        source = DeepMergedYamlSource(AppConfig, [str(defaults), str(config)])
+        result = source()
+        pc = result["default_profile_settings"]["processing_config"]
+        assert pc["timezone"] == "America/New_York"
+        assert pc["max_history_messages"] == 10
+        assert pc["max_iterations"] == 5
+
+    def test_gemini_voice_override_preserves_vad(self, tmp_path: Path) -> None:
+        """Overriding gemini voice preserves VAD settings."""
+        defaults = tmp_path / "defaults.yaml"
+        defaults.write_text(
+            yaml.dump({
+                "gemini_live_config": {
+                    "voice": {"name": "Puck"},
+                    "vad": {"automatic": True, "silence_duration_ms": 500},
+                }
+            })
+        )
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            yaml.dump({
+                "gemini_live_config": {"voice": {"name": "Aoede"}},
+            })
+        )
+
+        source = DeepMergedYamlSource(AppConfig, [str(defaults), str(config)])
+        result = source()
+        assert result["gemini_live_config"]["voice"]["name"] == "Aoede"
+        assert result["gemini_live_config"]["vad"]["automatic"] is True
+        assert result["gemini_live_config"]["vad"]["silence_duration_ms"] == 500
+
+
+class TestAppConfigBackwardCompat:
+    """Tests that existing AppConfig construction patterns still work."""
+
+    def test_no_args_gives_field_defaults(self) -> None:
+        """AppConfig() with no args produces field defaults only."""
+        config = AppConfig()
+        assert config.model == "gemini/gemini-2.5-pro"
+        assert config.database_url == "sqlite+aiosqlite:///family_assistant.db"
+        assert config.telegram_token is None
+
+    def test_init_override(self) -> None:
+        """AppConfig(field=value) overrides field defaults."""
+        config = AppConfig(telegram_token="test-token")
+        assert config.telegram_token == "test-token"
+        assert config.model == "gemini/gemini-2.5-pro"
+
+    def test_model_validate(self) -> None:
+        """AppConfig.model_validate({...}) works as before."""
+        config = AppConfig.model_validate({"model": "custom-model"})
+        assert config.model == "custom-model"
+
+    def test_model_copy_update(self) -> None:
+        """config.model_copy(update={...}) works as before."""
+        config = AppConfig()
+        updated = config.model_copy(update={"server_port": 9999})
+        assert updated.server_port == 9999
+        assert config.server_port == 8000
 
 
 class TestApplyEnvVarOverrides:
@@ -371,42 +582,6 @@ class TestValidateTimezone:
         validate_timezone(config)
         assert (
             config["default_profile_settings"]["processing_config"]["timezone"] == "UTC"
-        )
-
-
-class TestMergeYamlConfig:
-    """Tests for merge_yaml_config function."""
-
-    def test_merges_top_level_keys(self) -> None:
-        """Test merging top-level keys."""
-        base: dict[str, Any] = {"model": "default", "server_url": "http://localhost"}
-        yaml_config = {"model": "new-model", "new_key": "new_value"}
-        merge_yaml_config(base, yaml_config)
-        assert base["model"] == "new-model"
-        assert base["new_key"] == "new_value"
-        assert base["server_url"] == "http://localhost"
-
-    def test_deep_merges_default_profile_settings(self) -> None:
-        """Test deep merging of default_profile_settings."""
-        base: dict[str, Any] = {
-            "default_profile_settings": {
-                "processing_config": {"timezone": "UTC", "max_iterations": 5},
-                "tools_config": {"confirm_tools": []},
-            }
-        }
-        yaml_config = {
-            "default_profile_settings": {
-                "processing_config": {"timezone": "America/New_York"},
-            }
-        }
-        merge_yaml_config(base, yaml_config)
-        assert (
-            base["default_profile_settings"]["processing_config"]["timezone"]
-            == "America/New_York"
-        )
-        # max_iterations should be preserved
-        assert (
-            base["default_profile_settings"]["processing_config"]["max_iterations"] == 5
         )
 
 
@@ -571,8 +746,8 @@ class TestResolveAllServiceProfiles:
 class TestLoadConfig:
     """Integration tests for the complete load_config function."""
 
-    def test_loads_code_defaults_only(self, tmp_path: Path) -> None:
-        """Test loading with no config files uses code defaults."""
+    def test_loads_field_defaults_only(self, tmp_path: Path) -> None:
+        """Test loading with no config files uses pydantic field defaults."""
         defaults_file = tmp_path / "nonexistent_defaults.yaml"
         config_file = tmp_path / "nonexistent.yaml"
         prompts_file = tmp_path / "nonexistent_prompts.yaml"
@@ -600,8 +775,8 @@ class TestLoadConfig:
         assert config.model == "gemini/gemini-2.5-pro"
         assert config.database_url == "sqlite+aiosqlite:///family_assistant.db"
 
-    def test_defaults_yaml_overrides_code_defaults(self, tmp_path: Path) -> None:
-        """Test that defaults.yaml overrides code defaults."""
+    def test_defaults_yaml_overrides_field_defaults(self, tmp_path: Path) -> None:
+        """Test that defaults.yaml overrides pydantic field defaults."""
         defaults_file = tmp_path / "defaults.yaml"
         defaults_file.write_text(
             yaml.dump({
@@ -777,13 +952,64 @@ class TestLoadConfig:
                 load_dotenv_file=False,
             )
 
+    def test_mcp_servers_deep_merged_across_yaml_files(self, tmp_path: Path) -> None:
+        """Regression: config.yaml adding MCP servers doesn't lose defaults.yaml servers."""
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(
+            yaml.dump({
+                "mcp_config": {
+                    "mcpServers": {
+                        "time": {"command": "uvx", "args": ["mcp-server-time"]},
+                        "brave": {"command": "deno", "args": ["run"]},
+                    }
+                }
+            })
+        )
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            yaml.dump({
+                "mcp_config": {
+                    "mcpServers": {
+                        "custom": {"command": "my-server"},
+                    }
+                }
+            })
+        )
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
+
+        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
+        env_to_clear.extend([
+            "CALDAV_USERNAME",
+            "CALDAV_PASSWORD",
+            "CALDAV_CALENDAR_URLS",
+            "ICAL_URLS",
+            "MCP_CONFIG_PATH",
+            "INDEXING_PIPELINE_CONFIG_JSON",
+        ])
+        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            config = load_config(
+                defaults_file_path=str(defaults_file),
+                config_file_path=str(config_file),
+                prompts_file_path=str(prompts_file),
+                load_dotenv_file=False,
+            )
+
+        servers = config.mcp_config.mcpServers
+        assert "time" in servers
+        assert "brave" in servers
+        assert "custom" in servers
+
 
 class TestEnvVarMappingsComplete:
     """Tests to ensure environment variable mappings are complete and correct."""
 
     def test_all_mappings_have_valid_paths(self) -> None:
         """Test that all env var mappings point to valid config paths."""
-        defaults = get_code_defaults()
+        config = AppConfig()
+        defaults = config.model_dump()
         for mapping in ENV_VAR_MAPPINGS:
             # Each path should either exist in defaults or be a nested path
             # we can create (like pwa_config.vapid_public_key)
