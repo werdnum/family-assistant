@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.llm import LLMInterface
+    from family_assistant.tools import MCPServerConfig
 
 # Import necessary components from the application
 from family_assistant.config_models import AppConfig
@@ -255,8 +256,8 @@ async def test_mcp_time_conversion_stdio(db_engine: AsyncEngine) -> None:
 
     # Hard-coded MCP configuration using stdio transport.
     # Assumes 'mcp-server-time' command is available via dev dependencies.
-    mcp_config = {
-        "time": {"command": "mcp-server-time"}  # Command to execute for stdio
+    mcp_config: dict[str, MCPServerConfig] = {
+        "time": {"transport": "stdio", "command": "mcp-server-time"}
     }
     # Instantiate MCP provider with the in-memory config dictionary
     mcp_provider = MCPToolsProvider(mcp_server_configs=mcp_config)
@@ -450,7 +451,7 @@ async def test_mcp_time_conversion_sse(
     # --- End Debugging ---
 
     # Define MCP config *inside* the test after the fixture yielded the URL
-    mcp_config = {
+    mcp_config: dict[str, MCPServerConfig] = {
         "time_sse": {  # Use a different server ID to avoid clashes if needed
             "transport": "sse",
             "url": mcp_proxy_server,  # URL is now a string from the fixture

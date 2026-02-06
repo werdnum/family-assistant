@@ -6,6 +6,7 @@ import pytest
 
 from family_assistant.tools import (
     FilteredToolsProvider,
+    MCPServerConfig,
     MCPToolsProvider,
 )
 
@@ -14,7 +15,7 @@ from family_assistant.tools import (
 async def test_mcp_provider_exposes_tool_to_server_mapping() -> None:
     """Test that MCPToolsProvider exposes tool-to-server mapping."""
     # Create MCPToolsProvider with mock config
-    mcp_configs = {
+    mcp_configs: dict[str, MCPServerConfig] = {
         "server1": {"transport": "stdio", "command": "echo"},
         "server2": {"transport": "stdio", "command": "echo"},
     }

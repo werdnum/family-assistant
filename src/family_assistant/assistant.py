@@ -74,6 +74,7 @@ from family_assistant.tools import (
     ConfirmingToolsProvider,
     FilteredToolsProvider,
     LocalToolsProvider,
+    MCPServerConfig,
     MCPToolsProvider,
     _scan_user_docs,
 )
@@ -531,8 +532,9 @@ class Assistant:
         )
 
         # Create root MCP provider with ALL configured servers
-        all_mcp_servers_config = {
-            server_id: server_config.model_dump()
+        # ast-grep-ignore: no-dict-any - Configuration model dump returns dynamic dict
+        all_mcp_servers_config: dict[str, MCPServerConfig] = {
+            server_id: cast("MCPServerConfig", server_config.model_dump())
             for server_id, server_config in self.config.mcp_config.mcpServers.items()
         }
         root_mcp_provider = MCPToolsProvider(

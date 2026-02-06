@@ -9,7 +9,7 @@ import pytest
 import pytest_asyncio
 
 from family_assistant.tools.mcp import MCPToolsProvider
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.types import MCPServerConfig, ToolExecutionContext
 from tests.helpers import find_free_port, wait_for_server
 
 if TYPE_CHECKING:
@@ -90,7 +90,7 @@ async def test_mcp_sse_restart(mcp_proxy_controller: MCPProxyController) -> None
     Test that MCP client can handle server restart (SSE disconnect).
     """
     # 1. Initialize MCP Provider
-    mcp_config = {
+    mcp_config: dict[str, MCPServerConfig] = {
         "time_sse": {
             "transport": "sse",
             "url": mcp_proxy_controller.sse_url,

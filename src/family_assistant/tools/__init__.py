@@ -155,7 +155,11 @@ from family_assistant.tools.tasks import (
     schedule_recurring_task_tool,
     schedule_reminder_tool,
 )
-from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
+from family_assistant.tools.types import (
+    MCPServerConfig,
+    ToolDefinition,
+    ToolExecutionContext,
+)
 from family_assistant.tools.video_generation import (
     VIDEO_GENERATION_TOOLS_DEFINITION,
     generate_video_tool,
@@ -191,6 +195,7 @@ __all__ = [
     "CompositeToolsProvider",
     "ConfirmingToolsProvider",
     "FilteredToolsProvider",
+    "MCPServerConfig",
     "find_provider_by_type",
     "ToolNotFoundError",
     "ToolConfirmationRequired",
