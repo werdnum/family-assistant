@@ -15,9 +15,15 @@ Configuration priority (lowest to highest):
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from pydantic_settings import PydanticBaseSettingsSource
+
+from .config_sources import DeepMergedYamlSource
 
 
 class RetryModelConfig(BaseModel):
@@ -564,14 +570,39 @@ class OIDCConfig(BaseModel):
     allowed_emails: list[str] = Field(default_factory=list)
 
 
-class AppConfig(BaseModel):
+class AppConfig(BaseSettings):
     """Main application configuration.
 
     This is the root configuration model that contains all application settings.
     Property access is type-safe - misspelled property names will raise AttributeError.
+
+    Inherits from BaseSettings to support layered configuration sources
+    (YAML files, env vars) via pydantic-settings.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = SettingsConfigDict(
+        extra="forbid",
+        nested_model_default_partial_update=True,
+    )
+
+    # ClassVar used by load_config() to pass YAML file paths to settings_customise_sources.
+    # Set before construction, reset after.
+    _yaml_files: ClassVar[list[str] | None] = None
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Only use init_settings + optional YAML source. Env vars are handled as post-processing."""
+        sources: list[PydanticBaseSettingsSource] = [init_settings]
+        if cls._yaml_files:
+            sources.append(DeepMergedYamlSource(settings_cls, cls._yaml_files))
+        return tuple(sources)
 
     # Secrets and API keys (primarily from environment)
     telegram_token: str | None = None

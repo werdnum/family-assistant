@@ -29,6 +29,7 @@ from dotenv import load_dotenv
 from pydantic import ValidationError
 
 from .config_models import AppConfig
+from .config_sources import deep_merge_dicts
 
 logger = logging.getLogger(__name__)
 
@@ -129,39 +130,6 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     EnvVarMapping("AI_WORKER_K8S_NAMESPACE", "ai_worker_config.kubernetes.namespace"),
     EnvVarMapping("AI_WORKER_K8S_IMAGE", "ai_worker_config.kubernetes.ai_coder_image"),
 ]
-
-
-def _merge_dicts_inplace(
-    target: dict[str, Any],  # noqa: ANN401
-    source: dict[str, Any],  # noqa: ANN401
-) -> None:
-    """Recursively merge source into target in place.
-
-    This is an internal helper that modifies target directly.
-    """
-    for key, value in source.items():
-        if isinstance(value, dict) and key in target and isinstance(target[key], dict):
-            _merge_dicts_inplace(target[key], value)
-        else:
-            target[key] = copy.deepcopy(value) if isinstance(value, dict) else value
-
-
-def deep_merge_dicts(
-    base_dict: dict[str, Any],
-    merge_dict: dict[str, Any],  # noqa: ANN401
-) -> dict[str, Any]:  # noqa: ANN401
-    """Deeply merges merge_dict into base_dict.
-
-    Args:
-        base_dict: The base dictionary to merge into
-        merge_dict: The dictionary to merge from (values take precedence)
-
-    Returns:
-        A new dictionary with deeply merged values
-    """
-    result = copy.deepcopy(base_dict)
-    _merge_dicts_inplace(result, merge_dict)
-    return result
 
 
 def set_nested_value(
@@ -265,32 +233,6 @@ def parse_env_value(
     return value
 
 
-def load_yaml_file(
-    file_path: str | pathlib.Path,
-) -> dict[str, Any]:  # noqa: ANN401
-    """Load a YAML file, returning an empty dict if not found.
-
-    Args:
-        file_path: Path to the YAML file
-
-    Returns:
-        The loaded YAML content as a dictionary, or empty dict if file not found
-    """
-    try:
-        with open(file_path, encoding="utf-8") as f:
-            content = yaml.safe_load(f)
-            if isinstance(content, dict):
-                return content
-            logger.warning(f"{file_path} is not a valid dictionary. Ignoring.")
-            return {}
-    except FileNotFoundError:
-        logger.info(f"{file_path} not found. Using defaults.")
-        return {}
-    except yaml.YAMLError as e:
-        logger.error(f"Error parsing {file_path}: {e}. Using defaults.")
-        return {}
-
-
 def load_json_file(
     file_path: str | pathlib.Path,
 ) -> dict[str, Any]:  # noqa: ANN401
@@ -348,140 +290,24 @@ def expand_env_vars_in_dict(
         return data
 
 
-def get_code_defaults() -> dict[str, Any]:  # noqa: ANN401
-    """Get the default configuration values as a dictionary.
+def _build_config_from_yaml(yaml_files: list[str]) -> AppConfig:
+    """Build an AppConfig from field defaults + deep-merged YAML files.
 
-    These defaults match the existing behavior in __main__.py but are now
-    centralized and more maintainable. Many defaults are also defined in
-    the Pydantic models in config_models.py.
+    Uses pydantic-settings' source mechanism: AppConfig.settings_customise_sources
+    reads _yaml_files to create a DeepMergedYamlSource that layers the YAML files
+    on top of field defaults.
+
+    Args:
+        yaml_files: Ordered list of YAML file paths (later files override earlier ones)
 
     Returns:
-        Dictionary with all default configuration values
+        An AppConfig instance with field defaults + YAML values merged
     """
-    return {
-        "telegram_token": None,
-        "telegram_enabled": True,
-        "openrouter_api_key": None,
-        "gemini_api_key": None,
-        "allowed_user_ids": [],
-        "developer_chat_id": None,
-        "model": "gemini/gemini-2.5-pro",
-        "embedding_model": "gemini/gemini-embedding-001",
-        "embedding_dimensions": 1536,
-        "database_url": "sqlite+aiosqlite:///family_assistant.db",
-        "litellm_debug": False,
-        "debug_llm_messages": False,
-        "server_url": "http://localhost:8000",
-        "document_storage_path": "/mnt/data/files",
-        "attachment_storage_path": "/mnt/data/mailbox/attachments",
-        "chat_attachment_storage_path": "/tmp/chat_attachments",
-        "willyweather_api_key": None,
-        "willyweather_location_id": None,
-        "calendar_config": {
-            "duplicate_detection": {
-                "enabled": True,
-                "similarity_strategy": "embedding",
-                "similarity_threshold": 0.30,
-                "time_window_hours": 2,
-                "embedding": {
-                    "model": "sentence-transformers/all-MiniLM-L6-v2",
-                    "device": "cpu",
-                },
-            }
-        },
-        "pwa_config": {
-            "vapid_public_key": None,
-            "vapid_private_key": None,
-            "vapid_contact_email": None,
-        },
-        "llm_parameters": {},
-        "gemini_live_config": {
-            "model": "gemini-2.5-flash-native-audio-preview-09-2025",
-            "voice": {"name": "Puck"},
-            "session": {"max_duration_minutes": 15},
-            "transcription": {"input_enabled": True, "output_enabled": True},
-            "vad": {
-                "automatic": True,
-                "start_of_speech_sensitivity": "DEFAULT",
-                "end_of_speech_sensitivity": "DEFAULT",
-                "prefix_padding_ms": None,
-                "silence_duration_ms": None,
-            },
-            "affective_dialog": {"enabled": False},
-            "proactivity": {"enabled": False, "proactive_audio": False},
-            "thinking": {"include_thoughts": False},
-        },
-        "mcp_config": {"mcpServers": {}},
-        "default_service_profile_id": "default_assistant",
-        "service_profiles": [],
-        "indexing_pipeline_config": {
-            "processors": [
-                {"type": "TitleExtractor"},
-                {"type": "PDFTextExtractor"},
-                {
-                    "type": "LLMPrimaryLinkExtractor",
-                    "config": {
-                        "input_content_types": ["raw_body_text"],
-                        "target_embedding_type": "raw_url",
-                    },
-                },
-                {"type": "WebFetcher"},
-                {
-                    "type": "LLMSummaryGenerator",
-                    "config": {
-                        "input_content_types": [
-                            "original_document_file",
-                            "raw_body_text",
-                            "extracted_markdown_content",
-                            "fetched_content_markdown",
-                        ],
-                        "target_embedding_type": "llm_generated_summary",
-                    },
-                },
-                {
-                    "type": "TextChunker",
-                    "config": {
-                        "chunk_size": 1000,
-                        "chunk_overlap": 100,
-                        "embedding_type_prefix_map": {
-                            "raw_body_text": "content_chunk",
-                            "raw_file_text": "content_chunk",
-                            "extracted_markdown_content": "content_chunk",
-                            "fetched_content_markdown": "content_chunk",
-                        },
-                    },
-                },
-                {
-                    "type": "EmbeddingDispatch",
-                    "config": {
-                        "embedding_types_to_dispatch": [
-                            "title",
-                            "content_chunk",
-                            "llm_generated_summary",
-                            "fetched_content_markdown",
-                        ]
-                    },
-                },
-            ]
-        },
-        "default_profile_settings": {
-            "processing_config": {
-                "prompts": {},
-                "timezone": "UTC",
-                "max_history_messages": 5,
-                "history_max_age_hours": 24,
-                "web_max_history_messages": 100,
-                "web_history_max_age_hours": 720,
-                "llm_model": "gemini/gemini-2.5-pro",
-            },
-            "chat_id_to_name_map": {},
-            "tools_config": {
-                "confirm_tools": [],
-                "mcp_initialization_timeout_seconds": 60,
-            },
-            "slash_commands": [],
-        },
-    }
+    AppConfig._yaml_files = yaml_files
+    try:
+        return AppConfig()
+    finally:
+        AppConfig._yaml_files = None
 
 
 def apply_env_var_overrides(
@@ -591,54 +417,6 @@ def validate_timezone(
     except zoneinfo.ZoneInfoNotFoundError:
         logger.error(f"Invalid timezone '{timezone}'. Defaulting to UTC.")
         proc_config["timezone"] = "UTC"
-
-
-def merge_yaml_config(
-    base_config: dict[str, Any],  # noqa: ANN401
-    yaml_config: dict[str, Any],  # noqa: ANN401
-) -> None:
-    """Merge YAML config into base config with proper handling of nested structures.
-
-    Args:
-        base_config: The base configuration to merge into (modified in place)
-        yaml_config: The YAML configuration to merge from
-    """
-    for key, value in yaml_config.items():
-        if key == "default_profile_settings" and isinstance(value, dict):
-            base_dps = base_config.setdefault("default_profile_settings", {})
-            # Deep merge for processing_config
-            if "processing_config" in value:
-                base_dps.setdefault("processing_config", {}).update(
-                    value["processing_config"]
-                )
-            # Deep merge for tools_config
-            if "tools_config" in value:
-                base_dps.setdefault("tools_config", {}).update(value["tools_config"])
-            # Deep merge for chat_id_to_name_map
-            if "chat_id_to_name_map" in value:
-                base_dps.setdefault("chat_id_to_name_map", {}).update(
-                    value["chat_id_to_name_map"]
-                )
-            # Handle slash_commands (replace, not merge)
-            if "slash_commands" in value:
-                base_dps["slash_commands"] = value["slash_commands"]
-            # Handle other keys
-            for sub_key in value:
-                if sub_key not in {
-                    "processing_config",
-                    "tools_config",
-                    "chat_id_to_name_map",
-                    "slash_commands",
-                }:
-                    base_dps[sub_key] = value[sub_key]
-        elif (
-            key in base_config
-            and isinstance(value, dict)
-            and isinstance(base_config[key], dict)
-        ):
-            base_config[key].update(value)
-        else:
-            base_config[key] = value
 
 
 def load_prompts_yaml(
@@ -967,10 +745,14 @@ def load_config(
     """Load configuration with clear priority hierarchy.
 
     Priority (lowest to highest):
-    1. Code defaults (from get_code_defaults())
+    1. Pydantic model field defaults (defined in config_models.py)
     2. defaults.yaml file (shipped with application)
     3. config.yaml file (operator-provided, optional)
     4. Environment variables
+
+    YAML files are deep-merged via pydantic-settings' DeepMergedYamlSource,
+    so config.yaml can add/override individual nested keys without replacing
+    entire sections from defaults.yaml.
 
     CLI arguments should be applied after this function returns using
     AppConfig.model_copy(update={...}).
@@ -987,70 +769,52 @@ def load_config(
     Raises:
         ValidationError: If configuration contains invalid keys or values
     """
-    # 1. Start with code defaults
-    config_data = get_code_defaults()
-    logger.info("Initialized config with code defaults.")
+    # 1. Build config from field defaults + deep-merged YAML files
+    yaml_files = [
+        p for p in [defaults_file_path, config_file_path] if os.path.exists(p)
+    ]
+    base_config = _build_config_from_yaml(yaml_files)
+    logger.info("Built config from field defaults + YAML files: %s", yaml_files)
 
-    # 2. Load and merge defaults.yaml (shipped with application)
-    defaults_yaml = load_yaml_file(defaults_file_path)
-    if defaults_yaml:
-        merge_yaml_config(config_data, defaults_yaml)
-        logger.info(f"Merged defaults from {defaults_file_path}")
+    # 2. Post-processing operates on dict, re-validates at end
+    config_data = base_config.model_dump()
 
-    # 3. Load and merge config.yaml (operator-provided, optional)
-    user_config = load_yaml_file(config_file_path)
-    if user_config:
-        merge_yaml_config(config_data, user_config)
-        logger.info(f"Merged operator configuration from {config_file_path}")
-
-    # 4. Load environment variables from .env file
     if load_dotenv_file:
         load_dotenv()
 
-    # 5. Apply environment variable overrides
     apply_env_var_overrides(config_data)
     apply_calendar_env_vars(config_data)
-
-    # Handle telegram_enabled based on token presence
-    if config_data.get("telegram_token"):
-        config_data["telegram_enabled"] = True
-    else:
-        config_data["telegram_enabled"] = False
-
-    # Validate timezone
+    config_data["telegram_enabled"] = bool(config_data.get("telegram_token"))
     validate_timezone(config_data)
 
-    # 6. Load prompts and resolve service profiles
+    # 3. Load prompts and resolve service profiles
     default_prompts, service_profile_prompts = load_prompts_yaml(prompts_file_path)
     if default_prompts:
         config_data["default_profile_settings"]["processing_config"]["prompts"] = (
             default_prompts
         )
 
-    # 7. Load MCP config
+    # 4. Load MCP JSON config (overrides YAML mcp_config entirely if present)
     mcp_json_config = load_mcp_config()
     if mcp_json_config:
         config_data["mcp_config"] = mcp_json_config
-
-    # Ensure environment variables are expanded in mcp_config
-    # (handles both YAML defaults and JSON overrides)
     config_data["mcp_config"] = expand_env_vars_in_dict(config_data["mcp_config"])
 
-    # 8. Load indexing pipeline config from env if present
+    # 5. Load indexing pipeline config from env if present
     load_indexing_pipeline_config(config_data)
 
-    # 9. Resolve service profiles
+    # 6. Resolve service profiles
     config_data["service_profiles"] = resolve_all_service_profiles(
         config_data, service_profile_prompts
     )
 
-    # 10. Log final config (excluding secrets)
+    # 7. Log final config (excluding secrets)
     _log_config(config_data)
 
-    # 11. Validate through Pydantic model
+    # 8. Final validation
     try:
         validated_config = AppConfig.model_validate(config_data)
-        logger.info("Configuration validated successfully through Pydantic model.")
+        logger.info("Configuration validated successfully.")
         return validated_config
     except ValidationError as e:
         logger.error(f"Configuration validation failed: {e}")
@@ -1079,7 +843,7 @@ def _log_config(
     })
 
     # Remove password from calendar_config
-    if "calendar_config" in loggable and "caldav" in loggable["calendar_config"]:
+    if "calendar_config" in loggable and loggable["calendar_config"].get("caldav"):
         loggable["calendar_config"]["caldav"].pop("password", None)
 
     # Remove VAPID private key
