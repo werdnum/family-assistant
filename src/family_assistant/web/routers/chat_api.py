@@ -1468,9 +1468,14 @@ async def get_available_profiles(
     Returns information about each profile including ID, description,
     LLM model, and available tools/capabilities.
     """
-    processing_services_registry = getattr(request.app.state, "processing_services", {})
+    # Get processing services registry from app state
+    processing_services_registry: dict[str, ProcessingService] = (
+        request.app.state.processing_services
+        if hasattr(request.app.state, "processing_services")
+        else {}
+    )
 
-    profiles = []
+    profiles: list[ServiceProfile] = []
 
     # Add all profiles from the registry
     for profile_id, service in processing_services_registry.items():
@@ -1478,38 +1483,40 @@ async def get_available_profiles(
         service_config = service.service_config
 
         # Extract available tools from tools provider
-        available_tools = []
-        enabled_mcp_servers = []
+        available_tools: list[str] = []
+        enabled_mcp_servers: list[str] = []
 
-        if hasattr(service, "tools_provider") and service.tools_provider:
-            # Get all available tools for this profile (local + MCP)
-            try:
-                # This correctly returns only allowed tools if FilteredToolsProvider is used
-                defs = await service.tools_provider.get_tool_definitions()
-                available_tools = [
-                    d.get("function", {}).get("name", "unknown") for d in defs
-                ]
-            except Exception as e:
-                logger.error(
-                    f"Error fetching tool definitions for profile {profile_id}: {e}"
-                )
+        # Get all available tools for this profile (local + MCP)
+        try:
+            # This correctly returns only allowed tools if FilteredToolsProvider is used
+            defs = await service.tools_provider.get_tool_definitions()
+            available_tools = [
+                d.get("function", {}).get("name", "unknown") for d in defs
+            ]
+        except Exception:
+            # Log error but continue with other profiles. Catching Exception is necessary
+            # here because tool discovery (especially for MCP) involves external processes/network
+            # and should not crash the entire profile listing if one provider is flaky.
+            logger.exception(
+                f"Error fetching tool definitions for profile {profile_id}"
+            )
 
-            # Get enabled MCP servers
-            # First check explicit configuration in the profile
-            mcp_server_ids = service_config.tools_config.get("enable_mcp_server_ids")
-            if mcp_server_ids is not None:
-                enabled_mcp_servers = list(mcp_server_ids)
-            # If None, all configured servers are enabled for this profile
-            # Find the MCP provider in the chain to get the list of all configured servers
-            elif MCPToolsProvider is not None:
-                mcp_provider = find_provider_by_type(
-                    service.tools_provider, MCPToolsProvider
-                )
-                if mcp_provider:
-                    enabled_mcp_servers = list(mcp_provider.server_configs.keys())
+        # Get enabled MCP servers
+        # First check explicit configuration in the profile
+        mcp_server_ids = service_config.tools_config.get("enable_mcp_server_ids")
+        if mcp_server_ids is not None:
+            enabled_mcp_servers = list(mcp_server_ids)
+        # If None, all configured servers are enabled for this profile
+        # Find the MCP provider in the chain to get the list of all configured servers
+        elif MCPToolsProvider is not None:
+            mcp_provider = find_provider_by_type(
+                service.tools_provider, MCPToolsProvider
+            )
+            if mcp_provider:
+                enabled_mcp_servers = list(mcp_provider.server_configs.keys())
 
         # Get description from service config or generate a fallback
-        description = getattr(service_config, "description", None)
+        description = service_config.description
         if not description:
             # Generate a user-friendly description based on profile ID
             if profile_id == "default_assistant":

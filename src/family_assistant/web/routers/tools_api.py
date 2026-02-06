@@ -172,10 +172,16 @@ async def get_tool_definitions(
     try:
         # Use the tools provider to get the latest definitions, including MCP tools
         tool_definitions = await tools_provider.get_tool_definitions()
-    except Exception as e:
-        logger.error(f"Error fetching tool definitions from provider: {e}")
+    except Exception:
+        # Log error but fallback. Catching Exception is necessary because tool discovery
+        # involves external MCP servers and should not crash the endpoint.
+        logger.exception("Error fetching tool definitions from provider")
         # Fallback to app state if provider fails
-        tool_definitions = getattr(request.app.state, "tool_definitions", [])
+        tool_definitions = (
+            request.app.state.tool_definitions
+            if hasattr(request.app.state, "tool_definitions")
+            else []
+        )
 
     return JSONResponse(
         content={"tools": tool_definitions, "count": len(tool_definitions)}

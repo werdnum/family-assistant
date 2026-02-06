@@ -60,9 +60,11 @@ class MCPToolsProvider:
         )
 
     @property
-    # ast-grep-ignore: no-dict-any - MCP server config can have varied structure
+    # ast-grep-ignore: no-dict-any - MCP server config is dynamic and varies by transport
     def server_configs(self) -> dict[str, dict[str, Any]]:
         """Returns the configured MCP servers."""
+        # Use raw dicts here to avoid runtime dependency on config_models.py
+        # and because MCP configuration is dynamic by design.
         return self._mcp_server_configs
 
     async def _log_mcp_initialization_progress(

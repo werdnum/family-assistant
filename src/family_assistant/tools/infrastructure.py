@@ -12,7 +12,7 @@ import inspect
 import json
 import logging
 import uuid
-from typing import TYPE_CHECKING, Any, Protocol, cast, get_type_hints
+from typing import TYPE_CHECKING, Any, Protocol, cast, get_type_hints, runtime_checkable
 
 from family_assistant import calendar_integration
 from family_assistant.tools.attachment_utils import process_attachment_arguments
@@ -164,6 +164,21 @@ class ToolConfirmationFailed(Exception):
         self.tool_name = tool_name
         self.reason = reason
         super().__init__(f"Confirmation failed for tool '{tool_name}': {reason}")
+
+
+@runtime_checkable
+class ToolProviderWrapper(Protocol):
+    """Protocol for providers that wrap another provider."""
+
+    @property
+    def wrapped_provider(self) -> ToolsProvider: ...
+
+
+@runtime_checkable
+class ToolProviderComposite(Protocol):
+    """Protocol for providers that contain multiple sub-providers."""
+
+    def get_providers(self) -> list[ToolsProvider]: ...
 
 
 class ToolsProvider(Protocol):
@@ -467,7 +482,7 @@ class LocalToolsProvider:
         logger.debug("Closing LocalToolsProvider (no-op).")
 
 
-class CompositeToolsProvider:
+class CompositeToolsProvider(ToolsProvider):
     """Combines multiple tool providers into a single interface."""
 
     def __init__(self, providers: list[ToolsProvider]) -> None:
@@ -562,6 +577,11 @@ class FilteredToolsProvider(ToolsProvider):
         self._wrapped_provider = wrapped_provider
         self._allowed_tool_names = allowed_tool_names
         self._filtered_definitions: list[ToolDefinition] | None = None
+
+    @property
+    def wrapped_provider(self) -> ToolsProvider:
+        """Returns the wrapped provider."""
+        return self._wrapped_provider
 
     async def get_tool_definitions(self) -> list[ToolDefinition]:
         """Get filtered tool definitions."""
@@ -777,7 +797,7 @@ def find_provider_by_type[T](
     """Traverses the tool provider chain to find a provider of a specific type.
 
     Handles wrappers like ConfirmingToolsProvider, FilteredToolsProvider,
-    and composite providers.
+    and composite providers using structural protocols instead of dynamic attribute access.
 
     Args:
         provider: The root provider to start searching from
@@ -789,21 +809,13 @@ def find_provider_by_type[T](
     if isinstance(provider, provider_type):
         return provider
 
-    # Handle standard wrappers
-    if hasattr(provider, "wrapped_provider"):
-        # ast-grep-ignore: no-dict-any - Accessing dynamically added attributes on wrapper classes
-        wrapped = cast("Any", provider).wrapped_provider
-        return find_provider_by_type(wrapped, provider_type)
-    if hasattr(provider, "_wrapped_provider"):
-        # ast-grep-ignore: no-dict-any - Accessing dynamically added attributes on wrapper classes
-        wrapped = cast("Any", provider)._wrapped_provider
-        return find_provider_by_type(wrapped, provider_type)
+    # Handle wrappers via structural typing
+    if isinstance(provider, ToolProviderWrapper):
+        return find_provider_by_type(provider.wrapped_provider, provider_type)
 
-    # Handle composite providers
-    if hasattr(provider, "get_providers"):
-        # ast-grep-ignore: no-dict-any - Accessing dynamically added attributes on wrapper classes
-        providers = cast("Any", provider).get_providers()
-        for sub_provider in providers:
+    # Handle composite providers via structural typing
+    if isinstance(provider, ToolProviderComposite):
+        for sub_provider in provider.get_providers():
             found = find_provider_by_type(sub_provider, provider_type)
             if found:
                 return found
