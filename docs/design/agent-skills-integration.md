@@ -303,7 +303,7 @@ Notes come from two sources, merged at load time:
 │  - User-created via chat    │    │  - Built-in skills            │
 │  - Managed via web UI       │    │  - Shipped with application   │
 │  - include_in_prompt column │    │  - From config directory      │
-│                             │    │  - Always include_in_prompt   │
+│                             │    │  - Reactive by default        │
 │  Higher priority (override) │    │  Lower priority (defaults)    │
 └─────────────────────────────┘    └───────────────────────────────┘
                     │                               │
@@ -335,30 +335,33 @@ For a given profile, the `NotesContextProvider` produces three sections:
 
 ```
 ## Notes
-(notes where visibility=true AND not a skill)
+(regular notes where include_in_prompt=true)
 - Family Preferences: Our family prefers vegetarian meals on weekdays.
 - School Schedule: Monday: Math, Tuesday: Science...
 
 ## Available Skills
-(skills where visibility=true, metadata only)
+(all accessible skills — catalog entry only, not full content)
 Use the `get_note` tool to load a skill's full instructions.
 - **Meeting Notes**: Format meeting notes with attendees, agenda, decisions, and action items.
 - **Home Automation**: Control smart home devices, check sensor states, create automations.
 - **Research Assistant**: Help with research tasks including web searches and synthesis.
 
 ## Pre-loaded Skills
-(skills selected by preflight, full instructions included)
+(skills selected by preflight router, full instructions included)
 ### Meeting Notes
 When the user asks to take meeting notes, use this structure...
 
 ## Other Notes
-(titles of notes where visibility=false, for awareness)
-Other available notes (not included above): "Tax Records", "Medical Info"
+(regular notes where include_in_prompt=false, titles only for awareness)
+Other available notes (not shown above): "Tax Records", "Medical Info"
 ```
 
-The distinction between "Notes" and "Available Skills" is purely presentational: skills have their
-`name` and `description` extracted for a concise catalog listing, while regular notes have their
-full content included directly.
+**Key distinction:**
+
+- **Regular notes**: `include_in_prompt` controls whether full content appears in the prompt
+- **Skills**: Always appear in the catalog (metadata only) if accessible. Full instructions loaded
+  via preflight (proactive) or `get_note` (reactive). The `include_in_prompt` flag is not used for
+  skills — progressive disclosure is the default.
 
 ### 2.5. Hybrid Skill Activation
 
@@ -449,50 +452,38 @@ class NoteRegistry:
                 parsed = self._parse_note(note_dict, source="database")
                 self._notes[parsed.title] = parsed
 
-    def get_visible_notes(self, profile_id: str) -> list[ParsedNote]:
-        """Get notes visible in prompt for a profile."""
-        return [n for n in self._notes.values() if self._is_visible(n, profile_id)]
+    def get_prompt_notes(self, profile_id: str) -> list[ParsedNote]:
+        """Get regular notes to include in prompt (accessible + include_in_prompt)."""
+        return [
+            n for n in self._notes.values()
+            if not n.is_skill and self._is_accessible(n, profile_id) and n.include_in_prompt
+        ]
 
-    def get_visible_skills(self, profile_id: str) -> list[ParsedNote]:
-        """Get skills visible in prompt for a profile."""
-        return [n for n in self.get_visible_notes(profile_id) if n.is_skill]
+    def get_catalog_skills(self, profile_id: str) -> list[ParsedNote]:
+        """Get skills for catalog listing (all accessible skills, metadata only)."""
+        return [n for n in self._notes.values() if n.is_skill and self._is_accessible(n, profile_id)]
 
-    def get_visible_regular_notes(self, profile_id: str) -> list[ParsedNote]:
-        """Get non-skill notes visible in prompt for a profile."""
-        return [n for n in self.get_visible_notes(profile_id) if not n.is_skill]
+    def get_reactive_note_titles(self, profile_id: str) -> list[str]:
+        """Get titles of accessible regular notes not in prompt (for awareness listing)."""
+        return [
+            n.title for n in self._notes.values()
+            if not n.is_skill and self._is_accessible(n, profile_id) and not n.include_in_prompt
+        ]
 
     def get_accessible_notes(self, profile_id: str) -> list[ParsedNote]:
         """Get all notes accessible to a profile (for search filtering, get_note)."""
-        grants = self._get_grants(profile_id)
-        return [n for n in self._notes.values() if n.visibility_labels <= grants]
-
-    def get_reactive_titles(self, profile_id: str) -> list[str]:
-        """Get titles of accessible-but-not-visible notes (for awareness listing)."""
-        grants = self._get_grants(profile_id)
-        return [
-            n.title for n in self._notes.values()
-            if n.visibility_labels <= grants and not self._is_visible(n, profile_id)
-        ]
+        return [n for n in self._notes.values() if self._is_accessible(n, profile_id)]
 
     def get_by_title(self, title: str, profile_id: str) -> ParsedNote | None:
         """Get a note by title, respecting access control."""
         note = self._notes.get(title)
-        if not note:
-            return None
-        grants = self._get_grants(profile_id)
-        if not note.visibility_labels <= grants:
-            return None  # Access denied - looks like it doesn't exist
-        return note
+        if note and self._is_accessible(note, profile_id):
+            return note
+        return None  # Not found or access denied
 
     def _is_accessible(self, note: ParsedNote, profile_id: str) -> bool:
         """Check if a profile can access this note (labels ⊆ grants)."""
         return note.visibility_labels <= self._get_grants(profile_id)
-
-    def _is_visible(self, note: ParsedNote, profile_id: str) -> bool:
-        """Apply visibility rules for prompt inclusion (Section 2.2)."""
-        if not self._is_accessible(note, profile_id):
-            return False
-        return note.include_in_prompt
 
     def _parse_note(self, note_dict: dict, source: str = "database") -> ParsedNote:
         """Parse a note dict, extracting frontmatter if present."""
@@ -552,7 +543,7 @@ class NotesContextProvider(ContextProvider):
     ) -> None:
         """Optionally run preflight to pre-select skills."""
         if self._router:
-            available_skills = self._registry.get_visible_skills(self._profile_id)
+            available_skills = self._registry.get_catalog_skills(self._profile_id)
             if available_skills:
                 self._preloaded_skills = await self._router.select_skills(
                     user_message=user_message,
@@ -563,14 +554,14 @@ class NotesContextProvider(ContextProvider):
     async def get_context_fragments(self) -> list[str]:
         fragments: list[str] = []
 
-        # 1. Regular notes (full content)
-        regular_notes = self._registry.get_visible_regular_notes(self._profile_id)
-        if regular_notes:
+        # 1. Regular notes (full content, where include_in_prompt=true)
+        prompt_notes = self._registry.get_prompt_notes(self._profile_id)
+        if prompt_notes:
             # ... format as today, using prompts templates ...
             pass
 
-        # 2. Skill catalog (metadata only)
-        skills = self._registry.get_visible_skills(self._profile_id)
+        # 2. Skill catalog (all accessible skills, metadata only)
+        skills = self._registry.get_catalog_skills(self._profile_id)
         if skills:
             catalog_lines = ["## Available Skills",
                             "Use `get_note` tool to load a skill's full instructions."]
@@ -578,17 +569,16 @@ class NotesContextProvider(ContextProvider):
                 catalog_lines.append(f"- **{skill.skill_name}**: {skill.skill_description}")
             fragments.append("\n".join(catalog_lines))
 
-        # 3. Pre-loaded skill instructions
-        preloaded_ids = {s.title for s in self._preloaded_skills}
+        # 3. Pre-loaded skill instructions (selected by preflight)
         if self._preloaded_skills:
             fragments.append("\n## Pre-loaded Skills")
             for skill in self._preloaded_skills:
                 fragments.append(f"### {skill.skill_name}\n{skill.content}")
 
-        # 4. Reactive notes (accessible but not in prompt, for awareness)
-        excluded = self._registry.get_reactive_titles(self._profile_id)
-        if excluded:
-            titles_str = ", ".join(f'"{t}"' for t in excluded)
+        # 4. Reactive notes (regular notes not in prompt, titles for awareness)
+        reactive_titles = self._registry.get_reactive_note_titles(self._profile_id)
+        if reactive_titles:
+            titles_str = ", ".join(f'"{t}"' for t in reactive_titles)
             fragments.append(f"Other available notes (not shown): {titles_str}")
 
         return fragments
@@ -703,7 +693,7 @@ def load_notes_from_directory(directory: Path) -> list[ParsedNote]:
                 title=title,
                 content=body,
                 raw_content=raw_content,
-                include_in_prompt=True,  # File-based notes default to visible
+                include_in_prompt=False,  # Skills default to reactive (progressive disclosure)
                 attachment_ids=[],
                 visibility_labels=visibility_labels,
                 frontmatter=frontmatter,
