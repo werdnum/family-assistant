@@ -1,19 +1,32 @@
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import logging
 import os  # Import os for environment variable resolution
 from typing import (
+    TYPE_CHECKING,
     Any,
 )  # Added Tuple
 
 import anyio
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from mcp import ClientSession
 from mcp import ClientSession, StdioServerParameters, stdio_client
 from mcp.client.sse import sse_client  # Assuming sse_client is in mcp.client.sse
 from mcp.types import TextContent  # Import TextContent from mcp.types
 
 # Import storage functions needed by local tools
 # Import the context from the new types file
-from .types import ToolDefinition, ToolExecutionContext, ToolNotFoundError
+from .types import (
+    MCPServerConfig,
+    ToolDefinition,
+    ToolExecutionContext,
+    ToolNotFoundError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +44,15 @@ class MCPToolsProvider:
     Handles connection, fetching definitions, and execution.
     """
 
+    _mcp_server_configs: dict[str, MCPServerConfig]
+
     def __init__(
         self,
-        # ast-grep-ignore: no-dict-any - Legacy code - needs structured types
-        mcp_server_configs: dict[str, dict[str, Any]],
+        mcp_server_configs: Mapping[str, MCPServerConfig],
         initialization_timeout_seconds: int = 60,  # Default 1 minute
         health_check_interval_seconds: int = 30,  # Default 30 seconds
     ) -> None:
-        self._mcp_server_configs = mcp_server_configs
+        self._mcp_server_configs = dict(mcp_server_configs)
         self._initialization_timeout_seconds = initialization_timeout_seconds
         self._health_check_interval_seconds = health_check_interval_seconds
         self._sessions: dict[str, ClientSession] = {}
@@ -60,11 +74,8 @@ class MCPToolsProvider:
         )
 
     @property
-    # ast-grep-ignore: no-dict-any - MCP server config is dynamic and varies by transport
-    def server_configs(self) -> dict[str, dict[str, Any]]:
+    def server_configs(self) -> dict[str, MCPServerConfig]:
         """Returns the configured MCP servers."""
-        # Use raw dicts here to avoid runtime dependency on config_models.py
-        # and because MCP configuration is dynamic by design.
         return self._mcp_server_configs
 
     async def _log_mcp_initialization_progress(
@@ -115,9 +126,8 @@ class MCPToolsProvider:
     async def _connect_and_discover_mcp(
         self,
         server_id: str,
-        # ast-grep-ignore: no-dict-any - MCP server config can have varied structure
-        server_conf: dict[str, Any],
-    ) -> tuple["ClientSession | None", list[ToolDefinition], dict[str, str]]:
+        server_conf: MCPServerConfig,
+    ) -> tuple[ClientSession | None, list[ToolDefinition], dict[str, str]]:
         """Connects to a single MCP server, discovers tools, and returns results."""
         self._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTING
         discovered_tools = []

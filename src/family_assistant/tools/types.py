@@ -8,7 +8,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
 
 # Note: CalendarConfig TypedDict kept here for backward compatibility with tool functions
 # The Pydantic CalendarConfig in config_models.py is used for config file validation
@@ -34,6 +34,38 @@ class CalendarConfig(TypedDict, total=False):
 
     caldav: CalDavConfig | None
     ical: ICalConfig | None
+
+
+class MCPServerStdIOConfig(TypedDict, total=False):
+    """Configuration for a stdio-based MCP server."""
+
+    transport: Literal["stdio"]
+    command: str
+    args: list[str]
+    env: dict[str, str]
+
+
+class MCPServerSSEConfig(TypedDict):
+    """Configuration for an SSE-based MCP server."""
+
+    transport: Literal["sse"]
+    url: str
+    token: NotRequired[str | None]
+
+
+class MCPServerGenericConfig(TypedDict, total=False):
+    """Generic configuration for MCP servers, used when transport is not explicitly specified."""
+
+    transport: str
+    command: str
+    args: list[str]
+    env: dict[str, str]
+    url: str
+    token: str
+
+
+# Use a Union to represent the allowed MCP server configurations.
+MCPServerConfig = MCPServerStdIOConfig | MCPServerSSEConfig | MCPServerGenericConfig
 
 
 # Tool Definition Types
