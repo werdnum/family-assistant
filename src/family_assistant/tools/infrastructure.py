@@ -769,3 +769,43 @@ class ConfirmingToolsProvider(ToolsProvider):
         )
         await self.wrapped_provider.close()
         logger.info("ConfirmingToolsProvider finished closing wrapped provider.")
+
+
+def find_provider_by_type[T](
+    provider: ToolsProvider, provider_type: type[T]
+) -> T | None:
+    """Traverses the tool provider chain to find a provider of a specific type.
+
+    Handles wrappers like ConfirmingToolsProvider, FilteredToolsProvider,
+    and composite providers.
+
+    Args:
+        provider: The root provider to start searching from
+        provider_type: The type of provider to look for
+
+    Returns:
+        The provider instance if found, or None
+    """
+    if isinstance(provider, provider_type):
+        return provider
+
+    # Handle standard wrappers
+    if hasattr(provider, "wrapped_provider"):
+        # ast-grep-ignore: no-dict-any - Accessing dynamically added attributes on wrapper classes
+        wrapped = cast("Any", provider).wrapped_provider
+        return find_provider_by_type(wrapped, provider_type)
+    if hasattr(provider, "_wrapped_provider"):
+        # ast-grep-ignore: no-dict-any - Accessing dynamically added attributes on wrapper classes
+        wrapped = cast("Any", provider)._wrapped_provider
+        return find_provider_by_type(wrapped, provider_type)
+
+    # Handle composite providers
+    if hasattr(provider, "get_providers"):
+        # ast-grep-ignore: no-dict-any - Accessing dynamically added attributes on wrapper classes
+        providers = cast("Any", provider).get_providers()
+        for sub_provider in providers:
+            found = find_provider_by_type(sub_provider, provider_type)
+            if found:
+                return found
+
+    return None

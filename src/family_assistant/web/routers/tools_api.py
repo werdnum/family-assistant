@@ -164,9 +164,19 @@ async def execute_tool_api(
 
 
 @tools_api_router.get("/definitions")
-async def get_tool_definitions(request: Request) -> JSONResponse:
+async def get_tool_definitions(
+    request: Request,
+    tools_provider: Annotated[ToolsProvider, Depends(get_tools_provider_dependency)],
+) -> JSONResponse:
     """Development endpoint to list all available tools with their schemas."""
-    tool_definitions = getattr(request.app.state, "tool_definitions", [])
+    try:
+        # Use the tools provider to get the latest definitions, including MCP tools
+        tool_definitions = await tools_provider.get_tool_definitions()
+    except Exception as e:
+        logger.error(f"Error fetching tool definitions from provider: {e}")
+        # Fallback to app state if provider fails
+        tool_definitions = getattr(request.app.state, "tool_definitions", [])
+
     return JSONResponse(
         content={"tools": tool_definitions, "count": len(tool_definitions)}
     )
